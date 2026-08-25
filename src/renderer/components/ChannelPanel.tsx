@@ -359,7 +359,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const openRegisterForm = () => {
     setRegisterForm({
       name: !isDefaultChannelName(draft.name) ? draft.name.trim() : "LK Harness",
-      desc: "Cursor AI 协作助手",
+      desc: "IM Agent 协作助手",
     })
   }
 

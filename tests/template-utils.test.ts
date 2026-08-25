@@ -5,6 +5,7 @@ import * as os from "node:os"
 import { renderTemplate, readTemplate, getTemplateRoot } from "../src/shared/template-utils.js"
 
 afterEach(() => {
+  delete process.env.LK_HARNESS_TEMPLATE_DIR
   delete process.env.CURSOR_CLAW_TEMPLATE_DIR
 })
 
@@ -24,9 +25,9 @@ describe("renderTemplate", () => {
 })
 
 describe("getTemplateRoot / readTemplate", () => {
-  it("CURSOR_CLAW_TEMPLATE_DIR 覆盖模板根目录", () => {
+  it("LK_HARNESS_TEMPLATE_DIR 覆盖模板根目录", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-tpl-"))
-    process.env.CURSOR_CLAW_TEMPLATE_DIR = dir
+    process.env.LK_HARNESS_TEMPLATE_DIR = dir
     try {
       expect(getTemplateRoot()).toBe(dir)
       fs.writeFileSync(path.join(dir, "hello.md"), "内容 {{X}}", "utf-8")
@@ -38,7 +39,7 @@ describe("getTemplateRoot / readTemplate", () => {
 
   it("模板不存在时抛错", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-tpl-"))
-    process.env.CURSOR_CLAW_TEMPLATE_DIR = dir
+    process.env.LK_HARNESS_TEMPLATE_DIR = dir
     try {
       expect(() => readTemplate("missing.md")).toThrow(/模板文件不存在/)
     } finally {

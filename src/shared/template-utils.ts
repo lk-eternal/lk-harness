@@ -5,8 +5,9 @@ import { fileURLToPath } from "node:url";
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
 export function getTemplateRoot(): string {
-  if (process.env.CURSOR_CLAW_TEMPLATE_DIR) {
-    return process.env.CURSOR_CLAW_TEMPLATE_DIR;
+  const envRoot = process.env.LK_HARNESS_TEMPLATE_DIR ?? process.env.CURSOR_CLAW_TEMPLATE_DIR;
+  if (envRoot) {
+    return envRoot;
   }
 
   const candidates = [

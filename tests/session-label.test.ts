@@ -9,7 +9,7 @@ describe("session color stability", () => {
   })
 
   it("path escaping and casing differences map to one color", () => {
-    const a = sessionColorKey("oc_abc::D:\\\\Workspace\\\\Cursor-Claw")
+    const a = sessionColorKey("oc_abc::D:\\\\Workspace\\\\LK-Harness")
     const b = sessionColorKey("oc_abc::d:\\workspace\\lk-harness")
     expect(a).toBe(b)
   })

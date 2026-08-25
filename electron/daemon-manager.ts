@@ -624,7 +624,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
       ...process.env as Record<string, string>,
       LARK_WORKSPACE_DIR: wsFallback,
       APP_DATA_DIR: app.getPath("userData"),
-      CURSOR_CLAW_TEMPLATE_DIR: templateDir,
+      LK_HARNESS_TEMPLATE_DIR: templateDir,
       NODE_USE_ENV_PROXY: "1",
       CLAW_CHANNELS_JSON: JSON.stringify(channelConfigs),
       ...(config.daemonPort ? { LARK_DAEMON_PORT: String(config.daemonPort) } : {}),
@@ -2168,7 +2168,7 @@ export function initDaemonManager(): void {
       const QRCode = await import("qrcode")
       const result = await registerFeishuApp({
         name: preset?.name?.trim() || "LK Harness",
-        desc: preset?.desc?.trim() || "Cursor AI 协作助手",
+        desc: preset?.desc?.trim() || "IM Agent 协作助手",
         signal,
         onQrCodeUrl(url) {
           QRCode.toDataURL(url, { width: 280, margin: 2 })
