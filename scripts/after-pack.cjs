@@ -4,7 +4,7 @@ const path = require("path")
 const PUBLISH_LINES = [
   "provider: github",
   "owner: lk-eternal",
-  "repo: cursor-claw",
+  "repo: lk-harness",
   "vPrefixedTagName: true",
 ]
 

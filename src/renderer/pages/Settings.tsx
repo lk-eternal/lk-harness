@@ -1073,7 +1073,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 <div className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
                   <div className="min-w-0 pr-3">
                     <p className="text-sm font-medium">开机自启</p>
-                    <p className="text-xs text-gray-500">系统登录后自动启动 Cursor Claw；应用启动后自动拉起 Daemon 并连接消息通道</p>
+                    <p className="text-xs text-gray-500">系统登录后自动启动 LK Harness；应用启动后自动拉起 Daemon 并连接消息通道</p>
                   </div>
                   <button
                     type="button"
@@ -1505,7 +1505,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               <section className="space-y-3">
                 <h3 className="text-sm font-medium text-gray-300">参考文档</h3>
                 <div className="flex flex-wrap gap-2">
-                  <a href="https://github.com/lk-eternal/cursor-claw" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
+                  <a href="https://github.com/lk-eternal/lk-harness" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
                     <ExternalLink size={12} />项目 GitHub
                   </a>
                 </div>
@@ -1589,7 +1589,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               <section className="space-y-3">
                 <h3 className="text-sm font-medium text-gray-300">项目信息</h3>
                 <a
-                  href="https://github.com/lk-eternal/cursor-claw"
+                  href="https://github.com/lk-eternal/lk-harness"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-800/50 px-4 py-2 text-sm text-gray-300 transition hover:border-blue-500 hover:bg-gray-800 hover:text-blue-400"

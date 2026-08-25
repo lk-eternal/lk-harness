@@ -61,7 +61,7 @@ function showMainWindow(): void {
 
 export function initTray(): void {
   tray = new Tray(getIcon())
-  tray.setToolTip("Cursor Claw")
+  tray.setToolTip("LK Harness")
 
   const contextMenu = Menu.buildFromTemplate([
     { label: "显示窗口", click: showMainWindow },

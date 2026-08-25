@@ -255,35 +255,35 @@ export async function removeProjectWorktree(repoPath: string, worktreePath: stri
 }
 
 export async function ensureArtifactDir(worktreePath: string): Promise<string> {
-  const dir = path.join(worktreePath, ".cursor-claw", "artifacts")
+  const dir = path.join(worktreePath, ".lk-harness", "artifacts")
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   await ensureClawExcluded(worktreePath)
   return dir
 }
 
-/** 把 .cursor-claw/ 写进仓库本地 exclude（不动用户 .gitignore）：产物不进 git status、不见于 IDE 未版本列表 */
+/** 把 .lk-harness/ 写进仓库本地 exclude（不动用户 .gitignore）：产物不进 git status、不见于 IDE 未版本列表 */
 export async function ensureClawExcluded(worktreePath: string): Promise<void> {
   try {
     const gp = await runGit(worktreePath, ["rev-parse", "--git-path", "info/exclude"])
     if (!gp.ok || !gp.stdout) return
     const excludePath = path.isAbsolute(gp.stdout) ? gp.stdout : path.join(worktreePath, gp.stdout)
     const existing = fs.existsSync(excludePath) ? fs.readFileSync(excludePath, "utf-8") : ""
-    if (existing.split(/\r?\n/).some((l) => l.trim() === ".cursor-claw/")) return
+    if (existing.split(/\r?\n/).some((l) => l.trim() === ".lk-harness/")) return
     fs.mkdirSync(path.dirname(excludePath), { recursive: true })
-    fs.appendFileSync(excludePath, `${existing.endsWith("\n") || !existing ? "" : "\n"}.cursor-claw/\n`, "utf-8")
+    fs.appendFileSync(excludePath, `${existing.endsWith("\n") || !existing ? "" : "\n"}.lk-harness/\n`, "utf-8")
   } catch { /* best-effort */ }
 }
 
-/** porcelain 状态行（剔除 .cursor-claw 产物目录）；查询失败按空处理 */
+/** porcelain 状态行（剔除 .lk-harness 产物目录）；查询失败按空处理 */
 async function dirtyLines(worktreePath: string): Promise<string[]> {
   if (!fs.existsSync(worktreePath)) return []
   const st = await runGit(worktreePath, ["status", "--porcelain"])
   if (!st.ok || !st.stdout) return []
   return st.stdout.split("\n").filter(Boolean)
-    .filter((l) => !l.slice(3).trim().replace(/^"|"$/g, "").startsWith(".cursor-claw"))
+    .filter((l) => !l.slice(3).trim().replace(/^"|"$/g, "").startsWith(".lk-harness"))
 }
 
-/** 未提交改动条数（含未跟踪；不含 .cursor-claw 产物） */
+/** 未提交改动条数（含未跟踪；不含 .lk-harness 产物） */
 export async function worktreeDirtyCount(worktreePath: string): Promise<number> {
   return (await dirtyLines(worktreePath)).length
 }

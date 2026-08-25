@@ -133,9 +133,9 @@ let _store: Store<AppConfig> | null = null
 function getStore(): Store<AppConfig> {
   if (!_store) {
     _store = new Store<AppConfig>({
-      name: "cursor-claw-config",
+      name: "lk-harness-config",
       // 文件级混淆密钥（历史格式兼容，防手滑翻看）；真实凭据保护靠下方 safeStorage 字段级加密
-      encryptionKey: "cursor-claw-desktop-v1",
+      encryptionKey: "lk-harness-desktop-v1",
       defaults,
     })
   }

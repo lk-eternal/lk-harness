@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Detach pack-local.ps1 so killing Cursor Claw does not kill the pack job.
+ * Detach pack-local.ps1 so killing LK Harness does not kill the pack job.
  * Usage: node scripts/pack-local-detached.cjs
  *        npm run pack:local
  *

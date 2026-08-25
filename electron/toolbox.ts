@@ -87,7 +87,7 @@ async function detectNode(): Promise<{ ok: boolean; version?: string }> {
 
 function friendlyInstallError(raw: string): string {
   if (looksLikeMissingCmd(raw, "npm") || looksLikeMissingCmd(raw, "node")) {
-    return "未检测到 Node.js / npm。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 Cursor Claw 后再点一键安装。"
+    return "未检测到 Node.js / npm。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 LK Harness 后再点一键安装。"
   }
   if (/EACCES|permission|rejected by your operating system|as root\/Administrator/i.test(raw)) {
     return process.platform === "darwin"
@@ -135,7 +135,7 @@ export async function installTool(key: "larkCli" | "meegle"): Promise<{ ok: bool
   if (!tool) return { ok: false, error: "未知工具" }
   const node = await detectNode()
   if (!node.ok) {
-    return { ok: false, error: "未检测到 Node.js。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 Cursor Claw 后再试。" }
+    return { ok: false, error: "未检测到 Node.js。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 LK Harness 后再试。" }
   }
   const npmVer = await runCommand("npm", ["-v"])
   if (!npmVer.ok) {

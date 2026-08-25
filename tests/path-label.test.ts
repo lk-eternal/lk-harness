@@ -10,8 +10,8 @@ describe("pathLastSegment", () => {
 
 describe("disambiguatePathLabel", () => {
   it("keeps short name when unique", () => {
-    const peers = ["D:\\ws\\cursor-claw", "D:\\ws\\other"]
-    expect(disambiguatePathLabel(peers[0], peers)).toBe("cursor-claw")
+    const peers = ["D:\\ws\\lk-harness", "D:\\ws\\other"]
+    expect(disambiguatePathLabel(peers[0], peers)).toBe("lk-harness")
   })
 
   it("appends parent when last segment collides", () => {

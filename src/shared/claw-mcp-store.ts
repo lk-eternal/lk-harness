@@ -12,8 +12,8 @@ export interface StoreFile {
   servers: Record<string, Record<string, unknown>>
 }
 
-export const CLAW_MCP_KEY = "cursor-claw"
-export const ADMIN_MCP_KEY = "cursor-claw-admin"
+export const CLAW_MCP_KEY = "lk-harness"
+export const ADMIN_MCP_KEY = "lk-harness-admin"
 
 const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY])
 

@@ -47,6 +47,6 @@ describe("getTemplateRoot / readTemplate", () => {
   })
 
   it("默认能找到仓库内置模板", () => {
-    expect(readTemplate("rule/cursor-claw.mdc").length).toBeGreaterThan(0)
+    expect(readTemplate("rule/lk-harness.mdc").length).toBeGreaterThan(0)
   })
 })

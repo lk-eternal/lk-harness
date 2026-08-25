@@ -206,7 +206,7 @@ function queryToolsViaProtocol(cmd: string, args: string[], envOverride?: Record
 
     child.stdin?.write(JSON.stringify({
       jsonrpc: "2.0", id: 1, method: "initialize",
-      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "cursor-claw", version: "1.0.0" } },
+      params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "lk-harness", version: "1.0.0" } },
     }) + "\n")
   })
 }
@@ -244,7 +244,7 @@ async function queryToolsViaHttp(url: string, headers?: Record<string, string>):
   })
 
   try {
-    const initRes = await post(rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "cursor-claw", version: "1.0.0" } }))
+    const initRes = await post(rpc(1, "initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "lk-harness", version: "1.0.0" } }))
     if (!initRes?.result) return { ok: false, tools: [], error: "initialize 失败" }
     const listRes = await post(rpc(2, "tools/list"))
     if (!listRes?.result?.tools) return { ok: false, tools: [], error: "tools/list 无结果" }

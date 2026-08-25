@@ -3,14 +3,14 @@ import { sessionColorKey, sessionHeaderTemplate } from "../src/shared/session-la
 
 describe("session color stability", () => {
   it("same chat with/without channel prefix maps to one color", () => {
-    const a = sessionColorKey("ch_c9fc9ff4|oc_abc::D:\\workspace\\cursor-claw")
-    const b = sessionColorKey("oc_abc::D:\\workspace\\cursor-claw")
+    const a = sessionColorKey("ch_c9fc9ff4|oc_abc::D:\\workspace\\lk-harness")
+    const b = sessionColorKey("oc_abc::D:\\workspace\\lk-harness")
     expect(a).toBe(b)
   })
 
   it("path escaping and casing differences map to one color", () => {
     const a = sessionColorKey("oc_abc::D:\\\\Workspace\\\\Cursor-Claw")
-    const b = sessionColorKey("oc_abc::d:\\workspace\\cursor-claw")
+    const b = sessionColorKey("oc_abc::d:\\workspace\\lk-harness")
     expect(a).toBe(b)
   })
 
@@ -22,7 +22,7 @@ describe("session color stability", () => {
   })
 
   it("template is deterministic", () => {
-    const k = "ch_c9fc9ff4|oc_abc::D:\\workspace\\cursor-claw"
+    const k = "ch_c9fc9ff4|oc_abc::D:\\workspace\\lk-harness"
     expect(sessionHeaderTemplate(k)).toBe(sessionHeaderTemplate(k))
     expect(sessionHeaderTemplate(k)).toBeTruthy()
   })

@@ -15,9 +15,9 @@ const execFileAsync = promisify(execFile)
 const autoUpdater: AppUpdater = (electronUpdater as { autoUpdater: AppUpdater }).autoUpdater
 
 const GITHUB_OWNER = "lk-eternal"
-const GITHUB_REPO = "cursor-claw"
+const GITHUB_REPO = "lk-harness"
 const HOMEBREW_TAP = "lk-eternal/tap"
-const HOMEBREW_CASK = "cursor-claw"
+const HOMEBREW_CASK = "lk-harness"
 
 const STARTUP_CHECK_DELAY_MS = 4_000
 
@@ -279,7 +279,7 @@ async function httpGetText(
   try {
     const res = await net.fetch(url, {
       headers: {
-        "User-Agent": "cursor-claw-desktop-updater",
+        "User-Agent": "lk-harness-desktop-updater",
         ...(headers || {}),
       },
       // 被墙的源（api.github.com 直连）会长时间挂起，必须限时让并发查询尽快收敛
@@ -296,7 +296,7 @@ async function httpHead(url: string): Promise<{ status: number } | null> {
   try {
     const res = await net.fetch(url, {
       method: "HEAD",
-      headers: { "User-Agent": "cursor-claw-desktop-updater" },
+      headers: { "User-Agent": "lk-harness-desktop-updater" },
       signal: AbortSignal.timeout(12_000),
       redirect: "follow",
     })
@@ -606,7 +606,7 @@ async function runBrewUpgrade(): Promise<UpdaterApplyResult> {
 }
 
 function manualUpdateUrl(version: string): string {
-  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/cursor-claw-setup-${version}.exe`
+  return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/lk-harness-setup-${version}.exe`
 }
 
 async function showWinDownloadFallback(reason: unknown): Promise<void> {

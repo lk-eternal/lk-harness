@@ -1,8 +1,8 @@
-# Cursor Claw
+# LK Harness
 
 把 Cursor 变成 7×24 小时在线的数字雇员 —— 在飞书 / 微信里随时随地指挥 AI 干活。
 
-Cursor Agent 的交互被锁死在本地 IDE 里，人一离开电脑，协作就停了。**Cursor Claw** 把整条交互搬到你的手机上：AI 干活时实时看到它的思考与操作，AI 有问题时手机上点个按钮就能拍板，会话断了自动重连接着干。
+Cursor Agent 的交互被锁死在本地 IDE 里，人一离开电脑，协作就停了。**LK Harness** 把整条交互搬到你的手机上：AI 干活时实时看到它的思考与操作，AI 有问题时手机上点个按钮就能拍板，会话断了自动重连接着干。
 
 ## 效果展示
 
@@ -101,9 +101,9 @@ xattr -cr /Applications/Cursor\ Claw.app
 
 如果命令执行失败（如提示 `Operation not permitted` / `No such xattr`），或执行后打开仍被拦截，请改走系统设置手动信任：
 
-1. 双击打开一次 **Cursor Claw**，触发拦截弹窗后点「完成」关闭（不要点「移到废纸篓」）
+1. 双击打开一次 **LK Harness**，触发拦截弹窗后点「完成」关闭（不要点「移到废纸篓」）
 2. 打开「系统设置 → 隐私与安全性」，滚动到「安全性」区域
-3. 找到"已阻止 Cursor Claw"的提示，点击「仍要打开」，在弹窗中再次确认
+3. 找到"已阻止 LK Harness"的提示，点击「仍要打开」，在弹窗中再次确认
 
 完成后即可在「应用程序」中正常启动。
 
@@ -116,18 +116,18 @@ xattr -cr /Applications/Cursor\ Claw.app
 brew tap lk-eternal/tap
 
 # 2. 信任 tap
-brew trust --cask lk-eternal/tap/cursor-claw
+brew trust --cask lk-eternal/tap/lk-harness
 
 # 3. 安装
-brew install --cask cursor-claw
+brew install --cask lk-harness
 ```
 
-安装完成后按上方[「首次启动：信任应用」](#macos-首次启动信任应用必读)操作解除拦截，再在「应用程序」中打开 **Cursor Claw** 即可。
+安装完成后按上方[「首次启动：信任应用」](#macos-首次启动信任应用必读)操作解除拦截，再在「应用程序」中打开 **LK Harness** 即可。
 
 ##### 更新到最新版本
 
 ```bash
-brew update && brew upgrade --cask cursor-claw
+brew update && brew upgrade --cask lk-harness
 ```
 
 如果提示 `the latest version is already installed` 但实际版本较旧，请参考下方 FAQ。
@@ -135,7 +135,7 @@ brew update && brew upgrade --cask cursor-claw
 ##### 卸载
 
 ```bash
-brew uninstall --cask cursor-claw
+brew uninstall --cask lk-harness
 brew untap lk-eternal/tap   # 可选，移除 tap 源
 ```
 
@@ -150,11 +150,11 @@ brew untap lk-eternal/tap   # 可选，移除 tap 源
 # 方法 1：强制刷新 tap 后重装
 brew untap lk-eternal/tap
 brew tap lk-eternal/tap
-brew trust --cask lk-eternal/tap/cursor-claw
-brew upgrade --cask cursor-claw
+brew trust --cask lk-eternal/tap/lk-harness
+brew upgrade --cask lk-harness
 
 # 方法 2：直接强制重装
-brew reinstall --cask cursor-claw
+brew reinstall --cask lk-harness
 ```
 
 ###### Q: `brew update` 时出现 `Warning: No remote 'origin'` 导致 tap 无法更新？
@@ -162,7 +162,7 @@ brew reinstall --cask cursor-claw
 ```bash
 brew untap lk-eternal/tap
 brew tap lk-eternal/tap
-brew trust --cask lk-eternal/tap/cursor-claw
+brew trust --cask lk-eternal/tap/lk-harness
 ```
 
 如果 `untap` 报错 `Refusing to untap because it contains installed casks`，加上 `--force`：
@@ -170,14 +170,14 @@ brew trust --cask lk-eternal/tap/cursor-claw
 ```bash
 brew untap --force lk-eternal/tap
 brew tap lk-eternal/tap
-brew trust --cask lk-eternal/tap/cursor-claw
-brew upgrade --cask cursor-claw
+brew trust --cask lk-eternal/tap/lk-harness
+brew upgrade --cask lk-harness
 ```
 
 ###### Q: 如何确认当前安装的版本？
 
 ```bash
-brew info --cask cursor-claw
+brew info --cask lk-harness
 ```
 
 ###### Q: Apple Silicon 和 Intel Mac 都支持吗？
@@ -429,10 +429,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=lk-eternal%2Fcursor-claw&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=lk-eternal%2Flk-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lk-eternal/cursor-claw&type=date&theme=dark&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lk-eternal/cursor-claw&type=date&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lk-eternal/cursor-claw&type=date&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lk-eternal/lk-harness&type=date&theme=dark&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lk-eternal/lk-harness&type=date&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lk-eternal/lk-harness&type=date&legend=top-left&sealed_token=WIlkJeujXI5zTfjw5krA3Q7_WbJQKuq02Bez7x6u-nxdu5ObaFvIRY77eXpAH_8MHRkB0SAp0iuuP6EWA4FtdmATTM2YL8InZi3vF5ovFW8LUHFBhb7Wurk-5Zyru4XI64YFZ0yUC4_tqmIiY6W454b7hjNGbDMdOND5iQ01bBBII6XDq9XHUNgMGa3G" />
  </picture>
 </a>

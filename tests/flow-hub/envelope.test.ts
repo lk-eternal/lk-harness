@@ -40,7 +40,7 @@ describe("flow-hub envelope", () => {
 
   it("parses legacy v1 group export", () => {
     const parsed = parseGroupEnvelope({
-      kind: "cursor-claw-node-group",
+      kind: "lk-harness-node-group",
       version: 1,
       group: { id: "qa", name: "质检", nodes: [{ id: "check", label: "检查" }] },
     })

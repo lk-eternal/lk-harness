@@ -986,7 +986,7 @@ function shellCommandText(args: unknown): string {
   return ""
 }
 
-/** cursor-claw 出站工具（已有独立飞书消息，不进流式工具区） */
+/** lk-harness 出站工具（已有独立飞书消息，不进流式工具区） */
 const OUTBOUND_MCP_RE = /^(?:send_(?:text|question|image|file)|project_\w+)$/i
 const MEDIA_MCP_RE = /^send_(?:file|image)$/i
 

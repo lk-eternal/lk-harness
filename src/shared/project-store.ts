@@ -74,7 +74,7 @@ export function parseNodeGroupExport(raw: unknown): ProjectNodeGroupDef | null {
   if (!raw || typeof raw !== "object") return null
   const obj = raw as Record<string, unknown>
   let candidate: unknown
-  if (obj.kind === "cursor-claw-node-group" && obj.group && typeof obj.group === "object") {
+  if (obj.kind === "lk-harness-node-group" && obj.group && typeof obj.group === "object") {
     candidate = obj.group
   } else if (typeof obj.id === "string" && typeof obj.name === "string" && Array.isArray(obj.nodes)) {
     candidate = obj

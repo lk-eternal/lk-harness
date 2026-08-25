@@ -18,13 +18,13 @@ jobs:
         include:
           - os: windows-latest
             platform: win
-            artifact_name: cursor-claw-windows
+            artifact_name: lk-harness-windows
           - os: macos-latest
             platform: mac
-            artifact_name: cursor-claw-macos
+            artifact_name: lk-harness-macos
           - os: ubuntu-latest
             platform: linux
-            artifact_name: cursor-claw-linux
+            artifact_name: lk-harness-linux
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.platform }})
@@ -68,7 +68,7 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            release/cursor-claw-setup-*.exe
+            release/lk-harness-setup-*.exe
             release/*.dmg
             release/*.AppImage
             release/*.deb
@@ -128,7 +128,7 @@ jobs:
           body: ${{ steps.notes.outputs.body }}
           overwrite_files: true
           files: |
-            artifacts/**/cursor-claw-setup-*.exe
+            artifacts/**/lk-harness-setup-*.exe
             artifacts/**/*.dmg
             artifacts/**/*.AppImage
             artifacts/**/*.deb
@@ -175,11 +175,11 @@ jobs:
             intel && /sha256/ { $0 = "    sha256 \"" intel_sha "\""; intel = 0 }
             arm && /sha256/ { $0 = "    sha256 \"" arm_sha "\""; arm = 0 }
             { print }
-          ' Casks/cursor-claw.rb > tmp.rb && mv tmp.rb Casks/cursor-claw.rb
+          ' Casks/lk-harness.rb > tmp.rb && mv tmp.rb Casks/lk-harness.rb
 
-          cat Casks/cursor-claw.rb
+          cat Casks/lk-harness.rb
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Casks/cursor-claw.rb
-          git diff --cached --quiet || (git commit -m "feat: bump cursor-claw to $VERSION" && git push)
+          git add Casks/lk-harness.rb
+          git diff --cached --quiet || (git commit -m "feat: bump lk-harness to $VERSION" && git push)

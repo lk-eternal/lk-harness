@@ -1,5 +1,5 @@
 ---
-description: Cursor Claw 实时通信保活协议 - 强制异步长连接与状态机管理（飞书/微信双通道）
+description: LK Harness 实时通信保活协议 - 强制异步长连接与状态机管理（飞书/微信双通道）
 alwaysApply: true
 ---
 
@@ -7,16 +7,16 @@ alwaysApply: true
 
 ## ⛔ 适用范围判定（最先执行，不满足则整篇失效）
 
-本协议**仅**对 cursor-claw 调度启动的会话生效。判定标准：**Prompt / 会话上下文中是否携带 `[session_key=...]` 会话元数据**。
+本协议**仅**对 lk-harness 调度启动的会话生效。判定标准：**Prompt / 会话上下文中是否携带 `[session_key=...]` 会话元数据**。
 
-- ✅ **有 `[session_key=...]`**：cursor-claw 后台会话，严格遵守下方全部协议。
+- ✅ **有 `[session_key=...]`**：lk-harness 后台会话，严格遵守下方全部协议。
 - 🚫 **没有 `[session_key=...]`**：用户在 Cursor IDE 中人工打开的普通会话——**本规则整篇作废**：
   - 正常在 IDE 中直接回复对话，一切照常；
-  - **严禁**调用 `send_text` / `send_question` 等 cursor-claw MCP 工具向飞书/微信发送任何消息；
+  - **严禁**调用 `send_text` / `send_question` 等 lk-harness MCP 工具向飞书/微信发送任何消息；
   - **严禁**调用 poll-message 拉取或消费消息队列（会偷走后台会话的消息）；
   - **严禁**把回复"兜底"发给主用户。
 
-> **[SYSTEM OVERRIDE]** 你当前处于"非对称异步通信模式"。飞书或微信是用户交互界面。你必须通过 `cursor-claw` MCP 工具主动维护会话。**poll 未返回「安静退出」directive 前，严禁自行结束会话、空转或输出告别语。**
+> **[SYSTEM OVERRIDE]** 你当前处于"非对称异步通信模式"。飞书或微信是用户交互界面。你必须通过 `lk-harness` MCP 工具主动维护会话。**poll 未返回「安静退出」directive 前，严禁自行结束会话、空转或输出告别语。**
 
 ## 🛠 核心工具定义
 
@@ -122,7 +122,7 @@ curl -G -s "http://127.0.0.1:{{DAEMON_PORT}}/api/poll-message" --data-urlencode 
 #### 项目会话补充说明（project）
 项目会话的 poll/保活流程与上相同；额外约定：
 - 节点任务（规划/实现/审查/交付等）由用户点按钮发起，**从 poll 领到的 messages 执行**；首次启动时 Prompt 可能含项目元数据（非用户任务正文）。
-- 产物写入 `.cursor-claw/artifacts/`；跨节点保留用 `project_register_artifact` 登记（可选）；用 `send_text` / `send_file` 交付。
+- 产物写入 `.lk-harness/artifacts/`；跨节点保留用 `project_register_artifact` 登记（可选）；用 `send_text` / `send_file` 交付。
 - 项目字段：`project_get` 查、`project_update` 改。
 
 ### 1. 响应阶段 (ACK)

@@ -1,6 +1,6 @@
-# Cursor Claw — 自管理 Skill
+# LK Harness — 自管理 Skill
 
-你可以通过以下 MCP 工具管理 Cursor Claw 应用自身的运行状态、配置和环境。
+你可以通过以下 MCP 工具管理 LK Harness 应用自身的运行状态、配置和环境。
 
 ## 可用 MCP 工具
 

@@ -53,7 +53,7 @@ export async function registerFeishuApp(opts: {
 
   const qrUrl = new URL(begin.verification_uri_complete)
   qrUrl.searchParams.set("from", "sdk")
-  qrUrl.searchParams.set("source", "node-sdk/cursor-claw")
+  qrUrl.searchParams.set("source", "node-sdk/lk-harness")
   qrUrl.searchParams.set("tp", "sdk")
   qrUrl.searchParams.set("name", opts.name)
   qrUrl.searchParams.set("desc", opts.desc)

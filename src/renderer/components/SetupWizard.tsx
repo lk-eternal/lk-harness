@@ -148,7 +148,7 @@ export default function SetupWizard({ open, onClose }: Props) {
   const quickCreate = async () => {
     setQrState("loading")
     setChanErr("")
-    const r = await window.electronAPI.feishuRegisterApp({ name: "Cursor Claw", desc: "Cursor AI 协作助手" })
+    const r = await window.electronAPI.feishuRegisterApp({ name: "LK Harness", desc: "Cursor AI 协作助手" })
     setQrState("idle")
     setQrUrl("")
     if (r.ok && r.appId && r.appSecret) {

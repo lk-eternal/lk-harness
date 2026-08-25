@@ -54,7 +54,7 @@ export interface FlowHubGroupBody {
 }
 
 export interface FlowHubGroupEnvelope {
-  kind: "cursor-claw-node-group"
+  kind: "lk-harness-node-group"
   version: 2
   hubId: string
   hubRevision: number
@@ -65,7 +65,7 @@ export interface FlowHubGroupEnvelope {
 }
 
 export interface FlowHubNodeEnvelope {
-  kind: "cursor-claw-flow-node"
+  kind: "lk-harness-flow-node"
   version: 1
   hubId: string
   hubRevision: number

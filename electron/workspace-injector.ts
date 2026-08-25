@@ -34,10 +34,10 @@ export function getTemplateRoot(): string {
 }
 
 export function getRuleTemplatePath(): string {
-  return path.join(getTemplateRoot(), "rule", "cursor-claw.mdc")
+  return path.join(getTemplateRoot(), "rule", "lk-harness.mdc")
 }
 
-const ADMIN_SKILL_DIR = "cursor-claw-admin"
+const ADMIN_SKILL_DIR = "lk-harness-admin"
 
 /** 清理项目里残留的自管理 skill 目录（已改 prompt inline，不再注入） */
 function cleanupStaleAdminSkill(wsDir: string): void {
@@ -98,9 +98,9 @@ export async function injectWorkspaceMcpAndRules(): Promise<{ mcpOk: boolean; ru
   return { mcpOk: true, ruleOk: true, skillOk: false }
 }
 
-export const ADMIN_SKILL_CONTENT = `# Cursor Claw — 自管理 Skill
+export const ADMIN_SKILL_CONTENT = `# LK Harness — 自管理 Skill
 
-你可以通过以下 MCP 工具管理 Cursor Claw 应用自身的运行状态、配置和环境。
+你可以通过以下 MCP 工具管理 LK Harness 应用自身的运行状态、配置和环境。
 
 ## 可用 MCP 工具
 

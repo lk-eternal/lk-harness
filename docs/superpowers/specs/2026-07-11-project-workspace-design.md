@@ -14,7 +14,7 @@
 
 ## 1. 目标
 
-在 Cursor Claw 中新增 **项目工作区（Project）**：以飞书为前端，按「一条需求 = 一个隔离工作区」推进 `plan` / `build` / `review` / `ship`，每步产出本地 md artifact，经 HITL 确认后可同步飞书文档；`ship` 使用 GitLab token 推送并开 MR。
+在 LK Harness 中新增 **项目工作区（Project）**：以飞书为前端，按「一条需求 = 一个隔离工作区」推进 `plan` / `build` / `review` / `ship`，每步产出本地 md artifact，经 HITL 确认后可同步飞书文档；`ship` 使用 GitLab token 推送并开 MR。
 
 **非目标（明确不做）**
 
@@ -54,7 +54,7 @@ v1 类型：`plan` | `build` | `review` | `ship`
 ### 3.3 Artifact
 
 - **源真相**：worktree 内本地 markdown
-- 路径约定：`{worktreePath}/.cursor-claw/artifacts/{actionId}-{type}.md`
+- 路径约定：`{worktreePath}/.lk-harness/artifacts/{actionId}-{type}.md`
 - `accepted` 后可同步为 **每 action 一篇飞书文档**，链接写入 action 记录
 
 ---

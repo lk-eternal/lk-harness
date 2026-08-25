@@ -8,7 +8,7 @@
 
 ## 1. 目标
 
-在 Cursor Claw 设置页的**流程组**模块，接入团队 GitLab 共享仓库（Flow Hub），实现：
+在 LK Harness 设置页的**流程组**模块，接入团队 GitLab 共享仓库（Flow Hub），实现：
 
 - **上传**：本地流程组 / 独立节点 → 直推 Hub `main` 分支
 - **获取**：搜索 / 浏览 Hub → 添加到本地（整组或单节点）
@@ -36,7 +36,7 @@
 
 | 现有能力 | Hub 扩展 |
 |---|---|
-| 本地 JSON 导出/导入（`kind: cursor-claw-node-group`） | envelope 加 `hubId` / `hubRevision` / `author`，格式向后兼容 |
+| 本地 JSON 导出/导入（`kind: lk-harness-node-group`） | envelope 加 `hubId` / `hubRevision` / `author`，格式向后兼容 |
 | `project-node-groups.json` 持久化 | 组/节点增加 Hub 追踪字段（见 §4） |
 | `resolveUniqueNodeGroupId` / slug `id` | **不变**：`/p` 命令仍用 slug；`hubId` 仅用于共享识别 |
 | `getDefaultNodeGuide` | 不变；Hub 只传用户自定义 prompt |
@@ -124,7 +124,7 @@ interface FlowHubCatalogNode {
 
 ```ts
 interface FlowHubGroupEnvelope {
-  kind: "cursor-claw-node-group"
+  kind: "lk-harness-node-group"
   version: 2
   hubId: string
   hubRevision: number
@@ -151,7 +151,7 @@ interface FlowHubNodePayload {
 
 ```ts
 interface FlowHubNodeEnvelope {
-  kind: "cursor-claw-flow-node"
+  kind: "lk-harness-flow-node"
   version: 1
   hubId: string
   hubRevision: number

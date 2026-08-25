@@ -898,7 +898,7 @@ export default function Dashboard({ onSettings, active }: Props) {
         <div className="flex flex-1 items-center justify-between">
           <div className="flex items-center gap-3">
             <img src={logoUrl} alt="logo" className="h-6 w-6" />
-            <h1 className="text-lg font-semibold">Cursor Claw</h1>
+            <h1 className="text-lg font-semibold">LK Harness</h1>
             {status.version && (
               <span className="rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
                 v{status.version}

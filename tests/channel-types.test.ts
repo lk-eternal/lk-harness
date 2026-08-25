@@ -73,7 +73,7 @@ describe("channelIdFromSessionKey", () => {
 
 describe("workspaceDirFromSessionKey", () => {
   it("提取 Windows 路径后缀", () => {
-    expect(workspaceDirFromSessionKey("ch_a|oc_1::D:\\workspace\\cursor-claw")).toBe("D:\\workspace\\cursor-claw")
+    expect(workspaceDirFromSessionKey("ch_a|oc_1::D:\\workspace\\lk-harness")).toBe("D:\\workspace\\lk-harness")
   })
 
   it("提取 Unix 路径后缀", () => {

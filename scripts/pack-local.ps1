@@ -1,7 +1,7 @@
-# Pack → sync to release\local → restart Cursor Claw.
+# Pack → sync to release\local → restart LK Harness.
 # Run DETACHED from Agent sessions, e.g.:
 #   Start-Process powershell -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"$PWD\scripts\pack-local.ps1" -WorkingDirectory $PWD
-# Killing Cursor Claw will not kill this script if it was started detached.
+# Killing LK Harness will not kill this script if it was started detached.
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
@@ -36,13 +36,13 @@ try {
 
   $src = Join-Path $Root "release\win-unpacked"
   $dst = Join-Path $Root "release\local"
-  if (-not (Test-Path (Join-Path $src "Cursor Claw.exe"))) {
-    throw "missing packed exe: $src\Cursor Claw.exe"
+  if (-not (Test-Path (Join-Path $src "LK Harness.exe"))) {
+    throw "missing packed exe: $src\LK Harness.exe"
   }
 
-  Write-Log "2/4 stop Cursor Claw"
+  Write-Log "2/4 stop LK Harness"
   # CloseMainWindow 在 closeWindowAction=ask 时只弹窗不退出；用 --graceful-quit 第二实例触发 before-quit
-  $procs = @(Get-Process -Name "Cursor Claw" -ErrorAction SilentlyContinue)
+  $procs = @(Get-Process -Name "LK Harness" -ErrorAction SilentlyContinue)
   if ($procs.Count -gt 0) {
     $exePath = $procs[0].Path
     Write-Log "  graceful-quit pid=$($procs[0].Id) exe=$exePath"
@@ -54,10 +54,10 @@ try {
   }
   $graceDeadline = (Get-Date).AddSeconds(25)
   while ((Get-Date) -lt $graceDeadline) {
-    if (-not (Get-Process -Name "Cursor Claw" -ErrorAction SilentlyContinue)) { break }
+    if (-not (Get-Process -Name "LK Harness" -ErrorAction SilentlyContinue)) { break }
     Start-Sleep -Milliseconds 500
   }
-  $remaining = @(Get-Process -Name "Cursor Claw" -ErrorAction SilentlyContinue)
+  $remaining = @(Get-Process -Name "LK Harness" -ErrorAction SilentlyContinue)
   if ($remaining.Count -gt 0) {
     Write-Log "  soft stop ($($remaining.Count) proc)"
     foreach ($p in $remaining) {
@@ -65,7 +65,7 @@ try {
     }
     Start-Sleep -Seconds 5
   }
-  Get-Process -Name "Cursor Claw" -ErrorAction SilentlyContinue | ForEach-Object {
+  Get-Process -Name "LK Harness" -ErrorAction SilentlyContinue | ForEach-Object {
     Write-Log "  force-kill pid=$($_.Id)"
     Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
   }
@@ -80,14 +80,14 @@ try {
   if ($rc -ge 8) { throw "robocopy failed exit=$rc" }
   Write-Log "  robocopy exit=$rc"
 
-  $exe = Join-Path $dst "Cursor Claw.exe"
+  $exe = Join-Path $dst "LK Harness.exe"
   if (-not (Test-Path $exe)) { throw "sync missing exe: $exe" }
 
   Write-Log "4/4 start $exe"
   Start-Process -FilePath $exe -WorkingDirectory $dst
 
   # 写通知标记：应用启动后主用户私聊会收到「新版已启动」
-  $notify = Join-Path $env:APPDATA "cursor-claw\pack-notify.json"
+  $notify = Join-Path $env:APPDATA "lk-harness\pack-notify.json"
   $ver = "unknown"
   try {
     $pkg = Get-Content (Join-Path $Root "package.json") -Raw | ConvertFrom-Json

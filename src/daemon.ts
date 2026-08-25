@@ -879,7 +879,7 @@ function isKnownSessionKey(sessionKey: string): boolean {
 
 const SEND_REJECT_HINT =
   "session_key 必须从 poll-message 返回值或会话元数据 [session_key=...] 原样复制，禁止凭空捏造；" +
-  "若你在 Cursor IDE 人工会话中（Prompt 无 [session_key=...]），严禁调用 cursor-claw 发送工具——本规则对 IDE 会话整篇失效。";
+  "若你在 Cursor IDE 人工会话中（Prompt 无 [session_key=...]），严禁调用 lk-harness 发送工具——本规则对 IDE 会话整篇失效。";
 
 /**
  * 发送前校验：拒绝 IDE 误调 / 捏造 session_key。
@@ -907,7 +907,7 @@ function rejectUnroutedSend(res: http.ServerResponse, api: string, sessionKey?: 
     }
     if (!isKnownSessionKey(sk)) {
       log("WARN", `[${api}] 已拒绝未知 session_key: ${sk.slice(0, 120)}`);
-      json(res, { ok: false, error: `session_key 不在系统记录中（未由 cursor-claw 调度启动）。${SEND_REJECT_HINT}` });
+      json(res, { ok: false, error: `session_key 不在系统记录中（未由 lk-harness 调度启动）。${SEND_REJECT_HINT}` });
       return true;
     }
     return false;
@@ -3018,7 +3018,7 @@ function localDaemonUrl(p: string): string {
 }
 
 function createMcpServer(): McpServer {
-  const s = new McpServer({ name: "cursor-claw", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通" });
+  const s = new McpServer({ name: "lk-harness", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通" });
 
   s.tool(
     "send_text",
@@ -3109,7 +3109,7 @@ function createMcpServer(): McpServer {
 }
 
 function createAdminMcpServer(): McpServer {
-  const s = new McpServer({ name: "cursor-claw-admin", version: PKG_VERSION, description: "cursor-claw 管理工具" });
+  const s = new McpServer({ name: "lk-harness-admin", version: PKG_VERSION, description: "lk-harness 管理工具" });
   registerAdminTools(s);
   return s;
 }

@@ -19,7 +19,7 @@ import type { AgentResource, MessageChannel } from "../src/shared/channel-types.
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types.js"
 
-export const CONFIG_EXPORT_KIND = "cursor-claw-config-export"
+export const CONFIG_EXPORT_KIND = "lk-harness-config-export"
 export const CONFIG_EXPORT_VERSION = 1
 
 export interface ConfigExportManifest {
@@ -187,7 +187,7 @@ function readManifest(staging: string): ConfigExportManifest | null {
 }
 
 export function exportConfigBundle(zipPath: string): { ok: boolean; error?: string; warnings?: string[] } {
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-claw-export-"))
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-export-"))
   const warnings: string[] = []
   try {
     fs.writeFileSync(path.join(staging, "manifest.json"), JSON.stringify(buildManifest(), null, 2), "utf-8")
@@ -208,12 +208,12 @@ export function exportConfigBundle(zipPath: string): { ok: boolean; error?: stri
 }
 
 export function importConfigBundle(zipPath: string): { ok: boolean; error?: string; warnings?: string[] } {
-  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-claw-import-"))
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-import-"))
   const warnings: string[] = []
   try {
     if (!tarExtractZip(zipPath, staging)) return { ok: false, error: "解压失败（需要系统 tar 支持）" }
     const manifest = readManifest(staging)
-    if (!manifest) return { ok: false, error: "不是有效的 Cursor Claw 配置包" }
+    if (!manifest) return { ok: false, error: "不是有效的 LK Harness 配置包" }
 
     initProjectStore(app.getPath("userData"))
 

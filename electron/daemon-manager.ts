@@ -2167,7 +2167,7 @@ export function initDaemonManager(): void {
     try {
       const QRCode = await import("qrcode")
       const result = await registerFeishuApp({
-        name: preset?.name?.trim() || "Cursor Claw",
+        name: preset?.name?.trim() || "LK Harness",
         desc: preset?.desc?.trim() || "Cursor AI 协作助手",
         signal,
         onQrCodeUrl(url) {
@@ -2282,7 +2282,7 @@ export function initDaemonManager(): void {
       filters: [{ name: "JSON", extensions: ["json"] }],
     })
     if (result.canceled || !result.filePath) return { ok: false, error: "已取消" }
-    const envelope = { kind: "cursor-claw-node-group", version: 1, group }
+    const envelope = { kind: "lk-harness-node-group", version: 1, group }
     fs.writeFileSync(result.filePath, JSON.stringify(envelope, null, 2), "utf-8")
     return { ok: true, path: result.filePath }
   })
@@ -2316,8 +2316,8 @@ export function initDaemonManager(): void {
     if (!win) return { ok: false, error: "窗口不可用" }
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "")
     const result = await dialog.showSaveDialog(win, {
-      title: "导出 Cursor Claw 配置",
-      defaultPath: `cursor-claw-config-${stamp}.zip`,
+      title: "导出 LK Harness 配置",
+      defaultPath: `lk-harness-config-${stamp}.zip`,
       filters: [{ name: "ZIP", extensions: ["zip"] }],
     })
     if (result.canceled || !result.filePath) return { ok: false, error: "已取消" }
@@ -2330,7 +2330,7 @@ export function initDaemonManager(): void {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
     const result = await dialog.showOpenDialog(win, {
-      title: "导入 Cursor Claw 配置",
+      title: "导入 LK Harness 配置",
       properties: ["openFile"],
       filters: [{ name: "ZIP", extensions: ["zip"] }],
     })
@@ -2432,7 +2432,7 @@ async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?
 
     const logsDir = path.join(app.getPath("userData"), "logs")
     const sections = [
-      "# Cursor Claw 诊断包",
+      "# LK Harness 诊断包",
       `生成时间: ${now.toISOString()}`,
       `应用版本: ${app.getVersion()}  平台: ${process.platform} ${os.release()}  Electron: ${process.versions.electron}`,
       "",

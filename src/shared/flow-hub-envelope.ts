@@ -32,7 +32,7 @@ export function buildGroupEnvelope(opts: {
   }
   const contentHash = computeGroupContentHash(group)
   return {
-    kind: "cursor-claw-node-group",
+    kind: "lk-harness-node-group",
     version: 2,
     hubId: opts.hubId,
     hubRevision: opts.hubRevision,
@@ -58,7 +58,7 @@ export function buildNodeEnvelope(opts: {
     ...(opts.node.prompt?.trim() ? { prompt: opts.node.prompt.trim() } : {}),
   }
   return {
-    kind: "cursor-claw-flow-node",
+    kind: "lk-harness-flow-node",
     version: 1,
     hubId: opts.hubId,
     hubRevision: opts.hubRevision,
@@ -73,7 +73,7 @@ export function parseGroupEnvelope(raw: unknown): FlowHubGroupEnvelope | null {
   if (!raw || typeof raw !== "object") return null
   const obj = raw as Record<string, unknown>
   let candidate: unknown
-  if (obj.kind === "cursor-claw-node-group" && obj.group && typeof obj.group === "object") {
+  if (obj.kind === "lk-harness-node-group" && obj.group && typeof obj.group === "object") {
     candidate = obj
   } else {
     const legacy = parseNodeGroupExport(raw)
@@ -98,7 +98,7 @@ export function parseGroupEnvelope(raw: unknown): FlowHubGroupEnvelope | null {
   }
   const contentHash = computeGroupContentHash(group)
   return {
-    kind: "cursor-claw-node-group",
+    kind: "lk-harness-node-group",
     version: 2,
     hubId,
     hubRevision: typeof env.hubRevision === "number" ? env.hubRevision : 1,
@@ -112,7 +112,7 @@ export function parseGroupEnvelope(raw: unknown): FlowHubGroupEnvelope | null {
 export function parseNodeEnvelope(raw: unknown): FlowHubNodeEnvelope | null {
   if (!raw || typeof raw !== "object") return null
   const obj = raw as FlowHubNodeEnvelope
-  if (obj.kind !== "cursor-claw-flow-node" || !obj.node?.id?.trim() || !obj.node?.label?.trim()) return null
+  if (obj.kind !== "lk-harness-flow-node" || !obj.node?.id?.trim() || !obj.node?.label?.trim()) return null
   const node: FlowHubNodePayload = {
     hubId: (obj.node.hubId ?? "").trim() || randomUUID(),
     id: obj.node.id.trim(),
@@ -120,7 +120,7 @@ export function parseNodeEnvelope(raw: unknown): FlowHubNodeEnvelope | null {
     ...(obj.node.prompt?.trim() ? { prompt: obj.node.prompt.trim() } : {}),
   }
   return {
-    kind: "cursor-claw-flow-node",
+    kind: "lk-harness-flow-node",
     version: 1,
     hubId: (obj.hubId ?? "").trim() || randomUUID(),
     hubRevision: typeof obj.hubRevision === "number" ? obj.hubRevision : 1,

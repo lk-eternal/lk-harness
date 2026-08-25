@@ -65,14 +65,14 @@ describe("project-store", () => {
       worktreePath: "/w",
     })
     const r = registerArtifact(p.id, {
-      artifactPath: ".cursor-claw/artifacts/plan.md",
+      artifactPath: ".lk-harness/artifacts/plan.md",
       summary: "规划完成",
       mrUrl: "https://gitlab.example/mr/1",
       feishuDocUrl: "https://feishu.example/doc/1",
     })
     expect(r.ok).toBe(true)
     const got = getProject(p.id)!
-    expect(got.lastArtifactPath).toBe(".cursor-claw/artifacts/plan.md")
+    expect(got.lastArtifactPath).toBe(".lk-harness/artifacts/plan.md")
     expect(got.lastArtifactSummary).toBe("规划完成")
     expect(got.lastMrUrl).toBe("https://gitlab.example/mr/1")
     expect(got.lastFeishuDocUrl).toBe("https://feishu.example/doc/1")
@@ -188,7 +188,7 @@ describe("project-store", () => {
 
   it("parses node group export envelope and loose format", () => {
     const envelope = parseNodeGroupExport({
-      kind: "cursor-claw-node-group",
+      kind: "lk-harness-node-group",
       version: 1,
       group: {
         id: "custom",

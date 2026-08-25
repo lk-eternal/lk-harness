@@ -80,7 +80,7 @@ function appendUserClawRules(parts: string[]): void {
 function appendAdminSkill(parts: string[], ctx: PromptAssemblyContext): void {
   if (!shouldIncludeAdminMcp(ctx.meta, ctx.sessionKey)) return
   parts.push("---")
-  parts.push("## Cursor Claw 自管理 Skill")
+  parts.push("## LK Harness 自管理 Skill")
   parts.push(ADMIN_SKILL_CONTENT.trim())
 }
 
@@ -119,7 +119,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
   const parts: string[] = []
   parts.push("---")
-  parts.push("## Cursor Claw 协议（必须严格遵守）")
+  parts.push("## LK Harness 协议（必须严格遵守）")
   parts.push(loadBuiltinProtocol(portForAssembly(daemonPort)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
@@ -151,12 +151,12 @@ export function assembleWakePrompt(
       "任务内容:",
       ctx.taskMessage.trim(),
       "---",
-      "直接开始执行上述任务；执行中按 cursor-claw 协议同步进度，完成后挂阻塞 poll 收尾。",
+      "直接开始执行上述任务；执行中按 lk-harness 协议同步进度，完成后挂阻塞 poll 收尾。",
       "禁止向用户发送问候、唤醒说明等任何多余消息。",
     ]
     : [
       "[SESSION_RESUME / 系统指令] 会话已由后台唤醒（历史上下文完整保留），有新消息待处理。",
-      "立即执行：非阻塞检查 poll-message（wait=false），按 cursor-claw 协议处理所有消息并逐条回复，完成后挂阻塞 poll 收尾。",
+      "立即执行：非阻塞检查 poll-message（wait=false），按 lk-harness 协议处理所有消息并逐条回复，完成后挂阻塞 poll 收尾。",
       "禁止向用户发送问候、唤醒说明等任何多余消息。",
     ]
   if (ctx.rulesUpdated) {

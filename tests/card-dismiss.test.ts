@@ -21,7 +21,7 @@ describe("指令卡关闭", () => {
   })
 
   it("普通 Agent 回复卡（默认）不追加关闭按钮", () => {
-    const card = LarkSender.buildCard("拼音小班课有效课节不足20节查询…", { title: "📂 cursor-claw", subtitle: "🌿 main" }) as { body: { elements: unknown[] } }
+    const card = LarkSender.buildCard("拼音小班课有效课节不足20节查询…", { title: "📂 lk-harness", subtitle: "🌿 main" }) as { body: { elements: unknown[] } }
     const json = JSON.stringify(card)
     expect(json).not.toContain("✕ 关闭")
     expect(json).not.toContain('"kind":"dismiss"')

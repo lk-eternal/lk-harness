@@ -14,15 +14,15 @@ describe("formatLogLineForUi", () => {
   })
 
   it("preserves full path in non-sessionKey context", () => {
-    const line = "目录 D:\\workspace\\cursor-claw\\electron\\daemon-manager.ts"
+    const line = "目录 D:\\workspace\\lk-harness\\electron\\daemon-manager.ts"
     expect(formatLogLineForUi(line)).toBe(line)
   })
 
   it("replaces sessionKey with workspace path suffix", () => {
-    const sk = "ch_c0130dd0|oc_32cb78537b97c685e29f8a77e8a510cc::D:\\workspace\\cursor-claw"
+    const sk = "ch_c0130dd0|oc_32cb78537b97c685e29f8a77e8a510cc::D:\\workspace\\lk-harness"
     const line = `[Agent] 会话 ${sk} 已启动`
-    const out = formatLogLineForUi(line, () => "📂 cursor-claw")
-    expect(out).toBe("[Agent] 会话 📂 cursor-claw 已启动")
+    const out = formatLogLineForUi(line, () => "📂 lk-harness")
+    expect(out).toBe("[Agent] 会话 📂 lk-harness 已启动")
   })
 
   it("replaces bracketed scheduled task session id", () => {

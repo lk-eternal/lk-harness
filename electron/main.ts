@@ -127,7 +127,7 @@ function createWindow(): void {
     height: 680,
     minWidth: 780,
     minHeight: 560,
-    title: profileName ? `Cursor Claw [${profileName}]` : "Cursor Claw",
+    title: profileName ? `LK Harness [${profileName}]` : "LK Harness",
     icon: iconPath,
     autoHideMenuBar: true,
     frame: false,

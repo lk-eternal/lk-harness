@@ -79,7 +79,7 @@
     "date": "2026-08-04",
     "changes": [
       "新增配置 autoUpgradePrompt：关闭启动时自动升级弹窗（设置 → 关于 → 开关）",
-      "配置文件 cursor-claw-config.json 支持 \"autoUpgradePrompt\": false 批量预装"
+      "配置文件 lk-harness-config.json 支持 \"autoUpgradePrompt\": false 批量预装"
     ]
   },
   {
@@ -343,7 +343,7 @@
     "date": "2026-07-14",
     "changes": [
       "项目分支借还：/p leave 释放 feature 给 IDE 检出修改，进入项目/推进节点时自动切回；分支被占用时明确提示不硬抢",
-      "退出项目遇未提交改动可选「提交后退出」或「直接退出」；.cursor-claw 产物不再计入改动、也不会被误提交进业务仓",
+      "退出项目遇未提交改动可选「提交后退出」或「直接退出」；.lk-harness 产物不再计入改动、也不会被误提交进业务仓",
       "修复建项挂接已有分支时误清 upstream 导致 IDE 报「no remote branch」",
       "修复 /reset 与拉起竞态导致旧上下文复活、重置不生效",
       "断网时重试指数退避真正生效（不再秒级重试风暴），错误详情附真实网络原因",
