@@ -48,7 +48,7 @@ import {
 import { buildProjectSessionPrompt, buildActionPrompt } from "./project-prompts"
 import { findMergeRequest } from "./project-gitlab"
 import { syncArtifactToFeishu } from "./project-feishu-sync"
-import { httpPost, syncActiveSession, enqueueToSession } from "./daemon-client"
+import { httpPost, syncActiveSession, enqueueToSession, getCurrentActiveSession } from "./daemon-client"
 import { pushUiLog } from "./ui-logger"
 import { leaveProjectSession, formatCurrentSessionBlock } from "./session-dispatcher"
 import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
@@ -103,14 +103,13 @@ function projectHelpText(): string {
   return [
     "💡 /p 项目指令",
     "🔹 /p — 打开项目菜单",
-    "🔹 /p status — 查看当前项目详情",
+    "🔹 /p info — 查看项目详细信息",
     "🔹 /p new — 新建项目",
     "🔹 /p ls — 列出全部项目",
     "🔹 /p use <序号|id> — 进入指定项目",
     "🔹 /p leave — 退出当前项目，回到主会话",
     "🔹 /c main — 快速切回主会话（不清项目选中态）",
     `🔹 /p ${nodeIds} — 推进项目节点`,
-    "🔹 /p sync — 把最近通过的产出同步到飞书文档",
     "🔹 /p setup — 配置项目工作区与主仓",
     "🔹 /p del <序号|id> — 删除项目（连带移除 AI 工作目录）",
   ].join("\n")
@@ -215,20 +214,22 @@ function projectNodeButtons(p?: Project): CommandButton[] {
 function projectButtonsCreate(p?: Project): CommandButton[] {
   return [
     ...projectNodeButtons(p),
-    { label: "同步文档", cmd: "/p sync" },
-    { label: "项目菜单", cmd: "/p" },
+    { label: "项目详细信息", cmd: "/p info", section: "其他" },
   ]
 }
 
 /** 已进入项目会话后的操作卡；独立群模式不展示回主会话/退出（群内无主会话可回） */
-function projectButtons(p?: Project): CommandButton[] {
+function projectButtons(p?: Project, chatId?: string): CommandButton[] {
   const base = projectButtonsCreate(p)
   const proj = p ?? getCurrentProject()
-  if (proj?.groupChatId) return base
+  if (proj?.groupChatId) {
+    return [...base, { label: "帮助", cmd: "/p help", section: "其他" }]
+  }
   return [
     ...base,
-    { label: "回主会话", cmd: "/c main" },
-    { label: "退出项目", cmd: "/p leave" },
+    { label: "全部项目", cmd: "/p ls", section: "其他" },
+    { label: "回主会话", cmd: "/c main", section: "其他" },
+    { label: "退出项目", cmd: "/p leave", section: "其他" },
   ]
 }
 
@@ -434,10 +435,7 @@ async function finishBindGroupModeCreate(
       port,
       "",
       true,
-      withChatFooter(
-        [`✅ 项目已绑定本群${extraNote ? `\n\n${extraNote}` : ""}`, "", formatProjectCard(project)].join("\n"),
-        "在本群 @ 我发消息即可协作；推进用下方按钮",
-      ),
+      "",
       bound.chatKey,
       projectButtonsCreate(project),
       { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
@@ -480,10 +478,7 @@ async function finishGroupModeCreate(
     port,
     "",
     true,
-    withChatFooter(
-      [`✅ 项目已创建${extraNote ? `\n\n${extraNote}` : ""}`, "", formatProjectCard(project)].join("\n"),
-      "在本群 @ 我发消息即可协作；推进用下方按钮",
-    ),
+    "",
     g.chatKey,
     projectButtonsCreate(project),
     { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
@@ -558,23 +553,12 @@ async function finalizePlainProject(
       if (groupResult.ok) return
       fallbackNote = `\n⚠️ 独立群创建失败，已回退当前会话模式\n原因：${groupResult.error}`
     }
-    await reportCommandResult(
-      port,
-      messageId,
-      true,
-      withChatFooter(`✅ 项目已创建并进入项目会话${fallbackNote}\n\n${formatProjectCard(project)}`),
-      chatId,
-      [
-        ...(canEnterProjectFromChat(project, chatId)
-          ? [{ label: `进入 ${project.name}`, cmd: `/p use ${project.id}` }]
-          : []),
-        ...projectButtonsCreate(project),
-      ],
-      { cardTitle: projectCardTitle(project) },
-    )
     if (chatId && canEnterProjectFromChat(project, chatId)) {
       await enterProjectSession(port, chatId, project)
+      if (!project.groupChatId) setCurrentProjectId(project.id)
     }
+    const note = fallbackNote ? fallbackNote.replace(/^\n/, "") : undefined
+    await replyProjectWorkspace(port, messageId, project, chatId, undefined, note)
   } catch (e: any) {
     await reportCommandResult(port, messageId, false, `❌ 创建失败: ${e?.message || e}`, chatId)
   }
@@ -711,49 +695,28 @@ async function finalizeNewProject(
       fallbackNote = `\n⚠️ 独立群创建失败，已回退当前会话模式\n原因：${groupResult.error}`
     }
     if (wtErrors.length) {
-      await reportCommandResult(
-        port,
-        messageId,
-        true,
-        withChatFooter([
-          `✅ 项目已创建（信息已保存，无需重填）${fallbackNote}`,
-          "",
-          formatProjectCard(project),
-          "",
-          "⚠️ AI 工作目录初始化未完成：",
-          ...wtErrors.map((e) => `· ${e}`),
-          "",
-          "排除故障（网络/权限/分支名）后点「进入项目」即自动重建，无需重新创建项目。",
-        ].join("\n")),
-        chatId,
-        [
-          ...(canEnterProjectFromChat(project, chatId)
-            ? [{ label: `进入 ${project.name}`, cmd: `/p use ${project.id}` }]
-            : []),
-          ...projectButtonsCreate(project),
-        ],
-        { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
-      )
+      const note = [
+        fallbackNote ? fallbackNote.replace(/^\n/, "") : "",
+        "⚠️ AI 工作目录初始化未完成",
+        ...wtErrors.map((e) => `· ${e}`),
+      ].filter(Boolean).join("\n")
+      if (chatId && canEnterProjectFromChat(project, chatId)) {
+        await enterProjectSession(port, chatId, project)
+        if (!project.groupChatId) setCurrentProjectId(project.id)
+      }
+      await replyProjectWorkspace(port, messageId, project, chatId, undefined, note)
       return
     }
-    await reportCommandResult(
-      port,
-      messageId,
-      true,
-      withChatFooter(`✅ 项目已创建并进入项目会话${fallbackNote}\n\n${formatProjectCard(project)}`),
-      chatId,
-      projectButtonsCreate(project),
-      { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
-    )
     if (chatId && canEnterProjectFromChat(project, chatId)) {
       const r = await enterProjectSession(port, chatId, project)
-      if (!r.ok && repos.length) {
-        await reportCommandResult(port, messageId, false, featureOccupiedText(project, r.error || ""), chatId, undefined, {
-          cardTitle: projectCardTitle(project),
-          sessionKey: project.sessionKey,
-        })
+      if (!r.ok) {
+        await reportCommandResult(port, messageId, false, featureOccupiedText(project, r.error || ""), chatId)
+        return
       }
+      if (!project.groupChatId) setCurrentProjectId(project.id)
     }
+    const note = fallbackNote ? fallbackNote.replace(/^\n/, "") : undefined
+    await replyProjectWorkspace(port, messageId, project, chatId, undefined, note)
   } catch (e: any) {
     if (!persisted) {
       // 项目未落盘才回滚 worktree（防孤儿）；已落盘后的异常不动现场，缺啥走懒修复
@@ -1572,29 +1535,38 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
   return { ok: true, name: target.name }
 }
 
+/** 项目协作主卡：仅 header + 流程组按钮（详情走 /p info） */
+async function replyProjectWorkspace(
+  port: number,
+  messageId: string,
+  p: Project,
+  chatId?: string,
+  patchMessageId?: string,
+  headerNote?: string,
+): Promise<void> {
+  const sk = p.sessionKey || (chatId ? projectSessionKey(chatId, p.id) : undefined)
+  const base = projectCardTitle(p)
+  const cardTitle = headerNote && base
+    ? { title: base.title, subtitle: headerNote }
+    : base
+  await reportCommandResult(
+    port,
+    messageId,
+    true,
+    "",
+    chatId,
+    projectButtons(p, chatId),
+    { cardTitle, patchMessageId, sessionKey: sk },
+  )
+}
+
 /** 项目二级菜单：列表 + 快速进入，不自动进当前项目；patchMessageId 用于域内「返回菜单」原卡跳转 */
 async function replyProjectMenu(port: number, messageId: string, chatId?: string, patchMessageId?: string): Promise<void> {
   const bound = resolveBoundGroupProject(chatId)
-  // 专属群：只展示本群项目协作，禁止列/切其它项目；并纠正被串台的 active 路由
   if (bound) {
     const sk = bound.sessionKey || projectSessionKey(bound.groupChatId || chatId!, bound.id)
     if (chatId) await syncActiveSession(port, chatId, sk)
-    const head = [
-      `📦 项目专属群 · ${bound.name}`,
-      "",
-      formatProjectCard(bound),
-      "",
-      "本群仅协作此项目，不能切换其它项目。点下方节点推进；直接发消息也会路由到本项目。",
-    ].join("\n")
-    await reportCommandResult(
-      port,
-      messageId,
-      true,
-      head,
-      chatId,
-      [...projectButtons(bound), { label: "帮助", cmd: "/p help", section: "其他" }],
-      { cardTitle: projectCardTitle(bound), patchMessageId, sessionKey: sk },
-    )
+    await replyProjectWorkspace(port, messageId, bound, chatId, patchMessageId)
     return
   }
 
@@ -1633,7 +1605,7 @@ async function replyProjectMenu(port: number, messageId: string, chatId?: string
       section: "进入项目",
     }))
   if (cur && canOperateProjectInChat(cur, chatId)) {
-    btns.push({ label: "项目详情", cmd: "/p status", section: "其他" })
+    btns.push({ label: "项目详细信息", cmd: "/p info", section: "其他" })
     if (!cur.groupChatId) {
       btns.push({ label: "回主会话", cmd: "/c main", section: "其他" })
       btns.push({ label: "退出项目", cmd: "/p leave", section: "其他" })
@@ -1666,6 +1638,20 @@ export async function handleFeishuProjectCommand(
   const low = (s: string) => s.toLowerCase()
 
   if (parts.length <= 1) {
+    const bound = resolveBoundGroupProject(chatId)
+    if (bound) {
+      await replyProjectWorkspace(port, messageId, bound, chatId, patchMessageId)
+      return
+    }
+    const cur = getCurrentProject()
+    if (cur && chatId && canOperateProjectInChat(cur, chatId)) {
+      const active = await getCurrentActiveSession(port, chatId)
+      const projSk = cur.sessionKey || projectSessionKey(chatId, cur.id)
+      if (active === projSk) {
+        await replyProjectWorkspace(port, messageId, cur, chatId, patchMessageId)
+        return
+      }
+    }
     await replyProjectMenu(port, messageId, chatId, patchMessageId)
     return
   }
@@ -1677,8 +1663,16 @@ export async function handleFeishuProjectCommand(
   }
 
   if (sub === "menu") {
-    // --back：setup/new 等域内「返回菜单」按钮——原卡跳回；普通入口保持新发（导航锚点不吃卡）
     const back = parts.slice(2).some((t) => low(t) === "--back")
+    const bound = resolveBoundGroupProject(chatId)
+    const cur = resolveProjectForChat(chatId)
+    if (back && (bound || cur)) {
+      const p = bound ?? cur!
+      await replyProjectWorkspace(
+        port, messageId, p, chatId, patchMessageId,
+      )
+      return
+    }
     await replyProjectMenu(port, messageId, chatId, back ? patchMessageId : undefined)
     return
   }
@@ -1716,19 +1710,9 @@ export async function handleFeishuProjectCommand(
     }
     // 独立群不抢占全局 current 指针（防私聊/其它入口误用）
     if (!target.groupChatId) setCurrentProjectId(target.id)
-    const head = ["✅ 已进入项目会话", ...enterNotes, "", formatProjectCard(target)].filter(Boolean).join("\n")
-    await reportCommandResult(
-      port,
-      messageId,
-      true,
-      withChatFooter(head),
-      chatId,
-      projectButtons(target),
-      {
-        cardTitle: projectCardTitle(target),
-        sessionKey: target.sessionKey || (chatId ? projectSessionKey(chatId, target.id) : undefined),
-        patchMessageId,
-      },
+    await replyProjectWorkspace(
+      port, messageId, target, chatId, patchMessageId,
+      enterNotes.length ? enterNotes.join("\n") : undefined,
     )
     return
   }
@@ -1776,18 +1760,20 @@ export async function handleFeishuProjectCommand(
     return
   }
 
-  if (sub === "status") {
+  if (sub === "info") {
     const cur = resolveProjectForChat(chatId)
     if (!cur) {
-      await reportCommandResult(port, messageId, false, "❌ 没有当前项目", chatId)
+      await reportCommandResult(port, messageId, false, "❌ 没有当前项目", chatId, undefined, { patchMessageId })
       return
     }
     if (!canOperateProjectInChat(cur, chatId)) {
       await reportCommandResult(port, messageId, false, `❌ ${GROUP_ONLY_HINT}`, chatId, undefined, { patchMessageId })
       return
     }
-    await reportCommandResult(port, messageId, true, formatProjectCard(cur), chatId, projectButtons(cur), {
-      cardTitle: projectCardTitle(cur),
+    await reportCommandResult(port, messageId, true, formatProjectCard(cur), chatId, [
+      { label: "← 返回菜单", cmd: "/p menu --back", section: "导航" },
+    ], {
+      cardTitle: { title: projectCardTitle(cur)?.title ?? `📦 ${cur.name}`, subtitle: "详细信息" },
       patchMessageId,
     })
     return

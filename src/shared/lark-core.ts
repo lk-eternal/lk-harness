@@ -179,12 +179,12 @@ export class LarkSender {
     });
   }
 
-  private formatForSend(text: string, title?: CardTitle, template?: string): { content: string; msgType: string } {
+  private formatForSend(text: string, title?: CardTitle, template?: string, offerDismiss = false): { content: string; msgType: string } {
     const fullText = `${this.messagePrefix}${text}`;
     if (LarkSender.containsAtTag(fullText)) {
       return { content: JSON.stringify({ text: fullText }), msgType: "text" };
     }
-    return { content: JSON.stringify(LarkSender.buildCard(fullText, title, undefined, undefined, template)), msgType: "interactive" };
+    return { content: JSON.stringify(LarkSender.buildCard(fullText, title, undefined, undefined, template, undefined, undefined, offerDismiss)), msgType: "interactive" };
   }
 
   /** 按显示宽度计数（CJK/emoji 算 2，半角算 1）；.length 会低估中文导致窄屏按钮文字被截为 "..." */
@@ -216,6 +216,38 @@ export class LarkSender {
     grey: "142,142,147",
     default: "142,142,147",
   };
+
+  static readonly CARD_DISMISSED_MD = "<font color='grey'>菜单已关闭</font>";
+  static readonly CARD_BUTTON_BUDGET = 20;
+
+  static dismissCardButton(): CardButton {
+    return { label: "✕ 关闭", value: { kind: "dismiss" }, type: "default" };
+  }
+
+  static isDismissedCardText(text: string): boolean {
+    return text.includes("菜单已关闭");
+  }
+
+  /** 指令卡统一追加关闭按钮（飞书单卡按钮上限 20） */
+  static appendDismissButton(buttons: CardButton[]): CardButton[] {
+    if (!buttons.length) return buttons;
+    if (buttons.some((b) => (b.value as { kind?: string })?.kind === "dismiss")) return buttons;
+    const budget = LarkSender.CARD_BUTTON_BUDGET - 1;
+    const trimmed = buttons.length > budget ? buttons.slice(0, budget) : buttons;
+    return [...trimmed, LarkSender.dismissCardButton()];
+  }
+
+  static appendDismissToSections(sections: { text: string; buttons?: CardButton[] }[]): { text: string; buttons?: CardButton[] }[] {
+    if (!sections.length || !sections.some((s) => s.buttons?.length)) return sections;
+    const copy = sections.map((s) => ({ ...s, buttons: s.buttons ? [...s.buttons] : undefined }));
+    const last = copy[copy.length - 1]!;
+    last.buttons = LarkSender.appendDismissButton(last.buttons ?? []);
+    return copy;
+  }
+
+  static buildDismissedCard(): Record<string, unknown> {
+    return LarkSender.buildCard(LarkSender.CARD_DISMISSED_MD);
+  }
 
   /** 正文分段：每段 markdown 后紧跟该段按钮（用于 /s 等「标题+信息+按钮」同区） */
   static appendButtonRows(elements: any[], buttons: CardButton[], opts?: { showSection?: boolean; singleCol?: boolean }): void {
@@ -276,23 +308,35 @@ export class LarkSender {
     template?: string,
     footer?: string,
     sections?: { text: string; buttons?: CardButton[] }[],
+    offerDismiss = false,
   ): any {
+    let cardButtons = buttons;
+    let cardSections = sections;
+    if (offerDismiss && !input && !LarkSender.isDismissedCardText(text)) {
+      if (cardSections?.length) {
+        cardSections = LarkSender.appendDismissToSections(cardSections);
+      } else if (cardButtons?.length) {
+        cardButtons = LarkSender.appendDismissButton(cardButtons);
+      } else {
+        cardButtons = [LarkSender.dismissCardButton()];
+      }
+    }
     const elements: any[] = [];
     let questionMd = "";
-    if (sections && sections.length > 0) {
-      for (let i = 0; i < sections.length; i++) {
-        const sec = sections[i];
+    if (cardSections && cardSections.length > 0) {
+      for (let i = 0; i < cardSections.length; i++) {
+        const sec = cardSections[i];
         const md = sec.text.replace(/\s+$/u, "");
         if (md) elements.push({ tag: "markdown", content: md });
         if (sec.buttons?.length) LarkSender.appendButtonRows(elements, sec.buttons, { showSection: false });
-        if (i < sections.length - 1) elements.push({ tag: "hr" });
+        if (i < cardSections.length - 1) elements.push({ tag: "hr" });
       }
     } else {
       questionMd = text.replace(/\s+$/u, "");
     }
-    const btns = sections?.length ? [] : (buttons ?? []);
+    const btns = cardSections?.length ? [] : (cardButtons ?? []);
     const foot = footer?.replace(/^\s+|\s+$/gu, "");
-    if (sections?.length) {
+    if (cardSections?.length) {
       if (foot) elements.push({ tag: "markdown", content: foot });
     } else if (questionMd || btns.length || foot) {
       if (questionMd && elements.length > 0) elements.push({ tag: "hr" });
@@ -488,7 +532,9 @@ export class LarkSender {
     )
 
     elements.push({ tag: "form", name: "project_new", elements: formElements })
-    LarkSender.appendButtonRows(elements, [{ label: "← 返回菜单", value: { kind: "cmd", cmd: "/p menu --back" }, type: "default" }])
+    LarkSender.appendButtonRows(elements, LarkSender.appendDismissButton([
+      { label: "← 返回菜单", value: { kind: "cmd", cmd: "/p menu --back" }, type: "default" },
+    ]))
 
     return {
       schema: "2.0",
@@ -538,7 +584,9 @@ export class LarkSender {
         },
       ],
     }]
-    LarkSender.appendButtonRows(elements, [{ label: "← 返回", value: { kind: "project_new_back_main", worktreeRoot: opts?.worktreeRoot || "" }, type: "default" }])
+    LarkSender.appendButtonRows(elements, LarkSender.appendDismissButton([
+      { label: "← 返回", value: { kind: "project_new_back_main", worktreeRoot: opts?.worktreeRoot || "" }, type: "default" },
+    ]))
     return {
       schema: "2.0",
       config: { update_multi: true, width_mode: "fill" },
@@ -581,7 +629,9 @@ export class LarkSender {
         ],
       },
     ]
-    LarkSender.appendButtonRows(elements, [{ label: "← 返回 setup", value: { kind: "cmd", cmd: "/p setup" }, type: "default" }])
+    LarkSender.appendButtonRows(elements, LarkSender.appendDismissButton([
+      { label: "← 返回 setup", value: { kind: "cmd", cmd: "/p setup" }, type: "default" },
+    ]))
     return {
       schema: "2.0",
       config: { update_multi: true, width_mode: "fill" },
@@ -656,7 +706,9 @@ export class LarkSender {
       { tag: "markdown", content: isWorktree ? "项目 worktree 将在此目录下创建；不存在会自动创建。" : "保存后立即生效；Token 仅用于开提测 MR。" },
       { tag: "form", name: `setup_${opts.form}`, elements: formElements },
     ]
-    LarkSender.appendButtonRows(elements, [{ label: "← 返回 setup", value: { kind: "cmd", cmd: "/p setup" }, type: "default" }])
+    LarkSender.appendButtonRows(elements, LarkSender.appendDismissButton([
+      { label: "← 返回 setup", value: { kind: "cmd", cmd: "/p setup" }, type: "default" },
+    ]))
     return {
       schema: "2.0",
       config: { update_multi: true, width_mode: "fill" },
@@ -933,13 +985,18 @@ export class LarkSender {
     return -1;
   }
 
+  /** finish 剥块后无正文时展示的占位（斜体灰字） */
+  static readonly THINKING_ONLY_PLACEHOLDER = "<font color='grey'>_💭 仅包含思考,无实质输出_</font>";
+
   /** finish 关卡时剥除 thinking/tools/todos，仅保留 reply 等非折叠正文 */
-  static stripFoldableSegmentsOnFinish<T extends { type: string }>(
+  static stripFoldableSegmentsOnFinish<T extends { type: string; text?: string }>(
     segments: T[],
     opts?: { finish?: boolean; hideOnFinish?: boolean },
   ): T[] {
     if (!opts?.finish || opts.hideOnFinish === false) return segments;
-    return segments.filter((s) => s.type === "reply");
+    const kept = segments.filter((s) => s.type === "reply" && s.text?.trim());
+    if (kept.length) return kept;
+    return [{ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER } as T];
   }
 
   /** 按类型保留最近 keep 个 thinking/tools；reply、todos 全留；不插省略占位 */
@@ -1404,8 +1461,9 @@ export class LarkSender {
     template?: string,
     footer?: string,
     sections?: { text: string; buttons?: CardButton[] }[],
+    offerDismiss = false,
   ): Promise<string | null | undefined> {
-    const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, input, template, footer, sections);
+    const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, input, template, footer, sections, offerDismiss);
     const content = JSON.stringify(card);
     // 有 replyMessageId 时只走回复，成功即返回——禁止再 create 到 chatId（否则群消息 reply + 主用户 chat 直发 = 窜台）
     if (replyMessageId && !replyMessageId.startsWith("internal_")) {
@@ -1449,10 +1507,11 @@ export class LarkSender {
     footer?: string,
     buttons?: CardButton[],
     sections?: { text: string; buttons?: CardButton[] }[],
+    offerDismiss = false,
   ): Promise<boolean> {
     if (!messageId || messageId.startsWith("internal_")) return false;
     try {
-      const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, undefined, template, footer, sections);
+      const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, undefined, template, footer, sections, offerDismiss);
       const res = await this.client.im.message.patch({
         path: { message_id: messageId },
         data: { content: JSON.stringify(card) },
@@ -1470,9 +1529,9 @@ export class LarkSender {
     }
   }
 
-  async replyMessage(messageId: string, text: string, title?: CardTitle, template?: string): Promise<string | undefined> {
+  async replyMessage(messageId: string, text: string, title?: CardTitle, template?: string, offerDismiss = false): Promise<string | undefined> {
     try {
-      const { content, msgType } = this.formatForSend(text, title, template);
+      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss);
       const res = await this.client.im.message.reply({
         path: { message_id: messageId },
         data: { content, msg_type: msgType },
@@ -1483,8 +1542,8 @@ export class LarkSender {
     } catch (e: any) { this.log("WARN", `飞书回复异常: ${e?.message ?? e}`); return undefined; }
   }
 
-  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, template?: string): Promise<string | undefined> {
-    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, template); }
+  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, template?: string, offerDismiss = false): Promise<string | undefined> {
+    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, template, offerDismiss); }
     // internal_ 不可 reply：必须显式 chatId，禁止回落到 this.chatId（主用户）造成窜台
     if (replyMessageId?.startsWith("internal_") && !chatId) {
       this.log("WARN", `internal 消息回复缺少 chatId，已拒绝默认私聊兜底 (${replyMessageId})`);
@@ -1493,7 +1552,7 @@ export class LarkSender {
     const targetChatId = chatId ?? this.chatId;
     if (!targetChatId) { this.log("WARN", "无发送目标"); return undefined; }
     try {
-      const { content, msgType } = this.formatForSend(text, title, template);
+      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss);
       const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" as any },
         data: { receive_id: targetChatId, content, msg_type: msgType },

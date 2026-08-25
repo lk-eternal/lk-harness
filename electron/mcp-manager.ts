@@ -3,7 +3,7 @@ import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import { BrowserWindow } from "electron"
-import { getConfig } from "./config-store"
+import { getConfig, primaryWorkspaceForCli } from "./config-store"
 import { broadcastLog, logCursorAgentInvocation, logCursorAgentResponse } from "./ui-logger"
 import { resolveAgentBinary, applyProxyEnv, quoteArg, getAgentPaths } from "./agent-cli"
 
@@ -109,16 +109,16 @@ function readApprovedServers(workspaceDir: string): Set<string> {
 // ── MCP Enabled Cache ────────────────────────────────────
 
 interface McpListCache { enabled: Record<string, boolean>; status: Record<string, string>; ts: number; ws: string }
-const MCP_ENABLED_CACHE_TTL_MS = 30_000
 let mcpListCache: McpListCache | null = null
 let mcpListInflight: Promise<McpListCache> | null = null
 
+interface McpToolsCacheEntry { tools: McpToolInfo[]; error?: string }
+const mcpToolsCache = new Map<string, McpToolsCacheEntry>()
+
 async function fetchMcpList(force = false): Promise<McpListCache> {
-  const config = getConfig()
-  const ws = (config.workspaceDir || "").trim()
+  const ws = primaryWorkspaceForCli()
   const empty: McpListCache = { enabled: {}, status: {}, ts: 0, ws }
-  if (!ws) return empty
-  if (!force && mcpListCache && mcpListCache.ws === ws && Date.now() - mcpListCache.ts < MCP_ENABLED_CACHE_TTL_MS) return mcpListCache
+  if (!force && mcpListCache && mcpListCache.ws === ws) return mcpListCache
 
   if (!resolveAgentBinary()) {
     const fromJson = fetchMcpListFromJson(ws)
@@ -129,7 +129,7 @@ async function fetchMcpList(force = false): Promise<McpListCache> {
 
   const p = (async (): Promise<McpListCache> => {
     const env: Record<string, string> = { ...process.env as Record<string, string> }
-    applyProxyEnv(env, config)
+    applyProxyEnv(env, getConfig())
     try {
       const r = await spawnAsync(["mcp", "list"], ws, env)
       const clean = r.stdout.replace(ANSI_RE, "").replace(/\r/g, "")
@@ -168,6 +168,12 @@ export async function getMcpStatusMap(force = false): Promise<Record<string, str
 
 export function invalidateMcpEnabledCache(): void {
   mcpListCache = null
+  mcpToolsCache.clear()
+}
+
+/** 应用启动时后台预热 MCP 列表缓存，避免首次进入设置页等待 CLI */
+export function warmupMcpCache(): void {
+  void fetchMcpList(false).catch(() => { /* ignore */ })
 }
 
 function toggleMcpServerInJson(serverName: string, enabled: boolean): { ok: boolean; output: string } {
@@ -208,7 +214,7 @@ function fetchMcpListFromJson(ws: string): McpListCache {
 
 export async function toggleMcpServer(serverName: string, enabled: boolean, workspaceDirOverride?: string): Promise<{ ok: boolean; output: string }> {
   const config = getConfig()
-  const ws = (workspaceDirOverride ?? config.workspaceDir ?? "").trim()
+  const ws = (workspaceDirOverride ?? primaryWorkspaceForCli()).trim()
   if (!ws) return { ok: false, output: "工作目录未配置" }
 
   const jsonResult = toggleMcpServerInJson(serverName, enabled)
@@ -216,7 +222,7 @@ export async function toggleMcpServer(serverName: string, enabled: boolean, work
 
   if (resolveAgentBinary()) {
     const env: Record<string, string> = { ...process.env as Record<string, string> }
-    applyProxyEnv(env, config)
+    applyProxyEnv(env, getConfig())
     const action = enabled ? "enable" : "disable"
     await spawnAsync(["mcp", action, serverName], ws, env)
   }
@@ -226,9 +232,8 @@ export async function toggleMcpServer(serverName: string, enabled: boolean, work
 // ── Public API: CRUD ─────────────────────────────────────
 
 export function getMcpServerList(): McpServerEntry[] {
-  const config = getConfig()
-  const ws = config.workspaceDir || ""
-  const approved = ws ? readApprovedServers(ws) : new Set<string>()
+  const ws = primaryWorkspaceForCli()
+  const approved = readApprovedServers(ws)
   const result: McpServerEntry[] = []
 
   const globalPath = path.join(os.homedir(), ".cursor", "mcp.json")
@@ -241,19 +246,6 @@ export function getMcpServerList(): McpServerEntry[] {
       }
     }
   } catch { /* ignore */ }
-
-  if (ws) {
-    const projectPath = path.join(ws, ".cursor", "mcp.json")
-    try {
-      if (fs.existsSync(projectPath)) {
-        const cfg = JSON.parse(fs.readFileSync(projectPath, "utf-8"))
-        const servers = cfg.mcpServers ?? cfg.servers ?? {}
-        for (const [name, raw] of Object.entries(servers) as [string, Record<string, unknown>][]) {
-          result.push(buildEntry(name, raw, "project", approved))
-        }
-      }
-    } catch { /* ignore */ }
-  }
 
   return result
 }
@@ -275,10 +267,8 @@ function buildEntry(name: string, raw: Record<string, unknown>, source: "global"
 }
 
 export function getMcpJsonPath(scope: "global" | "project"): string | null {
-  if (scope === "global") return path.join(os.homedir(), ".cursor", "mcp.json")
-  const ws = getConfig().workspaceDir
-  if (!ws) return null
-  return path.join(ws, ".cursor", "mcp.json")
+  if (scope === "project") return null
+  return path.join(os.homedir(), ".cursor", "mcp.json")
 }
 
 export function readMcpJson(scope: "global" | "project"): Record<string, unknown> | null {
@@ -329,13 +319,13 @@ export function deleteMcpServer(name: string, scope: "global" | "project"): { ok
 
 export async function loginMcpServer(serverName: string): Promise<{ ok: boolean; output: string }> {
   const config = getConfig()
-  if (!config.workspaceDir) return { ok: false, output: "工作目录未配置" }
+  const cwd = primaryWorkspaceForCli()
+  if (!cwd) return { ok: false, output: "工作目录未配置" }
   if (!resolveAgentBinary()) return { ok: false, output: "Cursor CLI 未安装" }
 
   const env: Record<string, string> = { ...process.env as Record<string, string> }
-  applyProxyEnv(env, config)
+  applyProxyEnv(env, getConfig())
 
-  const cwd = config.workspaceDir.trim()
   logCursorAgentInvocation("mcp-login", ["mcp", "login", serverName], cwd)
 
   try {
@@ -517,36 +507,54 @@ async function queryToolsViaHttp(url: string, headers?: Record<string, string>):
 
 function queryToolsViaCli(serverName: string): Promise<{ ok: boolean; tools: McpToolInfo[]; error?: string }> {
   const config = getConfig()
-  if (!config.workspaceDir || !resolveAgentBinary()) return Promise.resolve({ ok: false, tools: [], error: "CLI 不可用" })
+  const ws = primaryWorkspaceForCli()
+  if (!ws || !resolveAgentBinary()) return Promise.resolve({ ok: false, tools: [], error: "CLI 不可用" })
   const env: Record<string, string> = { ...process.env as Record<string, string> }
-  applyProxyEnv(env, config)
-  return spawnAsync(["mcp", "list-tools", serverName], config.workspaceDir, env).then((r) => {
+  applyProxyEnv(env, getConfig())
+  return spawnAsync(["mcp", "list-tools", serverName], ws, env).then((r) => {
     const clean = (r.stdout + r.stderr).replace(ANSI_RE, "").replace(/\r/g, "")
     if (r.code !== 0) return { ok: false, tools: [] as McpToolInfo[], error: clean.trim().split("\n").pop()?.trim() || `exit ${r.code}` }
     const tools: McpToolInfo[] = []
     for (const line of clean.split("\n")) {
-      const m = line.match(/^[-–]\s+(\S+)/)
-      if (m) tools.push({ name: m[1] })
+      const m = line.match(/^[-–]\s+(\S+)(?:\s*\(([^)]*)\))?/)
+      if (!m) continue
+      const params = m[2]?.split(",").map((s) => s.trim()).filter(Boolean).map((name) => ({ name }))
+      tools.push({ name: m[1], params: params?.length ? params : undefined })
     }
     return { ok: true, tools }
   })
 }
 
-export async function getMcpServerTools(serverName: string): Promise<{ ok: boolean; tools: McpToolInfo[]; error?: string }> {
+export async function getMcpServerTools(serverName: string, force = false): Promise<{ ok: boolean; tools: McpToolInfo[]; error?: string }> {
+  if (!force) {
+    const cached = mcpToolsCache.get(serverName)
+    if (cached) return { ok: !cached.error, tools: cached.tools, error: cached.error }
+  }
+
   const servers = getMcpServerList()
   const server = servers.find((s) => s.name === serverName)
   if (!server) return { ok: false, tools: [], error: "MCP 服务器未找到" }
 
+  let result: { ok: boolean; tools: McpToolInfo[]; error?: string }
+
   if (server.type === "url" && server.url) {
     const headers = server.rawConfig?.headers as Record<string, string> | undefined
-    const result = await queryToolsViaHttp(server.url, headers)
-    if (result.ok && result.tools.length > 0) return result
+    result = await queryToolsViaHttp(server.url, headers)
+    if (result.ok && result.tools.length > 0) {
+      mcpToolsCache.set(serverName, { tools: result.tools })
+      return result
+    }
   }
 
   if (server.type === "command" && server.command) {
-    const result = await queryToolsViaProtocol(server.command, server.args ?? [], server.env)
-    if (result.ok && result.tools.length > 0) return result
+    result = await queryToolsViaProtocol(server.command, server.args ?? [], server.env)
+    if (result.ok && result.tools.length > 0) {
+      mcpToolsCache.set(serverName, { tools: result.tools })
+      return result
+    }
   }
 
-  return queryToolsViaCli(serverName)
+  result = await queryToolsViaCli(serverName)
+  mcpToolsCache.set(serverName, { tools: result.tools, error: result.error })
+  return result
 }

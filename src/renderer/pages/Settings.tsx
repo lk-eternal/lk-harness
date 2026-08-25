@@ -45,6 +45,13 @@ import { FlowHubBrowser } from "../components/FlowHubBrowser"
 import ToolboxPanel from "../components/ToolboxPanel"
 import AgentPanel from "../components/AgentPanel"
 import ChannelPanel from "../components/ChannelPanel"
+import TaskPanel from "../components/TaskPanel"
+import McpPanel from "../components/McpPanel"
+import RulePanel from "../components/RulePanel"
+import SkillPanel from "../components/SkillPanel"
+import ProjectListPanel from "../components/ProjectListPanel"
+import ProjectNodePanel from "../components/ProjectNodePanel"
+import { PANEL_FRAME } from "../components/panel-layout"
 import TitleBar from "../components/TitleBar"
 import useInlineModal from "../components/useInlineModal"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
@@ -59,7 +66,7 @@ interface McpEditForm {
   json: string; source: "global" | "project"; jsonError?: string
 }
 interface RuleFile { name: string; content: string }
-interface SkillFile { name: string; content: string }
+interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 interface TaskItem {
   id: string; name: string; cron: string; content: string; enabled: boolean; independent?: boolean
   channelId?: string; model?: string; modelParams?: string; notifyChatId?: string
@@ -89,6 +96,8 @@ const MCP_TEMPLATE = JSON.stringify({
 }, null, 2)
 const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE, source: "global" }
 
+const MASTER_DETAIL_TABS: Tab[] = ["channel", "tasks", "mcp", "rules", "skills"]
+
 const TABS: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
   { id: "general", label: "通用", icon: SettingsIcon },
   { id: "proxy", label: "网络", icon: Network },
@@ -114,7 +123,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     }
   }, [initialTab, onTabConsumed])
 
-  const [workspaceDir, setWorkspaceDir] = useState("")
   const [proxy, setProxy] = useState("")
   const [noProxy, setNoProxy] = useState("localhost,127.0.0.1,feishu.cn")
   const [closeWindowAction, setCloseWindowAction] = useState<CloseWindowAction>("ask")
@@ -183,14 +191,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [ruleEditing, setRuleEditing] = useState<RuleFile | null>(null)
   const [ruleEditOriginalName, setRuleEditOriginalName] = useState<string | null>(null)
 
+  const [skillRoots, setSkillRoots] = useState<{ id: string; label: string; path: string; skillCount: number }[]>([])
+  const [skillRootId, setSkillRootId] = useState("cursor")
   const [skills, setSkills] = useState<SkillFile[]>([])
   const [skillTree, setSkillTree] = useState<SkillTreeNode[]>([])
   const [skillExpanded, setSkillExpanded] = useState<Set<string>>(new Set())
   const [skillEditing, setSkillEditing] = useState<SkillFile | null>(null)
   const [skillEditOriginalName, setSkillEditOriginalName] = useState<string | null>(null)
-  const [skillFileEditing, setSkillFileEditing] = useState<{ skillName: string; relativePath: string; content: string } | null>(null)
-  const [skillPrompt, setSkillPrompt] = useState<{ skillName: string; parentPath: string; kind: "file" | "folder"; value: string } | null>(null)
-  const [skillDeleteConfirm, setSkillDeleteConfirm] = useState<{ skillName: string; relativePath: string } | null>(null)
+  const [skillFileEditing, setSkillFileEditing] = useState<{ rootId: string; skillPath: string; relativePath: string; content: string } | null>(null)
+  const [skillPrompt, setSkillPrompt] = useState<{ rootId: string; skillPath: string; parentPath: string; kind: "file" | "folder"; value: string } | null>(null)
+  const [skillDeleteConfirm, setSkillDeleteConfirm] = useState<{ rootId: string; skillPath: string; relativePath: string } | null>(null)
 
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [taskEditing, setTaskEditing] = useState<TaskItem | null>(null)
@@ -227,10 +237,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     }
   }, [])
   const refreshRules = useCallback(() => { window.electronAPI.getRules().then(setRules) }, [])
+  const refreshSkillRoots = useCallback(() => {
+    window.electronAPI.getSkillRoots().then((roots) => {
+      setSkillRoots(roots)
+      if (!roots.some((r) => r.id === skillRootId) && roots[0]) setSkillRootId(roots[0].id)
+    })
+  }, [skillRootId])
   const refreshSkills = useCallback(() => {
-    window.electronAPI.getSkills().then(setSkills)
-    window.electronAPI.getSkillTree().then(setSkillTree)
-  }, [])
+    window.electronAPI.getSkills(skillRootId).then(setSkills)
+    window.electronAPI.getSkillTree(skillRootId).then(setSkillTree)
+  }, [skillRootId])
   const refreshTasks = useCallback(() => {
     window.electronAPI.getScheduledTasks().then(setTasks)
   }, [])
@@ -313,17 +329,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       if (ok) setMcpServers((prev) => prev.map((s) => s.name === serverName ? { ...s, authenticated: true } : s))
     })
     const unsub2 = window.electronAPI.onScheduledTaskStatus(setTaskStatuses)
-    const unsub3 = window.electronAPI.onDaemonStatus?.(() => {
-      window.electronAPI.getConfig().then((cfg) => {
-        setWorkspaceDir((prev) => prev !== cfg.workspaceDir ? cfg.workspaceDir : prev)
-      })
-    })
-    return () => { unsub1(); unsub2(); unsub3?.() }
+    return () => { unsub1(); unsub2() }
   }, [])
 
   useEffect(() => {
     if (tab === "general" || tab === "setup") window.electronAPI.getConfig().then((config) => {
-      setWorkspaceDir(config.workspaceDir)
       setProxy(config.httpProxy || config.httpsProxy || "")
       setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn")
       setCloseWindowAction(config.closeWindowAction ?? "ask")
@@ -333,7 +343,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     })
     if (tab === "mcp") refreshMcpServers()
     if (tab === "rules") refreshRules()
-    if (tab === "skills") refreshSkills()
+    if (tab === "skills") { refreshSkillRoots(); refreshSkills() }
     if (tab === "tasks") {
       refreshTasks()
       window.electronAPI.getScheduledTaskStatus().then(setTaskStatuses)
@@ -368,33 +378,24 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
       }).catch(() => {})
     }
-  }, [tab, refreshMcpServers, refreshRules, refreshSkills, refreshTasks, refreshProjectList])
+  }, [tab, refreshMcpServers, refreshRules, refreshSkillRoots, refreshSkills, refreshTasks, refreshProjectList])
+
+  useEffect(() => {
+    if (tab !== "skills") return
+    refreshSkills()
+  }, [skillRootId, tab, refreshSkills])
 
   const autoSave = useCallback(() => {
     if (!loaded.current) return
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(async () => {
-      const r = await window.electronAPI.saveConfig({
-        workspaceDir: workspaceDir.trim(),
+      await window.electronAPI.saveConfig({
         httpProxy: proxy.trim(), httpsProxy: proxy.trim(), noProxy: noProxy.trim(),
         closeWindowAction,
       })
-      if (r.needWorkspaceConfirm && r.newWorkspaceDir) {
-        // 直接切换并保留旧会话，不弹窗打断（旧会话继续运行，新消息进新目录会话）
-        const res = await window.electronAPI.applyWorkspaceSwitch(r.newWorkspaceDir, false)
-        if (res.ok) {
-          void refreshMcpServers(true)
-        } else {
-          void showAlert("错误", res.error ?? "切换工作目录失败")
-          if (r.oldWorkspaceDir !== undefined) setWorkspaceDir(r.oldWorkspaceDir)
-        }
-      }
-      if (r.workspaceDirChanged) {
-        void refreshMcpServers(true)
-      }
       setSaved(true); setTimeout(() => setSaved(false), 1500)
     }, 500)
-  }, [workspaceDir, proxy, noProxy, closeWindowAction, refreshMcpServers])
+  }, [proxy, noProxy, closeWindowAction])
 
   useEffect(() => { autoSave() }, [autoSave])
 
@@ -553,8 +554,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskModalVisible, taskModelChannelId])
 
-  const selectDir = async () => { const d = await window.electronAPI.selectDirectory(); if (d) setWorkspaceDir(d) }
-
   const handleAutoLaunchToggle = async () => {
     const next = !autoLaunch
     setAutoLaunch(next)
@@ -651,28 +650,31 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   // ── Rules ──
   const openRuleAdd = () => { setRuleEditOriginalName(null); setRuleEditing({ name: "", content: "" }) }
   const openRuleEdit = (r: RuleFile) => { setRuleEditOriginalName(r.name); setRuleEditing({ ...r }) }
-  const handleRuleDelete = async (name: string) => { await window.electronAPI.deleteRule(name); refreshRules() }
+  const handleRuleDelete = async (name: string) => { await window.electronAPI.deleteRule("cursor", name); refreshRules() }
   const handleRuleSave = async () => {
     if (!ruleEditing || !ruleEditing.name.trim()) return
-    if (ruleEditOriginalName && ruleEditOriginalName !== ruleEditing.name) await window.electronAPI.deleteRule(ruleEditOriginalName)
+    if (ruleEditOriginalName && ruleEditOriginalName !== ruleEditing.name) await window.electronAPI.deleteRule("cursor", ruleEditOriginalName)
     let name = ruleEditing.name.trim()
     if (!name.endsWith(".mdc") && !name.endsWith(".md")) name += ".mdc"
-    await window.electronAPI.saveRule(name, ruleEditing.content)
+    await window.electronAPI.saveRule("cursor", name, ruleEditing.content)
     setRuleEditing(null); refreshRules()
   }
 
   // ── Skills ──
-  const openSkillAdd = () => { setSkillEditOriginalName(null); setSkillEditing({ name: "", content: "" }) }
-  const openSkillEdit = (s: SkillFile) => { setSkillEditOriginalName(s.name); setSkillEditing({ ...s }) }
-  const handleSkillDelete = async (name: string) => { await window.electronAPI.deleteSkill(name); refreshSkills() }
+  const openSkillAdd = () => { setSkillEditOriginalName(null); setSkillEditing({ rootId: skillRootId, skillPath: "", name: "", content: "" }) }
+  const openSkillEdit = (s: SkillFile) => { setSkillEditOriginalName(s.skillPath); setSkillEditing({ ...s }) }
+  const handleSkillDelete = async (skillPath: string) => {
+    await window.electronAPI.deleteSkill(skillRootId, skillPath)
+    refreshSkillRoots(); refreshSkills()
+  }
   const handleSkillSave = async () => {
     if (!skillEditing || !skillEditing.name.trim()) return
-    const newName = skillEditing.name.trim()
-    if (skillEditOriginalName && skillEditOriginalName !== newName) {
-      await window.electronAPI.renameSkill(skillEditOriginalName, newName)
+    const newPath = skillEditing.name.trim()
+    if (skillEditOriginalName && skillEditOriginalName !== newPath) {
+      await window.electronAPI.renameSkill(skillRootId, skillEditOriginalName, newPath)
     }
-    await window.electronAPI.saveSkill(newName, skillEditing.content)
-    setSkillEditing(null); refreshSkills()
+    await window.electronAPI.saveSkill(skillRootId, newPath, skillEditing.content)
+    setSkillEditing(null); refreshSkillRoots(); refreshSkills()
   }
   const toggleSkillExpand = (key: string) => {
     setSkillExpanded((prev) => {
@@ -681,36 +683,36 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       return next
     })
   }
-  const openSkillFile = async (skillName: string, relativePath: string) => {
-    const res = await window.electronAPI.readSkillFile(skillName, relativePath)
-    if (res.ok) setSkillFileEditing({ skillName, relativePath, content: res.content ?? "" })
+  const openSkillFile = async (skillPath: string, relativePath: string) => {
+    const res = await window.electronAPI.readSkillFile(skillRootId, skillPath, relativePath)
+    if (res.ok) setSkillFileEditing({ rootId: skillRootId, skillPath, relativePath, content: res.content ?? "" })
   }
   const handleSkillFileSave = async () => {
     if (!skillFileEditing) return
-    await window.electronAPI.saveSkillFile(skillFileEditing.skillName, skillFileEditing.relativePath, skillFileEditing.content)
+    await window.electronAPI.saveSkillFile(skillFileEditing.rootId, skillFileEditing.skillPath, skillFileEditing.relativePath, skillFileEditing.content)
     setSkillFileEditing(null); refreshSkills()
   }
-  const handleCreateFile = (skillName: string, parentPath: string) => setSkillPrompt({ skillName, parentPath, kind: "file", value: "" })
-  const handleCreateFolder = (skillName: string, parentPath: string) => setSkillPrompt({ skillName, parentPath, kind: "folder", value: "" })
+  const handleCreateFile = (skillPath: string, parentPath: string) => setSkillPrompt({ rootId: skillRootId, skillPath, parentPath, kind: "file", value: "" })
+  const handleCreateFolder = (skillPath: string, parentPath: string) => setSkillPrompt({ rootId: skillRootId, skillPath, parentPath, kind: "folder", value: "" })
   const handleSkillPromptConfirm = async () => {
     if (!skillPrompt || !skillPrompt.value.trim()) return
     const name = skillPrompt.value.trim()
-    const { skillName, parentPath, kind } = skillPrompt
+    const { rootId, skillPath, parentPath, kind } = skillPrompt
     if (kind === "file") {
       const rel = parentPath ? `${parentPath}/${name}` : name
-      await window.electronAPI.saveSkillFile(skillName, rel, "")
+      await window.electronAPI.saveSkillFile(rootId, skillPath, rel, "")
       refreshSkills(); setSkillPrompt(null)
-      openSkillFile(skillName, rel)
+      openSkillFile(skillPath, rel)
     } else {
       const rel = parentPath ? `${parentPath}/${name}` : name
-      await window.electronAPI.createSkillDir(skillName, rel)
+      await window.electronAPI.createSkillDir(rootId, skillPath, rel)
       refreshSkills(); setSkillPrompt(null)
     }
   }
-  const handleDeleteFile = (skillName: string, relativePath: string) => setSkillDeleteConfirm({ skillName, relativePath })
+  const handleDeleteFile = (skillPath: string, relativePath: string) => setSkillDeleteConfirm({ rootId: skillRootId, skillPath, relativePath })
   const handleDeleteFileConfirm = async () => {
     if (!skillDeleteConfirm) return
-    await window.electronAPI.deleteSkillFile(skillDeleteConfirm.skillName, skillDeleteConfirm.relativePath)
+    await window.electronAPI.deleteSkillFile(skillDeleteConfirm.rootId, skillDeleteConfirm.skillPath, skillDeleteConfirm.relativePath)
     setSkillDeleteConfirm(null); refreshSkills()
   }
 
@@ -860,6 +862,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   }
 
   const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+  const masterDetailLayout = MASTER_DETAIL_TABS.includes(tab) || tab === "projects"
 
   return (
     <div className="flex h-screen flex-col">
@@ -881,20 +884,210 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
           ))}
         </nav>
 
-        <div className="flex-1 overflow-y-auto px-8 py-6">
-          <div className="mx-auto max-w-xl space-y-6">
+        <div className={`flex-1 ${masterDetailLayout ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto px-8 py-6"}`}>
+          <div className={masterDetailLayout ? PANEL_FRAME : "mx-auto max-w-xl space-y-6"}>
+
+            {tab === "channel" && <ChannelPanel />}
+            {tab === "tasks" && <TaskPanel />}
+            {tab === "mcp" && <McpPanel />}
+            {tab === "rules" && <RulePanel />}
+            {tab === "skills" && <SkillPanel />}
+
+            {tab === "projects" && (
+              <div className="flex min-h-0 flex-1 flex-col">
+                <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
+                  <button type="button"
+                    onClick={() => { setProjectsSubTab("list"); refreshProjectList() }}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "list" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                  >项目列表</button>
+                  <button type="button"
+                    onClick={() => setProjectsSubTab("settings")}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "settings" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                  >项目设置</button>
+                  <button type="button"
+                    onClick={() => setProjectsSubTab("groups")}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "groups" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                  >流程组</button>
+                </div>
+                {projectsSubTab === "list" && <ProjectListPanel />}
+                {projectsSubTab === "settings" && (
+                  <div className="flex-1 overflow-y-auto pb-6">
+                    <div className="mx-auto max-w-xl space-y-6">
+                      <section className="space-y-4">
+                        <h3 className="text-sm font-medium text-gray-300">项目配置</h3>
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">GitLab Token</label>
+                          <div className="relative">
+                            <input type={showGitlabToken ? "text" : "password"} value={gitlabToken} onChange={(e) => setGitlabToken(e.target.value)} placeholder="glpat-..." className={inputCls + " pr-16"} />
+                            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                              <button type="button" title="复制" disabled={!gitlabToken.trim()} onClick={() => void navigator.clipboard.writeText(gitlabToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
+                              <button type="button" title={showGitlabToken ? "隐藏" : "显示"} onClick={() => setShowGitlabToken(!showGitlabToken)} className="text-gray-500 hover:text-gray-300">{showGitlabToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">GitLab Host（可空，默认从 origin 推断）</label>
+                          <input type="text" value={gitlabHost} onChange={(e) => setGitlabHost(e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">主仓（路径须为 git 根目录；基线=生产分支，只作切 feature 起点；测试/开发可空）</label>
+                          <div className="space-y-2">
+                            {repoProfiles.map((p, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                <input type="text" value={p.path} placeholder="D:\repos\foo"
+                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
+                                  className={`${inputCls} flex-[3]`} />
+                                <input type="text" value={p.baseBranch} placeholder="基线"
+                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, baseBranch: e.target.value } : x))}
+                                  className={`${inputCls} flex-1`} />
+                                <input type="text" value={p.testBranch ?? ""} placeholder="测试"
+                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, testBranch: e.target.value || undefined } : x))}
+                                  className={`${inputCls} flex-1`} />
+                                <input type="text" value={p.developBranch ?? ""} placeholder="开发"
+                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, developBranch: e.target.value || undefined } : x))}
+                                  className={`${inputCls} flex-1`} />
+                                <button type="button" title="删除"
+                                  onClick={() => setRepoProfiles((list) => list.filter((_, j) => j !== i))}
+                                  className="shrink-0 rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-red-400"
+                                >✕</button>
+                              </div>
+                            ))}
+                            <button
+                              type="button"
+                              onClick={() => setRepoProfiles((list) => [...list, { path: "", baseBranch: "" }])}
+                              className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
+                            >+ 添加主仓</button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-gray-500">AI 工作目录</label>
+                          <div className="flex gap-2">
+                            <input type="text" value={worktreeRoot} onChange={(e) => setWorktreeRoot(e.target.value)} placeholder="D:\claw-projects" className={inputCls} />
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const dir = await window.electronAPI.selectDirectory()
+                                if (dir) setWorktreeRoot(dir)
+                              }}
+                              className="shrink-0 rounded-md border border-gray-700 px-3 text-xs text-gray-300 hover:bg-gray-800"
+                            >浏览</button>
+                          </div>
+                        </div>
+                      </section>
+                    </div>
+                  </div>
+                )}
+                {projectsSubTab === "groups" && (
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2">
+                    <div className="flex-1 overflow-y-auto">
+                      <div className="space-y-4">
+                        <h3 className="text-sm font-medium text-gray-300">流程组</h3>
+                        <p className="text-xs text-gray-500">建项可多选（不选默认「开发」）；推进节点按所选组分组展示；点击节点编辑提示词；拖动左侧把手调整顺序。</p>
+                        <div className="rounded-lg border border-gray-800 p-3 space-y-2">
+                          <h4 className="text-xs font-medium text-gray-400">共享空间</h4>
+                          <div>
+                            <label className="mb-1 block text-xs text-gray-500">Hub 地址</label>
+                            <input type="text" value={flowHubUrl} onChange={(e) => setFlowHubUrl(e.target.value)}
+                              placeholder="https://gitlab.example.com/group/cursor-claw-flow-hub" className={inputCls} />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-gray-500">Hub Token（Flow Hub 项目专用）</label>
+                            <div className="relative">
+                              <input type={showFlowHubToken ? "text" : "password"} value={flowHubToken} onChange={(e) => setFlowHubToken(e.target.value)}
+                                placeholder="glpat-...（需 Maintainer 及以上权限）" className={inputCls + " pr-16"} />
+                              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
+                                <button type="button" title="复制" disabled={!flowHubToken.trim()} onClick={() => void navigator.clipboard.writeText(flowHubToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
+                                <button type="button" title={showFlowHubToken ? "隐藏" : "显示"} onClick={() => setShowFlowHubToken(!showFlowHubToken)} className="text-gray-500 hover:text-gray-300">{showFlowHubToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
+                              </div>
+                            </div>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-xs text-gray-500">作者昵称（上传时展示）</label>
+                            <input type="text" value={flowHubAuthor} onChange={(e) => setFlowHubAuthor(e.target.value)}
+                              placeholder="你的名字" className={inputCls} />
+                          </div>
+                          <p className="text-[10px] text-gray-600">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {nodeGroups.map((g) => (
+                            <button key={g.id} type="button"
+                              onClick={() => setActiveGroupId(g.id)}
+                              className={`rounded-md border px-3 py-1.5 text-xs transition ${g.id === activeGroup?.id ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                            >{g.name}</button>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => setGroupEditing({ id: "", name: "", index: -1 })}
+                            className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
+                          >+ 新增组</button>
+                          {hubConfigured && (
+                            <button
+                              type="button"
+                              onClick={() => setHubBrowser({ kind: "group" })}
+                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-3 py-1.5 text-xs text-blue-400 hover:bg-gray-800"
+                            ><Download className="h-3 w-3" />从共享空间获取组</button>
+                          )}
+                        </div>
+                        {activeGroup && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                              <span>当前组 <span className="font-mono">{activeGroup.id}</span> · {activeGroup.nodes.length} 个节点</span>
+                              <button type="button" className="text-blue-400 hover:text-blue-300"
+                                onClick={() => setGroupEditing({ id: activeGroup.id, name: activeGroup.name, index: nodeGroups.findIndex((g) => g.id === activeGroup.id) })}
+                              >编辑</button>
+                              <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupExport()}>
+                                <Download className="h-3 w-3" />导出
+                              </button>
+                              <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupImport()}>
+                                <FilePlus className="h-3 w-3" />导入
+                              </button>
+                              {hubConfigured && (
+                                <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                  onClick={async () => {
+                                    const r = await window.electronAPI.flowHub.uploadGroup(activeGroup.id)
+                                    if (r.ok) { void showAlert("上传成功", `流程组「${activeGroup.name}」已上传到共享空间`); void refreshNodeGroups() }
+                                    else void showAlert("上传失败", r.error ?? "未知错误")
+                                  }}>
+                                  <Upload className="h-3 w-3" />上传
+                                </button>
+                              )}
+                              {nodeGroups.length > 1 && (
+                                <button type="button" className="text-red-400 hover:text-red-300" onClick={handleGroupDelete}>删除组</button>
+                              )}
+                            </div>
+                            <ProjectNodePanel
+                              nodes={activeGroup.nodes}
+                              onSaveNodes={saveActiveGroupNodes}
+                              hubConfigured={hubConfigured}
+                              groupId={activeGroup.id}
+                              onUploadNode={hubConfigured ? async (nodeId) => {
+                                const r = await window.electronAPI.flowHub.uploadNode(activeGroup.id, nodeId)
+                                if (r.ok) void showAlert("上传成功", `节点已上传`)
+                                else void showAlert("上传失败", r.error ?? "未知错误")
+                              } : undefined}
+                            />
+                            {hubConfigured && (
+                              <button
+                                type="button"
+                                onClick={() => setHubBrowser({ kind: "node" })}
+                                className="w-full rounded-md border border-dashed border-gray-700 px-3 py-2 text-xs text-blue-400 hover:bg-gray-800"
+                              >从共享空间获取节点</button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!masterDetailLayout && (<>
+
+            {/* channel / tasks / mcp / rules / skills → Panel 组件 */}
 
             {/* ═══ General ═══ */}
             {tab === "general" && (<>
-              <section className="space-y-4">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">主工作目录</label>
-                  <div onClick={selectDir} className="flex cursor-pointer items-center gap-3 rounded-lg border border-gray-700 px-4 py-3 transition hover:border-blue-500">
-                    <FolderOpen size={18} className="text-blue-400" /><span className="truncate text-sm">{workspaceDir || "点击选择..."}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-600">AI 干活的文件夹（一般选你的代码项目）。你私聊机器人时 AI 就在这里工作；群聊和其他人则用各自的临时文件夹，不会碰这里</p>
-                </div>
-              </section>
               <section className="space-y-3">
                 <h3 className="text-sm font-medium text-gray-300">启动</h3>
                 <div className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
@@ -973,7 +1166,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       const warn = r.warnings?.length ? `\n\n注意：\n${r.warnings.join("\n")}` : ""
                       void showAlert("导入成功", `配置已应用，Daemon 已重启。${warn}`)
                       window.electronAPI.getConfig().then((config) => {
-                        setWorkspaceDir(config.workspaceDir ?? "")
                         setAutoLaunch(!!config.autoStart)
                         setCloseWindowAction(config.closeWindowAction ?? "ask")
                       })
@@ -986,9 +1178,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               </section>
               <p className="text-xs text-gray-500">关闭窗口相关选项保存后立即生效。其余设置自动保存，部分项需重启 Daemon 后生效。</p>
             </>)}
-
-            {/* ═══ Channel ═══ */}
-            {tab === "channel" && <ChannelPanel />}
 
             {/* ═══ Proxy ═══ */}
             {tab === "proxy" && (<>
@@ -1163,17 +1352,29 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               <section className="space-y-3">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium text-gray-300">Agent Skills</h3>
-                  <button onClick={refreshSkills} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
+                  <button onClick={() => { refreshSkillRoots(); refreshSkills() }} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
                   <div className="flex-1" />
                   <button onClick={openSkillAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
                 </div>
-                <p className="text-xs text-gray-600">管理 ~/.cursor/skills/ 下的技能（每个技能为一个文件夹 + SKILL.md）</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {skillRoots.map((root) => (
+                    <button
+                      key={root.id}
+                      type="button"
+                      onClick={() => { setSkillRootId(root.id); setSkillExpanded(new Set()) }}
+                      className={`rounded-md border px-2.5 py-1 text-xs transition ${skillRootId === root.id ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                    >
+                      {root.label} ({root.skillCount})
+                    </button>
+                  ))}
+                </div>
                 <div className="space-y-1">
                   {skillTree.map((skill) => {
-                    const isExpanded = skillExpanded.has(skill.name)
+                    const skillKey = `${skillRootId}:${skill.name}`
+                    const isExpanded = skillExpanded.has(skillKey)
                     const renderNode = (node: SkillTreeNode, parentPath: string, depth: number): React.ReactNode => {
                       const fullPath = parentPath ? `${parentPath}/${node.name}` : node.name
-                      const nodeKey = `${skill.name}/${fullPath}`
+                      const nodeKey = `${skillKey}/${fullPath}`
                       if (node.type === "directory") {
                         const dirExpanded = skillExpanded.has(nodeKey)
                         return (
@@ -1211,9 +1412,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       )
                     }
                     return (
-                      <div key={skill.name} className="rounded-lg border border-gray-700 overflow-hidden">
+                      <div key={skillKey} className="rounded-lg border border-gray-700 overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2.5">
-                          <button onClick={() => toggleSkillExpand(skill.name)} className="flex items-center gap-2 min-w-0">
+                          <button onClick={() => toggleSkillExpand(skillKey)} className="flex items-center gap-2 min-w-0">
                             {isExpanded ? <ChevronDown size={14} className="shrink-0 text-gray-500" /> : <ChevronRight size={14} className="shrink-0 text-gray-500" />}
                             <Sparkles size={14} className="shrink-0 text-amber-400/70" />
                             <span className="truncate text-sm font-medium">{skill.name}</span>
@@ -1221,7 +1422,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                           <div className="ml-3 flex shrink-0 items-center gap-1">
                             <button onClick={() => handleCreateFile(skill.name, "")} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="新建文件"><FilePlus size={13} /></button>
                             <button onClick={() => handleCreateFolder(skill.name, "")} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="新建文件夹"><FolderPlus size={13} /></button>
-                            <button onClick={() => { const s = skills.find((x) => x.name === skill.name); if (s) openSkillEdit(s) }} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="编辑 SKILL.md"><Pencil size={13} /></button>
+                            <button onClick={() => { const s = skills.find((x) => x.skillPath === skill.name); if (s) openSkillEdit(s) }} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="编辑 SKILL.md"><Pencil size={13} /></button>
                             <button onClick={() => handleSkillDelete(skill.name)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400" title="删除整个 Skill"><Trash2 size={13} /></button>
                           </div>
                         </div>
@@ -1236,268 +1437,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   {skillTree.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无 Skill</p>}
                 </div>
               </section>
-            </>)}
-
-            {/* ═══ Projects ═══ */}
-            {tab === "projects" && (<>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button type="button"
-                  onClick={() => { setProjectsSubTab("list"); refreshProjectList() }}
-                  className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "list" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
-                >项目列表</button>
-                <button type="button"
-                  onClick={() => setProjectsSubTab("settings")}
-                  className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "settings" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
-                >项目设置</button>
-                <button type="button"
-                  onClick={() => setProjectsSubTab("groups")}
-                  className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "groups" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
-                >流程组</button>
-              </div>
-
-              {projectsSubTab === "list" && (
-                <section className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-medium text-gray-300">项目列表</h3>
-                    <button onClick={refreshProjectList} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
-                  </div>
-                  <div className="space-y-2">
-                    {projectList.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2">
-                            <p className="truncate text-sm font-medium text-gray-200">{p.name}</p>
-                            <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">{p.featureBranch}</span>
-                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${p.status === "active" ? "bg-green-900/40 text-green-400" : p.status === "paused" ? "bg-yellow-900/40 text-yellow-400" : "bg-gray-800 text-gray-500"}`}>
-                              {PROJECT_STATUS_LABEL[p.status] ?? p.status}
-                            </span>
-                            {p.groupChatId && (
-                              <span className="shrink-0 rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] text-indigo-300">独立群</span>
-                            )}
-                          </div>
-                          {p.storyUrl && <p className="truncate text-xs text-gray-500">{p.storyUrl}</p>}
-                          {p.metadata && Object.keys(p.metadata).length > 0 && (
-                            <div className="mt-1">
-                              <button
-                                type="button"
-                                onClick={() => setMetadataExpanded((s) => ({ ...s, [p.id]: !s[p.id] }))}
-                                className="text-xs text-gray-500 transition hover:text-gray-300"
-                              >
-                                metadata ({Object.keys(p.metadata).length}) {metadataExpanded[p.id] ? "▾" : "▸"}
-                              </button>
-                              {metadataExpanded[p.id] && (
-                                <div className="mt-1 space-y-0.5 font-mono text-[10px] text-gray-500">
-                                  {Object.entries(p.metadata).map(([k, v]) => (
-                                    <p key={k} className="truncate" title={`${k}: ${v}`}>{k}: {v}</p>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                        <div className="ml-3 flex shrink-0 items-center gap-1.5">
-                          {!p.groupChatId && (
-                            <button type="button" onClick={() => handleProjectSwitch(p.id)}
-                              className="rounded px-2 py-0.5 text-xs text-blue-400 transition hover:bg-blue-600/20">切换至</button>
-                          )}
-                          <button type="button" onClick={() => {
-                            setProjectEditing({
-                            ...p,
-                            goal: p.goal ?? "",
-                            storyUrl: p.storyUrl ?? "",
-                            productDocUrl: p.productDocUrl ?? "",
-                            techDocUrl: p.techDocUrl ?? "",
-                            groupIds: p.groupIds?.length
-                              ? p.groupIds
-                              : (p.groupId ? [p.groupId] : nodeGroups[0]?.id ? [nodeGroups[0].id] : []),
-                          })
-                            setMetadataEditText(JSON.stringify(p.metadata ?? {}, null, 2))
-                          }}
-                            className="rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">修改</button>
-                          <button type="button" onClick={() => handleProjectDelete(p)}
-                            className="rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-red-400">删除</button>
-                        </div>
-                      </div>
-                    ))}
-                    {projectList.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无项目</p>}
-                  </div>
-                </section>
-              )}
-
-              {projectsSubTab === "settings" && (<>
-              <section className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-300">项目配置</h3>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">GitLab Token</label>
-                  <div className="relative">
-                    <input type={showGitlabToken ? "text" : "password"} value={gitlabToken} onChange={(e) => setGitlabToken(e.target.value)} placeholder="glpat-..." className={inputCls + " pr-16"} />
-                    <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                      <button type="button" title="复制" disabled={!gitlabToken.trim()} onClick={() => void navigator.clipboard.writeText(gitlabToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
-                      <button type="button" title={showGitlabToken ? "隐藏" : "显示"} onClick={() => setShowGitlabToken(!showGitlabToken)} className="text-gray-500 hover:text-gray-300">{showGitlabToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">GitLab Host（可空，默认从 origin 推断）</label>
-                  <input type="text" value={gitlabHost} onChange={(e) => setGitlabHost(e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">主仓（路径须为 git 根目录；基线=生产分支，只作切 feature 起点；测试/开发可空）</label>
-                  <div className="space-y-2">
-                    {repoProfiles.map((p, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <input type="text" value={p.path} placeholder="D:\repos\foo"
-                          onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
-                          className={`${inputCls} flex-[3]`} />
-                        <input type="text" value={p.baseBranch} placeholder="基线"
-                          onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, baseBranch: e.target.value } : x))}
-                          className={`${inputCls} flex-1`} />
-                        <input type="text" value={p.testBranch ?? ""} placeholder="测试"
-                          onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, testBranch: e.target.value || undefined } : x))}
-                          className={`${inputCls} flex-1`} />
-                        <input type="text" value={p.developBranch ?? ""} placeholder="开发"
-                          onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, developBranch: e.target.value || undefined } : x))}
-                          className={`${inputCls} flex-1`} />
-                        <button type="button" title="删除"
-                          onClick={() => setRepoProfiles((list) => list.filter((_, j) => j !== i))}
-                          className="shrink-0 rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-red-400"
-                        >✕</button>
-                      </div>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={() => setRepoProfiles((list) => [...list, { path: "", baseBranch: "" }])}
-                      className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
-                    >+ 添加主仓</button>
-                  </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">AI 工作目录</label>
-                  <div className="flex gap-2">
-                    <input type="text" value={worktreeRoot} onChange={(e) => setWorktreeRoot(e.target.value)} placeholder="D:\claw-projects" className={inputCls} />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const dir = await window.electronAPI.selectDirectory()
-                        if (dir) setWorktreeRoot(dir)
-                      }}
-                      className="shrink-0 rounded-md border border-gray-700 px-3 text-xs text-gray-300 hover:bg-gray-800"
-                    >浏览</button>
-                  </div>
-                </div>
-              </section>
-              </>)}
-
-              {projectsSubTab === "groups" && (
-              <section className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-300">流程组</h3>
-                <p className="text-xs text-gray-500">建项可多选（不选默认「开发」）；推进节点按所选组分组展示；点击节点编辑提示词；拖动左侧把手调整顺序。</p>
-                <div className="rounded-lg border border-gray-800 p-3 space-y-2">
-                  <h4 className="text-xs font-medium text-gray-400">共享空间</h4>
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-500">Hub 地址</label>
-                    <input type="text" value={flowHubUrl} onChange={(e) => setFlowHubUrl(e.target.value)}
-                      placeholder="https://gitlab.example.com/group/cursor-claw-flow-hub" className={inputCls} />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-500">Hub Token（Flow Hub 项目专用）</label>
-                    <div className="relative">
-                      <input type={showFlowHubToken ? "text" : "password"} value={flowHubToken} onChange={(e) => setFlowHubToken(e.target.value)}
-                        placeholder="glpat-...（需 Maintainer 及以上权限）" className={inputCls + " pr-16"} />
-                      <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                        <button type="button" title="复制" disabled={!flowHubToken.trim()} onClick={() => void navigator.clipboard.writeText(flowHubToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
-                        <button type="button" title={showFlowHubToken ? "隐藏" : "显示"} onClick={() => setShowFlowHubToken(!showFlowHubToken)} className="text-gray-500 hover:text-gray-300">{showFlowHubToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs text-gray-500">作者昵称（上传时展示）</label>
-                    <input type="text" value={flowHubAuthor} onChange={(e) => setFlowHubAuthor(e.target.value)}
-                      placeholder="你的名字" className={inputCls} />
-                  </div>
-                  <p className="text-[10px] text-gray-600">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {nodeGroups.map((g) => (
-                    <button key={g.id} type="button"
-                      onClick={() => setActiveGroupId(g.id)}
-                      className={`rounded-md border px-3 py-1.5 text-xs transition ${g.id === activeGroup?.id ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
-                    >{g.name}</button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setGroupEditing({ id: "", name: "", index: -1 })}
-                    className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
-                  >+ 新增组</button>
-                  {hubConfigured && (
-                    <button
-                      type="button"
-                      onClick={() => setHubBrowser({ kind: "group" })}
-                      className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-3 py-1.5 text-xs text-blue-400 hover:bg-gray-800"
-                    ><Download className="h-3 w-3" />从共享空间获取组</button>
-                  )}
-                </div>
-                {activeGroup && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center gap-3 text-xs text-gray-500">
-                      <span>当前组 <span className="font-mono">{activeGroup.id}</span> · {activeGroup.nodes.length} 个节点</span>
-                      <button type="button" className="text-blue-400 hover:text-blue-300"
-                        onClick={() => setGroupEditing({ id: activeGroup.id, name: activeGroup.name, index: nodeGroups.findIndex((g) => g.id === activeGroup.id) })}
-                      >编辑</button>
-                      <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupExport()}>
-                        <Download className="h-3 w-3" />导出
-                      </button>
-                      <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupImport()}>
-                        <FilePlus className="h-3 w-3" />导入
-                      </button>
-                      {hubConfigured && (
-                        <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
-                          onClick={async () => {
-                            const r = await window.electronAPI.flowHub.uploadGroup(activeGroup.id)
-                            if (r.ok) { void showAlert("上传成功", `流程组「${activeGroup.name}」已上传到共享空间`); void refreshNodeGroups() }
-                            else void showAlert("上传失败", r.error ?? "未知错误")
-                          }}>
-                          <Upload className="h-3 w-3" />上传
-                        </button>
-                      )}
-                      {nodeGroups.length > 1 && (
-                        <button type="button" className="text-red-400 hover:text-red-300" onClick={handleGroupDelete}>删除组</button>
-                      )}
-                    </div>
-                    <SortableList
-                      items={activeGroup.nodes}
-                      getId={(n) => n.id}
-                      onReorder={saveActiveGroupNodes}
-                      gapClass="space-y-1"
-                      renderItem={(n, { grip }) => (
-                        <div className="flex items-center gap-3 rounded-lg border border-gray-800 px-3 py-2 transition hover:border-gray-600 hover:bg-gray-900">
-                          {grip}
-                          <button type="button"
-                            onClick={() => setNodeEditing({ ...n, index: activeGroup.nodes.findIndex((x) => x.id === n.id) })}
-                            className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                            <span className="text-sm text-gray-200">{n.label}</span>
-                            <span className="font-mono text-xs text-gray-500">/p {n.id}</span>
-                            {(n.prompt ?? "").trim() !== "" && <span className="ml-auto shrink-0 text-[10px] text-gray-500">已自定义提示词</span>}
-                          </button>
-                        </div>
-                      )}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setNodeEditing({ id: "", label: "", index: -1 })}
-                      className="w-full rounded-md border border-dashed border-gray-700 px-3 py-2 text-xs text-gray-400 hover:bg-gray-800"
-                    >+ 新增节点</button>
-                    {hubConfigured && (
-                      <button
-                        type="button"
-                        onClick={() => setHubBrowser({ kind: "node" })}
-                        className="w-full rounded-md border border-dashed border-gray-700 px-3 py-2 text-xs text-blue-400 hover:bg-gray-800"
-                      >从共享空间获取节点</button>
-                    )}
-                  </div>
-                )}
-              </section>
-              )}
             </>)}
 
             {/* ═══ Toolbox ═══ */}
@@ -1707,6 +1646,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               </section>
             </>)}
 
+            </>)}
+
           </div>
         </div>
       </div>
@@ -1816,7 +1757,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   disabled={!nodeEditing.id.trim() || !nodeEditing.label.trim()}
                   onClick={async () => {
                     if (!activeGroup) return
-                    const reserved = ["help", "menu", "ls", "list", "use", "leave", "status", "new", "del", "delete", "rm", "setup", "sync", "ship"]
+                    const reserved = ["help", "menu", "ls", "list", "use", "leave", "info", "new", "del", "delete", "rm", "setup", "sync", "ship"]
                     const id = nodeEditing.id.trim()
                     if (reserved.includes(id) || !/^[a-z][a-z0-9-]*$/.test(id)) {
                       void showAlert("节点 id 不可用", `「${id}」需小写字母开头（可含数字/-），且不能与保留命令冲突`)
@@ -1844,84 +1785,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         </div>
       )}
 
-      {/* ═══ Project Edit Modal ═══ */}
-      {projectEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">修改项目</h3>
-              <button onClick={() => setProjectEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
-            </div>
-            <div className="space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">名称</label>
-                <input type="text" value={projectEditing.name}
-                  onChange={(e) => setProjectEditing({ ...projectEditing, name: e.target.value })}
-                  className={inputCls} placeholder="项目名称" /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">目标（可空）</label>
-                <textarea value={projectEditing.goal ?? ""}
-                  onChange={(e) => setProjectEditing({ ...projectEditing, goal: e.target.value })}
-                  rows={2} className={inputCls} placeholder="项目目标描述" /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className="mb-1 block text-xs text-gray-500">状态</label>
-                  <select value={projectEditing.status}
-                    onChange={(e) => setProjectEditing({ ...projectEditing, status: e.target.value })}
-                    className={inputCls}>
-                    <option value="active">进行中</option>
-                    <option value="paused">已暂停</option>
-                    <option value="done">已完成</option>
-                  </select></div>
-                <div className="col-span-2"><label className="mb-1 block text-xs text-gray-500">流程组（可多选）</label>
-                  <div className="flex flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2">
-                    {nodeGroups.map((g) => {
-                      const selected = (projectEditing.groupIds ?? []).includes(g.id)
-                      return (
-                        <label key={g.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-300">
-                          <input type="checkbox" checked={selected}
-                            onChange={(e) => {
-                              const cur = projectEditing.groupIds ?? []
-                              const next = e.target.checked
-                                ? [...cur, g.id]
-                                : cur.filter((id) => id !== g.id)
-                              setProjectEditing({ ...projectEditing, groupIds: next, groupId: next[0] })
-                            }}
-                            className="rounded border-gray-600" />
-                          {g.name}
-                        </label>
-                      )
-                    })}
-                  </div></div>
-              </div>
-              <div><label className="mb-1 block text-xs text-gray-500">飞书项目 / 需求链接</label>
-                <input type="text" value={projectEditing.storyUrl ?? ""}
-                  onChange={(e) => setProjectEditing({ ...projectEditing, storyUrl: e.target.value })}
-                  className={inputCls} placeholder="https://project.feishu.cn/..." /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">产品文档</label>
-                <input type="text" value={projectEditing.productDocUrl ?? ""}
-                  onChange={(e) => setProjectEditing({ ...projectEditing, productDocUrl: e.target.value })}
-                  className={inputCls} placeholder="https://..." /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">技术文档</label>
-                <input type="text" value={projectEditing.techDocUrl ?? ""}
-                  onChange={(e) => setProjectEditing({ ...projectEditing, techDocUrl: e.target.value })}
-                  className={inputCls} placeholder="https://..." /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">metadata（JSON 对象，value 均为字符串）</label>
-                <textarea value={metadataEditText}
-                  onChange={(e) => setMetadataEditText(e.target.value)}
-                  rows={6} className={`${inputCls} font-mono text-xs`} placeholder='{"deploy_url":"https://..."}' /></div>
-              <div className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2 text-[11px] text-gray-500">
-                <p className="mb-1 text-gray-400">只读（改这些请重建项目）</p>
-                <p className="truncate">🌿 {projectEditing.featureBranch || "—"}</p>
-                {projectEditing.repoPath && <p className="truncate">📦 {projectEditing.repoPath}</p>}
-                {projectEditing.worktreePath && <p className="truncate">📁 {projectEditing.worktreePath}</p>}
-                {projectEditing.workspaceType && <p>类型：{projectEditing.workspaceType === "plain" ? "纯会话" : "代码开发"}</p>}
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setProjectEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
-              <button onClick={handleProjectSave} disabled={!projectEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Project Edit → ProjectListPanel */}
 
       {/* ═══ Node Group Edit Modal ═══ */}
       {groupEditing && (
@@ -1978,7 +1842,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               <button onClick={() => setSkillEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">名称（文件夹名）</label><input type="text" value={skillEditing.name} onChange={(e) => setSkillEditing({ ...skillEditing, name: e.target.value })} className={inputCls} placeholder="my-skill" /></div>
+              <div><label className="mb-1 block text-xs text-gray-500">路径（相对根目录）</label><input type="text" value={skillEditing.name} onChange={(e) => setSkillEditing({ ...skillEditing, name: e.target.value })} className={inputCls} placeholder="my-skill 或 group/my-skill" /></div>
               <div><label className="mb-1 block text-xs text-gray-500">SKILL.md 内容</label><textarea value={skillEditing.content} onChange={(e) => setSkillEditing({ ...skillEditing, content: e.target.value })} rows={16} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="# My Skill\n\nDescription of what this skill does..." /></div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
@@ -1996,7 +1860,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
               <div className="min-w-0">
                 <h3 className="text-sm font-semibold text-gray-200">编辑文件</h3>
-                <p className="truncate text-xs text-gray-500 mt-0.5">{skillFileEditing.skillName}/{skillFileEditing.relativePath}</p>
+                <p className="truncate text-xs text-gray-500 mt-0.5">{skillFileEditing.skillPath}/{skillFileEditing.relativePath}</p>
               </div>
               <button onClick={() => setSkillFileEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
             </div>

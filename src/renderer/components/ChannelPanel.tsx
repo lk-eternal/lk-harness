@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import {
-  Plus, Pencil, Trash2, X, Loader2, CheckCircle2, ShieldAlert, Eye, EyeOff,
-  LogIn, MessageSquare, Bird, FolderOpen, RefreshCw, ChevronDown, ChevronRight, ExternalLink,
+  Plus, Loader2, CheckCircle2, ShieldAlert, Eye, EyeOff, Trash2,
+  LogIn, MessageSquare, Bird, FolderOpen, ExternalLink,
 } from "lucide-react"
 import SearchableSelect from "./SearchableSelect"
-import SortableList from "./SortableList"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
 import useInlineModal from "./useInlineModal"
+import { usePanelSave } from "./usePanelSave"
 import { modelSlug } from "../model-utils"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const sectionCls = "mt-5 space-y-3 border-t border-gray-800 pt-5 pb-5"
 
 function newLocalChannelId(): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -43,10 +45,23 @@ export default function ChannelPanel() {
   const [channels, setChannels] = useState<ChannelConfig[]>([])
   const [resources, setResources] = useState<AgentResource[]>([])
   const [statusMap, setStatusMap] = useState<Record<string, ChannelStatusInfo>>({})
-  const [editing, setEditing] = useState<ChannelConfig | null>(null)
-  const [isNew, setIsNew] = useState(false)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<ChannelConfig | null>(null)
+  const [savedSnapshot, setSavedSnapshot] = useState("")
+  const [isNewChannel, setIsNewChannel] = useState(false)
   const [showAddMenu, setShowAddMenu] = useState(false)
+  const addMenuRef = useRef<HTMLDivElement>(null)
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { justSaved, markSaved } = usePanelSave()
+
+  useEffect(() => {
+    if (!showAddMenu) return
+    const onDown = (e: MouseEvent) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false)
+    }
+    document.addEventListener("mousedown", onDown)
+    return () => document.removeEventListener("mousedown", onDown)
+  }, [showAddMenu])
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
@@ -88,160 +103,170 @@ export default function ChannelPanel() {
     await persistChannels(channels.filter((x) => x.id !== c.id))
   }
 
+  const openDraft = (c: ChannelConfig, isNew: boolean) => {
+    setSelectedId(c.id)
+    setDraft({ ...c })
+    setSavedSnapshot(JSON.stringify(c))
+    setIsNewChannel(isNew)
+  }
+
+  const isDirty = draft ? JSON.stringify(draft) !== savedSnapshot : false
+
+  const selectChannel = async (c: ChannelConfig) => {
+    if (isDirty && !(await showConfirm("未保存", "当前通道有未保存的修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    openDraft(c, false)
+  }
+
   const openAdd = (type: "feishu" | "wechat") => {
     setShowAddMenu(false)
     const count = channels.filter((c) => c.type === type).length
     const base = type === "feishu" ? "飞书" : "微信"
-    setEditing(emptyChannel(type, count > 0 ? `${base} ${count + 1}` : base))
-    setIsNew(true)
+    openDraft(emptyChannel(type, count > 0 ? `${base} ${count + 1}` : base), true)
   }
 
-  const openEdit = (c: ChannelConfig) => { setEditing({ ...c }); setIsNew(false) }
+  const handleCancel = async () => {
+    if (isDirty && !(await showConfirm("未保存", "放弃未保存的修改？", "放弃", "继续编辑"))) return
+    if (isNewChannel) {
+      setSelectedId(null)
+      setDraft(null)
+      setIsNewChannel(false)
+      return
+    }
+    const saved = channels.find((c) => c.id === selectedId)
+    if (saved) openDraft(saved, false)
+    else { setSelectedId(null); setDraft(null) }
+  }
+
+  const persistDraft = async (c: ChannelConfig) => {
+    const exists = channels.some((x) => x.id === c.id)
+    const updated = exists ? channels.map((x) => x.id === c.id ? c : x) : [...channels, c]
+    await persistChannels(updated)
+    setSavedSnapshot(JSON.stringify(c))
+  }
 
   const handleSave = async (next: ChannelConfig) => {
-    const exists = channels.some((c) => c.id === next.id)
-    await persistChannels(exists ? channels.map((c) => c.id === next.id ? next : c) : [...channels, next])
+    if (next.mainUserEnabled && !next.workspaceDir?.trim()) {
+      void showAlert("提示", "请设置主用户工作目录")
+      return
+    }
+    await persistDraft(next)
+    markSaved()
+    openDraft(next, false)
+    setIsNewChannel(false)
   }
 
-  // 数组顺序即首页通道树顺序；仅重排不触发 Daemon 重启
+  const handleDeleteCurrent = async () => {
+    if (!draft || isNewChannel) return
+    if (!await showConfirm("删除确认", `确定删除通道「${draft.name}」吗？`)) return
+    const next = channels.filter((x) => x.id !== draft.id)
+    await persistChannels(next)
+    setSelectedId(null)
+    setDraft(null)
+    setIsNewChannel(false)
+  }
+
   return (
     <>
-      <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h3 className="text-sm font-medium text-gray-300">消息通道</h3>
-          <button onClick={() => void reload()} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
-          <div className="flex-1" />
-          <div className="relative">
-            <button onClick={() => setShowAddMenu(!showAddMenu)} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />添加通道</button>
-            {showAddMenu && (
-              <div className="absolute right-0 z-20 mt-1 w-36 rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
-                <button onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-800"><Bird size={13} className="text-blue-400" />飞书通道</button>
-                <button onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-800"><MessageSquare size={13} className="text-green-400" />微信通道</button>
-              </div>
-            )}
+      <div className={PANEL_ROOT}>
+        {/* 左侧通道列表（固定，独立滚动） */}
+        <aside className={PANEL_ASIDE}>
+          <div className={PANEL_LIST}>
+            {channels.map((c) => {
+              const st = statusMap[c.id]
+              const active = selectedId === c.id
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => void selectChannel(c)}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}
+                >
+                  {c.type === "feishu" ? <Bird size={14} className="shrink-0 text-blue-400" /> : <MessageSquare size={14} className="shrink-0 text-green-400" />}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-medium">{c.name}</p>
+                    <p className="truncate text-[10px] text-gray-600">{st?.connected ? "已连接" : c.enabled ? "未连接" : "已停用"}</p>
+                  </div>
+                </button>
+              )
+            })}
+            <div className="relative pt-1" ref={addMenuRef}>
+              <button
+                type="button"
+                onClick={() => setShowAddMenu(!showAddMenu)}
+                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 transition hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300"
+              >
+                <Plus size={14} />添加
+              </button>
+              {showAddMenu && (
+                <div className="absolute bottom-full left-0 z-20 mb-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
+                  <button onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><Bird size={12} className="text-blue-400" />飞书</button>
+                  <button onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><MessageSquare size={12} className="text-green-400" />微信</button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        <p className="text-xs text-gray-600">
-          每个通道绑定一个 Agent 资源与独立模型；通道配置保存后 Daemon 将自动重启生效。
-          {channels.length > 1 && "拖动左侧把手可调整顺序，首页通道树同步生效（仅排序不重启）。"}
-        </p>
+        </aside>
 
-        <SortableList
-          items={channels}
-          getId={(c) => c.id}
-          onReorder={persistChannels}
-          renderItem={(c, { grip }) => {
-            const st = statusMap[c.id]
-            const resource = resources.find((r) => r.id === c.agentResourceId)
-            const credMissing = c.type === "feishu" ? !(c.larkAppId && c.larkAppSecret) : !c.wechatToken
-            return (
-              <div className="rounded-lg border border-gray-700 px-4 py-3 transition hover:border-gray-600">
-                <div className="flex items-center justify-between">
-                  <div className="flex min-w-0 items-center gap-3">
-                    {grip}
-                    {c.type === "feishu" ? <Bird size={16} className="shrink-0 text-blue-400" /> : <MessageSquare size={16} className="shrink-0 text-green-400" />}
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-medium">{c.name}</p>
-                        {!c.enabled
-                          ? <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">已停用</span>
-                          : credMissing
-                            ? <span className="shrink-0 rounded bg-yellow-900/40 px-1.5 py-0.5 text-[10px] text-yellow-400">凭据未配置</span>
-                            : st
-                              ? <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${st.connected ? "bg-green-900/40 text-green-400" : "bg-yellow-900/40 text-yellow-400"}`}>{st.connected ? "已连接" : st.status}</span>
-                              : <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">未运行</span>}
-                        {c.mainUserEnabled && c.mainUserChatId && <span className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] text-blue-400">主用户已绑定</span>}
-                        {c.allowOthers && <span className="shrink-0 rounded bg-emerald-900/40 px-1.5 py-0.5 text-[10px] text-emerald-400">其他人可用</span>}
-                      </div>
-                      <p className="flex items-center gap-1 truncate text-xs text-gray-500">
-                        {c.type === "feishu" && c.larkAppId && (
-                          <>
-                            <a
-                              href={`https://open.feishu.cn/app/${c.larkAppId}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={`打开飞书开发者后台 (${c.larkAppId})`}
-                              className="inline-flex shrink-0 items-center gap-0.5 text-blue-400/80 hover:text-blue-300 hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {st?.botName || c.larkBotName || c.larkAppId.slice(0, 12) + "…"}
-                              <ExternalLink size={10} />
-                            </a>
-                            <span className="text-gray-700">·</span>
-                          </>
-                        )}
-                        <span className="truncate">{resource?.name ?? "Cursor CLI"} · 主模型 {modelSlug(c.model, c.modelParams) || "auto"}{c.othersModel ? ` · 其他人 ${modelSlug(c.othersModel, c.othersModelParams)}` : ""}{c.workspaceDir ? ` · 📁${c.workspaceDir.split(/[\\/]/).pop()}` : ""}</span>
-                      </p>
-                    </div>
-                  </div>
-                  <div className="ml-3 flex shrink-0 items-center gap-2">
-                    <button onClick={() => openEdit(c)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white"><Pencil size={13} /></button>
-                    <button onClick={() => void handleDelete(c)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400"><Trash2 size={13} /></button>
-                    <button
-                      onClick={() => void handleToggle(c.id)}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${c.enabled ? "bg-green-500" : "bg-gray-600"}`}
-                    >
-                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${c.enabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
-                    </button>
-                  </div>
+        {/* 右侧编辑区（独立滚动） */}
+        <div className={PANEL_MAIN}>
+          {draft ? (
+            <>
+              <ChannelDetailForm
+                channel={draft}
+                isNew={isNewChannel}
+                resources={resources}
+                onChange={setDraft}
+                onSaveDraft={persistDraft}
+                showAlert={showAlert}
+                showConfirm={showConfirm}
+              />
+              <div className={PANEL_FOOTER}>
+                <div className="flex items-center gap-2">
+                  {!isNewChannel && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteCurrent()}
+                        className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-950/30"
+                      ><Trash2 size={13} />删除</button>
+                      <button
+                        type="button"
+                        onClick={() => setDraft({ ...draft, enabled: !draft.enabled })}
+                        className={`rounded-md px-2.5 py-1.5 text-xs transition ${draft.enabled ? "text-green-400 hover:bg-gray-800" : "text-gray-500 hover:bg-gray-800"}`}
+                      >{draft.enabled ? "已启用" : "已停用"}</button>
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => void handleSave(draft)} disabled={!draft.name.trim()}
+                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                    {justSaved ? "已保存" : "保存"}
+                  </button>
                 </div>
               </div>
-            )
-          }}
-        />
-        {channels.length === 0 && (
-            <div className="grid grid-cols-2 gap-3 py-2">
-              <button
-                onClick={() => openAdd("feishu")}
-                className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-600 px-4 py-8 transition hover:border-blue-500 hover:bg-blue-950/20"
-              >
-                <Bird size={28} className="text-blue-400" />
-                <span className="text-sm font-medium text-gray-200">飞书通道</span>
-                <span className="text-center text-xs text-gray-500">通过飞书自建应用收发消息<br />支持私聊和群聊</span>
-                <span className="mt-1 rounded-md bg-blue-600/20 px-3 py-1 text-xs font-medium text-blue-300">点击创建</span>
-              </button>
-              <button
-                onClick={() => openAdd("wechat")}
-                className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-600 px-4 py-8 transition hover:border-green-500 hover:bg-green-950/20"
-              >
-                <MessageSquare size={28} className="text-green-400" />
-                <span className="text-sm font-medium text-gray-200">微信通道</span>
-                <span className="text-center text-xs text-gray-500">扫码绑定 ClawBot 接入微信<br />支持私聊</span>
-                <span className="mt-1 rounded-md bg-green-600/20 px-3 py-1 text-xs font-medium text-green-300">点击创建</span>
-              </button>
-            </div>
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择通道</div>
           )}
-      </section>
-
-      {editing && (
-        <ChannelEditModal
-          channel={editing}
-          isNew={isNew}
-          resources={resources}
-          onClose={() => setEditing(null)}
-          onSave={async (c) => { await handleSave(c); setEditing(null) }}
-          onSaveDraft={async (c) => { await handleSave(c); setEditing({ ...c }) }}
-          showAlert={showAlert}
-          showConfirm={showConfirm}
-        />
-      )}
+        </div>
+      </div>
       {ModalPortal}
     </>
   )
 }
 
-// ── 通道编辑弹窗 ──────────────────────────────────────────
+// ── 通道详情表单（内嵌于二级导航右侧） ──────────────────────
 
-interface EditProps {
+interface DetailProps {
   channel: ChannelConfig
   isNew: boolean
   resources: AgentResource[]
-  onClose: () => void
-  onSave: (c: ChannelConfig) => Promise<void>
-  /** 保存但不关闭（绑定主用户前需先落库） */
+  onChange: (c: ChannelConfig) => void
+  /** 保存但不校验（绑定主用户前需先落库） */
   onSaveDraft: (c: ChannelConfig) => Promise<void>
   showAlert: (title: string, message: string) => Promise<void>
-  showConfirm: (title: string, message: string) => Promise<boolean>
+  showConfirm: (title: string, message: string, okLabel?: string, cancelLabel?: string) => Promise<boolean>
 }
 
 /** 通道名仍是默认占位（"飞书"/"飞书 2"…）时允许用解析出的应用名自动覆盖 */
@@ -249,10 +274,10 @@ function isDefaultChannelName(name: string): boolean {
   return !name.trim() || /^飞书( \d+)?$/.test(name.trim()) || /^微信( \d+)?$/.test(name.trim())
 }
 
-function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDraft, showAlert, showConfirm }: EditProps) {
-  const [draft, setDraft] = useState<ChannelConfig>(channel)
+function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, showAlert, showConfirm }: DetailProps) {
+  const draft = channel
+  const set = (p: Partial<ChannelConfig>) => onChange({ ...draft, ...p })
   const [showSecret, setShowSecret] = useState(false)
-  const [showAdvanced, setShowAdvanced] = useState(false)
   const [appInfoState, setAppInfoState] = useState<{ checking: boolean; error?: string }>({ checking: false })
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
@@ -268,8 +293,6 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
   const [wechatQrStatus, setWechatQrStatus] = useState<"idle" | "loading" | "wait" | "scaned" | "error">("idle")
   const [wechatQrMsg, setWechatQrMsg] = useState("")
   const wechatQrBusy = useRef(false)
-
-  const set = (p: Partial<ChannelConfig>) => setDraft((d) => ({ ...d, ...p }))
 
   const resource = resources.find((r) => r.id === draft.agentResourceId) ?? resources[0]
 
@@ -320,14 +343,14 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
       if (cancelled) return
       if (r.ok && r.name) {
         setAppInfoState({ checking: false })
-        setDraft((d) => ({
-          ...d,
+        onChange({
+          ...draft,
           larkBotName: r.name,
-          name: isDefaultChannelName(d.name) ? r.name! : d.name,
-        }))
+          name: isDefaultChannelName(draft.name) ? r.name! : draft.name,
+        })
       } else {
         setAppInfoState({ checking: false, error: r.error })
-        setDraft((d) => ({ ...d, larkBotName: "" }))
+        onChange({ ...draft, larkBotName: "" })
       }
     }, 600)
     return () => { cancelled = true; clearTimeout(t) }
@@ -392,8 +415,9 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
       await onSaveDraft({ ...draft, mainUserEnabled: true })
       const r = await window.electronAPI.startChannelBind(draft.id)
       if (r.ok && r.chatId) {
-        set({ mainUserEnabled: true, mainUserChatId: r.chatId })
-        await onSaveDraft({ ...draft, mainUserEnabled: true, mainUserChatId: r.chatId })
+        const next = { ...draft, mainUserEnabled: true, mainUserChatId: r.chatId }
+        onChange(next)
+        await onSaveDraft(next)
       } else if (r.error && r.error !== "cancelled") {
         void showAlert("绑定失败", r.error)
       }
@@ -438,17 +462,8 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "85vh" }}>
-        <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-gray-200">
-            {draft.type === "feishu" ? <Bird size={15} className="text-blue-400" /> : <MessageSquare size={15} className="text-green-400" />}
-            {isNew ? "添加" : "编辑"}{draft.type === "feishu" ? "飞书" : "微信"}通道
-          </h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white"><X size={16} /></button>
-        </div>
-
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+    <div className="flex flex-1 flex-col overflow-hidden">
+      <div className={PANEL_SCROLL_FLAT}>
           {/* 名称 */}
           <div>
             <label className="mb-1 block text-xs text-gray-500">通道名称</label>
@@ -457,7 +472,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
 
           {/* ── 凭据 ── */}
           {draft.type === "feishu" ? (
-            <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+            <section className={sectionCls}>
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-medium text-gray-400">飞书凭据</h4>
                 <div className="flex items-center gap-2">
@@ -525,9 +540,9 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
               {appInfoState.checking && <p className="flex items-center gap-1.5 text-xs text-gray-500"><Loader2 size={11} className="animate-spin" />正在识别应用...</p>}
               {!appInfoState.checking && draft.larkBotName && <p className="flex items-center gap-1.5 text-xs text-green-400"><CheckCircle2 size={12} />已识别应用：{draft.larkBotName}</p>}
               {!appInfoState.checking && appInfoState.error && <p className="flex items-center gap-1.5 text-xs text-red-400"><ShieldAlert size={12} />{appInfoState.error}</p>}
-            </div>
+            </section>
           ) : (
-            <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+            <section className={sectionCls}>
               <h4 className="text-xs font-medium text-gray-400">微信账号</h4>
               {draft.wechatToken && wechatQrStatus === "idle" ? (
                 <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2">
@@ -558,21 +573,20 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
                   )}
                 </div>
               )}
-            </div>
+            </section>
           )}
 
           {/* ── Agent 资源与模型 ── */}
-          <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+          <section className={sectionCls}>
             <h4 className="text-xs font-medium text-gray-400">Agent 资源与模型</h4>
             <div>
               <label className="mb-1 block text-xs text-gray-500">Agent 资源</label>
               <select value={draft.agentResourceId} onChange={(e) => set({ agentResourceId: e.target.value })} className={inputCls}>
                 {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
               </select>
-              {resource?.type === "sdk" && <p className="mt-1 text-xs text-amber-500/80">⚠ SDK 不支持单独设置代理，请根据网络环境选择模型或使用 TUN 模式。</p>}
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500">主模型 <span className="text-gray-600">— 主用户私聊 / 定时任务默认</span></label>
+              <label className="mb-1 block text-xs text-gray-500">主模型</label>
               {loadingModels
                 ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-gray-500"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
                 : modelOptions.length > 0
@@ -586,7 +600,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
                   : <input type="text" value={modelOptLabel(draft.model, draft.modelParams)} onChange={(e) => set({ model: e.target.value, modelParams: "" })} placeholder="auto" className={inputCls} />}
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500">其他人模型 <span className="text-gray-600">— 其他用户私聊 & 群聊</span></label>
+              <label className="mb-1 block text-xs text-gray-500">其他人模型</label>
               {loadingModels
                 ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-gray-500"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
                 : modelOptions.length > 0
@@ -599,15 +613,12 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
                     />
                   : <input type="text" value={modelOptLabel(draft.othersModel, draft.othersModelParams)} onChange={(e) => set({ othersModel: e.target.value, othersModelParams: "" })} placeholder="留空则跟随主模型" className={inputCls} />}
             </div>
-          </div>
+          </section>
 
           {/* ── 会话保活模式 ── */}
-          <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+          <section className={sectionCls}>
             <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-medium text-gray-400">保留会话</h4>
-                <p className="text-xs text-gray-600">回答结束后保留会话上下文，新消息自动恢复延续对话（应用重启也不丢）；关闭后每条消息都是全新会话</p>
-              </div>
+              <h4 className="text-xs font-medium text-gray-400">保留会话</h4>
               <button onClick={() => set({ keepSession: !(draft.keepSession ?? true) })}
                 className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSession ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSession ?? true) ? "left-[18px]" : "left-0.5"}`} />
@@ -615,10 +626,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
             </div>
             {(draft.keepSession ?? true) && (
               <div className="flex items-center justify-between border-t border-gray-800 pt-3">
-                <div>
-                  <p className="text-xs text-gray-400">保持长连接 <span className="ml-1 rounded bg-blue-900/50 px-1.5 py-0.5 text-[10px] text-blue-300">次数套餐用户推荐</span></p>
-                  <p className="text-xs text-gray-600">无限轮询保活，有新消息立即处理，会话期间多条消息共享一次额度；关闭后回答完即结束回合、新消息重新冷启动</p>
-                </div>
+                <p className="text-xs text-gray-400">保持长连接</p>
                 <button onClick={() => set({ persistentPoll: !(draft.persistentPoll ?? true) })}
                   className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPoll ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
                   <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPoll ?? true) ? "left-[18px]" : "left-0.5"}`} />
@@ -627,10 +635,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
             )}
             {draft.type === "feishu" && (
               <div className="flex items-center justify-between border-t border-gray-800 pt-3">
-                <div>
-                  <p className="text-xs text-gray-400">展示思考过程</p>
-                  <p className="text-xs text-gray-600">开启：显示 AI 工作过程中的思考与步骤；关闭：静默处理，只收到最终回复</p>
-                </div>
+                <p className="text-xs text-gray-400">展示思考过程</p>
                 <button onClick={() => set({ showThinking: !(draft.showThinking ?? true) })}
                   className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinking ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
                   <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinking ?? true) ? "left-[18px]" : "left-0.5"}`} />
@@ -640,10 +645,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
             {draft.type === "feishu" && (draft.showThinking ?? true) && (
               <>
               <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
-                <div>
-                  <p className="text-xs text-gray-400">思考/工具块保留数</p>
-                  <p className="text-xs text-gray-600">流式卡各保留最近 N 个思考块与工具块（1–20，默认 5），保存后立即生效</p>
-                </div>
+                <p className="text-xs text-gray-400">思考/工具块保留数</p>
                 <input
                   type="number"
                   min={1}
@@ -657,10 +659,7 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
                 />
               </div>
               <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
-                <div>
-                  <p className="text-xs text-gray-400">完整回复后隐藏思考过程</p>
-                  <p className="text-xs text-gray-600">开启：流式过程中可见思考/工具，完成后只保留正文；关闭：完成后仍保留折叠块</p>
-                </div>
+                <p className="text-xs text-gray-400">回复后隐藏思考</p>
                 <button onClick={() => set({ hideThinkingOnFinish: !(draft.hideThinkingOnFinish ?? true) })}
                   className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinish ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
                   <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinish ?? true) ? "left-[18px]" : "left-0.5"}`} />
@@ -668,54 +667,58 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
               </div>
               </>
             )}
-          </div>
+          </section>
 
-          {/* ── 主用户绑定 ── */}
-          <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+          {/* ── 主用户 ── */}
+          <section className={sectionCls}>
             <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-medium text-gray-400">主用户绑定 <span className="font-normal text-gray-600">— 让机器人认识"你"</span></h4>
-                <p className="text-xs text-gray-600">绑定你自己的账号后：你私聊机器人 = 直接指挥工作文件夹里的 AI，聊天记忆一直保留。不绑定的话，谁发消息都只能在临时文件夹里干活，碰不到你的项目</p>
-              </div>
+              <h4 className="text-xs font-medium text-gray-400">主用户</h4>
               <button onClick={() => set({ mainUserEnabled: !draft.mainUserEnabled })}
                 className={`relative h-5 w-9 shrink-0 rounded-full transition ${draft.mainUserEnabled ? "bg-blue-600" : "bg-gray-600"}`}>
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${draft.mainUserEnabled ? "left-[18px]" : "left-0.5"}`} />
               </button>
             </div>
             {draft.mainUserEnabled && (
-              <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2.5">
-                {binding
-                  ? <>
-                      <Loader2 size={14} className="animate-spin text-blue-400" />
-                      <span className="flex-1 text-xs text-blue-300">请在{draft.type === "feishu" ? "飞书" : "微信"}私聊中向机器人发送一条消息...</span>
-                      <button type="button" onClick={() => void cancelBind()} className="text-xs text-gray-500 hover:text-red-400">取消</button>
-                    </>
-                  : draft.mainUserChatId
+              <>
+                <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2.5">
+                  {binding
                     ? <>
-                        <CheckCircle2 size={14} className="text-green-400" />
-                        <span className="flex-1 truncate text-xs text-gray-300">已绑定 <span className="ml-1 font-mono text-gray-500">{draft.mainUserChatId}</span></span>
-                        <button type="button" onClick={() => void handleBind()} className="text-xs text-gray-500 hover:text-blue-400">重新绑定</button>
-                        <span className="text-gray-700">|</span>
-                        <button type="button" onClick={() => void handleUnbind()} className="text-xs text-gray-500 hover:text-red-400">解绑</button>
-                        <span className="text-gray-700">|</span>
-                        <button type="button" onClick={() => void handleTest()} disabled={testing} className="text-xs text-gray-500 hover:text-green-400 disabled:opacity-50">{testing ? "发送中..." : "测试"}</button>
+                        <Loader2 size={14} className="animate-spin text-blue-400" />
+                        <span className="flex-1 text-xs text-blue-300">请在{draft.type === "feishu" ? "飞书" : "微信"}私聊中向机器人发一条消息…</span>
+                        <button type="button" onClick={() => void cancelBind()} className="text-xs text-gray-500 hover:text-red-400">取消</button>
                       </>
-                    : <>
-                        <ShieldAlert size={14} className="text-yellow-500" />
-                        <span className="flex-1 text-xs text-gray-500">未绑定</span>
-                        <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">绑定</button>
-                      </>}
-              </div>
+                    : draft.mainUserChatId
+                      ? <>
+                          <CheckCircle2 size={14} className="text-green-400" />
+                          <span className="flex-1 truncate text-xs text-gray-300">已绑定</span>
+                          <button type="button" onClick={() => void handleBind()} className="text-xs text-gray-500 hover:text-blue-400">重新绑定</button>
+                          <button type="button" onClick={() => void handleUnbind()} className="text-xs text-gray-500 hover:text-red-400">解绑</button>
+                          <button type="button" onClick={() => void handleTest()} disabled={testing} className="text-xs text-gray-500 hover:text-green-400 disabled:opacity-50">{testing ? "…" : "测试"}</button>
+                        </>
+                      : <>
+                          <ShieldAlert size={14} className="text-yellow-500" />
+                          <span className="flex-1 text-xs text-gray-500">未绑定</span>
+                          <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">绑定</button>
+                        </>}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">工作目录</label>
+                  <div className="flex items-center gap-2">
+                    <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-gray-700 px-3 py-2 transition hover:border-blue-500">
+                      <FolderOpen size={14} className="text-blue-400" />
+                      <span className="truncate text-xs">{draft.workspaceDir || "点击选择…"}</span>
+                    </div>
+                    {draft.workspaceDir && <button onClick={() => set({ workspaceDir: "" })} className="text-xs text-gray-500 hover:text-red-400">清除</button>}
+                  </div>
+                </div>
+              </>
             )}
-          </div>
+          </section>
 
-          {/* ── 其他人使用 ── */}
-          <div className="space-y-3 rounded-lg border border-gray-800 p-3">
+          {/* ── 其他人 ── */}
+          <section className={sectionCls}>
             <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-xs font-medium text-gray-400">允许其他人使用</h4>
-                <p className="text-xs text-gray-600">开启后别人也能私聊机器人、在群里 @它。放心：他们的 AI 在单独的临时文件夹里干活，看不到也改不了你的项目文件</p>
-              </div>
+              <h4 className="text-xs font-medium text-gray-400">允许其他人使用</h4>
               <button onClick={() => set({ allowOthers: !draft.allowOthers })}
                 className={`relative h-5 w-9 shrink-0 rounded-full transition ${draft.allowOthers ? "bg-blue-600" : "bg-gray-600"}`}>
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${draft.allowOthers ? "left-[18px]" : "left-0.5"}`} />
@@ -724,40 +727,11 @@ function ChannelEditModal({ channel, isNew, resources, onClose, onSave, onSaveDr
             {draft.allowOthers && (
               <div>
                 <label className="mb-1 block text-xs text-gray-500">对外身份规则</label>
-                <textarea value={draft.digitalIdentity} onChange={(e) => set({ digitalIdentity: e.target.value })} rows={5} placeholder="定义 Agent 面向该通道其他用户时的角色、职责与行为规范...&#10;留空则不注入" className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none" />
-                <p className="mt-1 text-xs text-gray-600">该通道其他人触发的会话启动时，将此内容作为 Agent 身份规则注入</p>
+                <textarea value={draft.digitalIdentity} onChange={(e) => set({ digitalIdentity: e.target.value })} rows={4} placeholder="角色与行为规范…" className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none" />
               </div>
             )}
-          </div>
-
-          {/* ── 高级设置 ── */}
-          <div className="rounded-lg border border-gray-800">
-            <button onClick={() => setShowAdvanced(!showAdvanced)} className="flex w-full items-center justify-between px-3 py-2 text-left text-xs text-gray-400 hover:text-gray-200">
-              <span>高级设置</span>
-              {showAdvanced ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-            </button>
-            {showAdvanced && (
-              <div className="space-y-3 border-t border-gray-800 px-3 py-3">
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">通道工作目录 <span className="text-gray-600">— 留空使用全局主工作目录</span></label>
-                  <div className="flex items-center gap-2">
-                    <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-gray-700 px-3 py-2 transition hover:border-blue-500">
-                      <FolderOpen size={14} className="text-blue-400" />
-                      <span className="truncate text-xs">{draft.workspaceDir || "（全局默认）"}</span>
-                    </div>
-                    {draft.workspaceDir && <button onClick={() => set({ workspaceDir: "" })} className="text-xs text-gray-500 hover:text-red-400">清除</button>}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          </section>
         </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-gray-800 px-6 py-4">
-          <button onClick={onClose} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
-          <button onClick={() => void onSave(draft)} disabled={!draft.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-        </div>
-      </div>
     </div>
   )
 }

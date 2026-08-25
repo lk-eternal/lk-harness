@@ -42,7 +42,7 @@ import {
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, buildNotifySessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, buildNotifySessionKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
 import { initSessionModelStore, setSessionOverride } from "./shared/session-model-store.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -151,6 +151,7 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
 
 /** 会话收尾模式：poll 响应随路下发（模型以最近一次响应为准，免疫长上下文衰减） */
 function resolveKeepAlive(sessionKey: string): boolean {
+  if (isIndependentTaskSessionKey(sessionKey, readTasks())) return false;
   let channelId = channelIdFromSessionKey(sessionKey);
   if (!channelId) {
     const chatKey = sessionToChatMap.get(sessionKey);
@@ -1178,6 +1179,37 @@ function sanitizePollMessages(messages: QueueMessage[]): QueueMessage[] {
   });
 }
 
+async function stopChannelRuntime(channelId: string): Promise<boolean> {
+  const rt = channels.get(channelId);
+  if (!rt) return false;
+  const name = rt.cfg.name;
+  if (rt.cfg.type === "feishu") {
+    rt.sender?.closeConnection(true);
+    rt.feishuConnected = false;
+  } else if (rt.wechat) {
+    await rt.wechat.stop();
+  }
+  channels.delete(channelId);
+  channelKeepAlive.delete(channelId);
+  log("INFO", `[${name}] 通道已停用`);
+  return true;
+}
+
+async function startChannelRuntime(cfg: DaemonChannelConfig): Promise<void> {
+  if (channels.has(cfg.id)) await stopChannelRuntime(cfg.id);
+  const rt: ChannelRuntime = { cfg, lastP2pChatId: null, bindArmed: false };
+  channels.set(cfg.id, rt);
+  channelKeepAlive.set(cfg.id, cfg.keepAlive ?? true);
+  if (cfg.type === "feishu") {
+    await startFeishuChannel(rt);
+  } else {
+    loadWechatState(rt);
+    rt.wechat = initWeChatChannel(rt);
+    await rt.wechat.start(cfg.wechatToken ?? "", cfg.wechatAccountId);
+  }
+  log("INFO", `[${cfg.name}] 通道已启用`);
+}
+
 async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
   const { appId, appSecret } = rt.cfg;
   if (!appId || !appSecret) { log("ERROR", `[${rt.cfg.name}] 飞书凭据未配置`); return; }
@@ -1595,6 +1627,9 @@ function buildCardSegmentsFromPayload(
     } else if (seg.text.trim()) {
       out.push({ type: "reply", text: seg.text });
     }
+  }
+  if (stripFoldables && !out.some((s) => s.type === "reply" && s.text.trim())) {
+    out.push({ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER });
   }
   // 展开最近 2 个折叠块（思考/工具并排可见）；收口后也保持
   let n = 0;
@@ -2470,6 +2505,10 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     };
   }
 
+  if (value?.kind === "dismiss") {
+    return { card: { type: "raw", data: LarkSender.buildDismissedCard() } };
+  }
+
   if (value?.kind === "cmd") {
     const cmd = String(value.cmd ?? "").trim();
     if (!cmd || !isCommand(cmd)) return { toast: { type: "error", content: "无效指令" } };
@@ -2727,6 +2766,8 @@ async function replyToMessage(
     sessionKey?: string;
     /** 原卡更新：patch 该卡片替代新发消息（仅飞书；失败自动回退新发） */
     patchMessageId?: string;
+    /** 指令菜单卡：追加 ✕ 关闭按钮（普通 Agent 回复不应开启） */
+    offerDismiss?: boolean;
   },
 ): Promise<void> {
   // 优先显式 chatId；缺省时从消息路由表找回，禁止 allowDefault 兜底到别的通道（防微信指令回飞书）
@@ -2790,33 +2831,34 @@ async function replyToMessage(
   // 群聊指令卡保留 reply（多人并发指令要对得上号）；p2p 直发去引用条
   const replyId = shouldReplyToMessage(ch, messageId) ? messageId : undefined;
   const mapBtns = (list?: { label: string; cmd: string; section?: string }[]): CardButton[] =>
-    (list ?? []).slice(0, 20).map((b) => ({
+    (list ?? []).map((b) => ({
       label: b.label, value: { kind: "cmd", cmd: b.cmd }, type: "default" as const, section: b.section,
     }));
   const cardSections = opts?.sections?.map((s) => ({ text: s.text, buttons: mapBtns(s.buttons) }));
   // 原卡更新：patch 点击来源卡片，成功即结束；失败回退新发
+  const offerDismiss = opts?.offerDismiss ?? false;
   if (opts?.patchMessageId && !opts.patchMessageId.startsWith("internal_")) {
-    const patched = await sender.patchCard(opts.patchMessageId, text, title, headerTemplate, undefined, mapBtns(buttons), cardSections);
+    const patched = await sender.patchCard(opts.patchMessageId, text, title, headerTemplate, undefined, mapBtns(buttons), cardSections, offerDismiss);
     if (patched) return;
     log("WARN", `原卡更新失败，回退新发消息 (${opts.patchMessageId})`);
   }
   if ((buttons && buttons.length > 0) || (cardSections && cardSections.length > 0)) {
     const btns = mapBtns(buttons);
-    let sent = await sender.sendCardWithButtons(text, btns, replyId, ch.chatId, title, undefined, headerTemplate, undefined, cardSections);
+    let sent = await sender.sendCardWithButtons(text, btns, replyId, ch.chatId, title, undefined, headerTemplate, undefined, cardSections, offerDismiss);
     if (sent === undefined && replyId && ch.chatId) {
-      sent = await sender.sendCardWithButtons(text, btns, undefined, ch.chatId, title, undefined, headerTemplate, undefined, cardSections);
+      sent = await sender.sendCardWithButtons(text, btns, undefined, ch.chatId, title, undefined, headerTemplate, undefined, cardSections, offerDismiss);
     }
     if (typeof sent === "string" && opts?.sessionKey) trackMessageSession(sent, opts.sessionKey);
     return;
   }
   let sentTextId: string | undefined | null;
   if (replyId) {
-    sentTextId = await sender.replyMessage(replyId, text, title, headerTemplate);
-    if (!sentTextId && ch.chatId) sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate);
+    sentTextId = await sender.replyMessage(replyId, text, title, headerTemplate, offerDismiss);
+    if (!sentTextId && ch.chatId) sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, offerDismiss);
   } else if (ch.chatId) {
-    sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate);
+    sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, offerDismiss);
   } else if (messageId && !messageId.startsWith("internal_")) {
-    sentTextId = await sender.replyMessage(messageId, text, title, headerTemplate);
+    sentTextId = await sender.replyMessage(messageId, text, title, headerTemplate, offerDismiss);
   }
   if (typeof sentTextId === "string" && opts?.sessionKey) trackMessageSession(sentTextId, opts.sessionKey);
 }
@@ -3173,6 +3215,29 @@ function startHttpServer(): Promise<number> {
           return;
         }
 
+        if (method === "POST" && pathname === "/api/channel-lifecycle") {
+          const body = JSON.parse(await readBody(req)) as { action?: string; id?: string; channel?: DaemonChannelConfig };
+          if (body.action === "stop") {
+            const id = typeof body.id === "string" ? body.id.trim() : "";
+            if (!id) { json(res, { ok: false, error: "id required" }, 400); return; }
+            json(res, { ok: await stopChannelRuntime(id) });
+            return;
+          }
+          if (body.action === "start") {
+            const cfg = body.channel;
+            if (!cfg?.id || !cfg.type) { json(res, { ok: false, error: "channel required" }, 400); return; }
+            try {
+              await startChannelRuntime(cfg);
+              json(res, { ok: true });
+            } catch (e: unknown) {
+              json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+            }
+            return;
+          }
+          json(res, { ok: false, error: "unknown action" }, 400);
+          return;
+        }
+
         if (method === "POST" && pathname === "/enqueue") {
           const body = JSON.parse(await readBody(req));
           const content = typeof body.content === "string" ? body.content : "";
@@ -3327,6 +3392,7 @@ function startHttpServer(): Promise<number> {
               sections: body.sections,
               sessionKey: body.sessionKey,
               patchMessageId: body.patchMessageId,
+              offerDismiss: true,
             });
           }
           json(res, { ok: true });
@@ -4590,19 +4656,9 @@ export async function daemonMain(): Promise<void> {
   startMediaCacheCleanup();
 
   for (const cfg of CHANNEL_CONFIGS) {
-    const rt: ChannelRuntime = { cfg, lastP2pChatId: null, bindArmed: false };
-    channels.set(cfg.id, rt);
-    if (cfg.type === "feishu") {
-      startFeishuChannel(rt).catch((e: any) => {
-        log("ERROR", `[${cfg.name}] 飞书通道启动失败: ${e?.message ?? e}`);
-      });
-    } else {
-      loadWechatState(rt);
-      rt.wechat = initWeChatChannel(rt);
-      rt.wechat.start(cfg.wechatToken, cfg.wechatAccountId).catch((e: any) => {
-        log("WARN", `[WeChat:${cfg.name}] 启动失败: ${e?.message ?? e}`);
-      });
-    }
+    startChannelRuntime(cfg).catch((e: unknown) => {
+      log("ERROR", `[${cfg.name}] 通道启动失败: ${e instanceof Error ? e.message : e}`);
+    });
   }
   startFeishuWsWatchdog();
 

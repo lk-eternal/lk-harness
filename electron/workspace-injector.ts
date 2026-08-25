@@ -257,12 +257,20 @@ export async function injectWorkspaceToDir(
 }
 
 export async function injectWorkspaceMcpAndRules(): Promise<{ mcpOk: boolean; ruleOk: boolean; skillOk: boolean }> {
-  const config = getConfig()
   const mcpOk = await injectMcpGlobal()
-  if (!config.workspaceDir) return { mcpOk, ruleOk: false, skillOk: false }
-  injectMcpAdminToDir(config.workspaceDir)
-  const ruleOk = injectRulesToDir(config.workspaceDir, true)
-  const skillOk = injectSkillsToDir(config.workspaceDir)
+  const dirs = [...new Set(
+    (getConfig().channels ?? [])
+      .map((c) => c.workspaceDir?.trim())
+      .filter((w): w is string => !!w && fs.existsSync(w)),
+  )]
+  if (dirs.length === 0) return { mcpOk, ruleOk: false, skillOk: false }
+  let ruleOk = false
+  let skillOk = false
+  for (const dir of dirs) {
+    injectMcpAdminToDir(dir)
+    ruleOk = injectRulesToDir(dir, true) || ruleOk
+    skillOk = injectSkillsToDir(dir) || skillOk
+  }
   return { mcpOk, ruleOk, skillOk }
 }
 
@@ -318,14 +326,21 @@ function injectFile(filePath: string, content: string, forceUpdate = false): Inj
 }
 
 export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
-  const config = getConfig()
-  if (!config.workspaceDir) {
-    return { results: [{ file: "", action: "skipped", message: "工作目录未配置" }] }
+  const dirs = [...new Set(
+    (getConfig().channels ?? [])
+      .map((c) => c.workspaceDir?.trim())
+      .filter((w): w is string => !!w && fs.existsSync(w)),
+  )]
+  if (dirs.length === 0) {
+    return { results: [{ file: "", action: "skipped", message: "无通道工作目录" }] }
   }
-  const result = injectFile(
-    path.join(config.workspaceDir, ".cursor", "skills", "cursor-claw-admin", "SKILL.md"),
-    ADMIN_SKILL_CONTENT,
-    true,
-  )
-  return { results: [result] }
+  const results: InjectResult[] = []
+  for (const dir of dirs) {
+    results.push(injectFile(
+      path.join(dir, ".cursor", "skills", "cursor-claw-admin", "SKILL.md"),
+      ADMIN_SKILL_CONTENT,
+      true,
+    ))
+  }
+  return { results }
 }

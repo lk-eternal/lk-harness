@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from "electron"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
-import { getConfig, saveConfig, migrateSecretsToSafeStorage } from "./config-store"
+import { getConfig, saveConfig, migrateSecretsToSafeStorage, primaryWorkspaceForCli } from "./config-store"
 import {
   startDaemon,
   stopDaemon,
@@ -34,8 +34,23 @@ import {
   getMcpEnabledMap,
   getMcpServerTools,
   getMcpStatusMap,
+  warmupMcpCache,
 } from "./mcp-manager"
 import { injectWorkspace } from "./workspace-injector"
+import {
+  listSkillRoots,
+  listSkills,
+  listSkillTree,
+  resolveSkillDir,
+  resolveSkillFile,
+  resolveRootAbs,
+} from "./skill-store"
+import {
+  listRuleRoots,
+  listRules,
+  saveRule as saveRuleFile,
+  deleteRule as deleteRuleFile,
+} from "./rule-store"
 import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
@@ -217,8 +232,10 @@ function registerIpcHandlers(): void {
     saveMcpServer(name, entry, source)
     return { ok: true }
   })
-  ipcMain.handle("mcp:delete", (_, name: string) => {
-    const server = getMcpServerList().find((s) => s.name === name)
+  ipcMain.handle("mcp:delete", (_, name: string, source?: "global" | "project") => {
+    const server = source
+      ? getMcpServerList().find((s) => s.name === name && s.source === source)
+      : getMcpServerList().find((s) => s.name === name)
     if (!server) return { ok: false, error: "MCP 服务器不存在" }
     return deleteMcpServer(name, server.source)
   })
@@ -226,138 +243,88 @@ function registerIpcHandlers(): void {
   ipcMain.handle("mcp:toggle", (_, name: string, enabled: boolean) => toggleMcpServer(name, enabled))
   ipcMain.handle("mcp:enabled-map", (_, force?: boolean) => getMcpEnabledMap(force ?? false))
   ipcMain.handle("mcp:status-map", (_, force?: boolean) => getMcpStatusMap(force ?? false))
-  ipcMain.handle("mcp:tools", (_, name: string) => getMcpServerTools(name))
+  ipcMain.handle("mcp:tools", (_, name: string, force?: boolean) => getMcpServerTools(name, force ?? false))
 
-  ipcMain.handle("rules:list", () => {
-    const config = getConfig()
-    if (!config.workspaceDir) return []
-    const rulesDir = path.join(config.workspaceDir, ".cursor", "rules")
-    if (!fs.existsSync(rulesDir)) return []
-    return fs.readdirSync(rulesDir)
-      .filter((f) => f.endsWith(".mdc") || f.endsWith(".md"))
-      .map((f) => ({
-        name: f,
-        content: fs.readFileSync(path.join(rulesDir, f), "utf-8"),
-      }))
+  ipcMain.handle("rules:roots", () => listRuleRoots())
+  ipcMain.handle("rules:list", (_, rootId = "cursor") => listRules(String(rootId)))
+  ipcMain.handle("rules:save", (_, rootId: string, name: string, content: string) => ({
+    ok: saveRuleFile(String(rootId), name, content),
+  }))
+  ipcMain.handle("rules:delete", (_, rootId: string, name: string) => ({
+    ok: deleteRuleFile(String(rootId), name),
+  }))
+
+  ipcMain.handle("skills:roots", () => listSkillRoots())
+
+  ipcMain.handle("skills:list", (_, rootId = "cursor") => {
+    return listSkills(String(rootId)).map((s) => ({
+      rootId: s.rootId,
+      skillPath: s.skillPath,
+      name: s.skillPath,
+      content: s.content,
+    }))
   })
 
-  ipcMain.handle("rules:save", (_, name: string, content: string) => {
-    const config = getConfig()
-    if (!config.workspaceDir) return { ok: false }
-    const rulesDir = path.join(config.workspaceDir, ".cursor", "rules")
-    if (!fs.existsSync(rulesDir)) fs.mkdirSync(rulesDir, { recursive: true })
-    fs.writeFileSync(path.join(rulesDir, name), content, "utf-8")
-    return { ok: true }
-  })
+  ipcMain.handle("skills:tree", (_, rootId = "cursor") => listSkillTree(String(rootId)))
 
-  ipcMain.handle("rules:delete", (_, name: string) => {
-    const config = getConfig()
-    if (!config.workspaceDir) return { ok: false }
-    const filePath = path.join(config.workspaceDir, ".cursor", "rules", name)
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath)
-    return { ok: true }
-  })
-
-  ipcMain.handle("skills:list", () => {
-    const skillsDir = path.join(os.homedir(), ".cursor", "skills")
-    if (!fs.existsSync(skillsDir)) return []
-    return fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => {
-        const skillFile = path.join(skillsDir, d.name, "SKILL.md")
-        return {
-          name: d.name,
-          content: fs.existsSync(skillFile) ? fs.readFileSync(skillFile, "utf-8") : "",
-        }
-      })
-  })
-
-  interface SkillTreeNode {
-    name: string
-    type: "file" | "directory"
-    children?: SkillTreeNode[]
-  }
-
-  function buildTree(dir: string): SkillTreeNode[] {
-    if (!fs.existsSync(dir)) return []
-    return fs.readdirSync(dir, { withFileTypes: true })
-      .sort((a, b) => {
-        if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
-        return a.name.localeCompare(b.name)
-      })
-      .map((entry): SkillTreeNode => {
-        if (entry.isDirectory()) {
-          return { name: entry.name, type: "directory", children: buildTree(path.join(dir, entry.name)) }
-        }
-        return { name: entry.name, type: "file" }
-      })
-  }
-
-  ipcMain.handle("skills:tree", () => {
-    const skillsDir = path.join(os.homedir(), ".cursor", "skills")
-    if (!fs.existsSync(skillsDir)) return []
-    return fs.readdirSync(skillsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((d) => ({
-        name: d.name,
-        type: "directory" as const,
-        children: buildTree(path.join(skillsDir, d.name)),
-      }))
-  })
-
-  ipcMain.handle("skills:read-file", (_, skillName: string, relativePath: string) => {
-    const filePath = path.join(os.homedir(), ".cursor", "skills", skillName, relativePath)
-    if (!fs.existsSync(filePath)) return { ok: false, error: "文件不存在" }
+  ipcMain.handle("skills:read-file", (_, rootId: string, skillPath: string, relativePath: string) => {
+    const filePath = resolveSkillFile(String(rootId), skillPath, relativePath)
+    if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: "文件不存在" }
     return { ok: true, content: fs.readFileSync(filePath, "utf-8") }
   })
 
-  ipcMain.handle("skills:save-file", (_, skillName: string, relativePath: string, content: string) => {
-    const filePath = path.join(os.homedir(), ".cursor", "skills", skillName, relativePath)
+  ipcMain.handle("skills:save-file", (_, rootId: string, skillPath: string, relativePath: string, content: string) => {
+    const filePath = resolveSkillFile(String(rootId), skillPath, relativePath)
+    if (!filePath) return { ok: false, error: "路径无效" }
     const dir = path.dirname(filePath)
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(filePath, content, "utf-8")
     return { ok: true }
   })
 
-  ipcMain.handle("skills:create-dir", (_, skillName: string, relativePath: string) => {
-    const dirPath = path.join(os.homedir(), ".cursor", "skills", skillName, relativePath)
+  ipcMain.handle("skills:create-dir", (_, rootId: string, skillPath: string, relativePath: string) => {
+    const skillDir = resolveSkillDir(String(rootId), skillPath)
+    if (!skillDir) return { ok: false, error: "路径无效" }
+    const dirPath = path.resolve(skillDir, relativePath)
+    if (!dirPath.startsWith(path.resolve(skillDir))) return { ok: false, error: "路径无效" }
     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true })
     return { ok: true }
   })
 
-  ipcMain.handle("skills:delete-file", (_, skillName: string, relativePath: string) => {
-    const filePath = path.join(os.homedir(), ".cursor", "skills", skillName, relativePath)
+  ipcMain.handle("skills:delete-file", (_, rootId: string, skillPath: string, relativePath: string) => {
+    const skillDir = resolveSkillDir(String(rootId), skillPath)
+    if (!skillDir) return { ok: false, error: "路径无效" }
+    const filePath = path.resolve(skillDir, relativePath)
+    if (!filePath.startsWith(path.resolve(skillDir))) return { ok: false, error: "路径无效" }
     if (!fs.existsSync(filePath)) return { ok: false, error: "文件不存在" }
     const stat = fs.statSync(filePath)
-    if (stat.isDirectory()) {
-      fs.rmSync(filePath, { recursive: true, force: true })
-    } else {
-      fs.unlinkSync(filePath)
-    }
+    if (stat.isDirectory()) fs.rmSync(filePath, { recursive: true, force: true })
+    else fs.unlinkSync(filePath)
     return { ok: true }
   })
 
-  ipcMain.handle("skills:save", (_, name: string, content: string) => {
-    const dir = path.join(os.homedir(), ".cursor", "skills", name)
+  ipcMain.handle("skills:save", (_, rootId: string, skillPath: string, content: string) => {
+    const dir = resolveSkillDir(String(rootId), skillPath)
+    if (!dir) return { ok: false, error: "路径无效" }
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf-8")
     return { ok: true }
   })
 
-  ipcMain.handle("skills:rename", (_, oldName: string, newName: string) => {
-    const base = path.join(os.homedir(), ".cursor", "skills")
-    const oldDir = path.join(base, oldName)
-    const newDir = path.join(base, newName)
-    if (!fs.existsSync(oldDir)) return { ok: false, error: "原目录不存在" }
+  ipcMain.handle("skills:rename", (_, rootId: string, oldPath: string, newPath: string) => {
+    const rootAbs = resolveRootAbs(String(rootId))
+    const oldDir = resolveSkillDir(String(rootId), oldPath)
+    if (!rootAbs || !oldDir || !fs.existsSync(oldDir)) return { ok: false, error: "原目录不存在" }
+    const newDir = path.resolve(rootAbs, newPath.replace(/\//g, path.sep))
+    if (!newDir.startsWith(path.resolve(rootAbs))) return { ok: false, error: "路径无效" }
     if (fs.existsSync(newDir)) return { ok: false, error: "目标目录已存在" }
     fs.renameSync(oldDir, newDir)
     return { ok: true }
   })
 
-  ipcMain.handle("skills:delete", (_, name: string) => {
-    const dir = path.join(os.homedir(), ".cursor", "skills", name)
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
+  ipcMain.handle("skills:delete", (_, rootId: string, skillPath: string) => {
+    const dir = resolveSkillDir(String(rootId), skillPath)
+    if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
     return { ok: true }
   })
 
@@ -365,7 +332,7 @@ function registerIpcHandlers(): void {
     const config = getConfig()
     const env: Record<string, string> = { ...process.env as Record<string, string>, NODE_USE_ENV_PROXY: "1" }
     applyProxyEnv(env, config)
-    const ws = config.workspaceDir?.trim() || undefined
+    const ws = primaryWorkspaceForCli()
     const run = await execAgentAsync(["--list-models"], env, { timeoutMs: 30_000, logLabel: "list-models", cwd: ws })
     if (!run.ok) {
       return { ok: false, models: [], error: run.error || run.stderr.trim() || "获取模型列表失败" }
@@ -448,6 +415,7 @@ app.whenReady().then(() => {
   initAppUpdater(() => mainWindow)
   initTray()
   initDaemonManager()
+  warmupMcpCache()
   initToolbox()
 })
 

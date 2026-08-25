@@ -8,6 +8,7 @@ import {
   findScheduledTaskBySessionKey,
   formatScheduledTaskLabel,
   buildNotifySessionKey,
+  isIndependentTaskSessionKey,
   scheduledTaskNotifyPromptLines,
   type ScheduledTask,
 } from "../src/shared/scheduled-task.js"
@@ -109,6 +110,26 @@ describe("buildNotifySessionKey", () => {
   it("缺 notifyChatId 或 channelId 返回 undefined", () => {
     expect(buildNotifySessionKey({ channelId: "ch_a" })).toBeUndefined()
     expect(buildNotifySessionKey({ notifyChatId: "oc_x" })).toBeUndefined()
+  })
+})
+
+describe("isIndependentTaskSessionKey", () => {
+  const tasks = [
+    makeTask({ id: "indep-1", independent: true }),
+    makeTask({ id: "non-indep", independent: false }),
+    makeTask({ id: "default-indep" }),
+  ]
+
+  it("独立任务 id 命中", () => {
+    expect(isIndependentTaskSessionKey("indep-1", tasks)).toBe(true)
+    expect(isIndependentTaskSessionKey("default-indep", tasks)).toBe(true)
+  })
+
+  it("非独立或非法 sessionKey 不命中", () => {
+    expect(isIndependentTaskSessionKey("non-indep", tasks)).toBe(false)
+    expect(isIndependentTaskSessionKey("ch_a|oc_x", tasks)).toBe(false)
+    expect(isIndependentTaskSessionKey("ch_a|oc_x::/tmp", tasks)).toBe(false)
+    expect(isIndependentTaskSessionKey("unknown", tasks)).toBe(false)
   })
 })
 

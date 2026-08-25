@@ -1903,6 +1903,29 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
   }
 }
 
+/** /stop 等主动终止：finish 当前流式卡，避免 Resume 后旧卡与新卡叠内容 */
+async function sealStreamCardForStop(session: SdkSessionAgent): Promise<void> {
+  const agg = session.streamAgg
+  if (!agg?.cardId || agg.finished) {
+    session.streamAgg = null
+    return
+  }
+  if (agg.timer) {
+    clearTimeout(agg.timer)
+    agg.timer = null
+  }
+  sealAllThinking(agg)
+  sealRunningTools(agg)
+  agg.finished = true
+  const finishCardId = agg.cardId
+  session.streamAgg = null
+  try {
+    const payload = buildStreamPayload(agg, session.sessionKey)
+    await postStreamCard(session.sessionKey, "finish", payload, { cardId: finishCardId })
+    patchResumableStreamCard(session.sessionKey, undefined, { onlyIf: finishCardId })
+  } catch { /* best-effort */ }
+}
+
 /** 停止并释放会话：先等 cancel 把 run 落为终态再关进程（直接 close 会残留 active run，拖垮下次 Resume） */
 function releaseSession(s: SdkSessionAgent): Promise<void> {
   // 残留的 poll 连接无需专门收口：新回合的任意 poll 会顶掉它，claimed 消息下次 poll 重新可见
@@ -1924,11 +1947,12 @@ function releaseSession(s: SdkSessionAgent): Promise<void> {
 }
 
 /** 停止会话进程（保留 resume 映射，下条消息仍可续上下文；清上下文用 resetSdkSessionContext） */
-export function stopSdkSession(sessionKey: string): void {
-  const s = sdkSessions.get(sessionKey)
+export async function stopSdkSession(sessionKey: string): Promise<void> {
+  const s = findSdkSessionLoose(sessionKey)
   if (!s) return
-  pushUiLog("SDK", "INFO", `[${sessionKey}] 会话已停止（队列有未回复消息时将自动重新拉起）`)
-  void releaseSession(s)
+  pushUiLog("SDK", "INFO", `[${s.sessionKey}] 会话已停止（队列有未回复消息时将自动重新拉起）`)
+  await sealStreamCardForStop(s)
+  await releaseSession(s)
   broadcastSdkSessionStatus()
 }
 
@@ -1974,8 +1998,12 @@ export function resetSdkSessionContext(sessionKey: string): void {
  * 返回的 Promise 在所有 run 取消落库（或超时）后 resolve——退出前 await 可避免残留 active run。
  */
 export function stopAllSdkSessions(): Promise<void> {
-  const releases = [...sdkSessions.values()].map((s) => releaseSession(s))
+  const sessions = [...sdkSessions.values()]
   pendingLaunches.clear()
+  const releases = sessions.map(async (s) => {
+    await sealStreamCardForStop(s)
+    await releaseSession(s)
+  })
   broadcastSdkSessionStatus()
   return Promise.all(releases).then(() => {})
 }

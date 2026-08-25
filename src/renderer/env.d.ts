@@ -233,24 +233,26 @@ declare global {
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void
     getMcpServers(): Promise<McpServerEntry[]>
     saveMcpServer(name: string, entry: Record<string, unknown>, source: "global" | "project"): Promise<{ ok: boolean }>
-    deleteMcpServer(name: string): Promise<{ ok: boolean }>
+    deleteMcpServer(name: string, source?: "global" | "project"): Promise<{ ok: boolean }>
     loginMcp(name: string): Promise<{ ok: boolean; output: string }>
     toggleMcp(name: string, enabled: boolean): Promise<{ ok: boolean; output: string }>
     getMcpEnabledMap(force?: boolean): Promise<Record<string, boolean>>
     getMcpStatusMap(force?: boolean): Promise<Record<string, string>>
-    getMcpTools(name: string): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
-    getRules(): Promise<{ name: string; content: string }[]>
-    saveRule(name: string, content: string): Promise<{ ok: boolean }>
-    deleteRule(name: string): Promise<{ ok: boolean }>
-    getSkills(): Promise<{ name: string; content: string }[]>
-    getSkillTree(): Promise<SkillTreeNode[]>
-    readSkillFile(skillName: string, relativePath: string): Promise<{ ok: boolean; content?: string; error?: string }>
-    saveSkillFile(skillName: string, relativePath: string, content: string): Promise<{ ok: boolean }>
-    deleteSkillFile(skillName: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
-    createSkillDir(skillName: string, relativePath: string): Promise<{ ok: boolean }>
-    saveSkill(name: string, content: string): Promise<{ ok: boolean }>
-    renameSkill(oldName: string, newName: string): Promise<{ ok: boolean }>
-    deleteSkill(name: string): Promise<{ ok: boolean }>
+    getMcpTools(name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
+    getRuleRoots(): Promise<{ id: string; label: string; path: string; ruleCount: number }[]>
+    getRules(rootId?: string): Promise<{ rootId: string; name: string; content: string }[]>
+    saveRule(rootId: string, name: string, content: string): Promise<{ ok: boolean }>
+    deleteRule(rootId: string, name: string): Promise<{ ok: boolean }>
+    getSkillRoots(): Promise<{ id: string; label: string; path: string; skillCount: number }[]>
+    getSkills(rootId: string): Promise<{ rootId: string; skillPath: string; name: string; content: string }[]>
+    getSkillTree(rootId: string): Promise<SkillTreeNode[]>
+    readSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; content?: string; error?: string }>
+    saveSkillFile(rootId: string, skillPath: string, relativePath: string, content: string): Promise<{ ok: boolean }>
+    deleteSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
+    createSkillDir(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean }>
+    saveSkill(rootId: string, skillPath: string, content: string): Promise<{ ok: boolean }>
+    renameSkill(rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean }>
+    deleteSkill(rootId: string, skillPath: string): Promise<{ ok: boolean }>
     onMcpLoginComplete(cb: (data: { serverName: string; ok: boolean }) => void): () => void
     onDaemonStatus(cb: (status: DaemonStatus) => void): () => void
     onDaemonLog(cb: (line: string) => void): () => void

@@ -10,6 +10,7 @@ import {
   getRepoProfiles,
   type AppConfig,
 } from "./config-store"
+import { collectAllRulesForExport, rulesExportDir } from "./rule-store"
 import { readMcpJson, writeMcpJson, invalidateMcpEnabledCache } from "./mcp-manager"
 import { readTasksFromFile, writeTasksToFile } from "./cron-scheduler"
 import { initProjectStore, getNodeGroups, saveNodeGroups } from "../src/shared/project-store.js"
@@ -26,7 +27,6 @@ export interface ConfigExportManifest {
   exportedAt: string
   appVersion: string
   general: {
-    workspaceDir: string
     favoriteWorkspaces: string[]
     favoriteModels: AppConfig["favoriteModels"]
     autoStart: boolean
@@ -56,7 +56,6 @@ export interface ConfigExportManifest {
   }
   mcp: {
     global: Record<string, unknown> | null
-    project: Record<string, unknown> | null
   }
   tasks: ScheduledTask[]
 }
@@ -75,9 +74,7 @@ function skillsDir(): string {
 }
 
 function rulesDir(): string {
-  const ws = getConfig().workspaceDir?.trim()
-  if (!ws) return ""
-  return path.join(ws, ".cursor", "rules")
+  return rulesExportDir()
 }
 
 function copyDirSync(src: string, dest: string): void {
@@ -111,7 +108,6 @@ function buildManifest(): ConfigExportManifest {
     exportedAt: new Date().toISOString(),
     appVersion: appVersion(),
     general: {
-      workspaceDir: cfg.workspaceDir ?? "",
       favoriteWorkspaces: cfg.favoriteWorkspaces ?? [],
       favoriteModels: cfg.favoriteModels ?? [],
       autoStart: cfg.autoStart ?? false,
@@ -139,7 +135,6 @@ function buildManifest(): ConfigExportManifest {
     },
     mcp: {
       global: readMcpJson("global"),
-      project: readMcpJson("project"),
     },
     tasks: readTasksFromFile(),
   }
@@ -186,12 +181,10 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
     initProjectStore(app.getPath("userData"))
 
     const localCfg = getConfig()
-    const workspaceDir = localCfg.workspaceDir?.trim() ?? ""
-    const { workspaceDir: _exportedWs, ...generalRest } = manifest.general
+    const { ...generalRest } = manifest.general
 
     saveConfig({
       ...generalRest,
-      workspaceDir,
       httpProxy: manifest.proxy.httpProxy,
       httpsProxy: manifest.proxy.httpsProxy,
       noProxy: manifest.proxy.noProxy,
@@ -213,7 +206,6 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
     saveNodeGroups(manifest.projects.nodeGroups ?? [])
 
     if (manifest.mcp.global) writeMcpJson("global", manifest.mcp.global)
-    if (manifest.mcp.project) writeMcpJson("project", manifest.mcp.project)
     invalidateMcpEnabledCache()
 
     writeTasksToFile(manifest.tasks ?? [])
@@ -230,23 +222,16 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
       }
     }
 
-    const ws = workspaceDir
-    const rd = ws ? path.join(ws, ".cursor", "rules") : ""
+    const rd = rulesDir()
     const stagingRules = path.join(staging, "rules")
     if (fs.existsSync(stagingRules)) {
-      if (!ws) {
-        warnings.push("未设置工作目录，rules 未导入；请先配置工作目录后重新导入 rules")
-      } else if (!fs.existsSync(ws)) {
-        warnings.push(`工作目录不存在：${ws}，rules 未导入；请在设置中修改工作目录后重新导入 rules`)
-      } else {
-        try {
-          if (fs.existsSync(rd)) fs.rmSync(rd, { recursive: true, force: true })
-          fs.mkdirSync(path.dirname(rd), { recursive: true })
-          copyDirSync(stagingRules, rd)
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e)
-          warnings.push(`rules 导入失败：${msg}`)
-        }
+      try {
+        if (fs.existsSync(rd)) fs.rmSync(rd, { recursive: true, force: true })
+        fs.mkdirSync(rd, { recursive: true })
+        copyDirSync(stagingRules, rd)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        warnings.push(`rules 导入失败：${msg}`)
       }
     }
 

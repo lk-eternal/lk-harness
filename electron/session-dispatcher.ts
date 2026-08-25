@@ -68,14 +68,14 @@ export function isSessionAgentRunning(key: string): boolean {
   return _isCliSessionRunning(key) || isSdkSessionRunning(key)
 }
 
-export function stopSessionAgent(key: string): void {
+export async function stopSessionAgent(key: string): Promise<void> {
   // 无条件调用：send 前短暂窗口（run=null）isSdkSessionRunning 为 false，但 agent 进程需要释放
-  stopSdkSession(key)
+  await stopSdkSession(key)
   if (_isCliSessionRunning(key)) _stopCliSession(key)
 }
 
-export function stopAllSessionAgents(): void {
-  stopAllSdkSessions()
+export async function stopAllSessionAgents(): Promise<void> {
+  await stopAllSdkSessions()
   _stopAllCliSessions()
 }
 
@@ -493,7 +493,10 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
 
   // 会话模式：保留会话（run 结束持久化 agentId，新消息 Resume 续上下文）+ 长连接（无限 poll）
   const keepSession = channel?.keepSession ?? true
-  const persistentPoll = keepSession && (channel?.persistentPoll ?? true)
+  let persistentPoll = keepSession && (channel?.persistentPoll ?? true)
+  if (chatType === "task" && scheduledTask && scheduledTask.independent !== false) {
+    persistentPoll = false
+  }
   // 独立群即使入站 chatType=group，出站/提示词也按 project 语义（禁数字身份）
   const launchChatType: ChatType = projectOwned ? "project" : chatType
   const launchMeta = { ...meta, chatType: launchChatType }
@@ -832,7 +835,7 @@ export async function deleteUserSession(
 
   const label = tabLabelForSession(key)
 
-  if (isSessionAgentRunning(key)) stopSessionAgent(key)
+  if (isSessionAgentRunning(key)) await stopSessionAgent(key)
   resetSdkSessionContext(key)
   clearSdkFailStreak(key)
   previousActiveSessionMap.delete(key)
@@ -1142,7 +1145,7 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
       await reply(false, `❌ #${idx} 未在运行`)
       return
     }
-    stopSessionAgent(entry.sessionKey)
+    await stopSessionAgent(entry.sessionKey)
     if (patchMessageId) {
       await handleChatCommand(["/c", "ls"], port, messageId, chatId, patchMessageId)
       return
@@ -1264,7 +1267,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     if (isSessionAgentRunning(sessionKey)) {
       if (await isZombieAgent(sessionKey)) {
         broadcastLog(`[Agent] ${sessionKey} 疑似僵尸(队列有消息且 ${ZOMBIE_REPLY_SILENCE_MS / 60_000}min 无回复消息)，强制终止并重启`, "WARN")
-        stopSessionAgent(sessionKey)
+        await stopSessionAgent(sessionKey)
         await new Promise((r) => setTimeout(r, 1000))
       } else {
         continue

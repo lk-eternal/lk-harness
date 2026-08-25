@@ -57,6 +57,15 @@ export function findScheduledTaskBySessionKey(
   return tasks.find((t) => t.id === key);
 }
 
+/** 独立运行定时任务（默认 independent=true）的 sessionKey */
+export function isIndependentTaskSessionKey(
+  sessionKey: string,
+  tasks: ScheduledTask[],
+): boolean {
+  const task = findScheduledTaskBySessionKey(sessionKey, tasks);
+  return !!task && task.independent !== false;
+}
+
 export function formatScheduledTaskLabel(name: string): string {
   return `⏰ ${name}`;
 }

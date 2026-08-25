@@ -131,4 +131,12 @@ describe("完整回复后隐藏折叠块", () => {
     expect(LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: false })).toEqual(segments)
     expect(LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: true, hideOnFinish: false })).toEqual(segments)
   })
+
+  it("finish 后仅 thinking/tools 无正文时展示占位", () => {
+    const segments: Segment[] = [mkThink("a"), mkTools(2, "T"), mkTodos("x")]
+    const stripped = LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: true })
+    expect(stripped).toEqual([{ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER }])
+    const { json } = buildCard(stripped, true)
+    expect(json).toContain("仅包含思考,无实质输出")
+  })
 })

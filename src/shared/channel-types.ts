@@ -39,7 +39,7 @@ export interface MessageChannel {
   allowOthers: boolean;
   /** 对外身份规则，注入到其他人会话的临时工作目录 */
   digitalIdentity: string;
-  // 工作目录，空 = 使用全局主工作目录
+  // 工作目录（主用户私聊时使用；空 = 回退全局兜底）
   workspaceDir: string;
   /** 该通道的常用目录（可切换会话来源）；undefined = 未迁移，回退全局 favoriteWorkspaces */
   favoriteWorkspaces?: string[];

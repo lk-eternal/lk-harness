@@ -1,6 +1,6 @@
 import { type ChildProcess } from "node:child_process"
 import * as fs from "node:fs"
-import { getConfig, getMainChatIdForScope, setMainChatIdForScope } from "./config-store"
+import { getConfig, getMainChatIdForScope, setMainChatIdForScope, primaryWorkspaceForCli } from "./config-store"
 import { chatIdFromSessionKey } from "../src/shared/channel-types"
 import {
   resolveAgentBinary, applyProxyEnv, createAgentEnv,
@@ -397,7 +397,7 @@ async function checkAgentLoggedInImpl(): Promise<AgentLoginStatus> {
   const config = getConfig()
   const env: Record<string, string> = { ...process.env as Record<string, string>, NODE_USE_ENV_PROXY: "1" }
   applyProxyEnv(env, config)
-  const workspaceCwd = config.workspaceDir?.trim() || undefined
+  const workspaceCwd = primaryWorkspaceForCli()
   const r = await execAgentAsync(["whoami"], env, { timeoutMs: 15_000, cwd: workspaceCwd, logLabel: "whoami" })
   const out = r.stdout.trim()
   const err = r.stderr.trim()

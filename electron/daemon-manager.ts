@@ -12,6 +12,7 @@ import {
   resolveChannelForSession, getAgentResource, resolveChannelModel,
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, migrateFavoriteWorkspacesToChannels,
   mainChatScopeKey, setMainChatIdForScope, upsertRepoProfiles, type MessageChannel,
+  retireGlobalWorkspaceDir, primaryWorkspaceForCli,
 } from "./config-store"
 import { parseChatKey, channelIdFromSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
@@ -407,8 +408,7 @@ async function wechatSendTestMessageRaw(token: string, dataDir: string, preferre
 
 
 export async function getDaemonStatus(): Promise<DaemonStatus> {
-  const config = getConfig()
-  const cfgWs = (config.workspaceDir || "").trim()
+  const cfgWs = primaryWorkspaceForCli()
 
   const statusFromHealth = (port: number, health: Record<string, unknown>): DaemonStatus => {
     cachedPort = port
@@ -505,8 +505,9 @@ function channelReady(c: MessageChannel): boolean {
   return !!c.wechatToken?.trim()
 }
 
-function buildDaemonChannelConfigs(): DaemonChannelConfig[] {
-  return getChannels().filter(channelReady).map((c) => ({
+function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig | null {
+  if (!channelReady(c)) return null
+  return {
     id: c.id,
     name: c.name || (c.type === "feishu" ? "飞书" : "微信"),
     type: c.type,
@@ -521,7 +522,57 @@ function buildDaemonChannelConfigs(): DaemonChannelConfig[] {
     showThinking: c.showThinking ?? true,
     streamKeepPerKind: c.streamKeepPerKind,
     hideThinkingOnFinish: c.hideThinkingOnFinish ?? true,
-  }))
+  }
+}
+
+function buildDaemonChannelConfigs(): DaemonChannelConfig[] {
+  return getChannels().map(buildDaemonChannelConfig).filter((c): c is DaemonChannelConfig => c !== null)
+}
+
+function diffChannelEnabledChanges(prev: MessageChannel[], next: MessageChannel[]): { start: MessageChannel[]; stop: string[] } {
+  const prevById = new Map(prev.map((c) => [c.id, c]))
+  const nextById = new Map(next.map((c) => [c.id, c]))
+  const start: MessageChannel[] = []
+  const stop: string[] = []
+
+  for (const c of next) {
+    const was = prevById.get(c.id)
+    if (!was) {
+      if (c.enabled && channelReady(c)) start.push(c)
+      continue
+    }
+    if (was.enabled && !c.enabled) stop.push(c.id)
+    else if (!was.enabled && c.enabled && channelReady(c)) start.push(c)
+  }
+  for (const c of prev) {
+    if (!nextById.has(c.id) && c.enabled) stop.push(c.id)
+  }
+  return { start, stop }
+}
+
+async function applyChannelLifecycleChanges(prev: MessageChannel[], next: MessageChannel[]): Promise<void> {
+  const { start, stop } = diffChannelEnabledChanges(prev, next)
+  if (start.length === 0 && stop.length === 0) return
+  const port = cachedPort ?? readLockFile()?.port
+  if (!port) return
+  for (const id of stop) {
+    try {
+      await httpPost(`http://127.0.0.1:${port}/api/channel-lifecycle`, { action: "stop", id }, 5000)
+    } catch (e: unknown) {
+      broadcastLog(`[Channels] 通道停用失败(${id}): ${e instanceof Error ? e.message : e}`, "WARN")
+    }
+  }
+  for (const c of start) {
+    const cfg = buildDaemonChannelConfig(c)
+    if (!cfg) continue
+    try {
+      await httpPost(`http://127.0.0.1:${port}/api/channel-lifecycle`, { action: "start", channel: cfg }, 10000)
+    } catch (e: unknown) {
+      broadcastLog(`[Channels] 通道启用失败(${c.name || c.id}): ${e instanceof Error ? e.message : e}`, "WARN")
+    }
+  }
+  broadcastLog(`[Channels] 通道启停已热更新（${stop.length} 停 / ${start.length} 启）`)
+  broadcastStatus(await getDaemonStatus())
 }
 
 export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
@@ -531,9 +582,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
   if (channelConfigs.length === 0) {
     return { ok: false, error: "至少需要配置一个可用的消息通道（设置 → 消息通道）" }
   }
-  if (!config.workspaceDir) {
-    return { ok: false, error: "工作目录未配置" }
-  }
+  const wsFallback = primaryWorkspaceForCli()
 
   ensureCliConfig()
 
@@ -571,7 +620,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
 
     const env: Record<string, string> = {
       ...process.env as Record<string, string>,
-      LARK_WORKSPACE_DIR: config.workspaceDir,
+      LARK_WORKSPACE_DIR: wsFallback,
       APP_DATA_DIR: app.getPath("userData"),
       CURSOR_CLAW_TEMPLATE_DIR: templateDir,
       NODE_USE_ENV_PROXY: "1",
@@ -808,7 +857,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
 
     cachedPort = lock.port
     setDaemonPort(lock.port)
-    activeDaemonWorkspaceDir = config.workspaceDir.trim() || null
+    activeDaemonWorkspaceDir = wsFallback || null
     daemonShouldRun = true
     lastDaemonStartAt = Date.now()
     startStatusPolling()
@@ -1143,7 +1192,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
               && (s.sessionKey === claimed.chatId || s.sessionKey.startsWith(`${claimed.chatId}::`))
             )?.sessionKey
           if (matchedKey) {
-            stopSessionAgent(matchedKey)
+            await stopSessionAgent(matchedKey)
             await reply(true, "✅ 已停止当前对话")
           } else if (isAdmin) {
             const wasRunning = isAgentRunning()
@@ -1282,6 +1331,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             (task, content) => launchIndependentAgent(task.id, task.name, content, "task", undefined, task.channelId, task.model, task.modelParams),
             claimed.chatId,
             async (content, preferredChatId) => enqueueToMainSession(lock.port, content, preferredChatId ?? claimed.chatId),
+            patchTarget,
           )
           break
         }
@@ -1297,7 +1347,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/mc":
         case "/mcp": {
           if (!isAdmin) { await denyNonAdmin(); break }
-          await handleFeishuMcpCommand(lock.port, claimed.messageId, rawCmd, claimed.chatId)
+          await handleFeishuMcpCommand(lock.port, claimed.messageId, rawCmd, claimed.chatId, patchTarget)
           break
         }
 
@@ -1334,7 +1384,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/reset": {
           const sessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
           if (sessionKey && isSessionAgentRunning(sessionKey)) {
-            stopSessionAgent(sessionKey)
+            await stopSessionAgent(sessionKey)
           }
           // SDK 上下文重置：丢弃 resume 映射，下条消息全新会话
           if (sessionKey) resetSdkSessionContext(sessionKey)
@@ -1349,13 +1399,14 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/w":
         case "/workspace": {
           if (!isAdmin) { await denyNonAdmin(); break }
+          const wsChannelId = claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined
+          const wsChannel = wsChannelId ? getChannel(wsChannelId) : undefined
           const wsArgs = cmdTokens.slice(1)
           if (wsArgs.length === 0 || wsArgs[0] === "info") {
-            const cfg = getConfig()
-            const d = cfg.workspaceDir || "(未配置)"
-            const b = cfg.workspaceDir ? readGitBranch(cfg.workspaceDir) : undefined
+            const d = effectiveWorkspaceDir(wsChannel) || "(未配置)"
+            const b = d !== "(未配置)" ? readGitBranch(d) : undefined
             const info = b ? `📁 当前工作目录: ${d}\n🌿 分支: ${b}` : `📁 当前工作目录: ${d}`
-            const favDirs = getChannelFavoriteWorkspaces(getChannel(claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined))
+            const favDirs = getChannelFavoriteWorkspaces(wsChannel)
             const lastSeg = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p
             const wsBtns = favDirs.map((dir) => {
               const parts = dir.split(/[\\/]/).filter(Boolean)
@@ -1375,16 +1426,20 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             await reply(true, body, wsBtns.length ? wsBtns : undefined)
           } else if (wsArgs[0] === "set" && wsArgs.length >= 2) {
             const newDir = wsArgs.slice(1).join(" ").trim()
-            const cfg = getConfig()
+            if (!wsChannelId) {
+              await reply(false, "❌ 无法识别当前通道")
+              break
+            }
+            const curDir = effectiveWorkspaceDir(wsChannel)
             // 项目会话中切目录 = 退出项目、切到目标目录的普通会话（项目 worktree 不受影响）
             const curSk = await resolveCommandSessionKey(claimed!.chatId, claimed!.chatType)
             const inProject = !!(curSk && projectIdFromSessionKey(curSk))
-            if (newDir === cfg.workspaceDir && !inProject) {
+            if (newDir === curDir && !inProject) {
               await reply(true, `📂 工作目录未变化: ${newDir}`)
             } else {
-              const wsResult = newDir === cfg.workspaceDir
+              const wsResult = newDir === curDir
                 ? { ok: true as const }
-                : await applyWorkspaceSwitch(newDir, false)
+                : await applyChannelWorkspaceSwitch(wsChannelId, newDir, false)
               if (wsResult.ok) {
                 if (inProject && claimed!.chatId) {
                   await syncActiveSession(lock.port, claimed!.chatId, `${claimed!.chatId}::${newDir}`)
@@ -1475,6 +1530,31 @@ export interface ConfigSaveResult {
 /**
  * 切换工作目录：可选地停止旧会话，然后热更新到新目录。
  */
+/** 切换指定通道的主用户工作目录（不写全局 config.workspaceDir） */
+export async function applyChannelWorkspaceSwitch(
+  channelId: string,
+  workspaceDir: string,
+  stopOldSessions = false,
+): Promise<{ ok: boolean; error?: string }> {
+  const w = path.normalize(workspaceDir.trim()).replace(/[\\/]+$/, "")
+  if (!w) return { ok: false, error: "工作目录为空" }
+  if (!/[\\/]/.test(w) || !fs.existsSync(w) || !fs.statSync(w).isDirectory()) {
+    return { ok: false, error: `目录不存在或不是有效路径: ${w}` }
+  }
+  const channel = getChannel(channelId)
+  if (!channel) return { ok: false, error: "通道不存在" }
+  if (channel.workspaceDir?.trim() === w) return { ok: true }
+
+  if (stopOldSessions) await stopAllSessionAgents()
+
+  updateChannel(channelId, { workspaceDir: w })
+  invalidateMcpEnabledCache()
+  clearInjectionCache()
+  await injectWorkspaceMcpAndRules()
+  broadcastStatus(await getDaemonStatus())
+  return { ok: true }
+}
+
 export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions: boolean, skipDaemonSync = false, notifyMain = false): Promise<{ ok: boolean; error?: string }> {
   // path.normalize 压平 D:\\foo（Windows existsSync 对双重反斜杠仍为 true，写入 config/sessionKey 会分裂队列）
   const w = path.normalize(workspaceDir.trim()).replace(/[\\/]+$/, "")
@@ -1484,10 +1564,14 @@ export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions
   }
 
   if (stopOldSessions) {
-    stopAllSessionAgents()
+    await stopAllSessionAgents()
   }
 
-  saveConfig({ workspaceDir: w })
+  const mainChannel = getChannels().find((c) => c.enabled && c.mainUserEnabled)
+  if (mainChannel) {
+    return applyChannelWorkspaceSwitch(mainChannel.id, w, false)
+  }
+
   invalidateMcpEnabledCache()
   clearInjectionCache()
 
@@ -1540,17 +1624,26 @@ async function notifyMainUsersWorkspaceSwitched(dir: string): Promise<void> {
   }
 }
 
-/** 通道中影响 Daemon 连接的字段子集（变更后才需要重启 Daemon）；配置类字段走热更新，不入此名单 */
-function daemonRelevantChannelView(channels: MessageChannel[]): string {
-  // 按 id 排序后再序列化：通道显示顺序只影响 UI，重排不应重启 Daemon 断连
-  return JSON.stringify([...channels]
-    .sort((a, b) => a.id.localeCompare(b.id))
-    .map((c) => ({
-      id: c.id, type: c.type, enabled: c.enabled,
-      appId: c.larkAppId, appSecret: c.larkAppSecret,
-      token: c.wechatToken, account: c.wechatAccountId,
-      ws: c.workspaceDir,
-    })))
+function channelConnectionFields(c: MessageChannel): Record<string, string> {
+  return {
+    type: c.type,
+    appId: c.larkAppId ?? "",
+    appSecret: c.larkAppSecret ?? "",
+    token: c.wechatToken ?? "",
+    account: c.wechatAccountId ?? "",
+    ws: c.workspaceDir ?? "",
+  }
+}
+
+/** 已有通道的凭据/工作目录变更才需重启；启停与增删走 lifecycle 热更新 */
+function connectionConfigChanged(prev: MessageChannel[], next: MessageChannel[]): boolean {
+  const prevById = new Map(prev.map((c) => [c.id, c]))
+  for (const nc of next) {
+    const oc = prevById.get(nc.id)
+    if (!oc) continue
+    if (JSON.stringify(channelConnectionFields(oc)) !== JSON.stringify(channelConnectionFields(nc))) return true
+  }
+  return false
 }
 
 /** 运行时可热更新的通道配置（保存后直推 daemon 内存，不重启、不打断会话） */
@@ -1584,7 +1677,7 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
   const nextW = partial.workspaceDir !== undefined ? partial.workspaceDir.trim() : oldW
   const workspaceChanging = partial.workspaceDir !== undefined && nextW !== oldW && oldW !== ""
   const channelsChanging = partial.channels !== undefined
-    && daemonRelevantChannelView(partial.channels) !== daemonRelevantChannelView(current.channels ?? [])
+    && connectionConfigChanged(current.channels ?? [], partial.channels)
 
   if (workspaceChanging) {
     const st = await getDaemonStatus()
@@ -1644,6 +1737,8 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
       })()
     }
   } else if (partial.channels !== undefined) {
+    const prevChannels = current.channels ?? []
+    void applyChannelLifecycleChanges(prevChannels, partial.channels)
     // 仅运行时配置（保活开关等）变化：热推送到 Daemon，不重启、不打断会话
     void pushChannelFlagsToDaemon(partial.channels)
   }
@@ -1655,6 +1750,7 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
 
 /** 旧单通道配置 → channels 模型一次性迁移（应用启动时执行） */
 export function runLegacyConfigMigration(): void {
+  retireGlobalWorkspaceDir()
   if (getConfig().channelsMigrated) return
   const wechatBase = path.join(app.getPath("userData"), "wechat-data")
   migrateLegacyConfig({
@@ -1692,7 +1788,7 @@ async function autoStartDaemonOnLaunch(): Promise<void> {
     return
   }
   const config = getConfig()
-  if (!config.setupComplete || !config.workspaceDir?.trim() || buildDaemonChannelConfigs().length === 0) {
+  if (!config.setupComplete || buildDaemonChannelConfigs().length === 0) {
     return
   }
   broadcastLog("[Daemon] 应用启动，自动拉起 Daemon…")
@@ -1852,7 +1948,10 @@ export function initDaemonManager(): void {
 
   ipcMain.handle("feishu:app-info", (_e, appId: string, appSecret: string) =>
     fetchLarkBotInfo(appId?.trim() ?? "", appSecret?.trim() ?? ""))
-  ipcMain.handle("agent:stop-session", (_e, sessionKey: string) => { stopSessionAgent(sessionKey); return { ok: true } })
+  ipcMain.handle("agent:stop-session", async (_e, sessionKey: string) => {
+    await stopSessionAgent(sessionKey)
+    return { ok: true }
+  })
   ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string) => {
     return switchSdkSessionModel(sessionKey, model, modelParams)
   })
@@ -1896,7 +1995,7 @@ export function initDaemonManager(): void {
     const sk = target.sessionKey || (lock?.port
       ? projectSessionKey(await resolveMainChatId(lock.port) || "", id)
       : "")
-    if (sk) stopSessionAgent(sk)
+    if (sk) await stopSessionAgent(sk)
     await executeProjectDelete(id)
     if (lock?.port) await archiveProjectGroup(lock.port, target)
     if (wasCurrent && lock?.port) {
@@ -1999,7 +2098,10 @@ export function initDaemonManager(): void {
     removeRecentModel({ model, modelParams })
     return { ok: true as const }
   })
-  ipcMain.handle("agent:stop-all-sessions", () => { stopAllSessionAgents(); return { ok: true } })
+  ipcMain.handle("agent:stop-all-sessions", async () => {
+    await stopAllSessionAgents()
+    return { ok: true }
+  })
 
   ipcMain.handle("temp-conn:start", async (_e, appId: string, appSecret: string) => {
     try {

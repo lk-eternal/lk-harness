@@ -2,6 +2,7 @@ import Store from "electron-store"
 import { safeStorage } from "electron"
 import { randomBytes } from "node:crypto"
 import * as path from "node:path"
+import * as os from "node:os"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
@@ -401,10 +402,34 @@ export function resolveChannelModel(channel: MessageChannel | undefined, scenari
   return { model: channel.model ?? "", modelParams: channel.modelParams ?? "" }
 }
 
-/** 通道的有效主工作目录（通道未配置则用全局） */
+/** 通道的有效主工作目录（仅通道级，不再回退全局） */
 export function effectiveWorkspaceDir(channel?: MessageChannel): string {
-  const dir = channel?.workspaceDir?.trim()
-  return dir || getConfig().workspaceDir
+  return channel?.workspaceDir?.trim() ?? ""
+}
+
+/** CLI/MCP 探测用的 cwd：首个已启用且配置了目录的通道，否则用户主目录 */
+export function primaryWorkspaceForCli(): string {
+  for (const c of getConfig().channels ?? []) {
+    const w = c.workspaceDir?.trim()
+    if (c.enabled && w) return w
+  }
+  return os.homedir()
+}
+
+/** 将遗留的全局 workspaceDir 迁移到通道后清空 */
+export function retireGlobalWorkspaceDir(): void {
+  const cfg = getConfig()
+  const globalWs = cfg.workspaceDir?.trim()
+  if (!globalWs) return
+  const channels = cfg.channels ?? []
+  const migrated = channels.map((c) =>
+    c.mainUserEnabled && !c.workspaceDir?.trim() ? { ...c, workspaceDir: globalWs } : c,
+  )
+  const changed = migrated.some((c, i) => c.workspaceDir !== channels[i]?.workspaceDir)
+  saveConfig({
+    ...(changed ? { channels: migrated } : {}),
+    workspaceDir: "",
+  })
 }
 
 // ── 旧配置迁移 ────────────────────────────────────────────
@@ -540,6 +565,18 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   }
 
   partial.channelsMigrated = true
+
+  // 全局工作目录迁移到已绑主用户但通道目录为空的通道
+  const globalWs = (cfg.workspaceDir ?? "").trim()
+  if (globalWs) {
+    const migrated = channels.map((c) =>
+      c.mainUserEnabled && !c.workspaceDir?.trim() ? { ...c, workspaceDir: globalWs } : c,
+    )
+    if (migrated.some((c, i) => c.workspaceDir !== channels[i].workspaceDir)) {
+      partial.channels = migrated
+    }
+  }
+
   saveConfig(partial)
 }
 

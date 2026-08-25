@@ -148,7 +148,7 @@ export interface ProjectSettingsSlice {
 
 /** /p 保留子命令：自定义节点 id 不得与之冲突 */
 export const PROJECT_RESERVED_SUBCOMMANDS = [
-  "help", "menu", "ls", "list", "use", "leave", "status", "new", "del", "delete", "rm", "setup", "sync", "ship",
+  "help", "menu", "ls", "list", "use", "leave", "info", "new", "del", "delete", "rm", "setup", "sync", "ship",
 ]
 
 export function projectSessionKey(chatKey: string, projectId: string): string {

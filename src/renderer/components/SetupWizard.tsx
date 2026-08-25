@@ -89,7 +89,6 @@ export default function SetupWizard({ open, onClose }: Props) {
     const dir = await window.electronAPI.selectDirectory()
     if (!dir) return
     setWsDir(dir)
-    await window.electronAPI.saveConfig({ workspaceDir: dir })
     autoNext(1)
   }
 
@@ -130,11 +129,12 @@ export default function SetupWizard({ open, onClose }: Props) {
           id: newId("ch"), name: info.name || "飞书机器人", enabled: true, type: "feishu" as const,
           model: "auto", modelParams: "", othersModel: "", othersModelParams: "",
           mainUserEnabled: false, mainUserChatId: "", allowOthers: false, digitalIdentity: "",
-          workspaceDir: "", keepSession: true, persistentPoll: true, showThinking: true,
+          workspaceDir: wsDir.trim(), keepSession: true, persistentPoll: true, showThinking: true,
         }),
         larkAppId: id.trim(), larkAppSecret: secret.trim(), larkBotName: info.name,
         larkAppQuickCreated: quickCreated, enabled: true,
         agentResourceId: sdk?.id ?? "cli",
+        ...(wsDir.trim() ? { workspaceDir: wsDir.trim() } : {}),
       }
       setChannelId(chan.id)
       const nextChannels = channels.some((c) => c.id === chan.id) ? channels.map((c) => c.id === chan.id ? chan : c) : [...channels, chan]
