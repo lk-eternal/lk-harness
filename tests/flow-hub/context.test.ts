@@ -23,7 +23,7 @@ const baseCfg = (): AppConfig => ({
   repoRoots: [],
   repoProfiles: [],
   worktreeRoot: "",
-  flowHubUrl: "https://gitlab.wukongedu.net/internal-shared/cursor-claw-flow-hub",
+  flowHubUrl: "https://gitlab.example.com/internal-shared/flow-hub",
   flowHubToken: "glpat-hub",
   flowHubAuthor: "测试",
   allowOthers: false,
@@ -52,7 +52,7 @@ describe("loadFlowHubContext", () => {
     const ctx = loadFlowHubContext(baseCfg())
     expect("error" in ctx).toBe(false)
     if (!("error" in ctx)) {
-      expect(ctx.hubUrl).toContain("cursor-claw-flow-hub")
+      expect(ctx.hubUrl).toContain("flow-hub")
       expect(ctx.client).toBeTruthy()
     }
   })

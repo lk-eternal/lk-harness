@@ -3,10 +3,10 @@ import { GitLabFlowHubClient, parseHubRepoUrl } from "../../src/shared/flow-hub-
 
 describe("parseHubRepoUrl", () => {
   it("parses full gitlab URL", () => {
-    const r = parseHubRepoUrl("https://gitlab.wukongedu.net/internal-shared/cursor-claw-flow-hub")
+    const r = parseHubRepoUrl("https://gitlab.example.com/internal-shared/flow-hub")
     expect(r).toEqual({
-      host: "https://gitlab.wukongedu.net",
-      projectPath: "internal-shared/cursor-claw-flow-hub",
+      host: "https://gitlab.example.com",
+      projectPath: "internal-shared/flow-hub",
     })
   })
 

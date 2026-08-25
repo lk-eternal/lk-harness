@@ -968,7 +968,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                           <div>
                             <label className="mb-1 block text-xs text-gray-500">Hub 地址</label>
                             <input type="text" value={flowHubUrl} onChange={(e) => setFlowHubUrl(e.target.value)}
-                              placeholder="https://gitlab.example.com/group/cursor-claw-flow-hub" className={inputCls} />
+                              placeholder="https://gitlab.example.com/group/your-flow-hub" className={inputCls} />
                           </div>
                           <div>
                             <label className="mb-1 block text-xs text-gray-500">Hub Token（Flow Hub 项目专用）</label>

@@ -6,17 +6,15 @@ Cursor Agent 的交互被锁死在本地 IDE 里，人一离开电脑，协作�
 
 ## 效果展示
 
+（截图待补充）
+
 | 流式进度卡：实时看 AI 思考与工具调用 | 提问卡片：手机上点按钮拍板 |
 |---|---|
-| <img src="docs/screenshots/stream-card.png" width="360" /> | <img src="docs/screenshots/question-card.png" width="360" /> |
 
 | 状态卡片：随时掌握运行状态 | 项目菜单：节点按钮推进研发流程 |
 |---|---|
-| <img src="docs/screenshots/status-card.png" width="360" /> | <img src="docs/screenshots/project-menu.png" width="360" /> |
 
 Dashboard：通道 / 会话 / 分支 / 模型与实时日志一目了然
-
-<img src="docs/screenshots/dashboard.png" width="760" />
 
 ## 它能做什么
 
