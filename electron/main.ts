@@ -46,11 +46,10 @@ import {
   resolveRootAbs,
 } from "./skill-store"
 import {
-  listRuleRoots,
-  listRules,
-  saveRule as saveRuleFile,
-  deleteRule as deleteRuleFile,
-} from "./rule-store"
+  listClawRules,
+  saveClawRule,
+  deleteClawRule,
+} from "./claw-rule-store"
 import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
@@ -60,7 +59,7 @@ const profileArg = process.argv.find((a) => a.startsWith("--profile="))
 const profileName = profileArg?.split("=")[1] || ""
 if (profileName) {
   const baseDir = path.dirname(app.getPath("userData"))
-  app.setPath("userData", path.join(baseDir, `cursor-claw-${profileName}`))
+  app.setPath("userData", path.join(baseDir, `lk-harness-${profileName}`))
 }
 
 // NODE_USE_ENV_PROXY 必须在 Node 发出首个请求前就在环境里（initDaemonManager 里再赋已晚）。
@@ -228,16 +227,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("cli:install", () => installCli())
   ipcMain.handle("cli:login", () => loginCli())
   ipcMain.handle("mcp:list-all", () => getMcpServerList())
-  ipcMain.handle("mcp:save", (_, name: string, entry: Record<string, unknown>, source: "global" | "project") => {
-    saveMcpServer(name, entry, source)
-    return { ok: true }
-  })
-  ipcMain.handle("mcp:delete", (_, name: string, source?: "global" | "project") => {
-    const server = source
-      ? getMcpServerList().find((s) => s.name === name && s.source === source)
-      : getMcpServerList().find((s) => s.name === name)
+  ipcMain.handle("mcp:save", (_, name: string, entry: Record<string, unknown>) => saveMcpServer(name, entry))
+  ipcMain.handle("mcp:delete", (_, name: string) => {
+    const server = getMcpServerList().find((s) => s.name === name)
     if (!server) return { ok: false, error: "MCP 服务器不存在" }
-    return deleteMcpServer(name, server.source)
+    return deleteMcpServer(name)
   })
   ipcMain.handle("mcp:login", (_, name: string) => loginMcpServer(name))
   ipcMain.handle("mcp:toggle", (_, name: string, enabled: boolean) => toggleMcpServer(name, enabled))
@@ -245,13 +239,13 @@ function registerIpcHandlers(): void {
   ipcMain.handle("mcp:status-map", (_, force?: boolean) => getMcpStatusMap(force ?? false))
   ipcMain.handle("mcp:tools", (_, name: string, force?: boolean) => getMcpServerTools(name, force ?? false))
 
-  ipcMain.handle("rules:roots", () => listRuleRoots())
-  ipcMain.handle("rules:list", (_, rootId = "cursor") => listRules(String(rootId)))
-  ipcMain.handle("rules:save", (_, rootId: string, name: string, content: string) => ({
-    ok: saveRuleFile(String(rootId), name, content),
-  }))
-  ipcMain.handle("rules:delete", (_, rootId: string, name: string) => ({
-    ok: deleteRuleFile(String(rootId), name),
+  ipcMain.handle("claw-rules:list", () => listClawRules())
+  ipcMain.handle("claw-rules:save", (_, id: string | null, name: string, content: string, enabled?: boolean) => {
+    const rule = saveClawRule(id, name, content, enabled ?? true)
+    return { ok: !!rule, rule }
+  })
+  ipcMain.handle("claw-rules:delete", (_, id: string) => ({
+    ok: deleteClawRule(String(id)),
   }))
 
   ipcMain.handle("skills:roots", () => listSkillRoots())

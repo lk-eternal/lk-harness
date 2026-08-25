@@ -1,7 +1,7 @@
 {
-  "name": "cursor-claw",
-  "version": "1.8.11",
-  "description": "Cursor Claw - 飞书 & 微信 × Cursor AI 协作桌面应用",
+  "name": "lk-harness",
+  "version": "0.1.0",
+  "description": "LK Harness - 飞书 & 微信 Agent 调度桌面应用",
   "keywords": [
     "mcp",
     "wechat",
@@ -15,7 +15,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lk-eternal/cursor-claw.git"
+    "url": "https://github.com/lk-eternal/lk-harness.git"
   },
   "type": "module",
   "main": "./out/main/index.js",

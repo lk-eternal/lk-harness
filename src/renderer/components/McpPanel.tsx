@@ -67,7 +67,7 @@ export default function McpPanel() {
   const isDirty = draft ? JSON.stringify(draft) !== savedSnapshot : false
 
   const openDraft = (s: McpServerEntry | null, form: McpEditForm, asNew: boolean) => {
-    setSelectedKey(s ? mcpEntryKey("global", s.name) : null)
+    setSelectedKey(s ? mcpEntryKey("claw", s.name) : null)
     setDraft(form)
     setOriginalName(s?.name ?? null)
     setSavedSnapshot(JSON.stringify(form))
@@ -126,21 +126,21 @@ export default function McpPanel() {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) { setErr(`"${name}" 的值必须是一个对象`); return }
     const isNewEntry = !originalName
     if (originalName && originalName !== name) {
-      await window.electronAPI.deleteMcpServer(originalName, "global")
+      await window.electronAPI.deleteMcpServer(originalName, "claw")
     }
-    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>, "global")
+    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>, "claw")
     if (isNewEntry) await window.electronAPI.toggleMcp(name, true)
     markSaved()
     await reload(true)
-    const saved = { name, type: ("url" in (entry as object) ? "url" : "command") as "url" | "command", source: "global" as const, rawConfig: entry as Record<string, unknown>, enabled: true, authenticated: false } as McpServerEntry
+    const saved = { name, type: ("url" in (entry as object) ? "url" : "command") as "url" | "command", source: "claw" as const, rawConfig: entry as Record<string, unknown>, enabled: true, authenticated: false } as McpServerEntry
     openDraft(saved, { json: JSON.stringify({ [name]: entry }, null, 2) }, false)
     loadTools(saved, true)
   }
 
   const handleDelete = async () => {
     if (!currentServer || isNew) return
-    if (!(await showConfirm("删除 MCP", `确定删除「${currentServer.name}」（${currentServer.source === "global" ? "全局" : "项目"}）？`))) return
-    await window.electronAPI.deleteMcpServer(currentServer.name, "global")
+    if (!(await showConfirm("删除 MCP", `确定删除「${currentServer.name}」？`))) return
+    await window.electronAPI.deleteMcpServer(currentServer.name, "claw")
     await reload()
     setSelectedKey(null)
     setDraft(null)
@@ -152,7 +152,7 @@ export default function McpPanel() {
     else setDraft(JSON.parse(savedSnapshot) as McpEditForm)
   }
 
-  const currentServer = selectedKey ? servers.find((s) => mcpEntryKey("global", s.name) === selectedKey) : null
+  const currentServer = selectedKey ? servers.find((s) => mcpEntryKey("claw", s.name) === selectedKey) : null
   const toolState = selectedKey ? mcpTools[selectedKey] : undefined
 
   return (
@@ -161,7 +161,7 @@ export default function McpPanel() {
         <aside className={PANEL_ASIDE}>
           <div className={PANEL_LIST}>
             {servers.map((s) => {
-              const key = mcpEntryKey("global", s.name)
+              const key = mcpEntryKey("claw", s.name)
               const rawStatus = mcpStatus[s.name]
               const isReady = rawStatus === "ready" || rawStatus === "enabled"
               const statusText = s.enabled ? (isReady ? "ready" : rawStatus || "—") : "disabled"
@@ -186,7 +186,7 @@ export default function McpPanel() {
               <div className={PANEL_SCROLL}>
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="text-xs text-gray-500">配置 JSON（~/.cursor/mcp.json）</label>
+                    <label className="text-xs text-gray-500">配置 JSON</label>
                     <div className="flex items-center gap-2">
                       {currentServer?.type === "url" && currentServer.enabled && !currentServer.authenticated && (
                         mcpLoginPending[currentServer.name]

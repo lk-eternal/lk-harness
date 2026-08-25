@@ -67,8 +67,8 @@ alwaysApply: true
 用 `curl -G --data-urlencode` 自动编码 sessionKey（跨平台通用）。**Windows PowerShell 须用 `curl.exe`**（`curl` 是 Invoke-WebRequest 别名，会乱码）：
 
 ```bash
-curl -G -s "http://127.0.0.1:19528/api/poll-message" --data-urlencode "sessionKey=YOUR_SESSION_KEY" --data-urlencode "wait=false"
-curl -G -s "http://127.0.0.1:19528/api/poll-message" --data-urlencode "sessionKey=YOUR_SESSION_KEY"
+curl -G -s "http://127.0.0.1:{{DAEMON_PORT}}/api/poll-message" --data-urlencode "sessionKey=YOUR_SESSION_KEY" --data-urlencode "wait=false"
+curl -G -s "http://127.0.0.1:{{DAEMON_PORT}}/api/poll-message" --data-urlencode "sessionKey=YOUR_SESSION_KEY"
 ```
 
 返回 JSON 顶层字段：
@@ -93,7 +93,7 @@ curl -G -s "http://127.0.0.1:19528/api/poll-message" --data-urlencode "sessionKe
 
 ### 🔌 HTTP API 退避方案 (MCP Fallback)
 
-当 MCP 工具不可用（工具列表中无 `send_text`）时，**必须**切换到 HTTP API 直连模式。Daemon 端口为 `19528`。
+当 MCP 工具不可用（工具列表中无 `send_text`）时，**必须**切换到 HTTP API 直连模式。Daemon 端口为 `{{DAEMON_PORT}}`。
 
 | 操作 | HTTP API |
 |------|----------|

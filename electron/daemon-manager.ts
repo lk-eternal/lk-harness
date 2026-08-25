@@ -26,6 +26,8 @@ import {
 } from "./agent-launcher"
 import { stopAllSdkSessions, resetSdkSessionContext, getSdkSessionCount, getSdkSessionList, checkSdkApiKey, listSdkModels, getSdkSessionDiagnostics, getResumableSummary, switchSdkSessionModel, handlePollPhaseEvent, clearSdkFailStreak } from "./agent-sdk"
 import { initSessionModelStore, listQuickModels, getSessionOverride, removeRecentModel } from "../src/shared/session-model-store.js"
+import { initClawMcpStore } from "../src/shared/claw-mcp-store.js"
+import { initClawRuleStore } from "../src/shared/claw-rule-store.js"
 import { registerFeishuApp } from "./feishu-register"
 import {
   setDaemonPort,
@@ -1799,6 +1801,9 @@ async function autoStartDaemonOnLaunch(): Promise<void> {
 
 export function initDaemonManager(): void {
   process.env.APP_DATA_DIR = app.getPath("userData")
+  initClawMcpStore(app.getPath("userData"))
+  initClawRuleStore(app.getPath("userData"))
+  initClawRuleStore(app.getPath("userData"))
   // SDK 跑在主进程：启动时就把代理灌进 process.env（仅 spawn CLI 不够）
   syncMainProcessProxyEnv(getConfig())
   initSessionModelStore(app.getPath("userData"))

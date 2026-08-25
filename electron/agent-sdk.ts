@@ -1,12 +1,12 @@
-import { Agent, type SDKAgent, type Run, type SDKMessage } from "@cursor/sdk"
+import { Agent, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
 import { resolve, join, dirname } from "node:path"
-import { existsSync, readFileSync, writeFileSync, readdirSync } from "node:fs"
-import { createHash } from "node:crypto"
+import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
 import { type ChatType, type LaunchMeta, buildPrompt, resolveSessionChatName } from "./agent-launcher"
-import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
+import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { buildSdkMcpServers, shouldIncludeAdminMcp } from "../src/shared/claw-mcp-store.js"
 import { getAgentResource, resolveChannelForSession } from "./config-store"
 import { readLockFile, httpPost } from "./daemon-client"
 import {
@@ -82,6 +82,10 @@ interface SdkSessionAgent {
   chatName?: string
   /** 定时任务 outbound 投递目标 */
   notifySessionKey?: string
+  /** 是否跳过数字身份（主工作区 / 项目 / 任务） */
+  useMainWorkspace?: boolean
+  /** 通道级数字身份 */
+  digitalIdentityOverride?: string
   abortController: AbortController
   /** 通道开关：是否保留会话上下文（run 结束后记录 agentId，新消息 Resume 续上） */
   keepSession: boolean
@@ -140,24 +144,19 @@ interface ResumeEntry {
   updatedAt: number
   senderOpenId?: string
   rulesHash?: string
+  /** Resume 时记录的 Daemon 端口，用于检测端口漂移 */
+  daemonPort?: number
   /** 最近一次飞书流式卡 cardId；进程重启后用于收口孤儿卡，避免 Resume 再建一张重复卡 */
   streamCardId?: string
 }
 
-/** 工作区 rules 目录内容 hash：Resume 会话的规则是创建时的快照，靠它感知规则更新 */
-function computeRulesHash(workspaceDir: string): string {
-  try {
-    const rulesDir = join(workspaceDir, ".cursor", "rules")
-    if (!existsSync(rulesDir)) return ""
-    const h = createHash("md5")
-    for (const f of readdirSync(rulesDir).filter((n) => n.endsWith(".mdc")).sort()) {
-      h.update(f)
-      try { h.update(readFileSync(join(rulesDir, f))) } catch { /* ignore */ }
-    }
-    return h.digest("hex").slice(0, 16)
-  } catch {
-    return ""
-  }
+function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride">): string {
+  return computePromptHash({
+    meta: { chatType: session.chatType },
+    sessionKey: session.sessionKey,
+    useMainWorkspace: session.useMainWorkspace,
+    digitalIdentityOverride: session.digitalIdentityOverride,
+  }, undefined)
 }
 
 const RESUME_ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000
@@ -206,7 +205,8 @@ function rememberResumable(session: SdkSessionAgent): void {
   getResumableMap().set(session.sessionKey, {
     agentId: session.agentId, workspaceDir: session.workspaceDir, updatedAt: Date.now(),
     senderOpenId: session.senderOpenId,
-    rulesHash: computeRulesHash(session.workspaceDir),
+    rulesHash: promptHashForSession(session),
+    daemonPort: resolveDaemonPortForPrompt() ?? undefined,
     streamCardId: session.streamAgg?.cardId ?? prev?.streamCardId,
   })
   saveResumableMap()
@@ -226,37 +226,6 @@ function patchResumableStreamCard(sessionKey: string, streamCardId: string | und
 
 function forgetResumable(sessionKey: string): void {
   if (getResumableMap().delete(sessionKey)) saveResumableMap()
-}
-
-function buildWakePrompt(session: SdkSessionAgent, rulesUpdated = false, taskMessage?: string): string {
-  const lines = taskMessage
-    ? [
-      "[SESSION_RESUME / 系统指令] 会话已由后台唤醒（历史上下文完整保留），有新任务待执行。",
-      "---",
-      "任务内容:",
-      taskMessage,
-      "---",
-      "直接开始执行上述任务；执行中按 cursor-claw 协议同步进度，完成后挂阻塞 poll 收尾。",
-      "禁止向用户发送问候、唤醒说明等任何多余消息。",
-    ]
-    : [
-      "[SESSION_RESUME / 系统指令] 会话已由后台唤醒（历史上下文完整保留），有新消息待处理。",
-      "立即执行：非阻塞检查 poll-message（wait=false），按 cursor-claw 协议处理所有消息并逐条回复，完成后挂阻塞 poll 收尾。",
-      "禁止向用户发送问候、唤醒说明等任何多余消息。",
-    ]
-  if (rulesUpdated) {
-    lines.push("⚠️ 工作区规则已更新（你上下文中的规则是旧版快照）：处理消息前必须先重读 .cursor/rules/ 目录下全部 .mdc 规则文件，并严格按最新规则执行。")
-  }
-  lines.push(
-    "---",
-    "会话元数据:",
-    `[session_key=${session.sessionKey}]`,
-    `[chat_type=${session.chatType}]`,
-  )
-  if (session.notifySessionKey?.trim()) {
-    lines.push(...scheduledTaskNotifyPromptLines(session.notifySessionKey.trim()))
-  }
-  return lines.join("\n")
 }
 
 let sdkIdleHandler: ((sessionKey: string) => void) | null = null
@@ -1605,6 +1574,8 @@ export interface SdkLaunchOptions {
   pendingMessageIds?: string[]
   /** 定时任务 outbound 投递目标（notify_session_key） */
   notifySessionKey?: string
+  /** 通道级数字身份 */
+  digitalIdentityOverride?: string
 }
 
 /** run 生命周期托管：结束即释放 agent 进程（上下文靠持久化的 agentId Resume 恢复） */
@@ -1727,9 +1698,14 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     const localOptions = {
       cwd: workspaceDir,
-      settingSources: ["project", "user"] as ("project" | "user")[],
+      settingSources: [] as ("project" | "user")[],
       sandboxOptions: { enabled: false },
     }
+
+    const sdkPort = resolveDaemonPortForPrompt()
+    const includeAdmin = shouldIncludeAdminMcp(meta, sessionKey)
+    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin) as Record<string, McpServerConfig>
+    const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
 
     // Resume 语义：
     // - project 永远 Resume（带 taskMessage 时任务附在唤醒 prompt 里）
@@ -1743,7 +1719,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     if (resumable && resumable.workspaceDir === workspaceDir) {
       try {
         pushUiLog("SDK", "INFO", `[${sessionKey}] Resume 恢复会话 (agentId=${resumable.agentId}, model=${JSON.stringify(modelSelection)}, 新连接/上下文保留)`)
-        agent = await Agent.resume(resumable.agentId, { apiKey, model: modelSelection, local: localOptions })
+        agent = await Agent.resume(resumable.agentId, agentBaseOpts)
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
         // 只有服务端确认上下文不存在才允许回退全新会话；网络等瞬时故障直接放弃本次拉起——
@@ -1759,7 +1735,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     if (!agent) {
       pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, model=${JSON.stringify(modelSelection)})`)
-      agent = await Agent.create({ apiKey, model: modelSelection, local: localOptions })
+      agent = await Agent.create(agentBaseOpts)
     }
 
     // 拉起期间被 /reset：本次 agent 可能带着旧上下文，直接丢弃（队列消息会驱动下一次全新拉起）
@@ -1790,6 +1766,8 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       senderOpenId: senderOpenId ?? resumable?.senderOpenId,
       chatName,
       notifySessionKey: opts.notifySessionKey?.trim() || undefined,
+      useMainWorkspace: opts.useMainWorkspace,
+      digitalIdentityOverride: opts.digitalIdentityOverride,
       abortController,
       keepSession,
       persistentPoll,
@@ -1811,9 +1789,18 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     pushRecentModel({ model: modelId, modelParams })
 
     // Resume 会话的规则是创建时快照：规则文件变过则在唤醒 prompt 里硬指令重读
+    const currentDaemonPort = resolveDaemonPortForPrompt()
     const rulesUpdated = resumed && !!resumable?.rulesHash
-      && resumable.rulesHash !== computeRulesHash(workspaceDir)
-    if (rulesUpdated) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到规则更新，唤醒时要求重读规则`)
+      && resumable.rulesHash !== promptHashForSession({
+        sessionKey,
+        chatType,
+        useMainWorkspace: opts.useMainWorkspace,
+        digitalIdentityOverride: opts.digitalIdentityOverride,
+      })
+    const portChanged = resumed && !!resumable?.daemonPort && !!currentDaemonPort
+      && resumable.daemonPort !== currentDaemonPort
+    if (rulesUpdated) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到协议/规则更新，唤醒时重灌全文`)
+    if (portChanged) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到 Daemon 端口变更 ${resumable!.daemonPort} → ${currentDaemonPort}`)
     // 全新项目会话（not found 回退 / reset 后 / resume 映射丢失）必须重带项目元数据——
     // 新 Agent 没有历史上下文，不注入就不知道项目/仓库/分支/角色
     let effectiveTask = taskMessage
@@ -1833,9 +1820,19 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
         }
       }
     }
+    const promptCtx = {
+      meta,
+      sessionKey,
+      useMainWorkspace: opts.useMainWorkspace,
+      notifySessionKey: opts.notifySessionKey,
+      digitalIdentityOverride: opts.digitalIdentityOverride,
+      rulesUpdated,
+      portChanged,
+      taskMessage: resumed ? taskMessage : effectiveTask,
+    }
     const prompt = resumed
-      ? buildWakePrompt(session, rulesUpdated, taskMessage)
-      : buildPrompt(meta, effectiveTask, sessionKey, opts.useMainWorkspace, opts.notifySessionKey)
+      ? assembleWakePrompt(promptCtx, undefined)
+      : buildPrompt(meta, effectiveTask, sessionKey, opts.useMainWorkspace, opts.notifySessionKey, opts.digitalIdentityOverride)
     pushUiLog("SDK", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Prompt:\n${prompt}`)
     // pack/进程重启后 daemon 内存无卡，飞书旧流式卡仍在：Resume 前先按持久化 cardId 收口，避免再建一张重复卡
     if (resumed && resumable?.streamCardId && session.streamAgg) {

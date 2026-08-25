@@ -620,7 +620,7 @@ export async function handleFeishuMcpCommand(port: number, messageId: string, ra
     if (list.length === 0) { await reportCommandResult(port, messageId, true, "📭 暂无 MCP 服务器", chatId, withNav([], patchMessageId), mcExtra("列表")); return }
     const lines = list.map((s, i) => {
       const flag = enabledMap[s.name] === false ? "🔴" : "🟢"
-      const src = s.source === "global" ? "[G]" : "[P]"
+      const src = "[C]"
       const detail = s.type === "url" ? s.url : s.command
       return `  ${i + 1}. ${flag} ${src} ${s.name}  (${detail})`
     })
@@ -675,7 +675,7 @@ export async function handleFeishuMcpCommand(port: number, messageId: string, ra
     if (!token) { await reportCommandResult(port, messageId, false, "用法: /mc delete <序号|名称>", chatId, undefined, mcExtra()); return }
     const target = resolveMcpTarget(list, token)
     if (!target) { await reportCommandResult(port, messageId, false, `❌ 找不到: ${token}`, chatId, undefined, mcExtra()); return }
-    deleteMcpServer(target.name, target.source as "global" | "project")
+    deleteMcpServer(target.name)
     await reportCommandResult(port, messageId, true, `🗑️ ${target.name} 已删除`, chatId, undefined, mcExtra())
     return
   }

@@ -7,13 +7,14 @@ import {
   getConfig,
   saveConfig,
   CLI_RESOURCE_ID,
-  getRepoProfiles,
   type AppConfig,
 } from "./config-store"
-import { collectAllRulesForExport, rulesExportDir } from "./rule-store"
-import { readMcpJson, writeMcpJson, invalidateMcpEnabledCache } from "./mcp-manager"
+import { exportClawRulesBundle, importClawRulesBundle } from "./claw-rule-store"
+import { readClawMcpStoreRaw, writeClawMcpStoreRaw } from "../src/shared/claw-mcp-store.js"
+import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { readTasksFromFile, writeTasksToFile } from "./cron-scheduler"
 import { initProjectStore, getNodeGroups, saveNodeGroups } from "../src/shared/project-store.js"
+import { SKILL_ROOT_DEFS } from "./skill-store"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types.js"
@@ -47,7 +48,7 @@ export interface ConfigExportManifest {
   projects: {
     gitlabToken: string
     gitlabHost: string
-    repoProfiles: ReturnType<typeof getRepoProfiles>
+    repoProfiles: AppConfig["repoProfiles"]
     worktreeRoot: string
     flowHubUrl: string
     flowHubToken: string
@@ -55,8 +56,9 @@ export interface ConfigExportManifest {
     nodeGroups: ProjectNodeGroupDef[]
   }
   mcp: {
-    global: Record<string, unknown> | null
+    claw: ReturnType<typeof readClawMcpStoreRaw>
   }
+  rules: ReturnType<typeof exportClawRulesBundle>
   tasks: ScheduledTask[]
 }
 
@@ -69,12 +71,40 @@ function appVersion(): string {
   }
 }
 
-function skillsDir(): string {
-  return path.join(os.homedir(), ".cursor", "skills")
+function realPathSafe(p: string): string {
+  try {
+    return fs.realpathSync.native(p)
+  } catch {
+    return path.resolve(p)
+  }
 }
 
-function rulesDir(): string {
-  return rulesExportDir()
+function isDirLike(entry: fs.Dirent): boolean {
+  return entry.isDirectory() || entry.isSymbolicLink()
+}
+
+/** 按 realpath 去重；junction/软链用 cpSync；单条失败不中断整包导出 */
+function copySkillRoot(src: string, dest: string, seen: Set<string>): string[] {
+  const warnings: string[] = []
+  if (!fs.existsSync(src)) return warnings
+  fs.mkdirSync(dest, { recursive: true })
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const s = path.join(src, entry.name)
+    const d = path.join(dest, entry.name)
+    try {
+      if (isDirLike(entry)) {
+        const real = realPathSafe(s)
+        if (seen.has(real)) continue
+        seen.add(real)
+        fs.cpSync(s, d, { recursive: true, force: true, errorOnExist: false })
+      } else {
+        fs.copyFileSync(s, d)
+      }
+    } catch (e) {
+      warnings.push(`${entry.name}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+  return warnings
 }
 
 function copyDirSync(src: string, dest: string): void {
@@ -82,8 +112,11 @@ function copyDirSync(src: string, dest: string): void {
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
-    if (entry.isDirectory()) copyDirSync(s, d)
-    else fs.copyFileSync(s, d)
+    if (isDirLike(entry)) {
+      fs.cpSync(s, d, { recursive: true, force: true, errorOnExist: false })
+    } else {
+      fs.copyFileSync(s, d)
+    }
   }
 }
 
@@ -126,7 +159,7 @@ function buildManifest(): ConfigExportManifest {
     projects: {
       gitlabToken: cfg.gitlabToken ?? "",
       gitlabHost: cfg.gitlabHost ?? "",
-      repoProfiles: getRepoProfiles(cfg),
+      repoProfiles: cfg.repoProfiles ?? [],
       worktreeRoot: cfg.worktreeRoot ?? "",
       flowHubUrl: cfg.flowHubUrl ?? "",
       flowHubToken: cfg.flowHubToken ?? "",
@@ -134,8 +167,9 @@ function buildManifest(): ConfigExportManifest {
       nodeGroups: getNodeGroups(),
     },
     mcp: {
-      global: readMcpJson("global"),
+      claw: readClawMcpStoreRaw(),
     },
+    rules: exportClawRulesBundle(),
     tasks: readTasksFromFile(),
   }
 }
@@ -152,17 +186,20 @@ function readManifest(staging: string): ConfigExportManifest | null {
   }
 }
 
-export function exportConfigBundle(zipPath: string): { ok: boolean; error?: string } {
+export function exportConfigBundle(zipPath: string): { ok: boolean; error?: string; warnings?: string[] } {
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-claw-export-"))
+  const warnings: string[] = []
   try {
     fs.writeFileSync(path.join(staging, "manifest.json"), JSON.stringify(buildManifest(), null, 2), "utf-8")
-    const sd = skillsDir()
-    if (fs.existsSync(sd)) copyDirSync(sd, path.join(staging, "skills"))
-    const rd = rulesDir()
-    if (rd && fs.existsSync(rd)) copyDirSync(rd, path.join(staging, "rules"))
+    const skillsBase = path.join(staging, "skills")
+    const seenSkills = new Set<string>()
+    for (const def of SKILL_ROOT_DEFS) {
+      const src = path.join(os.homedir(), ...def.rel)
+      warnings.push(...copySkillRoot(src, path.join(skillsBase, def.id), seenSkills))
+    }
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath)
     if (!tarCreateZip(zipPath, staging)) return { ok: false, error: "打包失败（需要系统 tar 支持）" }
-    return { ok: true }
+    return { ok: true, warnings: warnings.length ? warnings : undefined }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   } finally {
@@ -180,7 +217,6 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
 
     initProjectStore(app.getPath("userData"))
 
-    const localCfg = getConfig()
     const { ...generalRest } = manifest.general
 
     saveConfig({
@@ -190,8 +226,8 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
       noProxy: manifest.proxy.noProxy,
       gitlabToken: manifest.projects.gitlabToken,
       gitlabHost: manifest.projects.gitlabHost,
-      repoProfiles: manifest.projects.repoProfiles,
-      repoRoots: manifest.projects.repoProfiles.map((p) => p.path),
+      repoProfiles: manifest.projects.repoProfiles ?? [],
+      repoRoots: (manifest.projects.repoProfiles ?? []).map((p) => p.path),
       worktreeRoot: manifest.projects.worktreeRoot,
       flowHubUrl: manifest.projects.flowHubUrl,
       flowHubToken: manifest.projects.flowHubToken,
@@ -205,33 +241,35 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
 
     saveNodeGroups(manifest.projects.nodeGroups ?? [])
 
-    if (manifest.mcp.global) writeMcpJson("global", manifest.mcp.global)
+    const legacyMcp = manifest.mcp as {
+      claw?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
+      global?: { mcpServers?: Record<string, Record<string, unknown>>; order?: string[] }
+    }
+    if (legacyMcp.claw) writeClawMcpStoreRaw(legacyMcp.claw)
+    else if (legacyMcp.global?.mcpServers) {
+      writeClawMcpStoreRaw({
+        order: legacyMcp.global.order ?? Object.keys(legacyMcp.global.mcpServers),
+        servers: legacyMcp.global.mcpServers,
+      })
+    }
     invalidateMcpEnabledCache()
+
+    if (manifest.rules) importClawRulesBundle(manifest.rules)
 
     writeTasksToFile(manifest.tasks ?? [])
 
-    const sd = skillsDir()
     const stagingSkills = path.join(staging, "skills")
     if (fs.existsSync(stagingSkills)) {
-      try {
-        if (fs.existsSync(sd)) fs.rmSync(sd, { recursive: true, force: true })
-        copyDirSync(stagingSkills, sd)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        warnings.push(`skills 导入失败：${msg}`)
-      }
-    }
-
-    const rd = rulesDir()
-    const stagingRules = path.join(staging, "rules")
-    if (fs.existsSync(stagingRules)) {
-      try {
-        if (fs.existsSync(rd)) fs.rmSync(rd, { recursive: true, force: true })
-        fs.mkdirSync(rd, { recursive: true })
-        copyDirSync(stagingRules, rd)
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        warnings.push(`rules 导入失败：${msg}`)
+      for (const def of SKILL_ROOT_DEFS) {
+        const src = path.join(stagingSkills, def.id)
+        if (!fs.existsSync(src)) continue
+        const dest = path.join(os.homedir(), ...def.rel)
+        try {
+          if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
+          copyDirSync(src, dest)
+        } catch (e) {
+          warnings.push(`skills/${def.id} 导入失败：${e instanceof Error ? e.message : String(e)}`)
+        }
       }
     }
 

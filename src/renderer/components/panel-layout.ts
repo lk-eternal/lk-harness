@@ -9,6 +9,6 @@ export const PANEL_SCROLL = "flex-1 space-y-3 overflow-y-auto pr-2 mr-4"
 export const PANEL_SCROLL_FLAT = "flex-1 space-y-0 overflow-y-auto pr-2 mr-4"
 export const PANEL_FOOTER = "flex shrink-0 items-center justify-between border-t border-gray-800 py-4 mr-4"
 
-export function mcpEntryKey(source: "global" | "project", name: string): string {
+export function mcpEntryKey(source: "claw" | "global" | "project", name: string): string {
   return `${source}:${name}`
 }

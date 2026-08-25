@@ -137,7 +137,7 @@ export interface McpServerEntry {
   args?: string[]
   url?: string
   env?: Record<string, string>
-  source: "global" | "project"
+  source: "claw"
   authenticated?: boolean
   enabled?: boolean
   rawConfig?: Record<string, unknown>
@@ -296,17 +296,16 @@ const api = {
     return () => ipcRenderer.removeListener("scheduled-tasks:status", handler)
   },
   getMcpServers: (): Promise<McpServerEntry[]> => ipcRenderer.invoke("mcp:list-all"),
-  saveMcpServer: (name: string, entry: Record<string, unknown>, source: "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:save", name, entry, source),
-  deleteMcpServer: (name: string, source?: "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:delete", name, source),
+  saveMcpServer: (name: string, entry: Record<string, unknown>, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:save", name, entry, source),
+  deleteMcpServer: (name: string, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:delete", name, source),
   loginMcp: (name: string): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("mcp:login", name),
   toggleMcp: (name: string, enabled: boolean): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("mcp:toggle", name, enabled),
   getMcpEnabledMap: (force?: boolean): Promise<Record<string, boolean>> => ipcRenderer.invoke("mcp:enabled-map", force),
   getMcpStatusMap: (force?: boolean): Promise<Record<string, string>> => ipcRenderer.invoke("mcp:status-map", force),
   getMcpTools: (name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }> => ipcRenderer.invoke("mcp:tools", name, force),
-  getRuleRoots: (): Promise<{ id: string; label: string; path: string; ruleCount: number }[]> => ipcRenderer.invoke("rules:roots"),
-  getRules: (rootId?: string): Promise<{ rootId: string; name: string; content: string }[]> => ipcRenderer.invoke("rules:list", rootId),
-  saveRule: (rootId: string, name: string, content: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("rules:save", rootId, name, content),
-  deleteRule: (rootId: string, name: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("rules:delete", rootId, name),
+  getClawRules: (): Promise<{ id: string; name: string; content: string; enabled: boolean }[]> => ipcRenderer.invoke("claw-rules:list"),
+  saveClawRule: (id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }> => ipcRenderer.invoke("claw-rules:save", id, name, content, enabled),
+  deleteClawRule: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("claw-rules:delete", id),
   getSkillRoots: (): Promise<{ id: string; label: string; path: string; skillCount: number }[]> => ipcRenderer.invoke("skills:roots"),
   getSkills: (rootId: string): Promise<{ rootId: string; skillPath: string; name: string; content: string }[]> => ipcRenderer.invoke("skills:list", rootId),
   getSkillTree: (rootId: string): Promise<SkillTreeNode[]> => ipcRenderer.invoke("skills:tree", rootId),

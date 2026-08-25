@@ -50,6 +50,20 @@ import { z } from "zod";
 import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
+import {
+  initClawMcpStore,
+  listClawMcpServers,
+  saveClawMcpServer,
+  deleteClawMcpServer,
+  CLAW_MCP_KEY,
+  ADMIN_MCP_KEY,
+} from "./shared/claw-mcp-store.js";
+import {
+  initClawRuleStore,
+  listClawRules,
+  saveClawRule,
+  deleteClawRule,
+} from "./shared/claw-rule-store.js";
 import { projectIdFromSessionKey, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
 import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey, sessionHeaderTemplate } from "./shared/session-label.js";
 
@@ -3432,15 +3446,11 @@ function startHttpServer(): Promise<number> {
 // ── 管理 API 辅助函数 ────────────────────────────────────
 
 const HOME_DIR = os.homedir();
-const GLOBAL_MCP_PATH = path.join(HOME_DIR, ".cursor", "mcp.json");
 const SKILLS_DIR = path.join(HOME_DIR, ".cursor", "skills");
 const TASKS_FILE = path.join(APP_DATA_DIR, "scheduled-tasks.json");
 
 function getProjectMcpPath(): string {
   return path.join(WORKSPACE_DIR, ".cursor", "mcp.json");
-}
-function getRulesDir(): string {
-  return path.join(WORKSPACE_DIR, ".cursor", "rules");
 }
 
 function readJsonSafe(filePath: string): any {
@@ -3468,44 +3478,33 @@ function writeTasks(tasks: ScheduledTask[]): void {
 
 async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    const globalCfg = readJsonSafe(GLOBAL_MCP_PATH);
-    const projectCfg = readJsonSafe(getProjectMcpPath());
     const servers: Record<string, { config: unknown; scope: string }> = {};
-    if (globalCfg?.mcpServers) {
-      for (const [k, v] of Object.entries(globalCfg.mcpServers)) servers[k] = { config: v, scope: "global" };
-    }
-    if (projectCfg?.mcpServers) {
-      for (const [k, v] of Object.entries(projectCfg.mcpServers)) servers[k] = { config: v, scope: "project" };
+    for (const s of listClawMcpServers()) {
+      servers[s.name] = { config: s.config, scope: "claw" };
     }
     json(res, { ok: true, servers });
     return true;
   }
   if (method === "POST") {
     const body = JSON.parse(await readBody(req));
-    const { action, name, config, scope } = body as { action: string; name?: string; config?: string; scope?: string };
-    const targetPath = (scope ?? "global") === "project" ? getProjectMcpPath() : GLOBAL_MCP_PATH;
+    const { action, name, config } = body as { action: string; name?: string; config?: string; scope?: string };
 
     if (action === "add") {
       if (!name || !config) { json(res, { ok: false, error: "name and config required" }, 400); return true; }
+      if ([CLAW_MCP_KEY, ADMIN_MCP_KEY].includes(name)) {
+        json(res, { ok: false, error: "reserved name" }, 400); return true;
+      }
       let parsed: unknown;
       try { parsed = JSON.parse(config); } catch { json(res, { ok: false, error: "invalid config JSON" }, 400); return true; }
-      const mcpJson = readJsonSafe(targetPath) ?? {};
-      if (!mcpJson.mcpServers) mcpJson.mcpServers = {};
-      mcpJson.mcpServers[name] = parsed;
-      writeJsonSafe(targetPath, mcpJson);
+      saveClawMcpServer(name, parsed as Record<string, unknown>);
       json(res, { ok: true, message: `${name} saved` });
       return true;
     }
     if (action === "delete") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      for (const p of [GLOBAL_MCP_PATH, getProjectMcpPath()]) {
-        const mcpJson = readJsonSafe(p);
-        if (mcpJson?.mcpServers?.[name]) {
-          delete mcpJson.mcpServers[name];
-          writeJsonSafe(p, mcpJson);
-          json(res, { ok: true, message: `${name} deleted` });
-          return true;
-        }
+      if (deleteClawMcpServer(name)) {
+        json(res, { ok: true, message: `${name} deleted` });
+        return true;
       }
       json(res, { ok: false, error: "not found" }, 404);
       return true;
@@ -3518,9 +3517,7 @@ async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: ht
 
 async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    if (!fs.existsSync(getRulesDir())) { json(res, { ok: true, rules: [] }); return true; }
-    const files = fs.readdirSync(getRulesDir()).filter((f) => f.endsWith(".mdc") || f.endsWith(".md"));
-    json(res, { ok: true, rules: files });
+    json(res, { ok: true, rules: listClawRules().map((r) => r.name) });
     return true;
   }
   if (method === "POST") {
@@ -3529,25 +3526,24 @@ async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: 
 
     if (action === "read") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      const fp = path.join(getRulesDir(), name);
-      if (!fs.existsSync(fp)) { json(res, { ok: false, error: "not found" }, 404); return true; }
-      json(res, { ok: true, content: fs.readFileSync(fp, "utf-8") });
+      const id = name.replace(/\.mdc$|\.md$/i, "");
+      const rule = listClawRules().find((r) => r.id === id || r.name === name);
+      if (!rule) { json(res, { ok: false, error: "not found" }, 404); return true; }
+      json(res, { ok: true, content: rule.content });
       return true;
     }
     if (action === "save") {
       if (!name || content === undefined) { json(res, { ok: false, error: "name and content required" }, 400); return true; }
-      let fileName = name.trim();
-      if (!fileName.endsWith(".mdc") && !fileName.endsWith(".md")) fileName += ".mdc";
-      if (!fs.existsSync(getRulesDir())) fs.mkdirSync(getRulesDir(), { recursive: true });
-      fs.writeFileSync(path.join(getRulesDir(), fileName), content, "utf-8");
-      json(res, { ok: true, message: `${fileName} saved` });
+      const id = name.replace(/\.mdc$|\.md$/i, "");
+      const saved = saveClawRule(id, id, content, true);
+      if (!saved) { json(res, { ok: false, error: "save failed" }, 400); return true; }
+      json(res, { ok: true, message: `${saved.name} saved` });
       return true;
     }
     if (action === "delete") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      const fp = path.join(getRulesDir(), name);
-      if (!fs.existsSync(fp)) { json(res, { ok: false, error: "not found" }, 404); return true; }
-      fs.unlinkSync(fp);
+      const id = name.replace(/\.mdc$|\.md$/i, "");
+      if (!deleteClawRule(id)) { json(res, { ok: false, error: "not found" }, 404); return true; }
       json(res, { ok: true, message: `${name} deleted` });
       return true;
     }
@@ -4652,6 +4648,8 @@ export async function daemonMain(): Promise<void> {
   if (APP_DATA_DIR) {
     initProjectStore(APP_DATA_DIR);
     initSessionModelStore(APP_DATA_DIR);
+    initClawMcpStore(APP_DATA_DIR);
+    initClawRuleStore(APP_DATA_DIR);
   }
   startMediaCacheCleanup();
 

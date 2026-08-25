@@ -27,7 +27,8 @@ import {
   listSdkModels,
   resetSdkSessionContext, clearSdkFailStreak, clearAllSdkFailStreaks,
 } from "./agent-sdk"
-import { injectWorkspaceToDir } from "./workspace-injector"
+import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
+import { shouldIncludeAdminMcp } from "../src/shared/claw-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
@@ -468,7 +469,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   }
   if (!workDir) return { ok: false, error: "工作目录未配置" }
 
-  // 项目/独立群/定时任务：删 digital-identity、剥离 admin MCP/Skill；主工作区私聊仍保留 admin
+  // 清理残留 workspace 注入；CLI 另在下方 merge 项目级 MCP
   await injectWorkspaceToDir(workDir, skipIdentity, channel?.digitalIdentity, projectOwned)
 
   // 模型解析：显式覆盖 > 会话 override/pending > 通道场景模型
@@ -501,10 +502,15 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const launchChatType: ChatType = projectOwned ? "project" : chatType
   const launchMeta = { ...meta, chatType: launchChatType }
 
+  if (resource.type === "cli") {
+    injectCliMcpToProjectDir(workDir, shouldIncludeAdminMcp(launchMeta, sessionKey))
+  }
+
   if (resource.type === "sdk") {
     return launchSdkAgent({
       sessionKey, chatType: launchChatType, meta: launchMeta, workspaceDir: workDir,
       useMainWorkspace: skipIdentity,
+      digitalIdentityOverride: channel?.digitalIdentity,
       senderOpenId, chatName, taskMessage,
       notifySessionKey,
       apiKey: resource.apiKey ?? "", model, modelParams,
@@ -517,6 +523,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   return _launchCliAgent({
     sessionKey, chatType: launchChatType, meta: launchMeta,
     useMainWorkspace: skipIdentity,
+    digitalIdentityOverride: channel?.digitalIdentity,
     senderOpenId, chatName, taskMessage,
     notifySessionKey,
     workspaceDir: workDir, model,

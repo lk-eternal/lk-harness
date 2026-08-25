@@ -63,9 +63,8 @@ type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks"
 type CloseWindowAction = "ask" | "minimize" | "quit"
 
 interface McpEditForm {
-  json: string; source: "global" | "project"; jsonError?: string
+  json: string; source: "claw"; jsonError?: string
 }
-interface RuleFile { name: string; content: string }
 interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 interface TaskItem {
   id: string; name: string; cron: string; content: string; enabled: boolean; independent?: boolean
@@ -94,19 +93,19 @@ const PROJECT_STATUS_LABEL: Record<string, string> = { active: "进行中", paus
 const MCP_TEMPLATE = JSON.stringify({
   "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] },
 }, null, 2)
-const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE, source: "global" }
+const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE, source: "claw" }
 
-const MASTER_DETAIL_TABS: Tab[] = ["channel", "tasks", "mcp", "rules", "skills"]
+const MASTER_DETAIL_TABS: Tab[] = ["channel", "rules", "skills", "mcp", "projects", "tasks"]
 
 const TABS: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
   { id: "general", label: "通用", icon: SettingsIcon },
   { id: "proxy", label: "网络", icon: Network },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "channel", label: "消息通道", icon: MessageSquare },
-  { id: "projects", label: "项目", icon: FolderOpen },
-  { id: "mcp", label: "MCP", icon: Blocks },
-  { id: "rules", label: "Rules", icon: FileCode2 },
+  { id: "rules", label: "规则", icon: FileCode2 },
   { id: "skills", label: "Skills", icon: Sparkles },
+  { id: "mcp", label: "MCP", icon: Blocks },
+  { id: "projects", label: "项目", icon: FolderOpen },
   { id: "tasks", label: "定时任务", icon: Timer },
   { id: "toolbox", label: "工具箱", icon: Wrench },
   { id: "setup", label: "帮助引导", icon: BookOpen },
@@ -187,10 +186,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     }
   }
 
-  const [rules, setRules] = useState<RuleFile[]>([])
-  const [ruleEditing, setRuleEditing] = useState<RuleFile | null>(null)
-  const [ruleEditOriginalName, setRuleEditOriginalName] = useState<string | null>(null)
-
   const [skillRoots, setSkillRoots] = useState<{ id: string; label: string; path: string; skillCount: number }[]>([])
   const [skillRootId, setSkillRootId] = useState("cursor")
   const [skills, setSkills] = useState<SkillFile[]>([])
@@ -236,7 +231,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       })
     }
   }, [])
-  const refreshRules = useCallback(() => { window.electronAPI.getRules().then(setRules) }, [])
   const refreshSkillRoots = useCallback(() => {
     window.electronAPI.getSkillRoots().then((roots) => {
       setSkillRoots(roots)
@@ -342,7 +336,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       loaded.current = true
     })
     if (tab === "mcp") refreshMcpServers()
-    if (tab === "rules") refreshRules()
     if (tab === "skills") { refreshSkillRoots(); refreshSkills() }
     if (tab === "tasks") {
       refreshTasks()
@@ -378,7 +371,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
       }).catch(() => {})
     }
-  }, [tab, refreshMcpServers, refreshRules, refreshSkillRoots, refreshSkills, refreshTasks, refreshProjectList])
+  }, [tab, refreshMcpServers, refreshSkillRoots, refreshSkills, refreshTasks, refreshProjectList])
 
   useEffect(() => {
     if (tab !== "skills") return
@@ -645,19 +638,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       return [...filtered, saved]
     })
     setMcpEditing(null)
-  }
-
-  // ── Rules ──
-  const openRuleAdd = () => { setRuleEditOriginalName(null); setRuleEditing({ name: "", content: "" }) }
-  const openRuleEdit = (r: RuleFile) => { setRuleEditOriginalName(r.name); setRuleEditing({ ...r }) }
-  const handleRuleDelete = async (name: string) => { await window.electronAPI.deleteRule("cursor", name); refreshRules() }
-  const handleRuleSave = async () => {
-    if (!ruleEditing || !ruleEditing.name.trim()) return
-    if (ruleEditOriginalName && ruleEditOriginalName !== ruleEditing.name) await window.electronAPI.deleteRule("cursor", ruleEditOriginalName)
-    let name = ruleEditing.name.trim()
-    if (!name.endsWith(".mdc") && !name.endsWith(".md")) name += ".mdc"
-    await window.electronAPI.saveRule("cursor", name, ruleEditing.content)
-    setRuleEditing(null); refreshRules()
   }
 
   // ── Skills ──
@@ -1225,7 +1205,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <p className="truncate text-sm font-medium">{s.name}</p>
-                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{s.source === "global" ? "全局" : "项目"}</span>
+                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">Claw</span>
                               {!mcpStatusLoading && <span className={`shrink-0 text-[10px] ${statusColor}`}>{statusLabel}</span>}
                               {toolState && !toolState.loading && toolState.tools.length > 0 && <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{toolState.tools.length} tools</span>}
                             </div>
@@ -1275,31 +1255,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     </div>
                   )})}
                   {mcpServers.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无 MCP 服务器配置</p>}
-                </div>
-              </section>
-            </>)}
-
-            {/* ═══ Rules ═══ */}
-            {tab === "rules" && (<>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-gray-300">Cursor Rules</h3>
-                  <button onClick={refreshRules} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
-                  <div className="flex-1" />
-                  <button onClick={openRuleAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
-                </div>
-                <p className="text-xs text-gray-600">管理 .cursor/rules/ 下的规则文件</p>
-                <div className="space-y-2">
-                  {rules.map((r) => (
-                    <div key={r.name} className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
-                      <div className="min-w-0"><p className="truncate text-sm font-medium">{r.name}</p><p className="truncate text-xs text-gray-500">{r.content.slice(0, 80)}{r.content.length > 80 ? "..." : ""}</p></div>
-                      <div className="ml-3 flex shrink-0 items-center gap-2">
-                        <button onClick={() => openRuleEdit(r)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white"><Pencil size={13} /></button>
-                        <button onClick={() => handleRuleDelete(r.name)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400"><Trash2 size={13} /></button>
-                      </div>
-                    </div>
-                  ))}
-                  {rules.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无 Rule 文件</p>}
                 </div>
               </section>
             </>)}
@@ -1662,12 +1617,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
               <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="text-xs text-gray-500">配置 JSON</label>
-                  <select value={mcpEditing.source} onChange={(e) => setMcpEditing({ ...mcpEditing, source: e.target.value as "global" | "project" })} className="rounded border border-gray-700 bg-gray-900 px-2 py-0.5 text-xs text-gray-400 outline-none focus:border-blue-500">
-                    <option value="global">全局</option><option value="project">项目</option>
-                  </select>
-                </div>
+                <label className="mb-1 block text-xs text-gray-500">配置 JSON</label>
                 <textarea
                   value={mcpEditing.json}
                   onChange={(e) => setMcpEditing({ ...mcpEditing, json: e.target.value, jsonError: undefined })}
@@ -1808,26 +1758,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
               <button onClick={() => setGroupEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
               <button onClick={handleGroupSave} disabled={!groupEditing.id.trim() || !groupEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Rule Edit Modal ═══ */}
-      {ruleEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{ruleEditOriginalName ? "编辑 Rule" : "新增 Rule"}</h3>
-              <button onClick={() => setRuleEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">文件名</label><input type="text" value={ruleEditing.name} onChange={(e) => setRuleEditing({ ...ruleEditing, name: e.target.value })} className={inputCls} placeholder="my-rule.mdc" /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">内容</label><textarea value={ruleEditing.content} onChange={(e) => setRuleEditing({ ...ruleEditing, content: e.target.value })} rows={16} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder={"---\ndescription: My rule\nglobs: **/*.ts\nalwaysApply: false\n---\n\n# Rule content"} /></div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setRuleEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
-              <button onClick={handleRuleSave} disabled={!ruleEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>
         </div>

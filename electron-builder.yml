@@ -1,11 +1,11 @@
-appId: com.cursor-claw.desktop
-productName: Cursor Claw
+appId: com.lk-harness.desktop
+productName: LK Harness
 copyright: Copyright © 2026
 
 publish:
   provider: github
   owner: lk-eternal
-  repo: cursor-claw
+  repo: lk-harness
   vPrefixedTagName: true
 
 afterPack: scripts/after-pack.cjs
@@ -40,7 +40,7 @@ extraResources:
 
 win:
   icon: resources/icon.ico
-  artifactName: cursor-claw-setup-${version}.${ext}
+  artifactName: lk-harness-setup-${version}.${ext}
   target:
     - target: nsis
       arch:
@@ -50,7 +50,7 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
-  shortcutName: Cursor Claw
+  shortcutName: LK Harness
 
 mac:
   target:
@@ -62,7 +62,7 @@ mac:
   category: public.app-category.developer-tools
 
 dmg:
-  title: Cursor Claw
+  title: LK Harness
 
 linux:
   icon: resources/icon.png
