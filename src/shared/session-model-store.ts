@@ -80,14 +80,14 @@ export function pendingKey(chatKey: string, workspaceDir: string): string {
   return `${chatKey}::${workspaceDir}`
 }
 
-/** sessionKey 形如 chatKey::workspace；无 :: 时整段当作 chatKey */
+/** sessionKey 形如 chatKey::workspace；无 :: 时整段当�?chatKey */
 export function pendingKeyFromSession(sessionKey: string): string {
   const idx = sessionKey.indexOf("::")
   if (idx < 0) return sessionKey
   return sessionKey
 }
 
-/** Windows 路径大小写不一致时，用已有 key 对齐，避免 override 写了读不到 */
+/** Windows 路径大小写不一致时，用已有 key 对齐，避�?override 写了读不�?*/
 function findStoredSessionKey(sessions: Record<string, unknown>, sessionKey: string): string | undefined {
   if (sessionKey in sessions) return sessionKey
   if (process.platform !== "win32") return undefined
@@ -123,6 +123,21 @@ export function clearSessionOverride(sessionKey: string): void {
   save()
 }
 
+/** 通道保存新模型时清掉该通道下所有会�?override，避免仍用旧 /m 或历史模�?*/
+export function clearSessionOverridesForChannel(channelId: string): number {
+  const s = load()
+  const prefix = `${channelId}|`
+  let n = 0
+  for (const key of Object.keys(s.sessions)) {
+    if (key.startsWith(prefix)) {
+      delete s.sessions[key]
+      n++
+    }
+  }
+  if (n) save()
+  return n
+}
+
 export function setPendingOverride(key: string, ref: ModelRef): void {
   const s = load()
   s.pending[key] = { model: ref.model, modelParams: ref.modelParams ?? "", updatedAt: Date.now() }
@@ -135,7 +150,7 @@ export function getPendingOverride(key: string): ModelRef | undefined {
   return { model: e.model, modelParams: e.modelParams ?? "" }
 }
 
-/** 读取并删除 pending；不存在返回 undefined */
+/** 读取并删�?pending；不存在返回 undefined */
 export function consumePendingOverride(key: string): ModelRef | undefined {
   const s = load()
   const e = s.pending[key]
@@ -146,8 +161,8 @@ export function consumePendingOverride(key: string): ModelRef | undefined {
 }
 
 /**
- * 解析会话有效模型：session override > pending(消费并写入 override) > fallback
- * pending key 与 sessionKey 同形（chatKey::workspace）
+ * 解析会话有效模型：session override > pending(消费并写�?override) > fallback
+ * pending key �?sessionKey 同形（chatKey::workspace�?
  */
 export function resolveModelForSession(sessionKey: string, fallback: ModelRef): ModelRef {
   const ov = getSessionOverride(sessionKey)
@@ -189,7 +204,7 @@ export function removeRecentModel(ref: ModelRef): void {
   save()
 }
 
-/** 收藏置顶 + 最近补充，去重，最多 limit 个 */
+/** 收藏置顶 + 最近补充，去重，最�?limit �?*/
 export function listQuickModels(favorites: ModelEntry[], limit = 6): ModelEntry[] {
   const out: ModelEntry[] = []
   const seen = new Set<string>()

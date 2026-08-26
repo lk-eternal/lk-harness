@@ -129,7 +129,7 @@ describe("project-worktree (independent checkout)", () => {
     git(repo, ["commit", "-m", "sync2"])
     const before = git(wt, ["rev-parse", "HEAD"])
     const note = await syncCheckout(wt, "feature/sync")
-    expect(note.note).toMatch(/已同步远程/)
+    expect(note.note).toMatch(/已同步远�?)
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(before)
     expect(fs.readFileSync(path.join(wt, "a.txt"), "utf-8").replace(/\r\n/g, "\n")).toBe("2\n")
   })

@@ -1,4 +1,4 @@
-/** 路径末段标签；与 peers 中有同名末段时附父目录（如 cp-scheduling·workspace） */
+/** 路径末段标签；与 peers 中有同名末段时附父目录（�?cp-scheduling·workspace�?*/
 export function pathLastSegment(dir: string): string {
   return dir.split(/[\\/]/).filter(Boolean).pop() ?? dir
 }

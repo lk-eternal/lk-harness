@@ -11,7 +11,7 @@ const mkTools = (n: number, tag: string): Segment => ({
   type: "tools",
   steps: Array.from({ length: n }, (_, i) => ({ title: `${tag}-step${i}`, status: "success", detail: `detail-${tag}-${i}` })),
 })
-const mkThink = (tag: string): Segment => ({ type: "thinking", text: `思考内容 ${tag} `.repeat(20) })
+const mkThink = (tag: string): Segment => ({ type: "thinking", text: `思考内�?${tag} `.repeat(20) })
 const mkReply = (tag: string): Segment => ({ type: "reply", text: `send_text 正文 ${tag}` })
 const mkTodos = (tag: string): Segment => ({
   type: "todos",
@@ -25,15 +25,15 @@ function buildCard(segments: Segment[], showThinking = true): { json: string; co
   return { json: JSON.stringify(card), count: LarkSender.countCardElements(card.body.elements) }
 }
 
-describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
+describe("流式卡压缩（各类型留最�?N，无省略占位�?, () => {
   it("不超限且未超 N 时原样保留：detail 不剥、无省略占位", () => {
     const { json, count } = buildCard([mkThink("s"), mkTools(5, "S"), mkReply("s")])
     expect(count).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
     expect(json).toContain("detail-S-4")
-    expect(json).not.toContain("已省略")
+    expect(json).not.toContain("已省�?)
   })
 
-  it("思考/工具各只留最近 5；reply 与 todos 全保留；无省略文案", () => {
+  it("思�?工具各只留最�?5；reply �?todos 全保留；无省略文�?, () => {
     const segments: Segment[] = []
     for (let i = 0; i < 12; i++) {
       segments.push(mkThink(`t${i}`))
@@ -48,7 +48,7 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
 
     const { json, count } = buildCard(segments)
     expect(count).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
-    expect(json).not.toContain("已省略")
+    expect(json).not.toContain("已省�?)
 
     // 正文与任务清单全保留
     for (const r of ["r0", "r3", "r6", "r9", "final"]) {
@@ -57,14 +57,14 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(json).toContain("任务 mid")
     expect(json).toContain("任务 end")
 
-    // 最早的思考/工具被丢掉；最近的保留
-    expect(json).not.toContain("思考内容 t0 ")
+    // 最早的思�?工具被丢掉；最近的保留
+    expect(json).not.toContain("思考内�?t0 ")
     expect(json).not.toContain("g0-step0")
-    expect(json).toContain("思考内容 latest ")
+    expect(json).toContain("思考内�?latest ")
     expect(json).toContain("LATEST-step0")
   })
 
-  it("keepPerKind 可配置（非默认 5）", () => {
+  it("keepPerKind 可配置（非默�?5�?, () => {
     const segments: Segment[] = []
     for (let i = 0; i < 10; i++) {
       segments.push(mkThink(`t${i}`))
@@ -77,7 +77,7 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(LarkSender.normalizeStreamKeepPerKind(99)).toBe(20)
   })
 
-  it("keepRecentStreamSegments 精确保留各类型最近 N 个", () => {
+  it("keepRecentStreamSegments 精确保留各类型最�?N �?, () => {
     const segments: Segment[] = []
     for (let i = 0; i < 8; i++) {
       segments.push(mkThink(`t${i}`))
@@ -94,17 +94,17 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(kept.some((s) => s.type === "thinking" && (s as Extract<Segment, { type: "thinking" }>).text.includes("t2"))).toBe(false)
   })
 
-  it("单个超大工具块兜底：从头截步、尾部保留", () => {
+  it("单个超大工具块兜底：从头截步、尾部保�?, () => {
     const { json, count } = buildCard([mkReply("head"), mkTools(300, "BIG"), mkReply("tail")])
     expect(count).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
     expect(json).toContain("BIG-step299")
     expect(json).not.toContain("\"BIG-step0\"")
     expect(json).toContain("send_text 正文 head")
     expect(json).toContain("send_text 正文 tail")
-    expect(json).not.toContain("已省略")
+    expect(json).not.toContain("已省�?)
   })
 
-  it("showThinking=false 时 thinking 不渲染", () => {
+  it("showThinking=false �?thinking 不渲�?, () => {
     const segments: Segment[] = []
     for (let i = 0; i < 30; i++) {
       segments.push(mkThink(`t${i}`))
@@ -113,20 +113,20 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     segments.push(mkReply("final"))
     const { json, count } = buildCard(segments, false)
     expect(count).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
-    expect(json).not.toContain("思考内容")
+    expect(json).not.toContain("思考内�?)
     expect(json).toContain("send_text 正文 final")
-    expect(json).not.toContain("已省略")
+    expect(json).not.toContain("已省�?)
   })
 })
 
 describe("完整回复后隐藏折叠块", () => {
-  it("finish 且 hideOnFinish 默认开启时只留 reply", () => {
+  it("finish �?hideOnFinish 默认开启时只留 reply", () => {
     const segments: Segment[] = [mkThink("a"), mkTools(2, "T"), mkTodos("x"), mkReply("done")]
     const stripped = LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: true })
     expect(stripped).toEqual([mkReply("done")])
   })
 
-  it("streaming 或未 finish 时不剥", () => {
+  it("streaming 或未 finish 时不�?, () => {
     const segments: Segment[] = [mkThink("a"), mkReply("done")]
     expect(LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: false })).toEqual(segments)
     expect(LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: true, hideOnFinish: false })).toEqual(segments)
@@ -137,6 +137,6 @@ describe("完整回复后隐藏折叠块", () => {
     const stripped = LarkSender.stripFoldableSegmentsOnFinish(segments, { finish: true })
     expect(stripped).toEqual([{ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER }])
     const { json } = buildCard(stripped, true)
-    expect(json).toContain("仅包含思考,无实质输出")
+    expect(json).toContain("仅包含思�?无实质输�?)
   })
 })

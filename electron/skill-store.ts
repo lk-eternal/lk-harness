@@ -26,6 +26,7 @@ const HOME = os.homedir()
 export const SKILL_ROOT_DEFS = [
   { id: "cursor", label: "~/.cursor/skills", rel: [".cursor", "skills"] },
   { id: "agents", label: "~/.agents/skills", rel: [".agents", "skills"] },
+  { id: "pi", label: "~/.pi/agent/skills", rel: [".pi", "agent", "skills"] },
   { id: "claude", label: "~/.claude/skills", rel: [".claude", "skills"] },
   { id: "codex", label: "~/.codex/skills", rel: [".codex", "skills"] },
 ] as const
@@ -45,7 +46,7 @@ function statFile(p: string): boolean {
   try { return fs.statSync(p).isFile() } catch { return false }
 }
 
-/** 递归发现含 SKILL.md 的目录（stat 识别 Windows symlink/junction） */
+/** 递归发现�?SKILL.md 的目录（stat 识别 Windows symlink/junction�?*/
 export function discoverSkillPaths(rootAbs: string): string[] {
   const found: string[] = []
   if (!fs.existsSync(rootAbs)) return found

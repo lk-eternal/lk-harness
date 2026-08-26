@@ -34,20 +34,20 @@ const CHAT = "ch_a|oc_111"
 const WS = "D:\\ws\\a"
 
 describe("pendingKey", () => {
-  it("与 sessionKey 形态对齐", () => {
+  it("�?sessionKey 形态对�?, () => {
     expect(pendingKey(CHAT, WS)).toBe(`${CHAT}::${WS}`)
   })
 })
 
 describe("resolveModelForSession", () => {
-  it("override 优先于 pending 与 fallback", () => {
+  it("override 优先�?pending �?fallback", () => {
     setPendingOverride(pendingKey(CHAT, WS), { model: "pending-model", modelParams: "" })
     setSessionOverride(SESSION, { model: "override-model", modelParams: '{"x":1}' })
     const r = resolveModelForSession(SESSION, { model: "fallback", modelParams: "" })
     expect(r).toEqual({ model: "override-model", modelParams: '{"x":1}' })
   })
 
-  it("无 override 时消费 pending 并落成 override", () => {
+  it("�?override 时消�?pending 并落�?override", () => {
     setPendingOverride(pendingKey(CHAT, WS), { model: "p1", modelParams: "[]" })
     const r = resolveModelForSession(SESSION, { model: "fb", modelParams: "" })
     expect(r).toEqual({ model: "p1", modelParams: "[]" })
@@ -60,7 +60,7 @@ describe("resolveModelForSession", () => {
     expect(r).toEqual({ model: "auto", modelParams: "" })
   })
 
-  it("Windows 下 sessionKey 大小写不同仍能命中 override", () => {
+  it("Windows �?sessionKey 大小写不同仍能命�?override", () => {
     if (process.platform !== "win32") return
     setSessionOverride(SESSION, { model: "grok-x", modelParams: "[]" })
     const alt = SESSION.replace("D:\\", "d:\\")
@@ -71,7 +71,7 @@ describe("resolveModelForSession", () => {
 })
 
 describe("pushRecentModel / listQuickModels", () => {
-  it("去重并把最新提到前面，有上限", () => {
+  it("去重并把最新提到前面，有上�?, () => {
     for (let i = 0; i < 10; i++) {
       pushRecentModel({ model: `m${i}`, modelParams: "" }, 8)
     }
@@ -84,7 +84,7 @@ describe("pushRecentModel / listQuickModels", () => {
     expect(quick[0].model).toBe("fav-a")
     expect(quick.map((q) => modelEntryKey(q))).toContain(modelEntryKey({ model: "m9", modelParams: "" }))
     expect(quick.length).toBeLessThanOrEqual(6)
-    // m9 已在收藏，不因 recent 重复出现
+    // m9 已在收藏，不�?recent 重复出现
     expect(quick.filter((q) => q.model === "m9").length).toBe(1)
   })
 })

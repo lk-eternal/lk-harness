@@ -88,7 +88,7 @@ function requestJson(
   })
 }
 
-/** 从 MR web_url 解析 host / project path / iid */
+/** �?MR web_url 解析 host / project path / iid */
 export function parseMrUrl(mrUrl: string): { ok: true; host: string; projectPath: string; iid: number } | { ok: false; error: string } {
   const m = (mrUrl || "").trim().match(/^(https?:\/\/[^/]+)\/(.+?)\/-\/merge_requests\/(\d+)/i)
   if (!m) return { ok: false, error: `无法解析 MR URL: ${mrUrl}` }
@@ -101,9 +101,9 @@ export interface AcceptMrResult {
   error?: string
 }
 
-/** 合并（accept）一个已存在的 MR；host 缺省用 MR URL 自带的 */
+/** 合并（accept）一个已存在�?MR；host 缺省�?MR URL 自带�?*/
 export async function acceptMergeRequest(input: GitlabConfig & { mrUrl: string }): Promise<AcceptMrResult> {
-  if (!input.token?.trim()) return { ok: false, error: "未配置 GitLab token（设置 → 项目工作区）" }
+  if (!input.token?.trim()) return { ok: false, error: "未配�?GitLab token（设�?�?项目工作区）" }
   const parsed = parseMrUrl(input.mrUrl)
   if (!parsed.ok) return parsed
   const host = (input.host?.trim() || parsed.host).replace(/\/$/, "")
@@ -117,11 +117,11 @@ export async function acceptMergeRequest(input: GitlabConfig & { mrUrl: string }
   }
 }
 
-/** 只读查询 source→target 的现存 MR（优先 opened，其次 merged），不创建 */
+/** 只读查询 source→target 的现�?MR（优�?opened，其�?merged），不创�?*/
 export async function findMergeRequest(
   input: GitlabConfig & { cwd: string; sourceBranch: string; targetBranch: string },
 ): Promise<{ ok: boolean; mrUrl?: string; state?: string; error?: string }> {
-  if (!input.token?.trim()) return { ok: false, error: "未配置 GitLab token（设置 → 项目工作区）" }
+  if (!input.token?.trim()) return { ok: false, error: "未配�?GitLab token（设�?�?项目工作区）" }
   const parsed = resolveGitlabProjectPath(input.cwd)
   if (!parsed.ok) return parsed
   const host = (input.host?.trim() || `https://${parsed.host}`).replace(/\/$/, "")
@@ -143,7 +143,7 @@ export async function findMergeRequest(
 }
 
 export async function pushAndCreateMergeRequest(input: CreateMrInput): Promise<CreateMrResult> {
-  if (!input.token?.trim()) return { ok: false, error: "未配置 GitLab token（设置 → 项目工作区）" }
+  if (!input.token?.trim()) return { ok: false, error: "未配�?GitLab token（设�?�?项目工作区）" }
 
   const push = git(input.cwd, ["push", "-u", "origin", `HEAD:${input.sourceBranch}`])
   if (!push.ok) return { ok: false, error: `git push 失败: ${push.out}` }
@@ -165,7 +165,7 @@ export async function pushAndCreateMergeRequest(input: CreateMrInput): Promise<C
     if (res.status >= 200 && res.status < 300 && res.json?.web_url) {
       return { ok: true, mrUrl: String(res.json.web_url) }
     }
-    // already exists → try find
+    // already exists �?try find
     if (res.status === 409 || /already exists/i.test(res.text)) {
       const listUrl = `${host}/api/v4/projects/${projectEnc}/merge_requests?source_branch=${encodeURIComponent(input.sourceBranch)}&state=opened`
       const list = await requestJson("GET", listUrl, input.token.trim())

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LK Harness — 随时随地 AI 协作</title>
+  <meta name="description" content="LK Harness：通过飞书 / 微信远程驱动 AI Agent，任意设备随时协作，流式进度与项目工作区。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #05060a; --text: #f4f6fb; --muted: #8b93a7; --line: rgba(255,255,255,.08);
+      --accent: #5b8cff; --accent2: #7c5cff; --glow: rgba(91, 140, 255, .35); --card: rgba(255,255,255,.04);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden;
+    }
+    .mesh {
+      position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(91,140,255,.25), transparent 60%),
+        radial-gradient(ellipse 60% 40% at 100% 20%, rgba(124,92,255,.18), transparent 55%),
+        linear-gradient(180deg, #05060a 0%, #0a0d14 40%, #05060a 100%);
+    }
+    .grid-bg {
+      position: fixed; inset: 0; z-index: -1; opacity: .4; pointer-events: none;
+      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 20%, transparent 75%);
+    }
+    nav {
+      position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px);
+      background: rgba(5,6,10,.72); border-bottom: 1px solid var(--line);
+    }
+    .nav-inner {
+      max-width: 1120px; margin: 0 auto; padding: 16px 24px;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    }
+    .logo { font-weight: 700; font-size: 1.05rem; letter-spacing: -.02em; }
+    .logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 28px; font-size: .875rem; color: var(--muted); }
+    .nav-links a { color: inherit; text-decoration: none; }
+    .nav-links a:hover { color: var(--text); }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 10px 18px; border-radius: 999px; font-size: .875rem; font-weight: 600;
+      text-decoration: none; transition: transform .2s, box-shadow .2s; border: 1px solid transparent;
+    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 8px 32px var(--glow); }
+    .btn-primary:hover { transform: translateY(-1px); }
+    .btn-ghost { background: rgba(255,255,255,.06); color: var(--text); border-color: var(--line); }
+    .hero { max-width: 1120px; margin: 0 auto; padding: 96px 24px 72px; text-align: center; }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
+      font-size: .75rem; color: var(--muted); border: 1px solid var(--line); background: var(--card); margin-bottom: 28px;
+    }
+    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+    h1 { font-size: clamp(2.5rem, 6vw, 4.25rem); font-weight: 700; letter-spacing: -.04em; line-height: 1.08; margin-bottom: 24px; }
+    h1 .grad { background: linear-gradient(135deg, #fff, #a5b4fc 45%, #5b8cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero-lead { max-width: 640px; margin: 0 auto 40px; font-size: 1.125rem; color: var(--muted); }
+    .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 64px; }
+    .demo-window {
+      max-width: 920px; margin: 0 auto; border-radius: 16px; border: 1px solid var(--line);
+      background: rgba(12,15,24,.85); box-shadow: 0 24px 80px rgba(0,0,0,.5); overflow: hidden; text-align: left;
+    }
+    .demo-bar {
+      display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+      border-bottom: 1px solid var(--line); background: rgba(0,0,0,.25);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; } .dot-y { background: #febc2e; } .dot-g { background: #28c840; }
+    .demo-body { padding: 24px; font-size: .875rem; }
+    .demo-row {
+      display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+      opacity: 0; animation: fadeUp .5s ease forwards;
+    }
+    .demo-row:last-child { border-bottom: none; }
+    .demo-row:nth-child(1) { animation-delay: .15s; }
+    .demo-row:nth-child(2) { animation-delay: .35s; }
+    .demo-row:nth-child(3) { animation-delay: .55s; }
+    .demo-row:nth-child(4) { animation-delay: .75s; }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .demo-label { min-width: 56px; font-size: .75rem; font-weight: 600; color: var(--accent); }
+    .demo-text { color: var(--muted); flex: 1; }
+    .demo-text strong { color: var(--text); font-weight: 500; }
+    .ok { color: #86efac; }
+    section { max-width: 1120px; margin: 0 auto; padding: 80px 24px; }
+    .section-label { font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    h2 { font-size: clamp(1.75rem, 3vw, 2.25rem); font-weight: 700; letter-spacing: -.03em; margin-bottom: 16px; }
+    .section-desc { color: var(--muted); max-width: 560px; margin-bottom: 48px; font-size: 1.05rem; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .card {
+      padding: 28px; border-radius: 16px; border: 1px solid var(--line);
+      background: linear-gradient(145deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+      transition: border-color .25s, transform .25s;
+    }
+    .card:hover { border-color: rgba(91,140,255,.35); transform: translateY(-4px); }
+    .card-icon {
+      width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+      font-size: 1.25rem; margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(91,140,255,.2), rgba(124,92,255,.15)); border: 1px solid rgba(91,140,255,.25);
+    }
+    .card h3 { font-size: 1.05rem; margin-bottom: 8px; }
+    .card p { font-size: .9rem; color: var(--muted); }
+    .stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 24px;
+      padding: 48px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 48px 0;
+    }
+    .stat-num { font-size: 2rem; font-weight: 700; }
+    .stat-label { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+    .flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); }
+    @media (max-width: 768px) { .flow { grid-template-columns: 1fr; } .nav-links { display: none; } }
+    .flow-step { padding: 32px 28px; background: var(--card); }
+    .flow-step strong { display: block; font-size: .7rem; letter-spacing: .1em; color: var(--accent); margin-bottom: 8px; }
+    .flow-step h3 { font-size: 1rem; margin-bottom: 8px; }
+    .flow-step p { font-size: .85rem; color: var(--muted); }
+    .cta-block { text-align: center; padding: 80px 24px 100px; border-top: 1px solid var(--line); }
+    .cta-block p { color: var(--muted); margin-bottom: 28px; }
+    footer { border-top: 1px solid var(--line); padding: 32px 24px; text-align: center; font-size: .8rem; color: var(--muted); }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="mesh"></div>
+  <div class="grid-bg"></div>
+
+  <nav>
+    <div class="nav-inner">
+      <div class="logo">LK <span>Harness</span></div>
+      <div class="nav-links">
+        <a href="#features">能力</a>
+        <a href="#flow">组成</a>
+        <a href="#start">开始</a>
+      </div>
+      <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">下载</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="badge"><span class="badge-dot"></span>飞书 · 微信 · 桌面 Agent</div>
+    <h1>AI 在电脑上干活<br><span class="grad">你在任何地方都能接手</span></h1>
+    <p class="hero-lead">LK Harness 把 Agent 会话接到飞书与微信：实时进度、一键决策、项目协作与定时任务，应用在后台持续运行。</p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">获取安装包</a>
+      <a class="btn btn-ghost" href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub 源码</a>
+    </div>
+
+    <div class="demo-window">
+      <div class="demo-bar">
+        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+        <span style="margin-left:8px;font-size:.75rem;color:var(--muted)">飞书 · 任务进度</span>
+      </div>
+      <div class="demo-body">
+        <div class="demo-row">
+          <span class="demo-label">进度</span>
+          <span class="demo-text">正在分析你的需求，并准备回复…</span>
+        </div>
+        <div class="demo-row">
+          <span class="demo-label">操作</span>
+          <span class="demo-text"><strong>发送消息</strong> · 已完成</span>
+        </div>
+        <div class="demo-row">
+          <span class="demo-label">操作</span>
+          <span class="demo-text"><strong>检查项目</strong> · 编译通过</span>
+        </div>
+        <div class="demo-row">
+          <span class="demo-label">结果</span>
+          <span class="demo-text"><span class="ok">任务已完成，等待你的下一步指示</span></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="section-label">Capabilities</div>
+    <h2>为真实协作场景设计</h2>
+    <p class="section-desc">面向日常工作的 Agent 调度与消息桥接——不必守在电脑前，也不必把 IDE 搬进聊天窗口。</p>
+
+    <div class="stats">
+      <div><div class="stat-num">IM</div><div class="stat-label">飞书 + 微信</div></div>
+      <div><div class="stat-num">24/7</div><div class="stat-label">后台持续运行</div></div>
+      <div><div class="stat-num">多会话</div><div class="stat-label">私聊 / 群聊 / 项目</div></div>
+      <div><div class="stat-num">可扩展</div><div class="stat-label">规则与技能管理</div></div>
+    </div>
+
+    <div class="cards">
+      <article class="card">
+        <div class="card-icon">⚡</div>
+        <h3>实时进度</h3>
+        <p>长任务也能看清 AI 在做什么：思考与操作步骤在一张卡片里持续更新。</p>
+      </article>
+      <article class="card">
+        <div class="card-icon">📱</div>
+        <h3>随时决策</h3>
+        <p>需要选择时收到选项按钮；也可直接打字补充说明。图片与文件双向收发。</p>
+      </article>
+      <article class="card">
+        <div class="card-icon">🗂️</div>
+        <h3>项目工作区</h3>
+        <p>独立目录与分支、节点化研发流程，可选专属群聊，任务互不干扰。</p>
+      </article>
+      <article class="card">
+        <div class="card-icon">⏰</div>
+        <h3>定时任务</h3>
+        <p>按 Cron 自动执行巡检、日报等；临时会话用完自动收尾。</p>
+      </article>
+      <article class="card">
+        <div class="card-icon">🔌</div>
+        <h3>飞书工具箱</h3>
+        <p>可选安装 lark-cli、meegle，让 AI 直接读写文档、日程与项目数据。</p>
+      </article>
+      <article class="card">
+        <div class="card-icon">🔒</div>
+        <h3>凭据安全</h3>
+        <p>密钥与 Token 由系统密钥链加密保存，支持多实例数据隔离。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="flow">
+    <div class="section-label">How it works</div>
+    <h2>三个部分，各司其职</h2>
+    <p class="section-desc">桌面端负责调度与配置，消息服务负责连接 IM，工作目录开箱即用。</p>
+    <div class="flow">
+      <div class="flow-step">
+        <strong>01</strong>
+        <h3>桌面应用</h3>
+        <p>可视化配置、Agent 调度、项目管理与运行日志。</p>
+      </div>
+      <div class="flow-step">
+        <strong>02</strong>
+        <h3>消息服务</h3>
+        <p>连接飞书与微信，可靠收发消息，断线后自动恢复会话。</p>
+      </div>
+      <div class="flow-step">
+        <strong>03</strong>
+        <h3>工作目录</h3>
+        <p>选定文件夹后自动完成环境配置，AI 即可在项目中执行任务。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="start" class="cta-block">
+    <h2>开始使用 LK Harness</h2>
+    <p>支持 Windows · macOS · Linux</p>
+    <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">前往 Releases 下载</a>
+  </section>
+
+  <footer>
+    <p>LK Harness · MIT License · <a href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub</a></p>
+  </footer>
+</body>
+</html>

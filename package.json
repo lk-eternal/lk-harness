@@ -29,6 +29,7 @@
     "build:bundle": "node scripts/bundle-daemon.cjs",
     "dev:mcp": "tsx src/index.ts",
     "dev": "npm run build && electron-vite dev -- --profile=dev",
+    "dev:live": "npm run build:mcp && npm run build:bundle && electron-vite dev",
     "dev:fresh-setup": "node scripts/dev-fresh-setup.cjs",
     "build": "npm run clean && npm run build:mcp && npm run build:bundle && electron-vite build",
     "preview": "electron-vite preview",
@@ -44,14 +45,22 @@
   "dependencies": {
     "@cursor/sdk": "^1.0.23",
     "@larksuiteoapi/node-sdk": "^1.66.1",
+    "axios": "^1.15.0",
+    "@mariozechner/jiti": "^2.6.5",
+    "@mariozechner/pi-agent-core": "npm:@earendil-works/pi-agent-core@^0.84.1",
+    "@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@^0.84.1",
+    "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@^0.84.1",
+    "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@^0.84.3",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "cron-parser": "^5.5.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
     "lucide-react": "^0.577.0",
     "node-cron": "^4.2.1",
+    "pi-mcp-adapter": "^2.27.0",
     "qrcode": "^1.5.4",
     "semver": "^7.7.4",
+    "typebox": "^1.3.19",
     "yaml": "^2.9.0",
     "zod": "^3.24.0"
   },
@@ -82,6 +91,7 @@
     "node": ">=18.0.0"
   },
   "overrides": {
-    "axios": "^1.15.0"
+    "axios": "^1.15.0",
+    "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@^0.84.3"
   }
 }

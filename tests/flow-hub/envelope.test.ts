@@ -15,14 +15,14 @@ describe("flow-hub envelope", () => {
       author: "张三",
       group: {
         id: "develop",
-        name: "开发",
+        name: "开�?,
         workspace: "worktree",
-        nodes: [{ hubId: "n1", id: "plan", label: "规划", prompt: "做规划" }],
+        nodes: [{ hubId: "n1", id: "plan", label: "规划", prompt: "做规�? }],
       },
     })
     const parsed = parseGroupEnvelope(env)
     expect(parsed?.hubId).toBe("g-test-uuid")
-    expect(parsed?.group.nodes[0].prompt).toBe("做规划")
+    expect(parsed?.group.nodes[0].prompt).toBe("做规�?)
     expect(parsed?.contentHash).toBe(env.contentHash)
   })
 
@@ -31,7 +31,7 @@ describe("flow-hub envelope", () => {
       hubId: "n-test",
       hubRevision: 1,
       author: "李四",
-      node: { hubId: "n-test", id: "mr", label: "MR", prompt: "建 MR" },
+      node: { hubId: "n-test", id: "mr", label: "MR", prompt: "�?MR" },
     })
     const parsed = parseNodeEnvelope(env)
     expect(parsed?.node.label).toBe("MR")
@@ -42,7 +42,7 @@ describe("flow-hub envelope", () => {
     const parsed = parseGroupEnvelope({
       kind: "lk-harness-node-group",
       version: 1,
-      group: { id: "qa", name: "质检", nodes: [{ id: "check", label: "检查" }] },
+      group: { id: "qa", name: "质检", nodes: [{ id: "check", label: "检�? }] },
     })
     expect(parsed?.group.name).toBe("质检")
     expect(parsed?.hubId).toBeTruthy()
@@ -53,7 +53,7 @@ describe("flow-hub envelope", () => {
       hubId: "g1",
       hubRevision: 3,
       author: "王五",
-      group: { id: "test", name: "测试组", nodes: [{ hubId: "n1", id: "a", label: "A" }] },
+      group: { id: "test", name: "测试�?, nodes: [{ hubId: "n1", id: "a", label: "A" }] },
     })
     const def = envelopeToGroupDef(env)
     expect(def.hubId).toBe("g1")

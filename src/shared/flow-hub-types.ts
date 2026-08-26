@@ -35,7 +35,7 @@ export interface FlowHubCatalogNode {
 
 /** 节点浏览列表项：独立节点 + 流程组内节点 */
 export interface FlowHubBrowsableNode extends FlowHubCatalogNode {
-  /** 来自流程组时填写，导入/预览走 groups/{groupHubId}.json */
+  /** 来自流程组时填写，导�?预览�?groups/{groupHubId}.json */
   groupHubId?: string
 }
 

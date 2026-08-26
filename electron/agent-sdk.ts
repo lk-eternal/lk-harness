@@ -6,9 +6,9 @@ import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
 import { type ChatType, type LaunchMeta, buildPrompt, resolveSessionChatName } from "./agent-launcher"
 import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
-import { buildSdkMcpServers, shouldIncludeAdminMcp } from "../src/shared/claw-mcp-store.js"
+import { buildSdkMcpServers, shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource, resolveChannelForSession } from "./config-store"
-import { readLockFile, httpPost } from "./daemon-client"
+import { readLockFile, httpPost, notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
 import {
   initSessionModelStore,
   resolveModelForSession,
@@ -964,11 +964,11 @@ async function flushStreamCard(session: SdkSessionAgent, finish: boolean): Promi
 // 严禁把整个 args 序列化后模糊匹配——Task 的 prompt / send_text 的 text 等长文本里
 // 出现 "poll-message"、"send_text" 字样就会整体误判（Subagent 步被隐藏、卡片被错误收口）。
 
-/** MCP 调用的目标工具名（args.toolName / tool_name）；非 MCP 调用返回 "" */
+/** MCP 调用的目标工具名（args.tool / toolName / tool_name）；非 MCP 调用返回 "" */
 function mcpToolName(args: unknown): string {
   if (!args || typeof args !== "object") return ""
   const rec = args as Record<string, unknown>
-  for (const key of ["toolName", "tool_name"]) {
+  for (const key of ["tool", "toolName", "tool_name"]) {
     const v = rec[key]
     if (typeof v === "string" && v.trim()) return v.trim()
   }
@@ -1035,30 +1035,56 @@ function isSendQuestionInvocation(name: string, summary: string, args?: unknown)
   return !!cmd && /\/api\/send-question/i.test(cmd)
 }
 
+function formatPrefixedMcpToolName(raw: string): string | null {
+  const name = raw.trim()
+  if (!name || name === "mcp") return null
+  if (name.startsWith("mcp__")) {
+    const rest = name.slice(5)
+    const idx = rest.indexOf("_")
+    if (idx > 0) return `${rest.slice(0, idx)} · ${rest.slice(idx + 1)}`
+  }
+  const knownServers = ["lk-harness-admin", "lk-harness"]
+  for (const srv of knownServers.sort((a, b) => b.length - a.length)) {
+    const prefix = `${srv}_`
+    if (name.startsWith(prefix)) return `${srv} · ${name.slice(prefix.length)}`
+  }
+  const idx = name.indexOf("_")
+  if (idx > 0 && idx < name.length - 1) return `${name.slice(0, idx)} · ${name.slice(idx + 1)}`
+  return null
+}
+
 /** MCP 工具展示名：优先 args.toolName / tool_name；Task/subagent 加可见标记 */
 function resolveToolDisplayName(name: string, args: unknown): string {
   const raw = name.trim()
   const isTask = /^task$/i.test(raw) || /^task\b/i.test(raw)
-  let label = raw
   if (args && typeof args === "object") {
     const rec = args as Record<string, unknown>
     if (isTask) {
       const desc = typeof rec.description === "string" ? rec.description.trim()
         : typeof rec.prompt === "string" ? rec.prompt.trim().slice(0, 80) : ""
       const sub = typeof rec.subagent_type === "string" ? rec.subagent_type.trim() : ""
-      label = desc ? `🤖 Subagent · ${desc}` : sub ? `🤖 Subagent · ${sub}` : "🤖 Subagent"
-      return label
+      return desc ? `🤖 Subagent · ${desc}` : sub ? `🤖 Subagent · ${sub}` : "🤖 Subagent"
     }
-    for (const key of ["toolName", "tool_name", "name"]) {
+    for (const key of ["tool", "toolName", "tool_name", "name"]) {
       const v = rec[key]
       if (typeof v === "string" && v.trim()) {
         const server = typeof rec.serverName === "string" ? rec.serverName
           : typeof rec.server === "string" ? rec.server : ""
-        return server ? `${server}/${v.trim()}` : v.trim()
+        return server ? `${server} · ${v.trim()}` : v.trim()
       }
     }
+    if (/^mcp$/i.test(raw)) {
+      if (typeof rec.action === "string" && rec.action.trim()) {
+        const server = typeof rec.server === "string" ? rec.server.trim() : ""
+        return server ? `mcp · ${rec.action.trim()} (${server})` : `mcp · ${rec.action.trim()}`
+      }
+      if (typeof rec.connect === "string" && rec.connect.trim()) return `mcp · connect (${rec.connect.trim()})`
+      if (rec.search !== undefined) return "mcp · search"
+    }
   }
-  return isTask ? "🤖 Subagent" : label
+  const prefixed = formatPrefixedMcpToolName(raw)
+  if (prefixed) return prefixed
+  return isTask ? "🤖 Subagent" : raw
 }
 
 
@@ -1255,15 +1281,7 @@ export function handlePollPhaseEvent(
  * 拉起后通知 daemon：resumed=false 全新会话（收口上一 run 残留流式卡）。失败静默＝降级默认行为。
  */
 async function notifySessionLaunched(sessionKey: string, resumed: boolean): Promise<void> {
-  const lock = readLockFile()
-  if (!lock?.port) return
-  try {
-    await httpPost(
-      `http://127.0.0.1:${lock.port}/api/session-launched`,
-      { session_key: sessionKey, resumed },
-      5_000,
-    )
-  } catch { /* best-effort */ }
+  await notifyDaemonSessionLaunched(sessionKey, { resumed, runtime: "sdk" })
 }
 
 /**
@@ -1799,7 +1817,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       })
     const portChanged = resumed && !!resumable?.daemonPort && !!currentDaemonPort
       && resumable.daemonPort !== currentDaemonPort
-    if (rulesUpdated) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到协议/规则更新，唤醒时重灌全文`)
+    if (rulesUpdated) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到协议/规则变更（已反映于 prompt 上下文，rulesHash 已变）`)
     if (portChanged) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到 Daemon 端口变更 ${resumable!.daemonPort} → ${currentDaemonPort}`)
     // 全新项目会话（not found 回退 / reset 后 / resume 映射丢失）必须重带项目元数据——
     // 新 Agent 没有历史上下文，不注入就不知道项目/仓库/分支/角色
@@ -1826,8 +1844,6 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       useMainWorkspace: opts.useMainWorkspace,
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
-      rulesUpdated,
-      portChanged,
       taskMessage: resumed ? taskMessage : effectiveTask,
     }
     const prompt = resumed

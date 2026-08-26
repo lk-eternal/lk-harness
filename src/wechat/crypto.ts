@@ -15,7 +15,7 @@ export function aesEcbPaddedSize(plaintextSize: number): number {
 }
 
 /**
- * aes_key 有两种编码格式:
+ * aes_key 有两种编码格�?
  *   - base64(16 raw bytes)       -> images
  *   - base64(32-char hex string) -> file/voice/video
  */

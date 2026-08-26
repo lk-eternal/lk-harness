@@ -28,7 +28,7 @@ function makeTask(overrides: Partial<ScheduledTask> = {}): ScheduledTask {
     id: "t1",
     name: "任务",
     cron: "0 9 * * *",
-    content: "做点事",
+    content: "做点�?,
     enabled: true,
     ...overrides,
   }
@@ -39,7 +39,7 @@ describe("readScheduledTasksFile", () => {
     expect(readScheduledTasksFile(path.join(dir, "none.json"))).toEqual([])
   })
 
-  it("损坏 JSON 返回空数组", () => {
+  it("损坏 JSON 返回空数�?, () => {
     const file = path.join(dir, "bad.json")
     fs.writeFileSync(file, "{not json", "utf-8")
     expect(readScheduledTasksFile(file)).toEqual([])
@@ -64,7 +64,7 @@ describe("readScheduledTasksFile", () => {
     expect(tasks[0].id).toBe("t1")
   })
 
-  it("enabled 缺省归一化为 true，显式 false 保留", () => {
+  it("enabled 缺省归一化为 true，显�?false 保留", () => {
     const file = path.join(dir, "enabled.json")
     const noEnabled = { id: "a", name: "n", cron: "* * * * *", content: "c" }
     fs.writeFileSync(file, JSON.stringify([noEnabled, makeTask({ id: "b", enabled: false })]), "utf-8")
@@ -75,7 +75,7 @@ describe("readScheduledTasksFile", () => {
 })
 
 describe("writeScheduledTasksFile", () => {
-  it("自动创建父目录并可往返读取", () => {
+  it("自动创建父目录并可往返读�?, () => {
     const file = path.join(dir, "nested", "deep", "tasks.json")
     const tasks = [makeTask(), makeTask({ id: "t2", channelId: "ch_x", model: "composer-2" })]
     writeScheduledTasksFile(file, tasks)
@@ -84,7 +84,7 @@ describe("writeScheduledTasksFile", () => {
 })
 
 describe("findScheduledTaskBySessionKey", () => {
-  it("匹配裸 task.id，忽略带 chatKey/workspace 的 sessionKey", () => {
+  it("匹配�?task.id，忽略带 chatKey/workspace �?sessionKey", () => {
     const tasks = [makeTask({ id: "t1", name: "日报" }), makeTask({ id: "t2", name: "周报" })]
     expect(findScheduledTaskBySessionKey("t1", tasks)?.name).toBe("日报")
     expect(findScheduledTaskBySessionKey("ch_a|oc_1", tasks)).toBeUndefined()
@@ -94,20 +94,20 @@ describe("findScheduledTaskBySessionKey", () => {
 
 describe("formatScheduledTaskLabel", () => {
   it("加定时任务前缀", () => {
-    expect(formatScheduledTaskLabel("英文合班入班追踪")).toBe("⏰ 英文合班入班追踪")
+    expect(formatScheduledTaskLabel("英文合班入班追踪")).toBe("�?英文合班入班追踪")
   })
 })
 
 describe("buildNotifySessionKey", () => {
-  it("用 channelId + 裸群 id 拼 chatKey", () => {
+  it("�?channelId + 裸群 id �?chatKey", () => {
     expect(buildNotifySessionKey({ channelId: "ch_a", notifyChatId: "oc_group1" })).toBe("ch_a|oc_group1")
   })
 
-  it("已是完整 chatKey 则原样返回", () => {
+  it("已是完整 chatKey 则原样返�?, () => {
     expect(buildNotifySessionKey({ channelId: "ch_a", notifyChatId: "ch_b|oc_x" })).toBe("ch_b|oc_x")
   })
 
-  it("缺 notifyChatId 或 channelId 返回 undefined", () => {
+  it("�?notifyChatId �?channelId 返回 undefined", () => {
     expect(buildNotifySessionKey({ channelId: "ch_a" })).toBeUndefined()
     expect(buildNotifySessionKey({ notifyChatId: "oc_x" })).toBeUndefined()
   })
@@ -125,7 +125,7 @@ describe("isIndependentTaskSessionKey", () => {
     expect(isIndependentTaskSessionKey("default-indep", tasks)).toBe(true)
   })
 
-  it("非独立或非法 sessionKey 不命中", () => {
+  it("非独立或非法 sessionKey 不命�?, () => {
     expect(isIndependentTaskSessionKey("non-indep", tasks)).toBe(false)
     expect(isIndependentTaskSessionKey("ch_a|oc_x", tasks)).toBe(false)
     expect(isIndependentTaskSessionKey("ch_a|oc_x::/tmp", tasks)).toBe(false)
@@ -134,9 +134,9 @@ describe("isIndependentTaskSessionKey", () => {
 })
 
 describe("scheduledTaskNotifyPromptLines", () => {
-  it("包含 notify_session_key 与投递规则", () => {
+  it("包含 notify_session_key 与投递规�?, () => {
     const lines = scheduledTaskNotifyPromptLines("ch_a|oc_g")
     expect(lines[0]).toBe("[notify_session_key=ch_a|oc_g]")
-    expect(lines.some((l) => l.includes("必须且只能"))).toBe(true)
+    expect(lines.some((l) => l.includes("必须且只�?))).toBe(true)
   })
 })

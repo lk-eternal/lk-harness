@@ -24,7 +24,7 @@ describe("computeNodeContentHash", () => {
 describe("computeGroupContentHash", () => {
   it("includes node order", () => {
     const a = computeGroupContentHash({
-      name: "开发",
+      name: "开�?,
       workspace: "worktree",
       nodes: [
         { hubId: "n1", id: "plan", label: "规划" },
@@ -32,7 +32,7 @@ describe("computeGroupContentHash", () => {
       ],
     })
     const b = computeGroupContentHash({
-      name: "开发",
+      name: "开�?,
       workspace: "worktree",
       nodes: [
         { hubId: "n2", id: "build", label: "实现" },

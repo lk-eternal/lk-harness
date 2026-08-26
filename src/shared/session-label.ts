@@ -5,19 +5,19 @@ import { projectIdFromSessionKey, type Project } from "./project-types.js"
 
 export type SessionCardTitle = { title: string; subtitle?: string }
 
-/** 同一 sessionKey 稳定映射到飞书 header 色板（同会话同色、不同会话尽量区分） */
+/** 同一 sessionKey 稳定映射到飞�?header 色板（同会话同色、不同会话尽量区分） */
 const SESSION_HEADER_TEMPLATES = [
   "turquoise", "blue", "wathet", "indigo", "violet", "purple",
   "carmine", "orange", "red", "green",
 ] as const
 
-/** 配色用规范 key：忽略路径转义/大小写/通道前缀差异；项目按 projectId；普通会话按 chat+工作目录 */
+/** 配色用规�?key：忽略路径转�?大小�?通道前缀差异；项目按 projectId；普通会话按 chat+工作目录 */
 export function sessionColorKey(sessionKey?: string): string {
   if (!sessionKey) return ""
   const sk = normalizeSessionKey(sessionKey) || sessionKey
   const pid = projectIdFromSessionKey(sk)
   if (pid) return `project:${pid}`
-  // 剥通道前缀（ch_xxx|oc_yyy → oc_yyy）：同一聊天在带/不带前缀两种 key 形态下必须同色
+  // 剥通道前缀（ch_xxx|oc_yyy �?oc_yyy）：同一聊天在带/不带前缀两种 key 形态下必须同色
   const chat = parseChatKey(chatIdFromSessionKey(sk)).chatId
   const ws = workspaceDirFromSessionKey(sk)
   if (ws) {
@@ -66,7 +66,7 @@ export function isSpecialSessionSuffix(suffix: string): boolean {
   return suffix.startsWith("wf_") || suffix.startsWith("project_")
 }
 
-/** 飞书卡片 header：普通会话只显示目录名+分支；项目会话显示项目名+分支 */
+/** 飞书卡片 header：普通会话只显示目录�?分支；项目会话显示项目名+分支 */
 export function buildSessionCardTitle(opts: {
   sessionKey?: string
   project?: Project
@@ -87,7 +87,7 @@ export function buildSessionCardTitle(opts: {
   return { title: `📂 ${dirBaseName(dir)}`, subtitle: branch ? `🌿 ${branch}` : undefined }
 }
 
-/** /s 等文本展示用一行 */
+/** /s 等文本展示用一�?*/
 export function formatSessionLabel(opts: {
   sessionKey?: string
   project?: Project

@@ -15,7 +15,7 @@ export function syncArtifactToFeishu(opts: {
   title: string
 }): FeishuSyncResult {
   if (!opts.artifactPath || !fs.existsSync(opts.artifactPath)) {
-    return { ok: false, error: `artifact 不存在: ${opts.artifactPath}` }
+    return { ok: false, error: `artifact 不存�? ${opts.artifactPath}` }
   }
   const abs = path.resolve(opts.artifactPath)
   const which = spawnSync("lark-cli", ["--help"], { encoding: "utf-8", windowsHide: true })
@@ -23,11 +23,11 @@ export function syncArtifactToFeishu(opts: {
     return {
       ok: false,
       skipped: true,
-      error: "未安装 lark-cli，已跳过飞书同步（本地 md 仍有效）。可在设置→工具箱安装后执行 /p sync",
+      error: "未安�?lark-cli，已跳过飞书同步（本�?md 仍有效）。可在设置→工具箱安装后执行 /p sync",
     }
   }
 
-  // Try shortcut create from markdown; schemas vary by CLI version — degrade gracefully.
+  // Try shortcut create from markdown; schemas vary by CLI version �?degrade gracefully.
   const attempts: string[][] = [
     ["docs", "+create", "--title", opts.title, "--markdown", abs],
     ["docs", "create", "--title", opts.title, "--file", abs],
@@ -38,12 +38,12 @@ export function syncArtifactToFeishu(opts: {
     if (r.status === 0) {
       const url = out.match(/https?:\/\/\S+/)?.[0]
       if (url) return { ok: true, docUrl: url.replace(/[)\].,]+$/, "") }
-      return { ok: true, docUrl: undefined, error: "已调用 lark-cli，但未解析到文档链接，请手动确认" }
+      return { ok: true, docUrl: undefined, error: "已调�?lark-cli，但未解析到文档链接，请手动确认" }
     }
   }
   return {
     ok: false,
     skipped: true,
-    error: "lark-cli 创建文档失败，已跳过。本地 artifact 仍保留，可用 /p sync 重试",
+    error: "lark-cli 创建文档失败，已跳过。本�?artifact 仍保留，可用 /p sync 重试",
   }
 }
