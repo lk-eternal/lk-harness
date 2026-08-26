@@ -265,8 +265,11 @@ const api = {
   importProjectNodeGroup: (): Promise<{ ok: boolean; group?: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }; error?: string }> =>
     ipcRenderer.invoke("project-node-groups:import"),
 
-  exportConfig: (): Promise<{ ok: boolean; path?: string; error?: string }> => ipcRenderer.invoke("config:export"),
-  importConfig: (): Promise<{ ok: boolean; error?: string; warnings?: string[] }> => ipcRenderer.invoke("config:import"),
+  exportConfig: (sections?: string[]): Promise<{ ok: boolean; path?: string; error?: string }> => ipcRenderer.invoke("config:export", sections),
+  importConfig: (sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }> => ipcRenderer.invoke("config:import", sections),
+  discoverCursorClawInstalls: (): Promise<{ label: string; userDataPath: string }[]> => ipcRenderer.invoke("config:discover-cursor-claw"),
+  migrateFromCursorClaw: (userDataPath: string, sections: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }> =>
+    ipcRenderer.invoke("config:migrate-from-cursor-claw", userDataPath, sections),
 
   flowHub: {
     getCatalog: (force?: boolean): Promise<{ ok: true; catalog: import("../src/shared/flow-hub-types").FlowHubCatalog } | { ok: false; error: string }> =>
@@ -303,6 +306,9 @@ const api = {
   getMcpEnabledMap: (force?: boolean): Promise<Record<string, boolean>> => ipcRenderer.invoke("mcp:enabled-map", force),
   getMcpStatusMap: (force?: boolean): Promise<Record<string, string>> => ipcRenderer.invoke("mcp:status-map", force),
   getMcpTools: (name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }> => ipcRenderer.invoke("mcp:tools", name, force),
+  getHarnessRules: (): Promise<{ id: string; name: string; content: string; enabled: boolean }[]> => ipcRenderer.invoke("harness-rules:list"),
+  saveHarnessRule: (id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }> => ipcRenderer.invoke("harness-rules:save", id, name, content, enabled),
+  deleteHarnessRule: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("harness-rules:delete", id),
   getClawRules: (): Promise<{ id: string; name: string; content: string; enabled: boolean }[]> => ipcRenderer.invoke("claw-rules:list"),
   saveClawRule: (id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }> => ipcRenderer.invoke("claw-rules:save", id, name, content, enabled),
   deleteClawRule: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("claw-rules:delete", id),

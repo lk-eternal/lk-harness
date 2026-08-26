@@ -12,6 +12,7 @@ import {
   broadcastSessionStatus as broadcastSessionStatusToUi,
 } from "./ui-logger"
 import { assembleColdStartPrompt } from "./prompt-assembler"
+import { notifySessionLaunched } from "./daemon-client"
 
 // ── 会话 Agent ──────────────────────────────────────────
 
@@ -333,6 +334,7 @@ export async function launchAgent(opts: LaunchAgentOptions): Promise<{ ok: boole
     pendingLaunches.delete(sessionKey)
     broadcastLog(`[Agent] 会话 ${sessionKey} (${chatType}) 已启动, pid=${child.pid}`)
     broadcastSessionStatus()
+    await notifySessionLaunched(sessionKey, { resumed: resumeChatId !== false, runtime: "cli" })
     return { ok: true }
   } catch (e: unknown) {
     pendingLaunches.delete(sessionKey)

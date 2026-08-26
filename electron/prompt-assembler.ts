@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import { getConfig } from "./config-store"
-import { listEnabledClawRules } from "./claw-rule-store"
-import { shouldIncludeAdminMcp } from "../src/shared/claw-mcp-store.js"
+import { listEnabledHarnessRules } from "./harness-rule-store"
+import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, ADMIN_SKILL_CONTENT } from "./workspace-injector"
 import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
@@ -66,11 +66,11 @@ function resolveDigitalIdentity(skipIdentity: boolean, override?: string): strin
   return (override ?? getConfig().digitalIdentity ?? "").trim()
 }
 
-function appendUserClawRules(parts: string[]): void {
-  const rules = listEnabledClawRules()
+function appendUserHarnessRules(parts: string[]): void {
+  const rules = listEnabledHarnessRules()
   if (!rules.length) return
   parts.push("---")
-  parts.push("## 用户 Claw 规则")
+  parts.push("## 用户 Harness 规则")
   for (const r of rules) {
     parts.push(`### ${r.name}`)
     parts.push(stripFrontmatter(r.content))
@@ -108,7 +108,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   h.update(loadBuiltinProtocol(portForAssembly(daemonPort)))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
-  for (const r of listEnabledClawRules()) {
+  for (const r of listEnabledHarnessRules()) {
     h.update(r.id)
     h.update(r.content)
   }
@@ -128,9 +128,24 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
     parts.push("## 数字身份")
     parts.push(identity)
   }
-  appendUserClawRules(parts)
+  appendUserHarnessRules(parts)
   appendAdminSkill(parts, ctx)
   return parts
+}
+
+export function hashSystemPrompt(text: string): string {
+  return createHash("md5").update(text).digest("hex").slice(0, 16)
+}
+
+/** Pi LLM 冷启动：仅用户侧指令 + 任务/元数据（协议在 system prompt） */
+export function assembleColdStartBootstrap(ctx: PromptAssemblyContext, daemonPort?: number | null): string {
+  const parts: string[] = [
+    "[冷启动] 请先非阻塞 poll-message（wait=false）检查待处理消息，按 lk-harness 协议处理；有 messageId 的消息必须逐条回复。",
+  ]
+  appendTaskAndMeta(parts, ctx)
+  const port = portForAssembly(daemonPort)
+  if (port) parts.push(`[daemon_port=${port}]`)
+  return parts.join("\n")
 }
 
 export function assembleColdStartPrompt(ctx: PromptAssemblyContext, daemonPort?: number | null): string {
@@ -160,7 +175,7 @@ export function assembleWakePrompt(
       "禁止向用户发送问候、唤醒说明等任何多余消息。",
     ]
   if (ctx.rulesUpdated) {
-    lines.push("⚠️ 协议模板或 Claw 规则已更新（上下文中的规则是旧版快照）：以下为最新全文，必须严格按此执行。")
+    lines.push("⚠️ 协议模板或 Harness 规则已更新（上下文中的规则是旧版快照）：以下为最新全文，必须严格按此执行。")
     lines.push(...assembleProtocolBlocks(ctx, daemonPort))
   } else if (ctx.portChanged && resolvedPort) {
     lines.push(`⚠️ Daemon 端口已变更：poll/send 必须使用 [daemon_port=${resolvedPort}]，勿用上下文中的旧端口。`)

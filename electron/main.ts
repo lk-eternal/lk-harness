@@ -46,10 +46,11 @@ import {
   resolveRootAbs,
 } from "./skill-store"
 import {
-  listClawRules,
-  saveClawRule,
-  deleteClawRule,
-} from "./claw-rule-store"
+  listHarnessRules,
+  saveHarnessRule,
+  deleteHarnessRule,
+  migrateLegacyRulesOnce,
+} from "./harness-rule-store"
 import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
@@ -239,13 +240,22 @@ function registerIpcHandlers(): void {
   ipcMain.handle("mcp:status-map", (_, force?: boolean) => getMcpStatusMap(force ?? false))
   ipcMain.handle("mcp:tools", (_, name: string, force?: boolean) => getMcpServerTools(name, force ?? false))
 
-  ipcMain.handle("claw-rules:list", () => listClawRules())
+  migrateLegacyRulesOnce()
+  ipcMain.handle("claw-rules:list", () => listHarnessRules())
   ipcMain.handle("claw-rules:save", (_, id: string | null, name: string, content: string, enabled?: boolean) => {
-    const rule = saveClawRule(id, name, content, enabled ?? true)
+    const rule = saveHarnessRule(id, name, content, enabled ?? true)
     return { ok: !!rule, rule }
   })
   ipcMain.handle("claw-rules:delete", (_, id: string) => ({
-    ok: deleteClawRule(String(id)),
+    ok: deleteHarnessRule(String(id)),
+  }))
+  ipcMain.handle("harness-rules:list", () => listHarnessRules())
+  ipcMain.handle("harness-rules:save", (_, id: string | null, name: string, content: string, enabled?: boolean) => {
+    const rule = saveHarnessRule(id, name, content, enabled ?? true)
+    return { ok: !!rule, rule }
+  })
+  ipcMain.handle("harness-rules:delete", (_, id: string) => ({
+    ok: deleteHarnessRule(String(id)),
   }))
 
   ipcMain.handle("skills:roots", () => listSkillRoots())

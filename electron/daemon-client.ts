@@ -49,6 +49,21 @@ export async function httpPost(url: string, body: object, timeoutMs = 3000): Pro
   return res.json().catch(() => null)
 }
 
+export async function notifySessionLaunched(
+  sessionKey: string,
+  opts: { resumed?: boolean; runtime?: "llm" | "sdk" | "cli" },
+): Promise<void> {
+  const lock = readLockFile()
+  if (!lock?.port) return
+  try {
+    await httpPost(
+      `http://127.0.0.1:${lock.port}/api/session-launched`,
+      { session_key: sessionKey, resumed: opts.resumed ?? false, runtime: opts.runtime },
+      5_000,
+    )
+  } catch { /* best-effort */ }
+}
+
 /**
  * 会话进程被杀前通知 daemon 收口（best-effort）：掐掉该会话残留 poll 连接 + .claimed 回退 pending。
  * 不通知则旧 run 里 AI 挂的 curl 成孤儿继续领消息，投到无人读的 stdout 即静默丢失。

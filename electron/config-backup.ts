@@ -9,8 +9,8 @@ import {
   CLI_RESOURCE_ID,
   type AppConfig,
 } from "./config-store"
-import { exportClawRulesBundle, importClawRulesBundle } from "./claw-rule-store"
-import { readClawMcpStoreRaw, writeClawMcpStoreRaw } from "../src/shared/claw-mcp-store.js"
+import { exportHarnessRulesBundle, importHarnessRulesBundle } from "./harness-rule-store"
+import { readHarnessMcpStoreRaw, writeHarnessMcpStoreRaw } from "../src/shared/harness-mcp-store.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { readTasksFromFile, writeTasksToFile } from "./cron-scheduler"
 import { initProjectStore, getNodeGroups, saveNodeGroups } from "../src/shared/project-store.js"
@@ -22,30 +22,68 @@ import type { ProjectNodeGroupDef } from "../src/shared/project-types.js"
 export const CONFIG_EXPORT_KIND = "lk-harness-config-export"
 export const CONFIG_EXPORT_VERSION = 1
 
+export type ConfigSection =
+  | "general"
+  | "proxy"
+  | "agent"
+  | "channels"
+  | "projects"
+  | "mcp"
+  | "rules"
+  | "tasks"
+  | "skills"
+
+export const ALL_CONFIG_SECTIONS: ConfigSection[] = [
+  "general",
+  "proxy",
+  "agent",
+  "channels",
+  "projects",
+  "mcp",
+  "rules",
+  "tasks",
+  "skills",
+]
+
+export const CONFIG_SECTION_LABELS: Record<ConfigSection, string> = {
+  general: "通用设置",
+  proxy: "网络代理",
+  agent: "Agent 资源",
+  channels: "消息通道",
+  projects: "项目设置",
+  mcp: "MCP 服务器",
+  rules: "Harness 规则",
+  tasks: "定时任务",
+  skills: "Skills 脚本",
+}
+
+export interface ConfigExportGeneral {
+  favoriteWorkspaces: string[]
+  favoriteModels: AppConfig["favoriteModels"]
+  autoStart: boolean
+  closeWindowAction: AppConfig["closeWindowAction"]
+  autoUpgradePrompt: boolean
+  daemonPort: number
+  setupComplete: boolean
+}
+
 export interface ConfigExportManifest {
   kind: typeof CONFIG_EXPORT_KIND
   version: typeof CONFIG_EXPORT_VERSION
   exportedAt: string
   appVersion: string
-  general: {
-    favoriteWorkspaces: string[]
-    favoriteModels: AppConfig["favoriteModels"]
-    autoStart: boolean
-    closeWindowAction: AppConfig["closeWindowAction"]
-    autoUpgradePrompt: boolean
-    daemonPort: number
-    setupComplete: boolean
-  }
-  proxy: {
+  sections?: ConfigSection[]
+  general?: ConfigExportGeneral
+  proxy?: {
     httpProxy: string
     httpsProxy: string
     noProxy: string
   }
-  agent: {
+  agent?: {
     agentResources: AgentResource[]
   }
-  channels: MessageChannel[]
-  projects: {
+  channels?: MessageChannel[]
+  projects?: {
     gitlabToken: string
     gitlabHost: string
     repoProfiles: AppConfig["repoProfiles"]
@@ -55,11 +93,11 @@ export interface ConfigExportManifest {
     flowHubAuthor: string
     nodeGroups: ProjectNodeGroupDef[]
   }
-  mcp: {
-    claw: ReturnType<typeof readClawMcpStoreRaw>
+  mcp?: {
+    harness: ReturnType<typeof readHarnessMcpStoreRaw>
   }
-  rules: ReturnType<typeof exportClawRulesBundle>
-  tasks: ScheduledTask[]
+  rules?: ReturnType<typeof exportHarnessRulesBundle>
+  tasks?: ScheduledTask[]
 }
 
 function appVersion(): string {
@@ -131,46 +169,60 @@ function tarExtractZip(zipPath: string, dest: string): boolean {
   return r.status === 0
 }
 
-function buildManifest(): ConfigExportManifest {
+function normalizeSections(sections?: ConfigSection[]): Set<ConfigSection> {
+  if (!sections?.length) return new Set(ALL_CONFIG_SECTIONS)
+  return new Set(sections)
+}
+
+function buildManifest(sections?: ConfigSection[]): Partial<ConfigExportManifest> & Pick<ConfigExportManifest, "kind" | "version" | "exportedAt" | "appVersion"> {
   initProjectStore(app.getPath("userData"))
   const cfg = getConfig()
-  const sdkResources = (cfg.agentResources ?? []).filter((r) => r.type === "sdk")
-  return {
-    kind: CONFIG_EXPORT_KIND,
-    version: CONFIG_EXPORT_VERSION,
+  const selected = normalizeSections(sections)
+  const sdkResources = (cfg.agentResources ?? []).filter((r) => r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom")
+  const base = {
+    kind: CONFIG_EXPORT_KIND as typeof CONFIG_EXPORT_KIND,
+    version: CONFIG_EXPORT_VERSION as typeof CONFIG_EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
     appVersion: appVersion(),
-    general: {
-      favoriteWorkspaces: cfg.favoriteWorkspaces ?? [],
-      favoriteModels: cfg.favoriteModels ?? [],
-      autoStart: cfg.autoStart ?? false,
-      closeWindowAction: cfg.closeWindowAction ?? "ask",
-      autoUpgradePrompt: cfg.autoUpgradePrompt ?? true,
-      daemonPort: cfg.daemonPort ?? 19528,
-      setupComplete: cfg.setupComplete ?? false,
-    },
-    proxy: {
-      httpProxy: cfg.httpProxy ?? "",
-      httpsProxy: cfg.httpsProxy ?? "",
-      noProxy: cfg.noProxy ?? "",
-    },
-    agent: { agentResources: sdkResources },
-    channels: cfg.channels ?? [],
-    projects: {
-      gitlabToken: cfg.gitlabToken ?? "",
-      gitlabHost: cfg.gitlabHost ?? "",
-      repoProfiles: cfg.repoProfiles ?? [],
-      worktreeRoot: cfg.worktreeRoot ?? "",
-      flowHubUrl: cfg.flowHubUrl ?? "",
-      flowHubToken: cfg.flowHubToken ?? "",
-      flowHubAuthor: cfg.flowHubAuthor ?? "",
-      nodeGroups: getNodeGroups(),
-    },
-    mcp: {
-      claw: readClawMcpStoreRaw(),
-    },
-    rules: exportClawRulesBundle(),
-    tasks: readTasksFromFile(),
+    sections: [...selected],
+  }
+  return {
+    ...base,
+    ...(selected.has("general") ? {
+      general: {
+        favoriteWorkspaces: cfg.favoriteWorkspaces ?? [],
+        favoriteModels: cfg.favoriteModels ?? [],
+        autoStart: cfg.autoStart ?? false,
+        closeWindowAction: cfg.closeWindowAction ?? "ask",
+        autoUpgradePrompt: cfg.autoUpgradePrompt ?? true,
+        daemonPort: cfg.daemonPort ?? 19528,
+        setupComplete: cfg.setupComplete ?? false,
+      },
+    } : {}),
+    ...(selected.has("proxy") ? {
+      proxy: {
+        httpProxy: cfg.httpProxy ?? "",
+        httpsProxy: cfg.httpsProxy ?? "",
+        noProxy: cfg.noProxy ?? "",
+      },
+    } : {}),
+    ...(selected.has("agent") ? { agent: { agentResources: sdkResources } } : {}),
+    ...(selected.has("channels") ? { channels: cfg.channels ?? [] } : {}),
+    ...(selected.has("projects") ? {
+      projects: {
+        gitlabToken: cfg.gitlabToken ?? "",
+        gitlabHost: cfg.gitlabHost ?? "",
+        repoProfiles: cfg.repoProfiles ?? [],
+        worktreeRoot: cfg.worktreeRoot ?? "",
+        flowHubUrl: cfg.flowHubUrl ?? "",
+        flowHubToken: cfg.flowHubToken ?? "",
+        flowHubAuthor: cfg.flowHubAuthor ?? "",
+        nodeGroups: getNodeGroups(),
+      },
+    } : {}),
+    ...(selected.has("mcp") ? { mcp: { harness: readHarnessMcpStoreRaw() } } : {}),
+    ...(selected.has("rules") ? { rules: exportHarnessRulesBundle() } : {}),
+    ...(selected.has("tasks") ? { tasks: readTasksFromFile() } : {}),
   }
 }
 
@@ -186,16 +238,19 @@ function readManifest(staging: string): ConfigExportManifest | null {
   }
 }
 
-export function exportConfigBundle(zipPath: string): { ok: boolean; error?: string; warnings?: string[] } {
+export function exportConfigBundle(zipPath: string, sections?: ConfigSection[]): { ok: boolean; error?: string; warnings?: string[] } {
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-export-"))
   const warnings: string[] = []
+  const selected = normalizeSections(sections)
   try {
-    fs.writeFileSync(path.join(staging, "manifest.json"), JSON.stringify(buildManifest(), null, 2), "utf-8")
-    const skillsBase = path.join(staging, "skills")
-    const seenSkills = new Set<string>()
-    for (const def of SKILL_ROOT_DEFS) {
-      const src = path.join(os.homedir(), ...def.rel)
-      warnings.push(...copySkillRoot(src, path.join(skillsBase, def.id), seenSkills))
+    fs.writeFileSync(path.join(staging, "manifest.json"), JSON.stringify(buildManifest(sections), null, 2), "utf-8")
+    if (selected.has("skills")) {
+      const skillsBase = path.join(staging, "skills")
+      const seenSkills = new Set<string>()
+      for (const def of SKILL_ROOT_DEFS) {
+        const src = path.join(os.homedir(), ...def.rel)
+        warnings.push(...copySkillRoot(src, path.join(skillsBase, def.id), seenSkills))
+      }
     }
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath)
     if (!tarCreateZip(zipPath, staging)) return { ok: false, error: "打包失败（需要系统 tar 支持）" }
@@ -207,9 +262,10 @@ export function exportConfigBundle(zipPath: string): { ok: boolean; error?: stri
   }
 }
 
-export function importConfigBundle(zipPath: string): { ok: boolean; error?: string; warnings?: string[] } {
+export function importConfigBundle(zipPath: string, sections?: ConfigSection[]): { ok: boolean; error?: string; warnings?: string[] } {
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-import-"))
   const warnings: string[] = []
+  const selected = normalizeSections(sections)
   try {
     if (!tarExtractZip(zipPath, staging)) return { ok: false, error: "解压失败（需要系统 tar 支持）" }
     const manifest = readManifest(staging)
@@ -217,58 +273,76 @@ export function importConfigBundle(zipPath: string): { ok: boolean; error?: stri
 
     initProjectStore(app.getPath("userData"))
 
-    const { ...generalRest } = manifest.general
-
-    saveConfig({
-      ...generalRest,
-      httpProxy: manifest.proxy.httpProxy,
-      httpsProxy: manifest.proxy.httpsProxy,
-      noProxy: manifest.proxy.noProxy,
-      gitlabToken: manifest.projects.gitlabToken,
-      gitlabHost: manifest.projects.gitlabHost,
-      repoProfiles: manifest.projects.repoProfiles ?? [],
-      repoRoots: (manifest.projects.repoProfiles ?? []).map((p) => p.path),
-      worktreeRoot: manifest.projects.worktreeRoot,
-      flowHubUrl: manifest.projects.flowHubUrl,
-      flowHubToken: manifest.projects.flowHubToken,
-      flowHubAuthor: manifest.projects.flowHubAuthor,
-      channels: manifest.channels,
-    })
-
-    const cfg = getConfig()
-    const cli = (cfg.agentResources ?? []).filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
-    saveConfig({ agentResources: [...cli, ...manifest.agent.agentResources] })
-
-    saveNodeGroups(manifest.projects.nodeGroups ?? [])
-
-    const legacyMcp = manifest.mcp as {
-      claw?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
-      global?: { mcpServers?: Record<string, Record<string, unknown>>; order?: string[] }
+    if (selected.has("general") && manifest.general) {
+      saveConfig({ ...manifest.general })
     }
-    if (legacyMcp.claw) writeClawMcpStoreRaw(legacyMcp.claw)
-    else if (legacyMcp.global?.mcpServers) {
-      writeClawMcpStoreRaw({
-        order: legacyMcp.global.order ?? Object.keys(legacyMcp.global.mcpServers),
-        servers: legacyMcp.global.mcpServers,
+
+    if (selected.has("proxy") && manifest.proxy) {
+      saveConfig({
+        httpProxy: manifest.proxy.httpProxy,
+        httpsProxy: manifest.proxy.httpsProxy,
+        noProxy: manifest.proxy.noProxy,
       })
     }
-    invalidateMcpEnabledCache()
 
-    if (manifest.rules) importClawRulesBundle(manifest.rules)
+    if (selected.has("projects") && manifest.projects) {
+      saveConfig({
+        gitlabToken: manifest.projects.gitlabToken,
+        gitlabHost: manifest.projects.gitlabHost,
+        repoProfiles: manifest.projects.repoProfiles ?? [],
+        repoRoots: (manifest.projects.repoProfiles ?? []).map((p) => p.path),
+        worktreeRoot: manifest.projects.worktreeRoot,
+        flowHubUrl: manifest.projects.flowHubUrl,
+        flowHubToken: manifest.projects.flowHubToken,
+        flowHubAuthor: manifest.projects.flowHubAuthor,
+      })
+      saveNodeGroups(manifest.projects.nodeGroups ?? [])
+    }
 
-    writeTasksToFile(manifest.tasks ?? [])
+    if (selected.has("channels") && manifest.channels) {
+      saveConfig({ channels: manifest.channels })
+    }
 
-    const stagingSkills = path.join(staging, "skills")
-    if (fs.existsSync(stagingSkills)) {
-      for (const def of SKILL_ROOT_DEFS) {
-        const src = path.join(stagingSkills, def.id)
-        if (!fs.existsSync(src)) continue
-        const dest = path.join(os.homedir(), ...def.rel)
-        try {
-          if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
-          copyDirSync(src, dest)
-        } catch (e) {
-          warnings.push(`skills/${def.id} 导入失败：${e instanceof Error ? e.message : String(e)}`)
+    if (selected.has("agent") && manifest.agent) {
+      const cfg = getConfig()
+      const cli = (cfg.agentResources ?? []).filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
+      saveConfig({ agentResources: [...cli, ...manifest.agent.agentResources] })
+    }
+
+    if (selected.has("mcp") && manifest.mcp) {
+      const legacyMcp = manifest.mcp as {
+        harness?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
+        claw?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
+        global?: { mcpServers?: Record<string, Record<string, unknown>>; order?: string[] }
+      }
+      if (legacyMcp.harness) writeHarnessMcpStoreRaw(legacyMcp.harness)
+      else if (legacyMcp.claw) writeHarnessMcpStoreRaw(legacyMcp.claw)
+      else if (legacyMcp.global?.mcpServers) {
+        writeHarnessMcpStoreRaw({
+          order: legacyMcp.global.order ?? Object.keys(legacyMcp.global.mcpServers),
+          servers: legacyMcp.global.mcpServers,
+        })
+      }
+      invalidateMcpEnabledCache()
+    }
+
+    if (selected.has("rules") && manifest.rules) importHarnessRulesBundle(manifest.rules)
+
+    if (selected.has("tasks") && manifest.tasks) writeTasksToFile(manifest.tasks ?? [])
+
+    if (selected.has("skills")) {
+      const stagingSkills = path.join(staging, "skills")
+      if (fs.existsSync(stagingSkills)) {
+        for (const def of SKILL_ROOT_DEFS) {
+          const src = path.join(stagingSkills, def.id)
+          if (!fs.existsSync(src)) continue
+          const dest = path.join(os.homedir(), ...def.rel)
+          try {
+            if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
+            copyDirSync(src, dest)
+          } catch (e) {
+            warnings.push(`skills/${def.id} 导入失败：${e instanceof Error ? e.message : String(e)}`)
+          }
         }
       }
     }

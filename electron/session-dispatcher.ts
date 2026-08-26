@@ -28,7 +28,7 @@ import {
   resetSdkSessionContext, clearSdkFailStreak, clearAllSdkFailStreaks,
 } from "./agent-sdk"
 import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
-import { shouldIncludeAdminMcp } from "../src/shared/claw-mcp-store.js"
+import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"

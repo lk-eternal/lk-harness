@@ -797,6 +797,24 @@ export class LarkSender {
     return el;
   }
 
+  /** MCP/内置工具名 → 飞书卡片标题（下划线在 lark_md 中会被吞，先拆词） */
+  static formatToolStepTitle(raw: string): string {
+    const name = (raw || "tool").trim()
+    if (name.includes(" · ")) return name.replace(/[*_`]/g, "")
+    const knownServers = ["lk-harness-admin", "lk-harness", "cursor-claw", "cursor-claw-admin"]
+    for (const srv of knownServers.sort((a, b) => b.length - a.length)) {
+      const prefix = `${srv}_`
+      if (name.startsWith(prefix)) {
+        return `${srv} · ${name.slice(prefix.length)}`.replace(/[*_`]/g, "")
+      }
+    }
+    const idx = name.indexOf("_")
+    if (idx > 0 && idx < name.length - 1) {
+      return `${name.slice(0, idx)} · ${name.slice(idx + 1)}`.replace(/[*_`]/g, "")
+    }
+    return name.replace(/[*_`]/g, "")
+  }
+
   /** 单步工具行：div + standard_icon + lark_md（对齐 hermes _build_tool_step_*） */
   static buildToolStepElements(step: {
     title: string;
@@ -808,7 +826,7 @@ export class LarkSender {
       step.status === "running" ? { label: "Running", color: "turquoise" }
       : step.status === "error" ? { label: "Failed", color: "red" }
       : { label: "Succeeded", color: "green" };
-    const title = (step.title || "tool").replace(/[*_`]/g, "");
+    const title = LarkSender.formatToolStepTitle(step.title);
     const elements: Record<string, unknown>[] = [{
       tag: "div",
       icon: {

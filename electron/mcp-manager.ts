@@ -2,16 +2,16 @@ import { spawn } from "node:child_process"
 import * as path from "node:path"
 import { quoteArg } from "./agent-cli"
 import {
-  listClawMcpServers,
-  saveClawMcpServer,
-  deleteClawMcpServer,
-  setClawMcpServerEnabled,
-  readClawMcpStoreRaw,
-  writeClawMcpStoreRaw,
-  clawMcpStoreDir,
+  listHarnessMcpServers,
+  saveHarnessMcpServer,
+  deleteHarnessMcpServer,
+  setHarnessMcpServerEnabled,
+  readHarnessMcpStoreRaw,
+  writeHarnessMcpStoreRaw,
+  harnessMcpStoreDir,
   CLAW_MCP_KEY,
   ADMIN_MCP_KEY,
-} from "../src/shared/claw-mcp-store.js"
+} from "../src/shared/harness-mcp-store.js"
 
 export interface McpServerEntry {
   name: string
@@ -20,7 +20,7 @@ export interface McpServerEntry {
   args?: string[]
   url?: string
   env?: Record<string, string>
-  source: "claw"
+  source: "harness"
   authenticated?: boolean
   rawConfig?: Record<string, unknown>
   enabled?: boolean
@@ -47,7 +47,7 @@ function buildEntry(name: string, raw: Record<string, unknown>): McpServerEntry 
     args: raw.args as string[] | undefined,
     url: raw.url as string | undefined,
     env: raw.env as Record<string, string> | undefined,
-    source: "claw",
+    source: "harness",
     authenticated: false,
     rawConfig: raw,
     enabled: raw.disabled !== true,
@@ -94,7 +94,7 @@ export async function toggleMcpServer(serverName: string, enabled: boolean): Pro
   if ([CLAW_MCP_KEY, ADMIN_MCP_KEY].includes(serverName)) {
     return { ok: false, output: `${serverName} 为内置 MCP，不可切换` }
   }
-  const ok = setClawMcpServerEnabled(serverName, enabled)
+  const ok = setHarnessMcpServerEnabled(serverName, enabled)
   if (ok) invalidateMcpEnabledCache()
   return ok
     ? { ok: true, output: `${serverName} ${enabled ? "enabled" : "disabled"}` }
@@ -102,15 +102,15 @@ export async function toggleMcpServer(serverName: string, enabled: boolean): Pro
 }
 
 export function getMcpServerList(): McpServerEntry[] {
-  return listClawMcpServers().map((s) => buildEntry(s.name, s.config))
+  return listHarnessMcpServers().map((s) => buildEntry(s.name, s.config))
 }
 
 export function getMcpJsonPath(_scope: "global" | "project" = "global"): string {
-  return path.join(clawMcpStoreDir(), "servers.json")
+  return path.join(harnessMcpStoreDir(), "servers.json")
 }
 
 export function readMcpJson(_scope: "global" | "project" = "global"): Record<string, unknown> | null {
-  const raw = readClawMcpStoreRaw()
+  const raw = readHarnessMcpStoreRaw()
   if (!raw) return null
   return { mcpServers: raw.servers, order: raw.order }
 }
@@ -119,7 +119,7 @@ export function writeMcpJson(_scope: "global" | "project", data: Record<string, 
   try {
     const servers = (data.mcpServers ?? data.servers ?? {}) as Record<string, Record<string, unknown>>
     const order = Array.isArray(data.order) ? data.order as string[] : Object.keys(servers)
-    writeClawMcpStoreRaw({ order, servers })
+    writeHarnessMcpStoreRaw({ order, servers })
     invalidateMcpEnabledCache()
     return true
   } catch {
@@ -128,19 +128,19 @@ export function writeMcpJson(_scope: "global" | "project", data: Record<string, 
 }
 
 export function saveMcpServer(name: string, config: Record<string, unknown>, _scope: "global" | "project" = "global"): { ok: boolean; error?: string } {
-  const ok = saveClawMcpServer(name, config)
+  const ok = saveHarnessMcpServer(name, config)
   if (ok) invalidateMcpEnabledCache()
   return ok ? { ok: true } : { ok: false, error: "写入失败或为保留名称" }
 }
 
 export function deleteMcpServer(name: string, _scope: "global" | "project" = "global"): { ok: boolean; error?: string } {
-  const ok = deleteClawMcpServer(name)
+  const ok = deleteHarnessMcpServer(name)
   if (ok) invalidateMcpEnabledCache()
   return ok ? { ok: true } : { ok: false, error: `${name} 不存在` }
 }
 
 export async function loginMcpServer(_serverName: string): Promise<{ ok: boolean; output: string }> {
-  return { ok: false, output: "Claw 独立 MCP 暂不支持 CLI OAuth；请在配置中手动填写 token/headers" }
+  return { ok: false, output: "Harness 独立 MCP 暂不支持 CLI OAuth；请在配置中手动填写 token/headers" }
 }
 
 function extractParams(schema: any): McpToolInfo["params"] {

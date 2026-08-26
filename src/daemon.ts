@@ -51,19 +51,19 @@ import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
-  initClawMcpStore,
-  listClawMcpServers,
-  saveClawMcpServer,
-  deleteClawMcpServer,
+  initHarnessMcpStore,
+  listHarnessMcpServers,
+  saveHarnessMcpServer,
+  deleteHarnessMcpServer,
   CLAW_MCP_KEY,
   ADMIN_MCP_KEY,
-} from "./shared/claw-mcp-store.js";
+} from "./shared/harness-mcp-store.js";
 import {
-  initClawRuleStore,
-  listClawRules,
-  saveClawRule,
-  deleteClawRule,
-} from "./shared/claw-rule-store.js";
+  initHarnessRuleStore,
+  listHarnessRules,
+  saveHarnessRule,
+  deleteHarnessRule,
+} from "./shared/harness-rule-store.js";
 import { projectIdFromSessionKey, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
 import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey, sessionHeaderTemplate } from "./shared/session-label.js";
 
@@ -3479,8 +3479,8 @@ function writeTasks(tasks: ScheduledTask[]): void {
 async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
     const servers: Record<string, { config: unknown; scope: string }> = {};
-    for (const s of listClawMcpServers()) {
-      servers[s.name] = { config: s.config, scope: "claw" };
+    for (const s of listHarnessMcpServers()) {
+      servers[s.name] = { config: s.config, scope: "harness" };
     }
     json(res, { ok: true, servers });
     return true;
@@ -3496,13 +3496,13 @@ async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: ht
       }
       let parsed: unknown;
       try { parsed = JSON.parse(config); } catch { json(res, { ok: false, error: "invalid config JSON" }, 400); return true; }
-      saveClawMcpServer(name, parsed as Record<string, unknown>);
+      saveHarnessMcpServer(name, parsed as Record<string, unknown>);
       json(res, { ok: true, message: `${name} saved` });
       return true;
     }
     if (action === "delete") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      if (deleteClawMcpServer(name)) {
+      if (deleteHarnessMcpServer(name)) {
         json(res, { ok: true, message: `${name} deleted` });
         return true;
       }
@@ -3517,7 +3517,7 @@ async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: ht
 
 async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    json(res, { ok: true, rules: listClawRules().map((r) => r.name) });
+    json(res, { ok: true, rules: listHarnessRules().map((r) => r.name) });
     return true;
   }
   if (method === "POST") {
@@ -3527,7 +3527,7 @@ async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: 
     if (action === "read") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
       const id = name.replace(/\.mdc$|\.md$/i, "");
-      const rule = listClawRules().find((r) => r.id === id || r.name === name);
+      const rule = listHarnessRules().find((r) => r.id === id || r.name === name);
       if (!rule) { json(res, { ok: false, error: "not found" }, 404); return true; }
       json(res, { ok: true, content: rule.content });
       return true;
@@ -3535,7 +3535,7 @@ async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: 
     if (action === "save") {
       if (!name || content === undefined) { json(res, { ok: false, error: "name and content required" }, 400); return true; }
       const id = name.replace(/\.mdc$|\.md$/i, "");
-      const saved = saveClawRule(id, id, content, true);
+      const saved = saveHarnessRule(id, id, content, true);
       if (!saved) { json(res, { ok: false, error: "save failed" }, 400); return true; }
       json(res, { ok: true, message: `${saved.name} saved` });
       return true;
@@ -3543,7 +3543,7 @@ async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: 
     if (action === "delete") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
       const id = name.replace(/\.mdc$|\.md$/i, "");
-      if (!deleteClawRule(id)) { json(res, { ok: false, error: "not found" }, 404); return true; }
+      if (!deleteHarnessRule(id)) { json(res, { ok: false, error: "not found" }, 404); return true; }
       json(res, { ok: true, message: `${name} deleted` });
       return true;
     }
@@ -4648,8 +4648,8 @@ export async function daemonMain(): Promise<void> {
   if (APP_DATA_DIR) {
     initProjectStore(APP_DATA_DIR);
     initSessionModelStore(APP_DATA_DIR);
-    initClawMcpStore(APP_DATA_DIR);
-    initClawRuleStore(APP_DATA_DIR);
+    initHarnessMcpStore(APP_DATA_DIR);
+    initHarnessRuleStore(APP_DATA_DIR);
   }
   startMediaCacheCleanup();
 

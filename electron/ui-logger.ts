@@ -96,7 +96,7 @@ export function flushAgentStreamChunk(
   }
 }
 
-export type SessionSource = "cli" | "sdk"
+export type SessionSource = "cli" | "sdk" | "llm"
 
 type SessionEntry = { sessionKey: string; pid: number; startedAt: number; lastActivityAt: number; chatType: string; chatName?: string; workspaceDir?: string; source?: SessionSource; model?: string; modelParams?: string }
 

@@ -25,9 +25,12 @@ import {
   type ChatType,
 } from "./agent-launcher"
 import { stopAllSdkSessions, resetSdkSessionContext, getSdkSessionCount, getSdkSessionList, checkSdkApiKey, listSdkModels, getSdkSessionDiagnostics, getResumableSummary, switchSdkSessionModel, handlePollPhaseEvent, clearSdkFailStreak } from "./agent-sdk"
+import { resetLlmSessionContext, handleLlmPollPhaseEvent, switchLlmSessionModel, clearLlmFailStreak } from "./agent-llm"
+import { stopAllLlmSessions, getLlmSessionCount } from "./agent-llm"
 import { initSessionModelStore, listQuickModels, getSessionOverride, removeRecentModel } from "../src/shared/session-model-store.js"
-import { initClawMcpStore } from "../src/shared/claw-mcp-store.js"
-import { initClawRuleStore } from "../src/shared/claw-rule-store.js"
+import { initHarnessMcpStore } from "../src/shared/harness-mcp-store.js"
+import { initHarnessRuleStore } from "../src/shared/harness-rule-store.js"
+import { usesLlmRuntime } from "./agent-engine/factory"
 import { registerFeishuApp } from "./feishu-register"
 import {
   setDaemonPort,
@@ -57,7 +60,8 @@ import {
   uploadGroup,
   uploadNode,
 } from "./flow-hub-service"
-import { exportConfigBundle, importConfigBundle } from "./config-backup"
+import { exportConfigBundle, importConfigBundle, type ConfigSection } from "./config-backup"
+import { discoverCursorClawInstalls, migrateFromCursorClaw } from "./cursor-claw-migrate"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, DEFAULT_NODE_GROUP_ID, canEnterProjectFromChat } from "../src/shared/project-types.js"
 import {
@@ -86,20 +90,20 @@ export { getQueueMessages, clearMessageQueue, deleteQueueMessage } from "./sessi
 
 
 function isAgentRunning(): boolean {
-  return _isCliAgentRunning() || getSdkSessionCount() > 0
+  return _isCliAgentRunning() || getSdkSessionCount() > 0 || getLlmSessionCount() > 0
 }
 
 function getRunningSessionCount(): number {
-  return _getCliRunningCount() + getSdkSessionCount()
+  return _getCliRunningCount() + getSdkSessionCount() + getLlmSessionCount()
 }
 
 function getSessionAgentCount(): number {
-  return _getCliSessionCount() + getSdkSessionCount()
+  return _getCliSessionCount() + getSdkSessionCount() + getLlmSessionCount()
 }
 
 async function stopAgent(): Promise<void> {
   const timeout = new Promise<void>((r) => setTimeout(r, 12_000))
-  await Promise.race([stopAllSdkSessions(), timeout])
+  await Promise.race([Promise.all([stopAllSdkSessions(), stopAllLlmSessions()]), timeout])
   _stopCliAgent()
 }
 
@@ -979,6 +983,7 @@ function connectSseQueueEvents(): void {
             void checkAndExecutePendingCommands().catch(() => {})
           } else if (ev.type === "poll-phase" && ev.sessionKey && ev.phase) {
             handlePollPhaseEvent(ev.sessionKey, ev.phase, ev)
+            handleLlmPollPhaseEvent(ev.sessionKey, ev.phase, ev)
           }
         } catch { /* ignore */ }
       }
@@ -1241,8 +1246,9 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           const effParams = matched?.modelParams ?? override?.modelParams ?? channelModel.modelParams
           if (channel) {
             const resource = getAgentResource(channel.agentResourceId)
-            if (resource.type === "sdk") {
-              await listSdkModels(resource.apiKey ?? "", effModel, effParams).catch(() => undefined)
+            if (resource?.type === "sdk") {
+              const { getAgentEngine } = await import("./agent-engine/factory.js")
+              await getAgentEngine(resource).listModels?.(resource, channel, effModel, effParams).catch(() => undefined)
             }
           }
 
@@ -1388,8 +1394,9 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           if (sessionKey && isSessionAgentRunning(sessionKey)) {
             await stopSessionAgent(sessionKey)
           }
-          // SDK 上下文重置：丢弃 resume 映射，下条消息全新会话
+          // SDK / LLM 上下文重置：丢弃 resume 映射，下条消息全新会话
           if (sessionKey) resetSdkSessionContext(sessionKey)
+          if (sessionKey) resetLlmSessionContext(sessionKey)
           const wsDir = resolveResetWorkspaceDir(sessionKey, claimed.chatId, claimed.chatType)
           const cmdChannelId = claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined
           if (wsDir && cmdChannelId) setMainChatIdForScope(mainChatScopeKey(cmdChannelId, wsDir), "")
@@ -1801,9 +1808,8 @@ async function autoStartDaemonOnLaunch(): Promise<void> {
 
 export function initDaemonManager(): void {
   process.env.APP_DATA_DIR = app.getPath("userData")
-  initClawMcpStore(app.getPath("userData"))
-  initClawRuleStore(app.getPath("userData"))
-  initClawRuleStore(app.getPath("userData"))
+  initHarnessMcpStore(app.getPath("userData"))
+  initHarnessRuleStore(app.getPath("userData"))
   // SDK 跑在主进程：启动时就把代理灌进 process.env（仅 spawn CLI 不够）
   syncMainProcessProxyEnv(getConfig())
   initSessionModelStore(app.getPath("userData"))
@@ -1958,6 +1964,11 @@ export function initDaemonManager(): void {
     return { ok: true }
   })
   ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string) => {
+    const channel = resolveChannelForSession(sessionKey)
+    const resource = channel ? getAgentResource(channel.agentResourceId) : undefined
+    if (resource && usesLlmRuntime(resource)) {
+      return switchLlmSessionModel(sessionKey, model, modelParams)
+    }
     return switchSdkSessionModel(sessionKey, model, modelParams)
   })
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())
@@ -2235,6 +2246,7 @@ export function initDaemonManager(): void {
     if (!lock?.port) return { ok: false, error: "守护进程未运行" }
     if (task.independent !== false) {
       clearSdkFailStreak(task.id)
+      clearLlmFailStreak(task.id)
       // 与 cron 触发同一套入队逻辑，失败由调度器按队列重拉
       return enqueueToSession(lock.port, task.id, content, "task", {
         channelId: task.channelId,
@@ -2311,7 +2323,7 @@ export function initDaemonManager(): void {
     return { ok: true, group: imported }
   })
 
-  ipcMain.handle("config:export", async () => {
+  ipcMain.handle("config:export", async (_e, sections?: ConfigSection[]) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
     const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "")
@@ -2321,12 +2333,12 @@ export function initDaemonManager(): void {
       filters: [{ name: "ZIP", extensions: ["zip"] }],
     })
     if (result.canceled || !result.filePath) return { ok: false, error: "已取消" }
-    const r = exportConfigBundle(result.filePath)
+    const r = exportConfigBundle(result.filePath, sections)
     if (!r.ok) return r
     return { ok: true, path: result.filePath }
   })
 
-  ipcMain.handle("config:import", async () => {
+  ipcMain.handle("config:import", async (_e, sections?: ConfigSection[]) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
     const result = await dialog.showOpenDialog(win, {
@@ -2335,9 +2347,23 @@ export function initDaemonManager(): void {
       filters: [{ name: "ZIP", extensions: ["zip"] }],
     })
     if (result.canceled || !result.filePaths[0]) return { ok: false, error: "已取消" }
-    const r = importConfigBundle(result.filePaths[0])
+    const r = importConfigBundle(result.filePaths[0], sections)
     if (!r.ok) return r
     broadcastLog("[Config] 配置已导入，正在重启 Daemon...")
+    await stopDaemon()
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const started = await startDaemon()
+    if (!started.ok) broadcastLog(`[Config] Daemon 重启失败: ${started.error}`, "ERROR")
+    broadcastStatus(await getDaemonStatus())
+    return r
+  })
+
+  ipcMain.handle("config:discover-cursor-claw", () => discoverCursorClawInstalls())
+
+  ipcMain.handle("config:migrate-from-cursor-claw", async (_e, userDataPath: string, sections: ConfigSection[]) => {
+    const r = migrateFromCursorClaw(String(userDataPath), sections)
+    if (!r.ok) return r
+    broadcastLog("[Config] 已从 Cursor Claw 迁移配置，正在重启 Daemon...")
     await stopDaemon()
     await new Promise((resolve) => setTimeout(resolve, 800))
     const started = await startDaemon()
