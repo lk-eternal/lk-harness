@@ -5,6 +5,7 @@ import {
 } from "lucide-react"
 import SearchableSelect from "./SearchableSelect"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
+import PanelAddMenu from "./PanelAddMenu"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { modelSlug } from "../model-utils"
@@ -53,15 +54,6 @@ export default function ChannelPanel() {
   const addMenuRef = useRef<HTMLDivElement>(null)
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
-
-  useEffect(() => {
-    if (!showAddMenu) return
-    const onDown = (e: MouseEvent) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target as Node)) setShowAddMenu(false)
-    }
-    document.addEventListener("mousedown", onDown)
-    return () => document.removeEventListener("mousedown", onDown)
-  }, [showAddMenu])
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
@@ -197,12 +189,10 @@ export default function ChannelPanel() {
               >
                 <Plus size={14} />添加
               </button>
-              {showAddMenu && (
-                <div className="absolute bottom-full left-0 z-20 mb-1 w-full rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl">
-                  <button onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><Bird size={12} className="text-blue-400" />飞书</button>
-                  <button onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><MessageSquare size={12} className="text-green-400" />微信</button>
-                </div>
-              )}
+              <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
+                <button type="button" onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><Bird size={12} className="text-blue-400" />飞书</button>
+                <button type="button" onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><MessageSquare size={12} className="text-green-400" />微信</button>
+              </PanelAddMenu>
             </div>
           </div>
         </aside>
@@ -306,6 +296,10 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
       if (resource?.type === "sdk") {
         const r = await window.electronAPI.listSdkModels(resource.apiKey ?? "", draft.model, draft.modelParams)
         if (r.ok && r.models.length > 0) setModelOptions(r.models)
+        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
+      } else if (resource?.type === "llm-builtin" || resource?.type === "llm-custom") {
+        const r = await window.electronAPI.listLlmModels(resource, draft.model, draft.modelParams)
+        if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
         else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
       } else {
         const r = await window.electronAPI.listModels()

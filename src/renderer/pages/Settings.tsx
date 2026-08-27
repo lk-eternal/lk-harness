@@ -96,7 +96,7 @@ const MCP_TEMPLATE = JSON.stringify({
 }, null, 2)
 const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE, source: "claw" }
 
-const MASTER_DETAIL_TABS: Tab[] = ["channel", "rules", "skills", "mcp", "projects", "tasks"]
+const MASTER_DETAIL_TABS: Tab[] = ["agent", "channel", "rules", "skills", "mcp", "projects", "tasks"]
 
 const TABS: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
   { id: "general", label: "通用", icon: SettingsIcon },
@@ -868,6 +868,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         <div className={`flex-1 ${masterDetailLayout ? "flex min-h-0 flex-col overflow-hidden" : "overflow-y-auto px-8 py-6"}`}>
           <div className={masterDetailLayout ? PANEL_FRAME : "mx-auto max-w-xl space-y-6"}>
 
+            {tab === "agent" && <AgentPanel />}
             {tab === "channel" && <ChannelPanel />}
             {tab === "tasks" && <TaskPanel />}
             {tab === "mcp" && <McpPanel />}
@@ -1145,9 +1146,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
               </section>
             </>)}
-
-            {/* ═══ Agent ═══ */}
-            {tab === "agent" && <AgentPanel />}
 
             {/* ═══ MCP ═══ */}
             {tab === "mcp" && (<>

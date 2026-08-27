@@ -154,7 +154,6 @@ declare global {
     importConfig(sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
     discoverCursorClawInstalls(): Promise<{ label: string; userDataPath: string }[]>
     migrateFromCursorClaw(userDataPath: string, sections: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
-    verifyLlmResource(resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }>
     flowHub: {
       getCatalog(force?: boolean): Promise<{ ok: true; catalog: import("../shared/flow-hub-types").FlowHubCatalog } | { ok: false; error: string }>
       listNodes(): Promise<{ ok: true; nodes: import("../shared/flow-hub-types").FlowHubBrowsableNode[] } | { ok: false; error: string }>
@@ -226,6 +225,8 @@ declare global {
     loginCli(): Promise<{ ok: boolean; output: string }>
     listModels(): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }>
     checkSdkApiKey(apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }>
+    verifyLlmResource(resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }>
+    listLlmModels(resource: AgentResource, currentModel?: string, currentParams?: string): Promise<{ ok: boolean; models: { id: string; label: string; current?: boolean }[]; error?: string }>
     listSdkModels(apiKey: string, currentModel?: string, currentParams?: string): Promise<{ ok: boolean; models: { id: string; label: string; params: string; current: boolean }[]; error?: string }>
     getScheduledTasks(): Promise<ScheduledTask[]>
     saveScheduledTasks(tasks: ScheduledTask[]): Promise<{ ok: boolean }>
@@ -242,6 +243,9 @@ declare global {
     getMcpEnabledMap(force?: boolean): Promise<Record<string, boolean>>
     getMcpStatusMap(force?: boolean): Promise<Record<string, string>>
     getMcpTools(name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
+    getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean }[]>
+    saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }>
+    deleteHarnessRule(id: string): Promise<{ ok: boolean }>
     getClawRules(): Promise<{ id: string; name: string; content: string; enabled: boolean }[]>
     saveClawRule(id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }>
     deleteClawRule(id: string): Promise<{ ok: boolean }>

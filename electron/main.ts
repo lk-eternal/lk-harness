@@ -24,6 +24,8 @@ import {
   listSdkModels,
   noteGlobalSdkError,
 } from "./daemon-manager"
+import { verifyLlmResource, listLlmModels } from "./agent-llm"
+import { warmModelsDevCatalog } from "./llm-model-catalog.js"
 import { parseListModelsStdout } from "./command-handler"
 import {
   getMcpServerList,
@@ -346,7 +348,8 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => checkSdkApiKey(apiKey))
   ipcMain.handle("sdk:list-models", (_, apiKey: string, currentModel?: string, currentParams?: string) => listSdkModels(apiKey, currentModel, currentParams))
-  ipcMain.handle("llm:verify-resource", (_, resource) => import("./agent-llm").then((m) => m.verifyLlmResource(resource)))
+  ipcMain.handle("llm:verify-resource", (_, resource) => verifyLlmResource(resource))
+  ipcMain.handle("llm:list-models", (_, resource, currentModel?: string, currentParams?: string) => listLlmModels(resource, currentModel, currentParams))
 }
 
 let isQuitting = false
@@ -421,6 +424,7 @@ app.whenReady().then(() => {
   initTray()
   initDaemonManager()
   warmupMcpCache()
+  warmModelsDevCatalog()
   initToolbox()
 })
 

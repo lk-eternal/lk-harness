@@ -6,20 +6,20 @@ import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FO
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
-interface ClawRule { id: string; name: string; content: string; enabled: boolean }
+interface HarnessRule { id: string; name: string; content: string; enabled: boolean }
 interface Draft { id: string | null; name: string; content: string; enabled: boolean }
 
 export default function RulePanel() {
   const { showConfirm, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
-  const [rules, setRules] = useState<ClawRule[]>([])
+  const [rules, setRules] = useState<HarnessRule[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
   const [isNew, setIsNew] = useState(false)
 
   const reload = useCallback(() => {
-    void window.electronAPI.getClawRules().then(setRules)
+    void window.electronAPI.getHarnessRules().then(setRules)
   }, [])
 
   useEffect(() => { reload() }, [reload])
@@ -33,14 +33,14 @@ export default function RulePanel() {
     setIsNew(asNew)
   }
 
-  const selectRule = async (r: ClawRule) => {
+  const selectRule = async (r: HarnessRule) => {
     if (isDirty && !(await showConfirm("未保存", "当前规则有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
     openDraft({ id: r.id, name: r.id, content: r.content, enabled: r.enabled }, false)
   }
 
   const handleSave = async () => {
     if (!draft || !draft.name.trim()) return
-    const r = await window.electronAPI.saveClawRule(draft.id, draft.name.trim(), draft.content, draft.enabled)
+    const r = await window.electronAPI.saveHarnessRule(draft.id, draft.name.trim(), draft.content, draft.enabled)
     if (!r.ok || !r.rule) {
       void showConfirm("保存失败", "规则 ID 已存在或无效，请换一个名称。", "知道了")
       return
@@ -54,7 +54,7 @@ export default function RulePanel() {
   const handleDelete = async () => {
     if (!draft?.id || isNew) return
     if (!(await showConfirm("删除规则", `确定删除「${draft.id}」？`))) return
-    await window.electronAPI.deleteClawRule(draft.id)
+    await window.electronAPI.deleteHarnessRule(draft.id)
     reload()
     setSelectedId(null)
     setDraft(null)

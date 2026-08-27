@@ -243,6 +243,7 @@ const api = {
   listModels: (): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }> => ipcRenderer.invoke("models:list"),
   checkSdkApiKey: (apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }> => ipcRenderer.invoke("sdk:check-api-key", apiKey),
   verifyLlmResource: (resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }> => ipcRenderer.invoke("llm:verify-resource", resource),
+  listLlmModels: (resource: AgentResource, currentModel?: string, currentParams?: string): Promise<{ ok: boolean; models: { id: string; label: string; current?: boolean }[]; error?: string }> => ipcRenderer.invoke("llm:list-models", resource, currentModel, currentParams),
   listSdkModels: (apiKey: string, currentModel?: string, currentParams?: string): Promise<{ ok: boolean; models: { id: string; label: string; params: string; current: boolean }[]; error?: string }> => ipcRenderer.invoke("sdk:list-models", apiKey, currentModel, currentParams),
   getScheduledTasks: (): Promise<ScheduledTask[]> => ipcRenderer.invoke("scheduled-tasks:get"),
   saveScheduledTasks: (tasks: ScheduledTask[]): Promise<{ ok: boolean }> => ipcRenderer.invoke("scheduled-tasks:save", tasks),

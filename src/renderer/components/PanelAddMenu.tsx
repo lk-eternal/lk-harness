@@ -9,7 +9,7 @@ interface Props {
   maxHeight?: number
 }
 
-/** 侧栏「添加」下拉：Portal 渲染，避免被 overflow 裁切；自动选择�?下方�?*/
+/** ?????????Portal ?????? overflow ????????/?? */
 export default function PanelAddMenu({ open, anchorRef, onClose, children, maxHeight = 280 }: Props) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [style, setStyle] = useState<React.CSSProperties>({})

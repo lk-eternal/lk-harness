@@ -83,6 +83,10 @@ export default function TaskPanel() {
         const r = await window.electronAPI.listSdkModels(resource.apiKey ?? "")
         if (r.ok && r.models.length > 0) setTaskModelOptions(r.models)
         else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
+      } else if (resource?.type === "llm-builtin" || resource?.type === "llm-custom") {
+        const r = await window.electronAPI.listLlmModels(resource)
+        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
+        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
       } else {
         const r = await window.electronAPI.listModels()
         if (r.ok && r.models.length > 0) setTaskModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
