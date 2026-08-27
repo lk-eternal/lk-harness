@@ -346,6 +346,7 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => checkSdkApiKey(apiKey))
   ipcMain.handle("sdk:list-models", (_, apiKey: string, currentModel?: string, currentParams?: string) => listSdkModels(apiKey, currentModel, currentParams))
+  ipcMain.handle("llm:verify-resource", (_, resource) => import("./agent-llm").then((m) => m.verifyLlmResource(resource)))
 }
 
 let isQuitting = false

@@ -54,6 +54,7 @@ import ProjectNodePanel from "../components/ProjectNodePanel"
 import { PANEL_FRAME } from "../components/panel-layout"
 import TitleBar from "../components/TitleBar"
 import useInlineModal from "../components/useInlineModal"
+import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
 import { modelSlug } from "../model-utils"
 
@@ -1116,45 +1117,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               </section>
               <section className="space-y-3">
                 <h3 className="text-sm font-medium text-gray-300">配置迁移</h3>
-                <p className="text-xs text-gray-600">导出全部设置（含密钥、通道、MCP、rules、skills 脚本等）到新电脑一键导入。导出文件含明文密钥，请妥善保管。</p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const r = await window.electronAPI.exportConfig()
-                      if (r.ok && r.path) void showAlert("导出成功", r.path)
-                      else if (!r.ok && r.error !== "已取消") void showAlert("导出失败", r.error ?? "未知错误")
-                    }}
-                    className="flex items-center gap-2 rounded-lg border border-gray-700 px-4 py-2 text-sm transition hover:border-blue-500"
-                  >
-                    <Download size={16} /> 导出配置
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (!(await showConfirm(
-                        "导入配置",
-                        "将覆盖 SDK 资源、消息通道、MCP、rules、skills、定时任务、项目设置与流程组。确定继续？",
-                        "导入",
-                        "取消",
-                      ))) return
-                      const r = await window.electronAPI.importConfig()
-                      if (!r.ok) {
-                        if (r.error !== "已取消") void showAlert("导入失败", r.error ?? "未知错误")
-                        return
-                      }
-                      const warn = r.warnings?.length ? `\n\n注意：\n${r.warnings.join("\n")}` : ""
-                      void showAlert("导入成功", `配置已应用，Daemon 已重启。${warn}`)
-                      window.electronAPI.getConfig().then((config) => {
-                        setAutoLaunch(!!config.autoStart)
-                        setCloseWindowAction(config.closeWindowAction ?? "ask")
-                      })
-                    }}
-                    className="flex items-center gap-2 rounded-lg border border-gray-700 px-4 py-2 text-sm transition hover:border-blue-500"
-                  >
-                    <Upload size={16} /> 导入配置
-                  </button>
-                </div>
+                <ConfigMigratePanel
+                  showAlert={showAlert}
+                  showConfirm={showConfirm}
+                  onMigrateSuccess={() => {
+                    window.electronAPI.getConfig().then((config) => {
+                      setAutoLaunch(!!config.autoStart)
+                      setCloseWindowAction(config.closeWindowAction ?? "ask")
+                    })
+                  }}
+                />
               </section>
               <p className="text-xs text-gray-500">关闭窗口相关选项保存后立即生效。其余设置自动保存，部分项需重启 Daemon 后生效。</p>
             </>)}

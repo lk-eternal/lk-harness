@@ -1,14 +1,20 @@
 import { useState, useEffect, useCallback } from "react"
 import {
-  Plus, Pencil, Trash2, X, Loader2, ShieldCheck, ShieldAlert, LogIn, RefreshCw, Eye, EyeOff, Terminal, KeyRound,
+  Plus, Pencil, Trash2, X, Loader2, ShieldCheck, ShieldAlert, LogIn, RefreshCw, Eye, EyeOff, Terminal, KeyRound, Cloud,
 } from "lucide-react"
 import useInlineModal from "./useInlineModal"
+import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 function newSdkId(): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
   return `sdk_${hex}`
+}
+
+function newLlmId(): string {
+  const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
+  return `llm_${hex}`
 }
 
 function CliStatusPanel() {
@@ -72,9 +78,12 @@ function CliStatusPanel() {
 
 export default function AgentPanel() {
   const [resources, setResources] = useState<AgentResource[]>([])
+  const [llmResources, setLlmResources] = useState<AgentResource[]>([])
   const [channels, setChannels] = useState<ChannelConfig[]>([])
   const [editing, setEditing] = useState<AgentResource | null>(null)
+  const [editingLlm, setEditingLlm] = useState<AgentResource | null>(null)
   const [isNew, setIsNew] = useState(false)
+  const [isNewLlm, setIsNewLlm] = useState(false)
   const [showKey, setShowKey] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [verifyResult, setVerifyResult] = useState<{ ok: boolean; email?: string; error?: string } | null>(null)
@@ -82,16 +91,28 @@ export default function AgentPanel() {
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
-    setResources((cfg.agentResources ?? []).filter((r) => r.type === "sdk"))
+    const all = cfg.agentResources ?? []
+    setResources(all.filter((r) => r.type === "sdk"))
+    setLlmResources(all.filter((r) => r.type === "llm-builtin" || r.type === "llm-custom"))
     setChannels(cfg.channels ?? [])
   }, [])
 
   useEffect(() => { void reload() }, [reload])
 
-  const persist = async (sdkList: AgentResource[]) => {
+  const persistAll = async (sdkList: AgentResource[], llmList: AgentResource[]) => {
     setResources(sdkList)
-    const all: AgentResource[] = [{ id: "cli", type: "cli", name: "Cursor CLI" }, ...sdkList]
-    await window.electronAPI.saveConfig({ agentResources: all })
+    setLlmResources(llmList)
+    await window.electronAPI.saveConfig({
+      agentResources: [{ id: "cli", type: "cli", name: "Cursor CLI" }, ...sdkList, ...llmList],
+    })
+  }
+
+  const persist = async (sdkList: AgentResource[]) => {
+    await persistAll(sdkList, llmResources)
+  }
+
+  const persistLlm = async (llmList: AgentResource[]) => {
+    await persistAll(resources, llmList)
   }
 
   const openAdd = () => {
@@ -102,6 +123,21 @@ export default function AgentPanel() {
 
   const openEdit = (r: AgentResource) => { setEditing({ ...r }); setIsNew(false); setVerifyResult(null) }
 
+  const openAddLlm = (mode: "llm-builtin" | "llm-custom") => {
+    setEditingLlm({
+      id: newLlmId(),
+      type: mode,
+      name: mode === "llm-builtin" ? "DeepSeek" : "自定义网关",
+      providerId: "deepseek",
+      apiKey: "",
+      baseUrl: "",
+    })
+    setIsNewLlm(true)
+    setVerifyResult(null)
+  }
+
+  const openEditLlm = (r: AgentResource) => { setEditingLlm({ ...r }); setIsNewLlm(false); setVerifyResult(null) }
+
   const handleDelete = async (r: AgentResource) => {
     const usedBy = channels.filter((c) => c.agentResourceId === r.id)
     if (usedBy.length > 0) {
@@ -110,6 +146,16 @@ export default function AgentPanel() {
     }
     if (!await showConfirm("删除确认", `确定删除「${r.name}」吗？`)) return
     await persist(resources.filter((x) => x.id !== r.id))
+  }
+
+  const handleDeleteLlm = async (r: AgentResource) => {
+    const usedBy = channels.filter((c) => c.agentResourceId === r.id)
+    if (usedBy.length > 0) {
+      void showAlert("无法删除", `该资源正在被通道使用：${usedBy.map((c) => c.name).join("、")}。`)
+      return
+    }
+    if (!await showConfirm("删除确认", `确定删除「${r.name}」吗？`)) return
+    await persistLlm(llmResources.filter((x) => x.id !== r.id))
   }
 
   const handleVerify = async () => {
@@ -125,6 +171,19 @@ export default function AgentPanel() {
     }
   }
 
+  const handleVerifyLlm = async () => {
+    if (!editingLlm?.apiKey?.trim()) return
+    setVerifying(true)
+    setVerifyResult(null)
+    try {
+      const r = await window.electronAPI.verifyLlmResource(editingLlm)
+      setVerifyResult(r)
+      if (r.ok && r.email) setEditingLlm((e) => e ? { ...e, email: r.email } : e)
+    } finally {
+      setVerifying(false)
+    }
+  }
+
   const handleSave = async () => {
     if (!editing || !editing.name.trim() || !editing.apiKey?.trim()) return
     const next = { ...editing, name: editing.name.trim(), apiKey: editing.apiKey.trim() }
@@ -133,12 +192,57 @@ export default function AgentPanel() {
     setEditing(null)
   }
 
+  const handleSaveLlm = async () => {
+    if (!editingLlm || !editingLlm.name.trim() || !editingLlm.apiKey?.trim()) return
+    if (editingLlm.type === "llm-custom" && !editingLlm.baseUrl?.trim()) return
+    const next = { ...editingLlm, name: editingLlm.name.trim(), apiKey: editingLlm.apiKey.trim() }
+    const exists = llmResources.some((r) => r.id === next.id)
+    await persistLlm(exists ? llmResources.map((r) => r.id === next.id ? next : r) : [...llmResources, next])
+    setEditingLlm(null)
+  }
+
   return (
     <>
       <section className="space-y-3">
         <h3 className="text-sm font-medium text-gray-300">Cursor CLI</h3>
         <p className="text-xs text-gray-600">本机 CLI 登录态，全局唯一；通道可绑定 CLI 作为 Agent 资源。</p>
         <CliStatusPanel />
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-gray-300">大模型 API</h3>
+          <div className="flex-1" />
+          <button onClick={() => openAddLlm("llm-builtin")} className="flex items-center gap-1 rounded-md border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500"><Cloud size={12} />内置提供商</button>
+          <button onClick={() => openAddLlm("llm-custom")} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />自定义网关</button>
+        </div>
+        <p className="text-xs text-gray-600">Pi 内嵌 Agent，飞书流式体验最佳。通道可分别绑定不同 LLM 资源。</p>
+        <div className="space-y-2">
+          {llmResources.map((r) => {
+            const usedBy = channels.filter((c) => c.agentResourceId === r.id)
+            const sub = r.type === "llm-builtin" ? builtinProviderLabel(r.providerId) : (r.baseUrl || "自定义")
+            return (
+              <div key={r.id} className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <Cloud size={15} className="shrink-0 text-sky-400" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-medium">{r.name}</p>
+                      <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{sub}</span>
+                      {usedBy.length > 0 && <span className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] text-blue-400">{usedBy.length} 个通道</span>}
+                    </div>
+                    <p className="truncate font-mono text-xs text-gray-600">{r.apiKey ? `${r.apiKey.slice(0, 8)}...` : "(未配置)"}</p>
+                  </div>
+                </div>
+                <div className="ml-3 flex shrink-0 items-center gap-2">
+                  <button onClick={() => openEditLlm(r)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white"><Pencil size={13} /></button>
+                  <button onClick={() => void handleDeleteLlm(r)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400"><Trash2 size={13} /></button>
+                </div>
+              </div>
+            )
+          })}
+          {llmResources.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无大模型资源，推荐添加 DeepSeek / OpenAI</p>}
+        </div>
       </section>
 
       <section className="space-y-3">
@@ -175,6 +279,52 @@ export default function AgentPanel() {
         </div>
       </section>
 
+      {editingLlm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
+              <h3 className="text-sm font-semibold text-gray-200">{isNewLlm ? "添加大模型" : "编辑大模型"}</h3>
+              <button onClick={() => setEditingLlm(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+            </div>
+            <div className="space-y-3 px-6 py-4">
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">名称</label>
+                <input type="text" value={editingLlm.name} onChange={(e) => setEditingLlm({ ...editingLlm, name: e.target.value })} className={inputCls} />
+              </div>
+              {editingLlm.type === "llm-builtin" && (
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">提供商</label>
+                  <select value={editingLlm.providerId ?? "deepseek"} onChange={(e) => setEditingLlm({ ...editingLlm, providerId: e.target.value, name: builtinProviderLabel(e.target.value) })} className={inputCls}>
+                    {BUILTIN_LLM_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                  </select>
+                </div>
+              )}
+              {editingLlm.type === "llm-custom" && (
+                <div>
+                  <label className="mb-1 block text-xs text-gray-500">Base URL</label>
+                  <input type="text" value={editingLlm.baseUrl ?? ""} onChange={(e) => setEditingLlm({ ...editingLlm, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" className={inputCls} />
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-xs text-gray-500">API Key</label>
+                <input type={showKey ? "text" : "password"} value={editingLlm.apiKey ?? ""} onChange={(e) => { setEditingLlm({ ...editingLlm, apiKey: e.target.value }); setVerifyResult(null) }} className={inputCls} />
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => void handleVerifyLlm()} disabled={verifying || !editingLlm.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 transition hover:border-blue-500 disabled:opacity-50">
+                  {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
+                  {verifying ? "验证中..." : "验证"}
+                </button>
+                {verifyResult?.ok && <span className="text-xs text-green-400">有效</span>}
+                {verifyResult && !verifyResult.ok && <span className="text-xs text-red-400">{verifyResult.error}</span>}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
+              <button onClick={() => setEditingLlm(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800">取消</button>
+              <button onClick={() => void handleSaveLlm()} disabled={!editingLlm.name.trim() || !editingLlm.apiKey?.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
+            </div>
+          </div>
+        </div>
+      )}
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
           <div className="w-full max-w-md rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">

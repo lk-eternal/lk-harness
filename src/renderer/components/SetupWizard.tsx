@@ -2,7 +2,11 @@ import { useState, useEffect, useRef } from "react"
 import {
   FolderOpen, KeyRound, Bird, UserCheck, Wrench, CheckCircle2, Circle,
   Loader2, ExternalLink, ShieldCheck, ShieldAlert, LogIn, Download, ArrowRight,
+  Terminal, Cloud, Globe,
 } from "lucide-react"
+import ConfigMigratePanel from "./ConfigMigratePanel"
+import useInlineModal from "./useInlineModal"
+import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -26,11 +30,19 @@ const STEPS = [
 ]
 
 export default function SetupWizard({ open, onClose }: Props) {
+  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
   const [step, setStep] = useState(0)
   const [maxStep, setMaxStep] = useState(0)
 
   const [wsDir, setWsDir] = useState("")
+  type AgentMode = "cli" | "sdk" | "llm-builtin" | "llm-custom"
+  const [agentMode, setAgentMode] = useState<AgentMode>("llm-builtin")
+  const [agentResourceId, setAgentResourceId] = useState("cli")
+  const [agentConfigured, setAgentConfigured] = useState(false)
   const [apiKey, setApiKey] = useState("")
+  const [llmProviderId, setLlmProviderId] = useState("deepseek")
+  const [llmBaseUrl, setLlmBaseUrl] = useState("")
+  const [cliLoggedIn, setCliLoggedIn] = useState<boolean | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [verifyErr, setVerifyErr] = useState("")
   const [sdkSaved, setSdkSaved] = useState(false)
@@ -71,7 +83,27 @@ export default function SetupWizard({ open, onClose }: Props) {
         if (feishu.mainUserEnabled && feishu.mainUserChatId) setBindDone(true)
       }
       const sdk = (cfg.agentResources ?? []).find((r) => r.type === "sdk" && r.apiKey?.trim())
-      if (sdk) { setApiKey(sdk.apiKey ?? ""); setSdkSaved(true) }
+      const llm = (cfg.agentResources ?? []).find((r) => (r.type === "llm-builtin" || r.type === "llm-custom") && r.apiKey?.trim())
+      if (llm) {
+        setAgentMode(llm.type === "llm-custom" ? "llm-custom" : "llm-builtin")
+        setAgentResourceId(llm.id)
+        setApiKey(llm.apiKey ?? "")
+        if (llm.type === "llm-builtin") setLlmProviderId(llm.providerId ?? "deepseek")
+        if (llm.type === "llm-custom") setLlmBaseUrl(llm.baseUrl ?? "")
+        setAgentConfigured(true)
+      } else if (sdk) {
+        setAgentMode("sdk")
+        setAgentResourceId(sdk.id)
+        setApiKey(sdk.apiKey ?? "")
+        setSdkSaved(true)
+        setAgentConfigured(true)
+      } else {
+        setAgentMode("llm-builtin")
+        setAgentResourceId("cli")
+      }
+      void window.electronAPI.checkCliLogin({ forceRefresh: false }).then((login) => {
+        setCliLoggedIn(login.loggedIn ?? false)
+      }).catch(() => setCliLoggedIn(null))
     })
     const unsub = window.electronAPI.onFeishuSetupQrCode((url) => { setQrUrl(url); setQrState("wait") })
     return () => unsub()
@@ -92,25 +124,78 @@ export default function SetupWizard({ open, onClose }: Props) {
     autoNext(1)
   }
 
-  const verifyAndSaveKey = async () => {
-    if (!apiKey.trim()) return
+  const saveAgentResources = async (list: AgentResource[]) => {
+    await window.electronAPI.saveConfig({ agentResources: list })
+  }
+
+  const verifyAndSaveAgent = async () => {
     setVerifying(true)
     setVerifyErr("")
     try {
-      const r = await window.electronAPI.checkSdkApiKey(apiKey.trim())
-      if (!r.ok) { setVerifyErr(r.error ?? "Key 无效，请检查后重试"); return }
       const cfg = await window.electronAPI.getConfig()
-      const list = (cfg.agentResources ?? []).filter((x) => x.type === "sdk")
-      const existing = list.find((x) => x.apiKey === apiKey.trim())
-      const next = existing
-        ? list
-        : [...list, { id: newId("sdk"), type: "sdk" as const, name: `SDK Key ${list.length + 1}`, apiKey: apiKey.trim(), email: r.email }]
-      await window.electronAPI.saveConfig({ agentResources: [{ id: "cli", type: "cli", name: "Cursor CLI" }, ...next] })
-      setSdkSaved(true)
+      const existing = cfg.agentResources ?? []
+      const keepOthers = existing.filter((r) => r.type !== "cli" && r.type !== "sdk" && r.type !== "llm-builtin" && r.type !== "llm-custom")
+      const cliRes = existing.find((r) => r.type === "cli") ?? { id: "cli", type: "cli" as const, name: "Cursor CLI" }
+
+      if (agentMode === "cli") {
+        const cliOk = await window.electronAPI.checkCli()
+        if (!cliOk) { setVerifyErr("未检测到 Cursor CLI"); return }
+        const login = await window.electronAPI.checkCliLogin({ forceRefresh: true })
+        if (!login.loggedIn) {
+          await window.electronAPI.loginCli()
+          const again = await window.electronAPI.checkCliLogin({ forceRefresh: true })
+          if (!again.loggedIn) { setVerifyErr("CLI 仍未登录"); return }
+        }
+        await saveAgentResources([cliRes, ...keepOthers])
+        setAgentResourceId("cli")
+        setAgentConfigured(true)
+        autoNext(2)
+        return
+      }
+
+      if (agentMode === "sdk") {
+        if (!apiKey.trim()) return
+        const r = await window.electronAPI.checkSdkApiKey(apiKey.trim())
+        if (!r.ok) { setVerifyErr(r.error ?? "Key 无效"); return }
+        const sdkList = existing.filter((x) => x.type === "sdk")
+        const hit = sdkList.find((x) => x.apiKey === apiKey.trim())
+        const entry = hit ?? { id: newId("sdk"), type: "sdk" as const, name: `Cursor SDK ${sdkList.length + 1}`, apiKey: apiKey.trim(), email: r.email }
+        await saveAgentResources([cliRes, ...(hit ? sdkList : [...sdkList, entry]), ...keepOthers])
+        setAgentResourceId(entry.id)
+        setSdkSaved(true)
+        setAgentConfigured(true)
+        autoNext(2)
+        return
+      }
+
+      if (agentMode === "llm-custom") {
+        if (!apiKey.trim() || !llmBaseUrl.trim()) { setVerifyErr("请填写 Base URL 和 API Key"); return }
+        const draft: AgentResource = { id: newId("llm"), type: "llm-custom", name: "自定义网关", baseUrl: llmBaseUrl.trim(), apiKey: apiKey.trim() }
+        const r = await window.electronAPI.verifyLlmResource(draft)
+        if (!r.ok) { setVerifyErr(r.error ?? "验证失败"); return }
+        await saveAgentResources([cliRes, draft, ...keepOthers])
+        setAgentResourceId(draft.id)
+        setAgentConfigured(true)
+        autoNext(2)
+        return
+      }
+
+      if (!apiKey.trim()) return
+      const draft: AgentResource = { id: newId("llm"), type: "llm-builtin", name: builtinProviderLabel(llmProviderId), providerId: llmProviderId, apiKey: apiKey.trim() }
+      const r = await window.electronAPI.verifyLlmResource(draft)
+      if (!r.ok) { setVerifyErr(r.error ?? "验证失败"); return }
+      await saveAgentResources([cliRes, draft, ...keepOthers])
+      setAgentResourceId(draft.id)
+      setAgentConfigured(true)
       autoNext(2)
     } finally {
       setVerifying(false)
     }
+  }
+
+  const verifyAndSaveKey = async () => {
+    setAgentMode("sdk")
+    await verifyAndSaveAgent()
   }
 
   const saveChannel = async (id: string, secret: string, quickCreated: boolean) => {
@@ -122,7 +207,8 @@ export default function SetupWizard({ open, onClose }: Props) {
       setBotName(info.name ?? "")
       const cfg = await window.electronAPI.getConfig()
       const channels = cfg.channels ?? []
-      const sdk = (cfg.agentResources ?? []).find((r) => r.type === "sdk" && r.apiKey?.trim())
+      const agentRes = (cfg.agentResources ?? []).find((r) => r.id === agentResourceId)
+        ?? (cfg.agentResources ?? []).find((r) => (r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && (r.apiKey?.trim() || r.type === "cli"))
       const existing = channels.find((c) => c.id === channelId) ?? channels.find((c) => c.type === "feishu")
       const chan = {
         ...(existing ?? {
@@ -133,7 +219,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         }),
         larkAppId: id.trim(), larkAppSecret: secret.trim(), larkBotName: info.name,
         larkAppQuickCreated: quickCreated, enabled: true,
-        agentResourceId: sdk?.id ?? "cli",
+        agentResourceId: agentRes?.id ?? agentResourceId ?? "cli",
         ...(wsDir.trim() ? { workspaceDir: wsDir.trim() } : {}),
       }
       setChannelId(chan.id)
@@ -201,7 +287,7 @@ export default function SetupWizard({ open, onClose }: Props) {
     onClose(completed)
   }
 
-  const stepDone = [!!wsDir, sdkSaved, !!botName, bindDone, false]
+  const stepDone = [!!wsDir, agentConfigured, !!botName, bindDone, false]
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
@@ -249,30 +335,89 @@ export default function SetupWizard({ open, onClose }: Props) {
                 下一步 <ArrowRight size={14} />
               </button>
             )}
+            <div className="mt-8 border-t border-gray-800 pt-6">
+              <h3 className="text-sm font-medium text-gray-300">已有 Cursor Claw？</h3>
+              <p className="mt-1 text-xs text-gray-500">一键迁移通道、Agent、MCP、规则等，成功后可直接进入主页。</p>
+              <div className="mt-3">
+                <ConfigMigratePanel
+                  compact
+                  showAlert={showAlert}
+                  showConfirm={showConfirm}
+                  onMigrateSuccess={() => {
+                    void window.electronAPI.saveConfig({ setupComplete: true }).then(() => onClose(true))
+                  }}
+                />
+              </div>
+            </div>
           </>)}
 
           {step === 1 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 2 步：接入 AI（Cursor API Key）</h2>
+            <h2 className="text-lg font-semibold text-gray-100">第 2 步：接入 AI</h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-400">
-              填一把 Cursor API Key，AI 才有大脑。前往{" "}
-              <a href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys" target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-blue-400 hover:underline">
-                Cursor Dashboard<ExternalLink size={11} />
-              </a>
-              {" "}登录后点 Create API Key，把 crsr_ 开头的字符串复制到下面。
+              推荐 <span className="text-gray-200">大模型 API</span>（Pi 内嵌，飞书流式体验最佳），也可选 Cursor CLI / SDK。
             </p>
-            <div className="mt-6 space-y-3">
-              <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setVerifyErr(""); setSdkSaved(false) }} placeholder="crsr_..." className={inputCls} />
-              <div className="flex items-center gap-3">
-                <button onClick={() => void verifyAndSaveKey()} disabled={verifying || !apiKey.trim() || sdkSaved}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {([
+                { id: "llm-builtin" as const, icon: Cloud, title: "大模型 API", desc: "DeepSeek / OpenAI 等" },
+                { id: "cli" as const, icon: Terminal, title: "Cursor CLI", desc: "本机 Cursor 登录态" },
+                { id: "sdk" as const, icon: KeyRound, title: "Cursor SDK", desc: "Cursor API Key" },
+                { id: "llm-custom" as const, icon: Globe, title: "自定义网关", desc: "OpenAI 兼容 Base URL" },
+              ]).map((opt) => (
+                <button key={opt.id} type="button"
+                  onClick={() => { setAgentMode(opt.id); setVerifyErr(""); setAgentConfigured(false); setSdkSaved(false) }}
+                  className={`rounded-lg border px-3 py-2.5 text-left transition ${agentMode === opt.id ? "border-blue-500 bg-blue-600/10" : "border-gray-800 hover:border-gray-600"}`}>
+                  <div className="flex items-center gap-2 text-sm text-gray-200"><opt.icon size={14} />{opt.title}</div>
+                  <p className="mt-0.5 text-[11px] text-gray-500">{opt.desc}</p>
+                </button>
+              ))}
+            </div>
+
+            {agentMode === "cli" && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs text-gray-500">确认本机 Cursor CLI 已安装并登录。</p>
+                <button onClick={() => void verifyAndSaveAgent()} disabled={verifying}
                   className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
                   {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  {verifying ? "验证中..." : sdkSaved ? "已验证" : "验证并继续"}
+                  {verifying ? "检测中..." : cliLoggedIn ? "已登录，继续" : "检测并登录 CLI"}
                 </button>
-                {sdkSaved && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />Key 有效，已保存</span>}
+              </div>
+            )}
+
+            {agentMode === "sdk" && (
+              <div className="mt-4 space-y-2">
+                <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setVerifyErr(""); setSdkSaved(false) }} placeholder="crsr_..." className={inputCls} />
+              </div>
+            )}
+
+            {agentMode === "llm-builtin" && (
+              <div className="mt-4 space-y-2">
+                <select value={llmProviderId} onChange={(e) => setLlmProviderId(e.target.value)} className={inputCls}>
+                  {BUILTIN_LLM_PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+                <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setVerifyErr("") }} placeholder="API Key" className={inputCls} />
+              </div>
+            )}
+
+            {agentMode === "llm-custom" && (
+              <div className="mt-4 space-y-2">
+                <input type="text" value={llmBaseUrl} onChange={(e) => setLlmBaseUrl(e.target.value)} placeholder="https://api.example.com/v1" className={inputCls} />
+                <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setVerifyErr("") }} placeholder="API Key" className={inputCls} />
+              </div>
+            )}
+
+            {agentMode !== "cli" && (
+              <div className="mt-4 flex items-center gap-3">
+                <button onClick={() => void verifyAndSaveAgent()} disabled={verifying || agentConfigured}
+                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
+                  {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                  {verifying ? "验证中..." : agentConfigured ? "已验证" : "验证并继续"}
+                </button>
+                {agentConfigured && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已保存</span>}
                 {verifyErr && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyErr}</span>}
               </div>
-            </div>
-            {sdkSaved && (
+            )}
+            {agentMode === "cli" && verifyErr && <p className="mt-2 text-xs text-red-400">{verifyErr}</p>}
+            {agentConfigured && (
               <button onClick={() => goto(2)} className="mt-6 flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
                 下一步 <ArrowRight size={14} />
               </button>
@@ -399,6 +544,7 @@ export default function SetupWizard({ open, onClose }: Props) {
 
         </div>
       </div>
+      {ModalPortal}
     </div>
   )
 }
