@@ -8,7 +8,7 @@ import type { ChatType, LaunchMeta } from "./agent-launcher"
 import type { AgentResource } from "../src/shared/channel-types"
 import { workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { resolveLlmModel, llmApiKey, llmProviderId } from "./llm-config"
-import { getChannel, resolveChannelModel } from "./config-store"
+import { getChannel, resolveChannelModel, getConfig } from "./config-store"
 import {
   resolveModelForSession,
   initSessionModelStore,
@@ -29,6 +29,8 @@ import {
   rememberPiResumable,
   patchPiResumableStreamCard,
 } from "./pi-resume-store"
+import { syncMainProcessProxyEnv } from "./agent-cli"
+import { llmProxyConfigured, withLlmProxyOptions } from "./llm-proxy"
 import {
   type PollPhaseEventPayload,
   type StreamAgg,
@@ -500,6 +502,11 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     const apiKey = llmApiKey(resource)
     if (!apiKey) return { ok: false, error: "未配置 API Key（设置 → Agent）" }
 
+    syncMainProcessProxyEnv(getConfig())
+    if (llmProxyConfigured()) {
+      pushUiLog("LLM", "INFO", `[${sessionKey}] LLM 请求走 HTTP 代理`)
+    }
+
     initSessionModelStore(app.getPath("userData"))
     const { modelId, modelParams } = resolveLlmModelRef(opts)
     const model = resolveLlmModel(resource, modelId)
@@ -610,7 +617,7 @@ export async function verifyLlmResource(resource: AgentResource): Promise<{ ok: 
     const res = await Promise.race([
       complete(model, {
         messages: [{ role: "user", content: "ping", timestamp: Date.now() }],
-      }, { apiKey, maxTokens: 16 }),
+      }, withLlmProxyOptions({ apiKey, maxTokens: 16 })),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("验证超时（30s）")), 30_000)),
     ])
     const block = res.content?.find((c: { type?: string }) => c.type === "text")

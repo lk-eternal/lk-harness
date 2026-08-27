@@ -10,6 +10,8 @@ import {
   SettingsManager,
   type AgentSession,
 } from "@mariozechner/pi-coding-agent"
+import { withLlmProxyOptions, llmProxyConfigured } from "./llm-proxy"
+import { pushUiLog } from "./ui-logger"
 import type { Model, Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
 import type { LlmLaunchOptions } from "./agent-llm"
@@ -20,7 +22,7 @@ import { buildPiMcpConfig } from "./pi-mcp-config"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 
 function harnessAgentDir(): string {
-  // �?Pi 官方 ~/.pi/agent 对齐，skills/settings 共用
+  // �?Pi 官方 ~/.pi/agent 对齝，skills/settings 共用
   return getAgentDir()
 }
 
@@ -143,6 +145,15 @@ export async function createHarnessPiSession(
     model,
     thinkingLevel: "off",
   })
+  wrapAgentStreamWithProxy(session)
 
   return { session, sessionManager, resumed }
+}
+
+function wrapAgentStreamWithProxy(session: AgentSession): void {
+  if (!llmProxyConfigured()) return
+  const orig = session.agent.streamFunction
+  session.agent.streamFunction = (model, context, options) =>
+    orig(model, context, withLlmProxyOptions(options))
+  pushUiLog("LLM", "INFO", "Pi Agent ??? HTTP ??")
 }

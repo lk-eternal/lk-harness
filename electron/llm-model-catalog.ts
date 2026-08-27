@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { app } from "electron"
+import { createProxyFetch } from "./llm-proxy"
 import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai/compat"
 import type { LlmApiProtocol } from "../src/shared/agent-providers"
 
@@ -79,7 +80,8 @@ function writeDiskCache(index: Map<string, CatalogEntry>): void {
 }
 
 async function fetchModelsDevIndex(): Promise<Map<string, CatalogEntry>> {
-  const res = await fetch(MODELS_DEV_URL, { signal: AbortSignal.timeout(60_000) })
+  const proxyFetch = createProxyFetch()
+  const res = await (proxyFetch ?? fetch)(MODELS_DEV_URL, { signal: AbortSignal.timeout(60_000) })
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`)
   const raw = (await res.json()) as Record<string, ModelsDevProvider>
   const index = buildIndex(raw)
@@ -175,7 +177,8 @@ export async function fetchGatewayModels(
   const fetchOnce = async (useKey: boolean): Promise<{ id: string; label: string }[]> => {
     const headers: Record<string, string> = {}
     if (useKey && apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
+    const proxyFetch = createProxyFetch()
+    const res = await (proxyFetch ?? fetch)(url, { headers, signal: AbortSignal.timeout(30_000) })
     if (!res.ok) {
       const body = await res.text().catch(() => "")
       throw new Error(body.trim() || `HTTP ${res.status}`)
