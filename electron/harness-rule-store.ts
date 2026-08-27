@@ -9,6 +9,7 @@ import {
   harnessRulesStoreDir,
   exportHarnessRulesBundle as exportBundle,
   importHarnessRulesBundle as importBundle,
+  mergeImportHarnessRulesBundle as mergeBundle,
   type HarnessRule,
 } from "../src/shared/harness-rule-store.js"
 
@@ -61,4 +62,9 @@ export function exportHarnessRulesBundle() {
 export function importHarnessRulesBundle(data: Parameters<typeof importBundle>[0]) {
   ensureInit()
   importBundle(data)
+}
+
+export function mergeImportHarnessRulesBundle(data: Parameters<typeof mergeBundle>[0]) {
+  ensureInit()
+  return mergeBundle(data)
 }

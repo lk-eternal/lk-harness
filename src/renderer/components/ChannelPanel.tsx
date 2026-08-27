@@ -284,39 +284,51 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const [wechatQrMsg, setWechatQrMsg] = useState("")
   const wechatQrBusy = useRef(false)
 
-  const resource = resources.find((r) => r.id === draft.agentResourceId) ?? resources[0]
+  const resource = resources.find((r) => r.id === draft.agentResourceId)
 
   const modelOptLabel = (id?: string, params?: string) =>
     modelOptions.find((o) => o.id === id && o.params === (params ?? ""))?.label
     || modelSlug(id, params)
 
-  const fetchModels = useCallback(async (silent = false) => {
-    setLoadingModels(true)
-    try {
-      if (resource?.type === "sdk") {
-        const r = await window.electronAPI.listSdkModels(resource.apiKey ?? "", draft.model, draft.modelParams)
-        if (r.ok && r.models.length > 0) setModelOptions(r.models)
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      } else if (resource?.type === "llm-builtin" || resource?.type === "llm-custom") {
-        const r = await window.electronAPI.listLlmModels(resource, draft.model, draft.modelParams)
-        if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      } else {
-        const r = await window.electronAPI.listModels()
-        if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      }
-    } finally {
-      setLoadingModels(false)
-    }
-  }, [resource, draft.model, draft.modelParams, showAlert])
-
-  // 打开弹窗与切换 Agent 资源时自动加载模型列表（静默失败，按钮可手动重试）
+  // 随 Agent 资源（及凭据）变化加载对应模型列表；取消过时请求避免错序覆盖
   useEffect(() => {
+    if (!resource) {
+      setModelOptions([])
+      setLoadingModels(false)
+      return
+    }
+    let cancelled = false
+    const load = async () => {
+      setLoadingModels(true)
+      try {
+        if (resource.type === "sdk") {
+          if (!resource.apiKey?.trim()) {
+            if (!cancelled) setModelOptions([])
+            return
+          }
+          const r = await window.electronAPI.listSdkModels(resource.apiKey.trim(), draft.model, draft.modelParams)
+          if (cancelled) return
+          if (r.ok && r.models.length > 0) setModelOptions(r.models)
+          else setModelOptions([])
+        } else if (resource.type === "llm-builtin" || resource.type === "llm-custom") {
+          const r = await window.electronAPI.listLlmModels(resource, draft.model, draft.modelParams)
+          if (cancelled) return
+          if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
+          else setModelOptions([])
+        } else {
+          const r = await window.electronAPI.listModels()
+          if (cancelled) return
+          if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
+          else setModelOptions([])
+        }
+      } finally {
+        if (!cancelled) setLoadingModels(false)
+      }
+    }
     setModelOptions([])
-    void fetchModels(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.agentResourceId])
+    void load()
+    return () => { cancelled = true }
+  }, [resource, draft.model, draft.modelParams])
 
   // 飞书一键创建应用
   useEffect(() => {
@@ -575,7 +587,15 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             <h4 className="text-xs font-medium text-gray-400">Agent 资源与模型</h4>
             <div>
               <label className="mb-1 block text-xs text-gray-500">Agent 资源</label>
-              <select value={draft.agentResourceId} onChange={(e) => set({ agentResourceId: e.target.value })} className={inputCls}>
+              <select
+                value={draft.agentResourceId}
+                onChange={(e) => {
+                  const agentResourceId = e.target.value
+                  if (agentResourceId === draft.agentResourceId) return
+                  set({ agentResourceId, model: "auto", modelParams: "", othersModel: "", othersModelParams: "" })
+                }}
+                className={inputCls}
+              >
                 {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
               </select>
             </div>

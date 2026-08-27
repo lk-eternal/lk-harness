@@ -151,9 +151,12 @@ declare global {
     exportProjectNodeGroup(groupId: string): Promise<{ ok: boolean; path?: string; error?: string }>
     importProjectNodeGroup(): Promise<{ ok: boolean; group?: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }; error?: string }>
     exportConfig(sections?: string[]): Promise<{ ok: boolean; path?: string; error?: string }>
-    importConfig(sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
+    pickImportConfigFile(): Promise<{ ok: boolean; filePath?: string; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }>
+    getLocalConfigSectionStats(): Promise<{ id: string; label: string; count: number }[]>
+    importConfig(filePath: string, sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
+    inspectCursorClawSections(userDataPath?: string): Promise<{ ok: boolean; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }>
     discoverCursorClawInstalls(): Promise<{ label: string; userDataPath: string }[]>
-    migrateFromCursorClaw(userDataPath: string, sections: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
+    migrateFromCursorClaw(userDataPath?: string, sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
     flowHub: {
       getCatalog(force?: boolean): Promise<{ ok: true; catalog: import("../shared/flow-hub-types").FlowHubCatalog } | { ok: false; error: string }>
       listNodes(): Promise<{ ok: true; nodes: import("../shared/flow-hub-types").FlowHubBrowsableNode[] } | { ok: false; error: string }>

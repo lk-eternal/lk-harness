@@ -79,6 +79,8 @@ interface LlmSession extends StreamCardHost {
   startedAt: number
   lastActivityAt: number
   chatType: ChatType
+  chatName?: string
+  senderOpenId?: string
   persistentPoll: boolean
   keepSession: boolean
   channelModel: string
@@ -459,6 +461,8 @@ export function getLlmSessionList() {
     startedAt: s.startedAt,
     lastActivityAt: s.lastActivityAt,
     chatType: s.chatType,
+    chatName: s.chatName,
+    senderOpenId: s.senderOpenId,
     workspaceDir: workspaceDirFromSessionKey(s.sessionKey),
     model: s.model.id,
     modelParams: s.channelModelParams,
@@ -545,6 +549,8 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       startedAt: Date.now(),
       lastActivityAt: Date.now(),
       chatType: opts.chatType,
+      chatName: opts.chatName,
+      senderOpenId: opts.senderOpenId,
       persistentPoll: opts.keepSession !== false && (opts.persistentPoll ?? true),
       keepSession: opts.keepSession ?? true,
       channelModel: modelId,

@@ -208,7 +208,10 @@ export default function SetupWizard({ open, onClose }: Props) {
       const cfg = await window.electronAPI.getConfig()
       const channels = cfg.channels ?? []
       const agentRes = (cfg.agentResources ?? []).find((r) => r.id === agentResourceId)
-        ?? (cfg.agentResources ?? []).find((r) => (r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && (r.apiKey?.trim() || r.type === "cli"))
+        ?? (cfg.agentResources ?? []).find((r) =>
+          r.type === "cli" ||
+          ((r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && !!r.apiKey?.trim()),
+        )
       const existing = channels.find((c) => c.id === channelId) ?? channels.find((c) => c.type === "feishu")
       const chan = {
         ...(existing ?? {
@@ -336,18 +339,14 @@ export default function SetupWizard({ open, onClose }: Props) {
               </button>
             )}
             <div className="mt-8 border-t border-gray-800 pt-6">
-              <h3 className="text-sm font-medium text-gray-300">已有 Cursor Claw？</h3>
-              <p className="mt-1 text-xs text-gray-500">一键迁移通道、Agent、MCP、规则等，成功后可直接进入主页。</p>
-              <div className="mt-3">
-                <ConfigMigratePanel
-                  compact
-                  showAlert={showAlert}
-                  showConfirm={showConfirm}
-                  onMigrateSuccess={() => {
-                    void window.electronAPI.saveConfig({ setupComplete: true }).then(() => onClose(true))
-                  }}
-                />
-              </div>
+              <ConfigMigratePanel
+                variant="wizard"
+                showAlert={showAlert}
+                showConfirm={showConfirm}
+                onMigrateSuccess={() => {
+                  void window.electronAPI.saveConfig({ setupComplete: true }).then(() => onClose(true))
+                }}
+              />
             </div>
           </>)}
 

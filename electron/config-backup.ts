@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import AdmZip from "adm-zip"
 import { app } from "electron"
 import {
   getConfig,
@@ -9,8 +10,10 @@ import {
   CLI_RESOURCE_ID,
   type AppConfig,
 } from "./config-store"
-import { exportHarnessRulesBundle, importHarnessRulesBundle } from "./harness-rule-store"
-import { readHarnessMcpStoreRaw, writeHarnessMcpStoreRaw } from "../src/shared/harness-mcp-store.js"
+import { exportHarnessRulesBundle, mergeImportHarnessRulesBundle } from "./harness-rule-store"
+import { listHarnessRules } from "./harness-rule-store"
+import { listSkillRoots } from "./skill-store"
+import { readHarnessMcpStoreRaw, mergeHarnessMcpStoreRaw } from "../src/shared/harness-mcp-store.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { readTasksFromFile, writeTasksToFile } from "./cron-scheduler"
 import { initProjectStore, getNodeGroups, saveNodeGroups } from "../src/shared/project-store.js"
@@ -33,28 +36,105 @@ export type ConfigSection =
   | "tasks"
   | "skills"
 
-export const ALL_CONFIG_SECTIONS: ConfigSection[] = [
-  "general",
-  "proxy",
-  "agent",
-  "channels",
-  "projects",
-  "mcp",
-  "rules",
-  "tasks",
-  "skills",
+export const CONFIG_SECTION_NAV: { id: ConfigSection; label: string }[] = [
+  { id: "general", label: "通用" },
+  { id: "proxy", label: "网络" },
+  { id: "agent", label: "Agent" },
+  { id: "channels", label: "消息通道" },
+  { id: "rules", label: "规则" },
+  { id: "skills", label: "Skills" },
+  { id: "mcp", label: "MCP" },
+  { id: "projects", label: "项目" },
+  { id: "tasks", label: "定时任务" },
 ]
 
-export const CONFIG_SECTION_LABELS: Record<ConfigSection, string> = {
-  general: "通用设置",
-  proxy: "网络代理",
-  agent: "Agent 资源",
-  channels: "消息通道",
-  projects: "项目设置",
-  mcp: "MCP 服务器",
-  rules: "Harness 规则",
-  tasks: "定时任务",
-  skills: "Skills 脚本",
+export const ALL_CONFIG_SECTIONS: ConfigSection[] = CONFIG_SECTION_NAV.map((s) => s.id)
+
+export const CONFIG_SECTION_LABELS: Record<ConfigSection, string> = Object.fromEntries(
+  CONFIG_SECTION_NAV.map((s) => [s.id, s.label]),
+) as Record<ConfigSection, string>
+
+export interface ConfigSectionStat {
+  id: ConfigSection
+  label: string
+  count: number
+}
+
+function agentResourceCount(resources: AgentResource[] | undefined): number {
+  return (resources ?? []).filter((r) => r.type !== "cli" && r.id !== CLI_RESOURCE_ID).length
+}
+
+function statsFromManifest(manifest: ConfigExportManifest, staging: string): ConfigSectionStat[] {
+  const counts: Partial<Record<ConfigSection, number>> = {}
+  if (manifest.general) {
+    counts.general = (manifest.general.favoriteWorkspaces?.length ?? 0) + (manifest.general.favoriteModels?.length ?? 0)
+  }
+  if (manifest.proxy) {
+    counts.proxy = [manifest.proxy.httpProxy, manifest.proxy.httpsProxy, manifest.proxy.noProxy].filter((s) => s?.trim()).length
+  }
+  if (manifest.agent) counts.agent = agentResourceCount(manifest.agent.agentResources)
+  if (manifest.channels) counts.channels = manifest.channels.length
+  if (manifest.rules) counts.rules = manifest.rules.order?.length ?? Object.keys(manifest.rules.files ?? {}).length
+  if (manifest.tasks) counts.tasks = manifest.tasks.length
+  if (manifest.mcp?.harness) counts.mcp = manifest.mcp.harness.order?.length ?? Object.keys(manifest.mcp.harness.servers ?? {}).length
+  if (manifest.projects) {
+    counts.projects = (manifest.projects.repoProfiles?.length ?? 0) + (manifest.projects.nodeGroups?.length ?? 0)
+  }
+  if (fs.existsSync(path.join(staging, "skills"))) {
+    let n = 0
+    for (const ent of fs.readdirSync(path.join(staging, "skills"), { withFileTypes: true })) {
+      if (ent.isDirectory()) n += 1
+    }
+    counts.skills = n
+  }
+  return sectionsFromManifest(manifest, staging).map((id) => ({
+    id,
+    label: CONFIG_SECTION_LABELS[id],
+    count: counts[id] ?? 0,
+  }))
+}
+
+/** 当前本机各模块数量（与设置页一级导航对齐） */
+export function getLocalConfigSectionStats(): ConfigSectionStat[] {
+  initProjectStore(app.getPath("userData"))
+  const cfg = getConfig()
+  const mcp = readHarnessMcpStoreRaw()
+  const rules = listHarnessRules()
+  const skills = listSkillRoots().reduce((sum, r) => sum + r.skillCount, 0)
+  const tasks = readTasksFromFile()
+  return CONFIG_SECTION_NAV.map(({ id, label }) => {
+    let count = 0
+    switch (id) {
+      case "general":
+        count = (cfg.favoriteWorkspaces?.length ?? 0) + (cfg.favoriteModels?.length ?? 0)
+        break
+      case "proxy":
+        count = [cfg.httpProxy, cfg.httpsProxy, cfg.noProxy].filter((s) => s?.trim()).length
+        break
+      case "agent":
+        count = agentResourceCount(cfg.agentResources)
+        break
+      case "channels":
+        count = cfg.channels?.length ?? 0
+        break
+      case "rules":
+        count = rules.length
+        break
+      case "skills":
+        count = skills
+        break
+      case "mcp":
+        count = mcp?.order?.length ?? Object.keys(mcp?.servers ?? {}).length
+        break
+      case "projects":
+        count = (cfg.repoProfiles?.length ?? 0) + (getNodeGroups()?.length ?? 0)
+        break
+      case "tasks":
+        count = tasks.length
+        break
+    }
+    return { id, label, count }
+  })
 }
 
 export interface ConfigExportGeneral {
@@ -145,25 +225,169 @@ function copySkillRoot(src: string, dest: string, seen: Set<string>): string[] {
   return warnings
 }
 
-function copyDirSync(src: string, dest: string): void {
+/** 导入 skill 根：跳过本地已存在的条目，仅新增 */
+function importSkillRoot(src: string, dest: string, seen: Set<string>): string[] {
+  const notes: string[] = []
+  if (!fs.existsSync(src)) return notes
   fs.mkdirSync(dest, { recursive: true })
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
-    if (isDirLike(entry)) {
-      fs.cpSync(s, d, { recursive: true, force: true, errorOnExist: false })
-    } else {
-      fs.copyFileSync(s, d)
+    try {
+      if (fs.existsSync(d)) {
+        notes.push(`${entry.name}：已跳过（本地已存在）`)
+        continue
+      }
+      if (isDirLike(entry)) {
+        const real = realPathSafe(s)
+        if (seen.has(real)) continue
+        seen.add(real)
+        fs.cpSync(s, d, { recursive: true, force: true, errorOnExist: false })
+      } else {
+        fs.copyFileSync(s, d)
+      }
+    } catch (e) {
+      notes.push(`${entry.name}: ${e instanceof Error ? e.message : String(e)}`)
     }
+  }
+  return notes
+}
+
+function skipNote(label: string): string {
+  return `${label}：已跳过（本地已存在）`
+}
+
+export function mergeImportAgentResources(incoming: AgentResource[], warnings: string[]): void {
+  const cfg = getConfig()
+  const existing = cfg.agentResources ?? []
+  const cli = existing.filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
+  const rest = existing.filter((r) => r.id !== CLI_RESOURCE_ID && r.type !== "cli")
+  const byId = new Set(rest.map((r) => r.id))
+  for (const r of incoming) {
+    if (byId.has(r.id)) warnings.push(skipNote(`agent/${r.name || r.id}`))
+    else {
+      rest.push(r)
+      byId.add(r.id)
+    }
+  }
+  saveConfig({ agentResources: [...cli, ...rest] })
+}
+
+export function mergeImportChannels(incoming: MessageChannel[], warnings: string[]): void {
+  const cfg = getConfig()
+  const current = [...(cfg.channels ?? [])]
+  const byId = new Set(current.map((c) => c.id))
+  for (const c of incoming) {
+    if (byId.has(c.id)) warnings.push(skipNote(`通道/${c.name || c.id}`))
+    else {
+      current.push(c)
+      byId.add(c.id)
+    }
+  }
+  saveConfig({ channels: current })
+}
+
+export function mergeImportTasks(incoming: ScheduledTask[], warnings: string[]): void {
+  const current = readTasksFromFile()
+  const byId = new Set(current.map((t) => t.id))
+  for (const t of incoming) {
+    if (byId.has(t.id)) warnings.push(skipNote(`任务/${t.name || t.id}`))
+    else {
+      current.push(t)
+      byId.add(t.id)
+    }
+  }
+  writeTasksToFile(current)
+}
+
+export function mergeImportNodeGroups(incoming: ProjectNodeGroupDef[], warnings: string[]): void {
+  const current = getNodeGroups()
+  const byId = new Set(current.map((g) => g.id))
+  const merged = [...current]
+  for (const g of incoming) {
+    if (byId.has(g.id)) warnings.push(skipNote(`流程组/${g.name || g.id}`))
+    else {
+      merged.push(g)
+      byId.add(g.id)
+    }
+  }
+  saveNodeGroups(merged)
+}
+
+export function mergeImportRepoProfiles(incoming: AppConfig["repoProfiles"], warnings: string[]): AppConfig["repoProfiles"] {
+  const cfg = getConfig()
+  const current = [...(cfg.repoProfiles ?? [])]
+  const byPath = new Set(current.map((p) => p.path))
+  for (const p of incoming ?? []) {
+    if (byPath.has(p.path)) warnings.push(skipNote(`仓库/${p.path}`))
+    else {
+      current.push(p)
+      byPath.add(p.path)
+    }
+  }
+  return current
+}
+
+export function mergeImportMcpFromManifest(
+  legacyMcp: {
+    harness?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
+    claw?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
+    global?: { mcpServers?: Record<string, Record<string, unknown>>; order?: string[] }
+  },
+  warnings: string[],
+): void {
+  let incoming: { order: string[]; servers: Record<string, Record<string, unknown>> } | null = null
+  if (legacyMcp.harness) incoming = legacyMcp.harness
+  else if (legacyMcp.claw) incoming = legacyMcp.claw
+  else if (legacyMcp.global?.mcpServers) {
+    incoming = {
+      order: legacyMcp.global.order ?? Object.keys(legacyMcp.global.mcpServers),
+      servers: legacyMcp.global.mcpServers,
+    }
+  }
+  if (incoming) warnings.push(...mergeHarnessMcpStoreRaw(incoming))
+}
+
+function addDirToZip(zip: AdmZip, dir: string, zipRoot: string): void {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, ent.name)
+    const entry = zipRoot ? `${zipRoot}/${ent.name}` : ent.name
+    if (isDirLike(ent)) addDirToZip(zip, abs, entry)
+    else zip.addLocalFile(abs, zipRoot)
+  }
+}
+
+function zipCreateFromDir(zipPath: string, cwd: string): boolean {
+  try {
+    const zip = new AdmZip()
+    addDirToZip(zip, cwd, "")
+    if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath)
+    zip.writeZip(zipPath)
+    return fs.existsSync(zipPath)
+  } catch {
+    return false
+  }
+}
+
+function zipExtractToDir(zipPath: string, dest: string): boolean {
+  try {
+    fs.mkdirSync(dest, { recursive: true })
+    const zip = new AdmZip(zipPath)
+    zip.extractAllTo(dest, true)
+    return true
+  } catch {
+    return false
   }
 }
 
 function tarCreateZip(zipPath: string, cwd: string): boolean {
+  if (zipCreateFromDir(zipPath, cwd)) return true
   const r = spawnSync("tar", ["-caf", zipPath, "-C", cwd, "."], { stdio: "pipe", windowsHide: true })
   return r.status === 0
 }
 
 function tarExtractZip(zipPath: string, dest: string): boolean {
+  if (zipExtractToDir(zipPath, dest)) return true
   fs.mkdirSync(dest, { recursive: true })
   const r = spawnSync("tar", ["-xaf", zipPath, "-C", dest], { stdio: "pipe", windowsHide: true })
   return r.status === 0
@@ -238,6 +462,40 @@ function readManifest(staging: string): ConfigExportManifest | null {
   }
 }
 
+function sectionsFromManifest(manifest: ConfigExportManifest, staging: string): ConfigSection[] {
+  const found = new Set<ConfigSection>()
+  for (const id of manifest.sections ?? []) {
+    if (ALL_CONFIG_SECTIONS.includes(id)) found.add(id)
+  }
+  if (manifest.general) found.add("general")
+  if (manifest.proxy) found.add("proxy")
+  if (manifest.agent) found.add("agent")
+  if (manifest.channels?.length) found.add("channels")
+  if (manifest.projects) found.add("projects")
+  if (manifest.mcp) found.add("mcp")
+  if (manifest.rules) found.add("rules")
+  if (manifest.tasks?.length) found.add("tasks")
+  if (fs.existsSync(path.join(staging, "skills"))) found.add("skills")
+  return ALL_CONFIG_SECTIONS.filter((s) => found.has(s))
+}
+
+/** 读取配置包内含模块（不解包写入） */
+export function inspectConfigBundle(zipPath: string): { ok: boolean; sections?: ConfigSection[]; items?: ConfigSectionStat[]; error?: string } {
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-inspect-"))
+  try {
+    if (!tarExtractZip(zipPath, staging)) return { ok: false, error: "解压失败" }
+    const manifest = readManifest(staging)
+    if (!manifest) return { ok: false, error: "不是有效的 LK Harness 配置包" }
+    const items = statsFromManifest(manifest, staging)
+    if (!items.length) return { ok: false, error: "配置包内未识别到可导入模块" }
+    return { ok: true, sections: items.map((i) => i.id), items }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true })
+  }
+}
+
 export function exportConfigBundle(zipPath: string, sections?: ConfigSection[]): { ok: boolean; error?: string; warnings?: string[] } {
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lk-harness-export-"))
   const warnings: string[] = []
@@ -253,7 +511,7 @@ export function exportConfigBundle(zipPath: string, sections?: ConfigSection[]):
       }
     }
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath)
-    if (!tarCreateZip(zipPath, staging)) return { ok: false, error: "打包失败（需要系统 tar 支持）" }
+    if (!tarCreateZip(zipPath, staging)) return { ok: false, error: "打包失败" }
     return { ok: true, warnings: warnings.length ? warnings : undefined }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -267,14 +525,23 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
   const warnings: string[] = []
   const selected = normalizeSections(sections)
   try {
-    if (!tarExtractZip(zipPath, staging)) return { ok: false, error: "解压失败（需要系统 tar 支持）" }
+    if (!tarExtractZip(zipPath, staging)) return { ok: false, error: "解压失败" }
     const manifest = readManifest(staging)
     if (!manifest) return { ok: false, error: "不是有效的 LK Harness 配置包" }
 
     initProjectStore(app.getPath("userData"))
 
     if (selected.has("general") && manifest.general) {
-      saveConfig({ ...manifest.general })
+      const cfg = getConfig()
+      saveConfig({
+        favoriteWorkspaces: [...new Set([...(cfg.favoriteWorkspaces ?? []), ...(manifest.general.favoriteWorkspaces ?? [])])],
+        favoriteModels: manifest.general.favoriteModels?.length ? manifest.general.favoriteModels : cfg.favoriteModels,
+        autoStart: manifest.general.autoStart,
+        closeWindowAction: manifest.general.closeWindowAction,
+        autoUpgradePrompt: manifest.general.autoUpgradePrompt,
+        daemonPort: manifest.general.daemonPort,
+        setupComplete: cfg.setupComplete || manifest.general.setupComplete,
+      })
     }
 
     if (selected.has("proxy") && manifest.proxy) {
@@ -286,49 +553,40 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
     }
 
     if (selected.has("projects") && manifest.projects) {
+      const repoProfiles = mergeImportRepoProfiles(manifest.projects.repoProfiles, warnings)
       saveConfig({
-        gitlabToken: manifest.projects.gitlabToken,
-        gitlabHost: manifest.projects.gitlabHost,
-        repoProfiles: manifest.projects.repoProfiles ?? [],
-        repoRoots: (manifest.projects.repoProfiles ?? []).map((p) => p.path),
-        worktreeRoot: manifest.projects.worktreeRoot,
-        flowHubUrl: manifest.projects.flowHubUrl,
-        flowHubToken: manifest.projects.flowHubToken,
-        flowHubAuthor: manifest.projects.flowHubAuthor,
+        gitlabToken: manifest.projects.gitlabToken || getConfig().gitlabToken,
+        gitlabHost: manifest.projects.gitlabHost || getConfig().gitlabHost,
+        repoProfiles,
+        repoRoots: repoProfiles.map((p) => p.path),
+        worktreeRoot: manifest.projects.worktreeRoot || getConfig().worktreeRoot,
+        flowHubUrl: manifest.projects.flowHubUrl || getConfig().flowHubUrl,
+        flowHubToken: manifest.projects.flowHubToken || getConfig().flowHubToken,
+        flowHubAuthor: manifest.projects.flowHubAuthor || getConfig().flowHubAuthor,
       })
-      saveNodeGroups(manifest.projects.nodeGroups ?? [])
+      if (manifest.projects.nodeGroups?.length) mergeImportNodeGroups(manifest.projects.nodeGroups, warnings)
     }
 
     if (selected.has("channels") && manifest.channels) {
-      saveConfig({ channels: manifest.channels })
+      mergeImportChannels(manifest.channels, warnings)
     }
 
     if (selected.has("agent") && manifest.agent) {
-      const cfg = getConfig()
-      const cli = (cfg.agentResources ?? []).filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
-      saveConfig({ agentResources: [...cli, ...manifest.agent.agentResources] })
+      mergeImportAgentResources(manifest.agent.agentResources, warnings)
     }
 
     if (selected.has("mcp") && manifest.mcp) {
-      const legacyMcp = manifest.mcp as {
-        harness?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
-        claw?: { order: string[]; servers: Record<string, Record<string, unknown>> } | null
-        global?: { mcpServers?: Record<string, Record<string, unknown>>; order?: string[] }
-      }
-      if (legacyMcp.harness) writeHarnessMcpStoreRaw(legacyMcp.harness)
-      else if (legacyMcp.claw) writeHarnessMcpStoreRaw(legacyMcp.claw)
-      else if (legacyMcp.global?.mcpServers) {
-        writeHarnessMcpStoreRaw({
-          order: legacyMcp.global.order ?? Object.keys(legacyMcp.global.mcpServers),
-          servers: legacyMcp.global.mcpServers,
-        })
-      }
+      mergeImportMcpFromManifest(manifest.mcp as Parameters<typeof mergeImportMcpFromManifest>[0], warnings)
       invalidateMcpEnabledCache()
     }
 
-    if (selected.has("rules") && manifest.rules) importHarnessRulesBundle(manifest.rules)
+    if (selected.has("rules") && manifest.rules) {
+      warnings.push(...mergeImportHarnessRulesBundle(manifest.rules))
+    }
 
-    if (selected.has("tasks") && manifest.tasks) writeTasksToFile(manifest.tasks ?? [])
+    if (selected.has("tasks") && manifest.tasks?.length) {
+      mergeImportTasks(manifest.tasks, warnings)
+    }
 
     if (selected.has("skills")) {
       const stagingSkills = path.join(staging, "skills")
@@ -338,8 +596,8 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
           if (!fs.existsSync(src)) continue
           const dest = path.join(os.homedir(), ...def.rel)
           try {
-            if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true })
-            copyDirSync(src, dest)
+            const seen = new Set<string>()
+            warnings.push(...importSkillRoot(src, dest, seen))
           } catch (e) {
             warnings.push(`skills/${def.id} 导入失败：${e instanceof Error ? e.message : String(e)}`)
           }

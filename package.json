@@ -45,13 +45,14 @@
   "dependencies": {
     "@cursor/sdk": "^1.0.23",
     "@larksuiteoapi/node-sdk": "^1.66.1",
-    "axios": "^1.15.0",
     "@mariozechner/jiti": "^2.6.5",
     "@mariozechner/pi-agent-core": "npm:@earendil-works/pi-agent-core@^0.84.1",
     "@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@^0.84.1",
     "@mariozechner/pi-coding-agent": "npm:@earendil-works/pi-coding-agent@^0.84.1",
     "@mariozechner/pi-tui": "npm:@earendil-works/pi-tui@^0.84.3",
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "adm-zip": "^0.6.0",
+    "axios": "^1.15.0",
     "cron-parser": "^5.5.0",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
@@ -66,6 +67,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/qrcode": "^1.5.6",

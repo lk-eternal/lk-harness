@@ -420,7 +420,20 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     }, 500)
   }, [tab, gitlabToken, gitlabHost, repoProfiles, worktreeRoot, flowHubUrl, flowHubToken, flowHubAuthor])
 
-  const hubConfigured = flowHubUrl.trim().length > 0 && (flowHubToken.trim().length > 0 || gitlabToken.trim().length > 0)
+  const hubUrlReady = flowHubUrl.trim().length > 0
+  const hubConfigured = hubUrlReady && (flowHubToken.trim().length > 0 || gitlabToken.trim().length > 0)
+
+  const openHubBrowser = (kind: "group" | "node") => {
+    if (!hubUrlReady) {
+      void showAlert("无法连接共享空间", "请先填写 Hub 地址。")
+      return
+    }
+    if (!hubConfigured) {
+      void showAlert("无法连接共享空间", "请填写 Hub Token，或在「项目设置」中配置 GitLab Token。")
+      return
+    }
+    setHubBrowser({ kind })
+  }
 
   const refreshNodeGroups = useCallback(async () => {
     const gs = await window.electronAPI.getProjectNodeGroups()
@@ -989,6 +1002,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                               placeholder="你的名字" className={inputCls} />
                           </div>
                           <p className="text-[10px] text-gray-600">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
+                          <button
+                            type="button"
+                            onClick={() => openHubBrowser("group")}
+                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-blue-600/50 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
+                          ><Download className="h-3 w-3" />从共享空间获取组</button>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           {nodeGroups.map((g) => (
@@ -1002,13 +1020,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                             onClick={() => setGroupEditing({ id: "", name: "", index: -1 })}
                             className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
                           >+ 新增组</button>
-                          {hubConfigured && (
-                            <button
-                              type="button"
-                              onClick={() => setHubBrowser({ kind: "group" })}
-                              className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-3 py-1.5 text-xs text-blue-400 hover:bg-gray-800"
-                            ><Download className="h-3 w-3" />从共享空间获取组</button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => openHubBrowser("group")}
+                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-gray-700 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
+                          ><Download className="h-3 w-3" />从共享空间获取组</button>
                         </div>
                         {activeGroup && (
                           <div className="space-y-1.5">
@@ -1048,11 +1064,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                                 else void showAlert("上传失败", r.error ?? "未知错误")
                               } : undefined}
                             />
-                            {hubConfigured && (
+                            {hubUrlReady && (
                               <button
                                 type="button"
-                                onClick={() => setHubBrowser({ kind: "node" })}
-                                className="w-full rounded-md border border-dashed border-gray-700 px-3 py-2 text-xs text-blue-400 hover:bg-gray-800"
+                                onClick={() => openHubBrowser("node")}
+                                className={`w-full rounded-md border border-dashed px-3 py-2 text-xs transition ${hubConfigured ? "border-gray-700 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
                               >从共享空间获取节点</button>
                             )}
                           </div>

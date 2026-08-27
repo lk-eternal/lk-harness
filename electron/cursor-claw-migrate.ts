@@ -6,22 +6,29 @@ import { app } from "electron"
 import {
   getConfig,
   saveConfig,
-  CLI_RESOURCE_ID,
   type AppConfig,
 } from "./config-store"
-import { importHarnessRulesBundle } from "./harness-rule-store"
 import {
-  writeHarnessMcpStoreRaw,
+  mergeImportAgentResources,
+  mergeImportChannels,
+  mergeImportNodeGroups,
+  mergeImportRepoProfiles,
+  mergeImportTasks,
+} from "./config-backup"
+import { mergeImportHarnessRulesBundle } from "./harness-rule-store"
+import {
+  mergeHarnessMcpStoreRaw,
   CLAW_MCP_KEY,
   ADMIN_MCP_KEY,
 } from "../src/shared/harness-mcp-store.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { readTasksFromFile, writeTasksToFile } from "./cron-scheduler"
-import { initProjectStore, getNodeGroups, saveNodeGroups } from "../src/shared/project-store.js"
+import { initProjectStore } from "../src/shared/project-store.js"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types.js"
 import type { ConfigSection } from "./config-backup"
+import { CONFIG_SECTION_LABELS, type ConfigSectionStat } from "./config-backup"
 
 export interface CursorClawInstall {
   label: string
@@ -175,6 +182,37 @@ export function discoverCursorClawInstalls(): CursorClawInstall[] {
   return results
 }
 
+/** 检测 Cursor Claw 安装中可迁移的模块 */
+export function inspectCursorClawSections(userDataPath: string): { ok: boolean; sections?: ConfigSection[]; items?: ConfigSectionStat[]; error?: string } {
+  const cfg = readCursorClawConfig(userDataPath)
+  if (!cfg) return { ok: false, error: "无法读取 Cursor Claw 配置（路径无效或文件损坏）" }
+
+  const items: ConfigSectionStat[] = []
+  items.push({
+    id: "general",
+    label: CONFIG_SECTION_LABELS.general,
+    count: (cfg.favoriteWorkspaces?.length ?? 0) + (cfg.favoriteModels?.length ?? 0),
+  })
+  const proxyN = [cfg.httpProxy, cfg.httpsProxy, cfg.noProxy].filter((s) => s?.trim()).length
+  if (proxyN) items.push({ id: "proxy", label: CONFIG_SECTION_LABELS.proxy, count: proxyN })
+  const agents = (cfg.agentResources ?? []).filter((r) => r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom")
+  if (agents.length) items.push({ id: "agent", label: CONFIG_SECTION_LABELS.agent, count: agents.length })
+  if (cfg.channels?.length) items.push({ id: "channels", label: CONFIG_SECTION_LABELS.channels, count: cfg.channels.length })
+  const groups = readClawNodeGroups(userDataPath)
+  const projectN = (cfg.repoProfiles?.length ?? 0) + (groups?.length ?? 0)
+    + ((cfg.gitlabToken ?? "").trim() || (cfg.worktreeRoot ?? "").trim() || (cfg.flowHubUrl ?? "").trim() ? 1 : 0)
+  if (projectN) items.push({ id: "projects", label: CONFIG_SECTION_LABELS.projects, count: projectN })
+  const mcp = readClawMcpStore(userDataPath)
+  if (mcp) items.push({ id: "mcp", label: CONFIG_SECTION_LABELS.mcp, count: mcp.order.length || Object.keys(mcp.servers).length })
+  const rules = readClawRulesBundle(userDataPath)
+  if (rules) items.push({ id: "rules", label: CONFIG_SECTION_LABELS.rules, count: rules.order.length || Object.keys(rules.files).length })
+  const tasks = readClawTasks(userDataPath)
+  if (tasks?.length) items.push({ id: "tasks", label: CONFIG_SECTION_LABELS.tasks, count: tasks.length })
+
+  if (!items.length) return { ok: false, error: "未识别到可迁移模块" }
+  return { ok: true, sections: items.map((i) => i.id), items }
+}
+
 export function migrateFromCursorClaw(
   userDataPath: string,
   sections: ConfigSection[],
@@ -209,35 +247,34 @@ export function migrateFromCursorClaw(
 
   if (selected.has("agent")) {
     const sdkResources = (cfg.agentResources ?? []).filter((r) => r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom")
-    const harnessCfg = getConfig()
-    const cli = (harnessCfg.agentResources ?? []).filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
-    saveConfig({ agentResources: [...cli, ...sdkResources] })
+    mergeImportAgentResources(sdkResources, warnings)
   }
 
   if (selected.has("channels") && cfg.channels?.length) {
-    saveConfig({ channels: cfg.channels })
+    mergeImportChannels(cfg.channels, warnings)
   }
 
   if (selected.has("projects")) {
+    const repoProfiles = mergeImportRepoProfiles(cfg.repoProfiles, warnings)
     saveConfig({
-      gitlabToken: cfg.gitlabToken ?? "",
-      gitlabHost: cfg.gitlabHost ?? "",
-      repoProfiles: cfg.repoProfiles ?? [],
-      repoRoots: (cfg.repoProfiles ?? []).map((p) => p.path),
-      worktreeRoot: cfg.worktreeRoot ?? "",
-      flowHubUrl: cfg.flowHubUrl ?? "",
-      flowHubToken: cfg.flowHubToken ?? "",
-      flowHubAuthor: cfg.flowHubAuthor ?? "",
+      gitlabToken: cfg.gitlabToken || getConfig().gitlabToken,
+      gitlabHost: cfg.gitlabHost || getConfig().gitlabHost,
+      repoProfiles,
+      repoRoots: repoProfiles.map((p) => p.path),
+      worktreeRoot: cfg.worktreeRoot || getConfig().worktreeRoot,
+      flowHubUrl: cfg.flowHubUrl || getConfig().flowHubUrl,
+      flowHubToken: cfg.flowHubToken || getConfig().flowHubToken,
+      flowHubAuthor: cfg.flowHubAuthor || getConfig().flowHubAuthor,
     })
     const groups = readClawNodeGroups(userDataPath)
-    if (groups?.length) saveNodeGroups(groups)
+    if (groups?.length) mergeImportNodeGroups(groups, warnings)
     else if (selected.has("projects")) warnings.push("未找到 Cursor Claw 流程组文件，已跳过")
   }
 
   if (selected.has("mcp")) {
     const mcp = readClawMcpStore(userDataPath)
     if (mcp) {
-      writeHarnessMcpStoreRaw(mcp)
+      warnings.push(...mergeHarnessMcpStoreRaw(mcp))
       invalidateMcpEnabledCache()
     } else {
       warnings.push("未找到 Cursor Claw MCP 配置，已跳过")
@@ -246,13 +283,13 @@ export function migrateFromCursorClaw(
 
   if (selected.has("rules")) {
     const rules = readClawRulesBundle(userDataPath)
-    if (rules) importHarnessRulesBundle(rules)
+    if (rules) warnings.push(...mergeImportHarnessRulesBundle(rules))
     else warnings.push("未找到 Cursor Claw 规则，已跳过")
   }
 
   if (selected.has("tasks")) {
     const tasks = readClawTasks(userDataPath)
-    if (tasks) writeTasksToFile(tasks)
+    if (tasks?.length) mergeImportTasks(tasks, warnings)
     else {
       const existing = readTasksFromFile()
       if (!existing.length) warnings.push("未找到 Cursor Claw 定时任务，已跳过")

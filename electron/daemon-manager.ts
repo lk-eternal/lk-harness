@@ -60,8 +60,8 @@ import {
   uploadGroup,
   uploadNode,
 } from "./flow-hub-service"
-import { exportConfigBundle, importConfigBundle, type ConfigSection } from "./config-backup"
-import { discoverCursorClawInstalls, migrateFromCursorClaw } from "./cursor-claw-migrate"
+import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
+import { discoverCursorClawInstalls, migrateFromCursorClaw, inspectCursorClawSections } from "./cursor-claw-migrate"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, DEFAULT_NODE_GROUP_ID, canEnterProjectFromChat } from "../src/shared/project-types.js"
 import {
@@ -1073,12 +1073,17 @@ function startStatusPolling(): void {
 
         // open_id 按签发应用分组查询（open_id 是应用维度的，跨应用查询必然失败）
         const uncachedP2p = sessions
-          .filter((s) => s.chatType === "p2p" && s.senderOpenId?.startsWith("ou_") && !chatNameCache.has(s.senderOpenId))
+          .filter((s) => {
+            const openId = "senderOpenId" in s ? s.senderOpenId : undefined
+            return s.chatType === "p2p" && openId?.startsWith("ou_") && !chatNameCache.has(openId)
+          })
         const byChannel = new Map<string | undefined, string[]>()
         for (const s of uncachedP2p) {
+          const openId = "senderOpenId" in s ? s.senderOpenId : undefined
+          if (!openId) continue
           const cid = channelIdFromSessionKey(s.sessionKey)
           const list = byChannel.get(cid) ?? []
-          list.push(s.senderOpenId!)
+          list.push(openId)
           byChannel.set(cid, list)
         }
         for (const [cid, ids] of byChannel) await fetchUserNames(ids, cid)
@@ -2338,16 +2343,27 @@ export function initDaemonManager(): void {
     return { ok: true, path: result.filePath }
   })
 
-  ipcMain.handle("config:import", async (_e, sections?: ConfigSection[]) => {
+  ipcMain.handle("config:import", async (_e, sectionsOrPath?: ConfigSection[] | string, sections?: ConfigSection[]) => {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
-    const result = await dialog.showOpenDialog(win, {
-      title: "导入 LK Harness 配置",
-      properties: ["openFile"],
-      filters: [{ name: "ZIP", extensions: ["zip"] }],
-    })
-    if (result.canceled || !result.filePaths[0]) return { ok: false, error: "已取消" }
-    const r = importConfigBundle(result.filePaths[0], sections)
+
+    let filePath: string
+    let selected: ConfigSection[] | undefined
+    if (typeof sectionsOrPath === "string") {
+      filePath = sectionsOrPath
+      selected = sections
+    } else {
+      selected = sectionsOrPath
+      const result = await dialog.showOpenDialog(win, {
+        title: "导入 LK Harness 配置",
+        properties: ["openFile"],
+        filters: [{ name: "ZIP", extensions: ["zip"] }],
+      })
+      if (result.canceled || !result.filePaths[0]) return { ok: false, error: "已取消" }
+      filePath = result.filePaths[0]
+    }
+
+    const r = importConfigBundle(filePath, selected)
     if (!r.ok) return r
     broadcastLog("[Config] 配置已导入，正在重启 Daemon...")
     await stopDaemon()
@@ -2358,10 +2374,34 @@ export function initDaemonManager(): void {
     return r
   })
 
+  ipcMain.handle("config:pick-import-file", async () => {
+    const win = BrowserWindow.getAllWindows()[0]
+    if (!win) return { ok: false, error: "窗口不可用" }
+    const result = await dialog.showOpenDialog(win, {
+      title: "选择要导入的配置包",
+      properties: ["openFile"],
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    })
+    if (result.canceled || !result.filePaths[0]) return { ok: false, error: "已取消" }
+    const inspected = inspectConfigBundle(result.filePaths[0])
+    if (!inspected.ok) return inspected
+    return { ok: true, filePath: result.filePaths[0], sections: inspected.sections, items: inspected.items }
+  })
+
+  ipcMain.handle("config:local-section-stats", () => getLocalConfigSectionStats())
+
+  ipcMain.handle("config:inspect-cursor-claw", (_e, userDataPath?: string) => {
+    const pathArg = userDataPath?.trim() || discoverCursorClawInstalls()[0]?.userDataPath
+    if (!pathArg) return { ok: false, error: "未检测到本机 Cursor Claw 数据目录" }
+    return inspectCursorClawSections(pathArg)
+  })
+
   ipcMain.handle("config:discover-cursor-claw", () => discoverCursorClawInstalls())
 
   ipcMain.handle("config:migrate-from-cursor-claw", async (_e, userDataPath: string, sections: ConfigSection[]) => {
-    const r = migrateFromCursorClaw(String(userDataPath), sections)
+    const pathArg = String(userDataPath ?? "").trim() || discoverCursorClawInstalls()[0]?.userDataPath
+    if (!pathArg) return { ok: false, error: "未检测到本机 Cursor Claw 数据目录" }
+    const r = migrateFromCursorClaw(pathArg, sections)
     if (!r.ok) return r
     broadcastLog("[Config] 已从 Cursor Claw 迁移配置，正在重启 Daemon...")
     await stopDaemon()

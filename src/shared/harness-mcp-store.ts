@@ -130,6 +130,33 @@ export function writeHarnessMcpStoreRaw(data: StoreFile): void {
   writeStore(data)
 }
 
+/** 合并 MCP：跳过本地已存在的 server 名，保留本地配置 */
+export function mergeHarnessMcpStoreRaw(incoming: StoreFile): string[] {
+  const notes: string[] = []
+  const current = readStore()
+  const order = [...current.order]
+  const servers = { ...current.servers }
+  const seen = new Set(Object.keys(servers))
+
+  const addServer = (name: string, cfg: Record<string, unknown> | undefined) => {
+    if (!cfg || RESERVED.has(name)) return
+    if (seen.has(name)) {
+      notes.push(`${name}：已跳过（本地已存在）`)
+      return
+    }
+    if (!order.includes(name)) order.push(name)
+    servers[name] = cfg
+    seen.add(name)
+  }
+
+  for (const name of incoming.order) addServer(name, incoming.servers[name])
+  for (const name of Object.keys(incoming.servers)) {
+    if (!incoming.order.includes(name)) addServer(name, incoming.servers[name])
+  }
+  writeStore({ order, servers })
+  return notes
+}
+
 export function harnessMcpStoreDir(): string {
   ensureDir()
   return path.dirname(storePath())

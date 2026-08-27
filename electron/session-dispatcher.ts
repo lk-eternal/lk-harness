@@ -27,6 +27,11 @@ import {
   listSdkModels,
   resetSdkSessionContext, clearSdkFailStreak, clearAllSdkFailStreaks,
 } from "./agent-sdk"
+import {
+  launchLlmAgent, stopLlmSession, stopAllLlmSessions,
+  isLlmSessionRunning, getLlmSessionList,
+} from "./agent-llm"
+import { usesLlmRuntime } from "./agent-engine/factory"
 import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
@@ -66,16 +71,17 @@ async function notifyChat(sessionKey: string, text: string): Promise<void> {
 // ── 内部工具（CLI 与 SDK 双运行时并存）────────────────────
 
 export function isSessionAgentRunning(key: string): boolean {
-  return _isCliSessionRunning(key) || isSdkSessionRunning(key)
+  return _isCliSessionRunning(key) || isSdkSessionRunning(key) || isLlmSessionRunning(key)
 }
 
 export async function stopSessionAgent(key: string): Promise<void> {
-  // 无条件调用：send 前短暂窗口（run=null）isSdkSessionRunning 为 false，但 agent 进程需要释放
+  await stopLlmSession(key)
   await stopSdkSession(key)
   if (_isCliSessionRunning(key)) _stopCliSession(key)
 }
 
 export async function stopAllSessionAgents(): Promise<void> {
+  await stopAllLlmSessions()
   await stopAllSdkSessions()
   _stopAllCliSessions()
 }
@@ -440,7 +446,11 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
-  const resource = getAgentResource(channel?.agentResourceId)
+  const resourceId = channel?.agentResourceId
+  const resource = getAgentResource(resourceId)
+  if (resourceId && resource.id !== resourceId) {
+    return { ok: false, error: `Agent 资源「${resourceId}」未找到，请在设置 → Agent 中确认并已保存通道配置` }
+  }
 
   const isOwnTask = chatType === "task" || chatType === "temp" || chatType === "project" || projectOwned
   if (!useMain && !isOwnTask && !channel?.allowOthers) {
@@ -519,6 +529,28 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     })
   }
 
+  if (usesLlmRuntime(resource)) {
+    return launchLlmAgent({
+      sessionKey,
+      chatType: launchChatType,
+      meta: launchMeta,
+      workspaceDir: workDir,
+      resource,
+      channelId: channel?.id,
+      model,
+      modelParams,
+      useMainWorkspace: skipIdentity,
+      digitalIdentityOverride: channel?.digitalIdentity,
+      senderOpenId,
+      chatName,
+      taskMessage,
+      notifySessionKey,
+      keepSession,
+      persistentPoll,
+      pendingMessageIds: p.pendingMessageIds,
+    })
+  }
+
   const needResume = launchChatType === "p2p" || launchChatType === "group"
   return _launchCliAgent({
     sessionKey, chatType: launchChatType, meta: launchMeta,
@@ -569,15 +601,24 @@ export function getSessionAgentList() {
   const rawList = [
     ...getRawCliSessionList().map((s) => ({ ...s, modelParams: undefined as string | undefined, source: "cli" as const })),
     ...getSdkSessionList().map((s) => ({ ...s, pid: 0, source: "sdk" as const })),
+    ...getLlmSessionList().map((s) => ({ ...s, pid: 0, source: "llm" as const })),
   ]
-  // 同 sessionKey 只保留一条（SDK 优先，避免 CLI+SDK 双计）
+  // 同 sessionKey 只保留一条（llm/sdk 优先于 cli，避免双计）
   const byKey = new Map<string, (typeof rawList)[number]>()
+  const rank = (s: (typeof rawList)[number]["source"]) => (s === "llm" ? 3 : s === "sdk" ? 2 : 1)
   for (const s of rawList) {
     const prev = byKey.get(s.sessionKey)
-    if (!prev || s.source === "sdk") byKey.set(s.sessionKey, s)
+    if (!prev || rank(s.source) >= rank(prev.source)) byKey.set(s.sessionKey, s)
   }
   return [...byKey.values()]
-    .map((s) => ({ ...s, chatName: resolveSessionChatName(s.sessionKey, s.chatName, s.senderOpenId) }))
+    .map((s) => ({
+      ...s,
+      chatName: resolveSessionChatName(
+        s.sessionKey,
+        "chatName" in s ? s.chatName : undefined,
+        "senderOpenId" in s ? s.senderOpenId : undefined,
+      ),
+    }))
 }
 
 /** 未运行但可一键切换的会话：主会话 + 项目 + 常用目录（切换=只改路由，消息到达时自动拉起） */

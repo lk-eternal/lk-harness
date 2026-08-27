@@ -210,6 +210,31 @@ export function importHarnessRulesBundle(data: HarnessRulesBundle): void {
   writeHarnessRulesStoreRaw({ order: data.order, rules: data.files })
 }
 
+/** 合并导入规则：跳过本地已存在的 id，不删除任何本地规则 */
+export function mergeImportHarnessRulesBundle(data: HarnessRulesBundle): string[] {
+  const notes: string[] = []
+  const raw = readHarnessRulesStoreRaw()
+  const order = [...(raw?.order ?? [])]
+  const existing = new Set(order)
+  const dir = rulesDir()
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+  for (const id of data.order) {
+    const entry = data.files[id]
+    if (!entry) continue
+    if (existing.has(id) || fs.existsSync(rulePath(id))) {
+      notes.push(`${id}：已跳过（本地已存在）`)
+      continue
+    }
+    order.push(id)
+    existing.add(id)
+    const body = (entry.enabled === false ? "<!-- disabled -->\n" : "") + entry.content
+    fs.writeFileSync(rulePath(id), body.endsWith("\n") ? body : `${body}\n`, "utf-8")
+  }
+  writeManifest({ order, migrated: true })
+  return notes
+}
+
 export function harnessRulesStoreDir(): string {
   migrateLegacyRulesOnce()
   return rulesDir()
