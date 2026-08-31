@@ -22,7 +22,6 @@ import { buildPiMcpConfig } from "./pi-mcp-config"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 
 function harnessAgentDir(): string {
-  // 涓?Pi 瀹樻柟 ~/.pi/agent 瀵归綕锛宻kills/settings 鍏辩敤
   return getAgentDir()
 }
 
@@ -155,5 +154,5 @@ function wrapAgentStreamWithProxy(session: AgentSession): void {
   const orig = session.agent.streamFunction
   session.agent.streamFunction = (model, context, options) =>
     orig(model, context, withLlmProxyOptions(options))
-  pushUiLog("LLM", "INFO", "Pi Agent 已启用 HTTP 代理")
+  pushUiLog("LLM", "INFO", "Pi Agent \u5df2\u542f\u7528 HTTP \u4ee3\u7406")
 }

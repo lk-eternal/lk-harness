@@ -92,6 +92,8 @@ interface LlmSession extends StreamCardHost {
   abort: AbortController
   runPromise: Promise<void>
   piUnsubscribe: (() => void) | null
+  /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
+  logAgg: { kind: "thinking" | "text" | null; buf: string }
 }
 
 const llmSessions = new Map<string, LlmSession>()
@@ -253,33 +255,59 @@ function toolSummaryFromArgs(args: unknown): string {
 }
 
 const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
+const LOG_FLUSH_LEN = 400
 
 function isStartupNotifyDelta(delta: string): boolean {
   const t = delta.trim()
   return t === STARTUP_NOTIFY_TEXT || t.includes(STARTUP_NOTIFY_TEXT)
 }
 
+function flushLlmLog(session: LlmSession): void {
+  const agg = session.logAgg
+  const text = agg.buf.trim()
+  if (agg.kind && text) {
+    if (agg.kind === "thinking") {
+      pushUiLog("LLM", "DEBUG", `[${session.sessionKey}] [thinking] ${text}`)
+    } else {
+      pushUiLog("LLM", "INFO", `[${session.sessionKey}] [text] ${text}`)
+    }
+  }
+  agg.kind = null
+  agg.buf = ""
+}
+
+function appendLlmLog(session: LlmSession, kind: "thinking" | "text", delta: string): void {
+  const agg = session.logAgg
+  if (agg.kind && agg.kind !== kind) flushLlmLog(session)
+  agg.kind = kind
+  agg.buf += delta
+  if (agg.buf.length >= LOG_FLUSH_LEN) flushLlmLog(session)
+}
+
 function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): void {
   const stream = session.streamAgg
-  if (!stream || stream.finished) return
 
   if (event.type === "message_update") {
     const ev = event.assistantMessageEvent
-    if (isStreamSilenced(session)) return
     if (ev.type === "thinking_delta" && ev.delta) {
       if (isStartupNotifyDelta(ev.delta)) return
-      enqueueThinking(stream, ev.delta)
-      scheduleFlushStreamCard(session)
+      appendLlmLog(session, "thinking", ev.delta)
+      if (stream && !stream.finished && !isStreamSilenced(session)) {
+        enqueueThinking(stream, ev.delta)
+        scheduleFlushStreamCard(session)
+      }
     } else if (ev.type === "text_delta" && ev.delta) {
-      // 正文由 send_text 投递；勿写入流式卡思考块（否则与正式回复重复）
       if (isStartupNotifyDelta(ev.delta)) return
+      appendLlmLog(session, "text", ev.delta)
     }
     return
   }
 
   if (event.type === "tool_execution_start") {
-    if (isToolStreamSilenced(session)) return
+    flushLlmLog(session)
     const summary = toolSummaryFromArgs(event.args)
+    pushUiLog("LLM", "INFO", `[${session.sessionKey}] [tool] ${event.toolName}: running${summary ? ` · ${summary}` : ""}`)
+    if (!stream || stream.finished || isToolStreamSilenced(session)) return
     if (shouldOmitFromStreamCard(event.toolName, summary, event.args)) {
       if (event.toolName && !/poll-message/i.test(summary)) {
         stream.gateOpen = true
@@ -301,8 +329,10 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
   }
 
   if (event.type === "tool_execution_end") {
-    if (isToolStreamSilenced(session)) return
+    flushLlmLog(session)
     const summary = typeof event.result === "string" ? event.result.slice(0, 120) : toolSummaryFromArgs(event.result)
+    pushUiLog("LLM", "INFO", `[${session.sessionKey}] [tool] ${event.toolName}: ${event.isError ? "error" : "completed"}${summary ? ` · ${summary}` : ""}`)
+    if (!stream || stream.finished || isToolStreamSilenced(session)) return
     if (shouldOmitFromStreamCard(event.toolName, summary, event.result)) return
     enqueueTool(stream, {
       call_id: event.toolCallId,
@@ -314,6 +344,8 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
   }
 
   if (event.type === "agent_end") {
+    flushLlmLog(session)
+    if (!stream || stream.finished) return
     sealAllThinking(stream)
     sealRunningTools(stream)
     void flushStreamCard(session, true)
@@ -326,6 +358,7 @@ function beginLlmTurn(session: LlmSession): void {
 }
 
 async function sealLlmStream(session: LlmSession): Promise<void> {
+  flushLlmLog(session)
   const agg = session.streamAgg
   if (!agg || agg.finished) return
   sealAllThinking(agg)
@@ -569,6 +602,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       pollPhase: { blocking: false, nonBlocking: false, questionPause: false },
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),
       piUnsubscribe: null,
+      logAgg: { kind: null, buf: "" },
       patchStreamCardId: (cardId, patchOpts) => patchPiResumableStreamCard(sessionKey, cardId, patchOpts),
     }
 
