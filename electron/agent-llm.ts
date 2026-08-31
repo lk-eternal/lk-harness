@@ -271,9 +271,8 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
       enqueueThinking(stream, ev.delta)
       scheduleFlushStreamCard(session)
     } else if (ev.type === "text_delta" && ev.delta) {
+      // 正文由 send_text 投递；勿写入流式卡思考块（否则与正式回复重复）
       if (isStartupNotifyDelta(ev.delta)) return
-      enqueueThinking(stream, ev.delta)
-      scheduleFlushStreamCard(session)
     }
     return
   }

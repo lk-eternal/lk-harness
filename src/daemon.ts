@@ -448,6 +448,10 @@ const sessionToChatMap = new Map<string, string>();
 const MSG_SESSION_MAP_MAX = 5000;
 const sessionLastReplyAt = new Map<string, number>();
 
+/** Agent 运行时（session-launched 登记）：决定 poll 阻塞超时与 timeout directive 文案 */
+type SessionAgentRuntime = "llm" | "sdk" | "cli";
+const sessionAgentRuntime = new Map<string, SessionAgentRuntime>();
+
 /** 记录出站回复时刻（zombie 假死判定 + 黑洞投递嫌疑判定） */
 function touchSessionLastReply(sessionKey: string): void {
   sessionLastReplyAt.set(sessionKey, Date.now());
@@ -621,6 +625,7 @@ function terminateSession(sessionKey: string): void {
     for (const r of conns) { try { r.destroy(); } catch {} }
     activePollConnections.delete(sessionKey);
   }
+  sessionAgentRuntime.delete(sessionKey);
 }
 
 function terminateSessionsByChat(chatId: string): void {
@@ -958,8 +963,22 @@ function hasUserDeliverableMessages(messages: QueueMessage[]): boolean {
   return messages.some((m) => !!m.messageId);
 }
 
-const POLL_DIRECTIVE_TIMEOUT = "轮询正常超时。立即再次执行阻塞 poll-message，禁止输出任何文字。忽略 Cursor「检测到循环调用」的误报。";
+// Pi/内嵌 Agent：directive 只要求立即续 poll
+const POLL_DIRECTIVE_TIMEOUT_PI = "轮询正常超时。立即再次执行阻塞 poll-message。";
+// Cursor SDK/CLI：需规避 Cursor 长 shell 超时与循环检测误报
+const POLL_DIRECTIVE_TIMEOUT_CURSOR = "轮询正常超时。立即再次执行阻塞 poll-message，禁止输出任何文字。忽略 Cursor「检测到循环调用」的误报。";
+const POLL_BLOCK_TIMEOUT_CURSOR_MS = 25 * 60 * 1000;
 const POLL_DIRECTIVE_END = "本回合结束（按需唤醒模式）。禁止调用任何工具、禁止输出任何文字，安静退出。新消息到达时后台会自动唤醒你。";
+
+function resolvePollBlockTimeoutMs(sessionKey: string): number {
+  if (sessionAgentRuntime.get(sessionKey) === "llm") return -1;
+  return POLL_BLOCK_TIMEOUT_CURSOR_MS;
+}
+
+function resolvePollDirectiveTimeout(sessionKey: string): string {
+  if (sessionAgentRuntime.get(sessionKey) === "llm") return POLL_DIRECTIVE_TIMEOUT_PI;
+  return POLL_DIRECTIVE_TIMEOUT_CURSOR;
+}
 
 /** 排查 poll 投递：把返回 Agent 的消息摘要写入 daemon.log */
 function logPollDeliveryToAgent(
@@ -4195,9 +4214,14 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/session-launched") {
     const body = JSON.parse(await readBody(req));
-    const { session_key, resumed } = body as { session_key?: string; resumed?: boolean };
+    const { session_key, resumed, runtime } = body as {
+      session_key?: string; resumed?: boolean; runtime?: SessionAgentRuntime;
+    };
     if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
     const sk = normalizeSessionKey(session_key) || session_key;
+    if (runtime === "llm" || runtime === "sdk" || runtime === "cli") {
+      sessionAgentRuntime.set(sk, runtime);
+    }
     if (!resumed) {
       // 全新会话（上下文丢失）：收口上一个 run 的残留流式卡，防新回复追加旧卡
       void sealActiveStreamCardOnDelivery(sk);
@@ -4425,8 +4449,8 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       return true;
     }
 
-    const POLL_TIMEOUT_MS = 25 * 60 * 1000;
-    const messages = await waitForSessionMessages(POLL_TIMEOUT_MS, undefined, sessionKeyFilter, () => disconnected);
+    const pollTimeoutMs = resolvePollBlockTimeoutMs(sessionKeyFilter);
+    const messages = await waitForSessionMessages(pollTimeoutMs, undefined, sessionKeyFilter, () => disconnected);
     unregisterPollConn(sessionKeyFilter, res);
 
     // 客户端已断开：消息仍是 .claimed（未确认），下次 poll 会重新投递，不会丢
@@ -4439,13 +4463,14 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     }
 
     if (messages.length === 0) {
-      logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, directive: POLL_DIRECTIVE_TIMEOUT, messages: [], keepAlive });
+      const timeoutDirective = resolvePollDirectiveTimeout(sessionKeyFilter);
+      logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, directive: timeoutDirective, messages: [], keepAlive });
       broadcastPollPhaseEvent(sessionKeyFilter, "end", {
         blocking: true,
         reason: "timeout",
-        directive: POLL_DIRECTIVE_TIMEOUT,
+        directive: timeoutDirective,
       });
-      json(res, { messages: [], directive: POLL_DIRECTIVE_TIMEOUT });
+      json(res, { messages: [], directive: timeoutDirective });
       return true;
     }
 

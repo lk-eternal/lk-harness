@@ -29,7 +29,7 @@ import {
 } from "./agent-sdk"
 import {
   launchLlmAgent, stopLlmSession, stopAllLlmSessions,
-  isLlmSessionRunning, getLlmSessionList,
+  isLlmSessionRunning, getLlmSessionList, setLlmIdleHandler,
 } from "./agent-llm"
 import { usesLlmRuntime } from "./agent-engine/factory"
 import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
@@ -44,6 +44,18 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
+import { hasPersistedPiSession } from "./pi-embedded"
+import { isFeishuStreamEnabled } from "./stream-card"
+
+const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
+
+function hasResumableAgentSession(sessionKey: string): boolean {
+  return hasResumableSdkSession(sessionKey) || hasPersistedPiSession(sessionKey)
+}
+
+function shouldSendStartupNotify(sessionKey: string, resumable: boolean): boolean {
+  return !resumable && !isFeishuStreamEnabled(sessionKey)
+}
 
 // ── readLockFile 短 TTL 缓存 ─────────────────────────────
 let _lockCache: { value: ReturnType<typeof readLockFile>; ts: number } | null = null
@@ -1333,7 +1345,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     // 裸 id 会话（临时/定时任务）：按队列 chatType 拉起；续聊走主工作目录 + Resume
     if (!sessionKey.includes("|") && !sessionKey.includes("::")) {
       const launchType: ChatType = chatType === "task" ? "task" : "temp"
-      const resumableT = hasResumableSdkSession(sessionKey)
+      const resumableT = hasResumableAgentSession(sessionKey)
       // 队列唤醒必须带回任务绑定的通道，否则 getAgentResource(undefined) 会默落 CLI
       const task = readTasksFromFile().find((t) => t.id === sessionKey)
       const channelId = task?.channelId
@@ -1384,9 +1396,9 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
         }
         continue
       }
-      const resumableP = hasResumableSdkSession(sessionKey)
+      const resumableP = hasResumableAgentSession(sessionKey)
       broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
-      if (!resumableP) await notifyChat(sessionKey, "正在启动Agent，请稍等...")
+      if (shouldSendStartupNotify(sessionKey, resumableP)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
       launches.push((async () => {
         const r = await launchAgent({
           sessionKey,
@@ -1412,14 +1424,14 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
 
     const userName = senderOpenId ? chatNameCache.get(senderOpenId) : undefined
     const chatName = chatNameCache.get(chatId) || userName
-    const resumable = hasResumableSdkSession(sessionKey)
+    const resumable = hasResumableAgentSession(sessionKey)
     const p2pName = userName || resolveSessionChatName(sessionKey, undefined, senderOpenId) || chatId
     const label = chatType === "group"
       ? `群聊 ${chatName ? `「${chatName}」` : chatId}`
       : (mainUser ? `主用户私聊${userName ? ` (${userName})` : ""}` : `私聊 ${p2pName}`)
     broadcastLog(`[Agent] ${label} 有新消息，正在启动Agent（${resumable ? "Resume 恢复上下文" : "全新会话"}）${mainUser ? "(主工作目录)" : ""}`)
     // Resume 恢复静默进行；仅真正冷启动（无历史上下文可续）才提示等待
-    if (!resumable) await notifyChat(sessionKey, "正在启动Agent，请稍等...")
+    if (shouldSendStartupNotify(sessionKey, resumable)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
 
     const meta: import("./agent-launcher").LaunchMeta = { chatId, chatType: chatType as "p2p" | "group" }
     launches.push((async () => {
@@ -1458,6 +1470,8 @@ export function initSessionDispatcher(): void {
   })
   setSessionCloseHandler(handleSessionClosed)
   // run 收口释放后立即调度：队列有未处理消息时自动拉起（含异常结束——.claimed 仍在队列中）
-  setSdkIdleHandler(() => { void dispatchSessionAgents().catch(() => {}) })
+  const redispatchOnIdle = () => { void dispatchSessionAgents().catch(() => {}) }
+  setSdkIdleHandler(redispatchOnIdle)
+  setLlmIdleHandler(redispatchOnIdle)
 }
 
