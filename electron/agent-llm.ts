@@ -497,6 +497,11 @@ export function getLlmSessionCount(): number {
 }
 
 export function getLlmSessionList() {
+  let workerPhase: ((sk: string) => import("./llm-session-worker.js").LlmWorkerPhase | null) | undefined
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    workerPhase = require("./llm-session-worker.js").getLlmWorkerPhase
+  } catch { /* worker 未加载 */ }
   return [...llmSessions.values()].map((s) => ({
     sessionKey: s.sessionKey,
     startedAt: s.startedAt,
@@ -507,6 +512,7 @@ export function getLlmSessionList() {
     workspaceDir: workspaceDirFromSessionKey(s.sessionKey),
     model: s.model.id,
     modelParams: s.channelModelParams,
+    workerPhase: workerPhase?.(s.sessionKey) ?? undefined,
   }))
 }
 
