@@ -1294,7 +1294,8 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
       return;
     }
 
-    const cleanText = chatType === "group" ? resolveMentionTags(text, ev.mentions, rt.botOpenId) : text;
+    // p2p 带 @ 占位符（如 @_user_1 /p）也需剥除，否则 isCommand 无法识别
+    const cleanText = resolveMentionTags(text, ev.mentions, rt.botOpenId);
     log("INFO", `[${rt.cfg.name}] 收到消息 [${chatType}] chat=${chatId} sender=${senderOpenId ?? "?"}${ev.senderType === "app" ? "(bot)" : ""}${parentId ? ` reply=${parentId}` : ""}: ${cleanText.slice(0, 100)}`);
     rememberChatType(chatKey, chatType);
 
