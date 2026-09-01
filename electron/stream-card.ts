@@ -448,52 +448,65 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean): Pr
     clearTimeout(agg.timer)
     agg.timer = null
   }
-  if (!finish && !agg.dirty) return
-  if (!finish && (!agg.gateOpen || host.pollPhase.blocking)) return
-
-  const payload = buildStreamPayload(agg, host.sessionKey)
-  if (!finish && !agg.ensured && payload.segments.length === 0) return
-  agg.dirty = false
-  agg.lastFlushAt = Date.now()
-  if (finish) agg.finished = true
+  if (!finish) {
+    if (!agg.dirty) return
+    if (!agg.gateOpen || host.pollPhase.blocking) return
+  } else {
+    agg.finished = true
+  }
 
   const patchCard = (cardId: string | undefined, onlyIf?: string) => {
     host.patchStreamCardId?.(cardId, onlyIf ? { onlyIf } : undefined)
   }
 
   const run = async (): Promise<void> => {
+    const sendUpdate = async (): Promise<boolean> => {
+      if (!finish && (!agg.gateOpen || host.pollPhase.blocking)) return false
+      const payload = buildStreamPayload(agg, host.sessionKey)
+      if (!agg.ensured && payload.segments.length === 0) return false
+
+      agg.dirty = false
+      agg.lastFlushAt = Date.now()
+
+      if (!agg.ensured) {
+        const ensured = await postStreamCard(host.sessionKey, "ensure", payload, { queueBornAt: agg.bornAt })
+        if (ensured?.gone) {
+          rotateStaleStreamQueue(host, agg)
+          return false
+        }
+        agg.ensured = true
+        if (ensured?.cardId) {
+          agg.cardId = ensured.cardId
+          patchCard(ensured.cardId)
+        }
+      }
+
+      const latest = buildStreamPayload(agg, host.sessionKey)
+      const updated = await postStreamCard(host.sessionKey, "update", latest, { cardId: agg.cardId, queueBornAt: agg.bornAt })
+      if (updated?.gone) {
+        rotateStaleStreamQueue(host, agg)
+        return false
+      }
+      if (!agg.cardId && updated?.cardId) {
+        agg.cardId = updated.cardId
+        patchCard(updated.cardId)
+      }
+      return true
+    }
+
     if (finish) {
+      while (agg.dirty) await sendUpdate()
       if (!agg.cardId) return
+      const payload = buildStreamPayload(agg, host.sessionKey)
+      agg.dirty = false
       await postStreamCard(host.sessionKey, "finish", payload, { cardId: agg.cardId })
       patchCard(undefined, agg.cardId)
       return
     }
-    if (agg.finished) return
-    if (!agg.ensured) {
-      const ensured = await postStreamCard(host.sessionKey, "ensure", payload, { queueBornAt: agg.bornAt })
-      if (ensured?.gone) {
-        rotateStaleStreamQueue(host, agg)
-        return
-      }
-      agg.ensured = true
-      if (ensured?.cardId) {
-        agg.cardId = ensured.cardId
-        patchCard(ensured.cardId)
-      }
-      const updated = await postStreamCard(host.sessionKey, "update", payload, { cardId: agg.cardId, queueBornAt: agg.bornAt })
-      if (updated?.gone) rotateStaleStreamQueue(host, agg)
-      else if (!agg.cardId && updated?.cardId) {
-        agg.cardId = updated.cardId
-        patchCard(updated.cardId)
-      }
-      return
-    }
-    const updated = await postStreamCard(host.sessionKey, "update", payload, { cardId: agg.cardId, queueBornAt: agg.bornAt })
-    if (updated?.gone) rotateStaleStreamQueue(host, agg)
-    else if (!agg.cardId && updated?.cardId) {
-      agg.cardId = updated.cardId
-      patchCard(updated.cardId)
-    }
+
+    do {
+      if (!await sendUpdate()) break
+    } while (agg.dirty)
   }
 
   agg.inflight = agg.inflight.then(run, run)

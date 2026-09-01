@@ -296,7 +296,7 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
       appendLlmLog(session, "thinking", ev.delta)
       if (stream && !stream.finished && !isStreamSilenced(session)) {
         enqueueThinking(stream, ev.delta)
-        scheduleFlushStreamCard(session)
+        scheduleFlushStreamCard(session, true)
       }
     } else if (ev.type === "text_delta" && ev.delta) {
       if (isStartupNotifyDelta(ev.delta)) return
