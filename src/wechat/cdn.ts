@@ -126,7 +126,7 @@ export async function uploadMedia(
     aeskey: aeskey.toString("hex"),
   });
 
-  // 兼容两种响应: upload_param (构�?URL) �?upload_full_url (直接使用)
+  // 兼容两种响应: upload_param (构造 URL) 和 upload_full_url (直接使用)
   let uploadUrl: string;
   if (resp.upload_full_url) {
     uploadUrl = resp.upload_full_url;

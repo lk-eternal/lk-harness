@@ -26,9 +26,9 @@ export interface AgentLaunchParams {
   pendingMessageIds?: string[]
   resource: AgentResource
   channelId?: string
-  /** CLI resume 作用�?*/
+  /** CLI resume 作用域*/
   resumeScope?: string
-  /** 启动前注�?CLI MCP（是否含 admin MCP�?*/
+  /** 启动前注入 CLI MCP（是否含 admin MCP）*/
   cliMcpAdmin?: boolean
 }
 

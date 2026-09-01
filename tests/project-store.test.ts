@@ -87,7 +87,7 @@ describe("project-store", () => {
       type: "build",
       status: "accepted",
       artifactPath: "legacy.md",
-      summary: "旧产�?,
+      summary: "旧产物",
       startedAt: 1,
       completedAt: 2,
     }]
@@ -99,7 +99,7 @@ describe("project-store", () => {
     fs.writeFileSync(legacyPath, JSON.stringify(raw), "utf-8")
     const migrated = getProject(p.id)!
     expect(migrated.lastArtifactPath).toBe("legacy.md")
-    expect(migrated.lastArtifactSummary).toBe("旧产�?)
+    expect(migrated.lastArtifactSummary).toBe("旧产物")
     expect(migrated.actions).toBeUndefined()
   })
 
@@ -132,20 +132,20 @@ describe("project-store", () => {
     expect(getProjectNodes("test").map((n) => n.id)).toContain("test-exec")
     // 未知组回落默认组
     expect(getProjectNodes("nonexistent").map((n) => n.id)).toContain("plan")
-    // 跨组兜底�?label（历�?action 的节点可能在别的组）
+    // 跨组兜底找 label（历史 action 的节点可能在别的组）
     expect(projectNodeLabel("test-exec", "develop")).toBe("测试")
   })
 
   it("migrates legacy flat nodes into develop group", () => {
     fs.writeFileSync(path.join(dir, "projects", "project-nodes.json"), JSON.stringify([
-      { id: "plan", label: "规划�?, prompt: "自定义要�?, builtin: true },
+      { id: "plan", label: "规划改", prompt: "自定义要求", builtin: true },
       { id: "ship", label: "交付", builtin: true },
-      { id: "my-node", label: "自定义节�? },
+      { id: "my-node", label: "自定义节点" },
     ]), "utf-8")
     const develop = resolveNodeGroup(DEFAULT_NODE_GROUP_ID)
     const plan = develop.nodes.find((n) => n.id === "plan")
-    expect(plan?.label).toBe("规划�?)
-    expect(plan?.prompt).toBe("自定义要�?)
+    expect(plan?.label).toBe("规划改")
+    expect(plan?.prompt).toBe("自定义要求")
     expect(develop.nodes.some((n) => n.id === "ship")).toBe(false)
     expect(develop.nodes.some((n) => n.id === "my-node")).toBe(true)
     // 迁移结果已持久化为组文件
@@ -154,19 +154,19 @@ describe("project-store", () => {
 
   it("saves and roundtrips custom groups", () => {
     saveNodeGroups([
-      { id: "develop", name: "开�?, nodes: [{ id: "plan", label: "规划" }] },
-      { id: "qa", name: "质检", nodes: [{ id: "check", label: "检�?, prompt: "查一�? }] },
+      { id: "develop", name: "开发", nodes: [{ id: "plan", label: "规划" }] },
+      { id: "qa", name: "质检", nodes: [{ id: "check", label: "检查", prompt: "查一切" }] },
     ])
     const groups = getNodeGroups()
     expect(groups).toHaveLength(2)
     expect(getProjectNodes("qa").map((n) => n.id)).toEqual(["check"])
-    expect(projectNodeLabel("check", "qa")).toBe("检�?)
+    expect(projectNodeLabel("check", "qa")).toBe("检查")
   })
 
   it("roundtrips hub tracking fields on groups and nodes", () => {
     saveNodeGroups([{
       id: "develop",
-      name: "开�?,
+      name: "开发",
       hubId: "group-uuid-1",
       hubRevision: 2,
       hubContentHash: "ghash",
@@ -192,16 +192,16 @@ describe("project-store", () => {
       version: 1,
       group: {
         id: "custom",
-        name: "自定�?,
+        name: "自定义",
         workspace: "plain",
-        nodes: [{ id: "step", label: "步骤", prompt: "做某�? }],
+        nodes: [{ id: "step", label: "步骤", prompt: "做某事" }],
       },
     })
     expect(envelope).toEqual({
       id: "custom",
-      name: "自定�?,
+      name: "自定义",
       workspace: "plain",
-      nodes: [{ id: "step", label: "步骤", prompt: "做某�? }],
+      nodes: [{ id: "step", label: "步骤", prompt: "做某事" }],
     })
     const loose = parseNodeGroupExport({
       id: "loose",
@@ -215,10 +215,10 @@ describe("project-store", () => {
   })
 
   it("resolves unique node group id without overwriting existing", () => {
-    expect(resolveUniqueNodeGroupId("develop", "开�?, ["develop", "test"])).toBe("develop-2")
-    expect(resolveUniqueNodeGroupId("develop", "开�?, ["develop", "develop-2"])).toBe("develop-3")
+    expect(resolveUniqueNodeGroupId("develop", "开发", ["develop", "test"])).toBe("develop-2")
+    expect(resolveUniqueNodeGroupId("develop", "开发", ["develop", "develop-2"])).toBe("develop-3")
     expect(resolveUniqueNodeGroupId("BAD", "My Group", ["develop"])).toBe("my-group")
-    expect(resolveUniqueNodeGroupId(undefined, "开�?, ["develop"])).toMatch(/^import-[a-f0-9]+$/)
+    expect(resolveUniqueNodeGroupId(undefined, "开发", ["develop"])).toMatch(/^import-[a-f0-9]+$/)
   })
 
   it("stores groupId on created project", () => {

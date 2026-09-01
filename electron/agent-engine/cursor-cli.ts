@@ -15,7 +15,7 @@ function parseListModelsStdout(stdout: string): ListedModel[] {
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim()
     if (!trimmed || /^available models/i.test(trimmed)) continue
-    const match = trimmed.match(/^(\S+)\s+[â€“â€?]\s+(.+?)(\s+\((?:default|current)\))?\s*$/)
+    const match = trimmed.match(/^(\S+)\s+[??]\s+(.+?)(\s+\((?:default|current)\))?\s*$/)
     if (match) models.push({ id: match[1], label: match[2].trim(), current: !!match[3] })
   }
   return models

@@ -75,6 +75,6 @@ describe("loadFlowHubContext", () => {
     const cfg = baseCfg()
     cfg.flowHubToken = ""
     cfg.gitlabHost = "https://gitlab.com"
-    expect(loadFlowHubContext(cfg)).toEqual({ error: "Hub 地址�?GitLab Host 不一�? })
+    expect(loadFlowHubContext(cfg)).toEqual({ error: "Hub 地址与 GitLab Host 不一致" })
   })
 })

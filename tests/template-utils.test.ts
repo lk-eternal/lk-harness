@@ -9,12 +9,12 @@ afterEach(() => {
 })
 
 describe("renderTemplate", () => {
-  it("替换 {{VAR}} 占位�?, () => {
+  it("替换 {{VAR}} 占位符", () => {
     expect(renderTemplate("你好 {{NAME}}，今天{{DAY}}", { NAME: "张三", DAY: "周一" }))
       .toBe("你好 张三，今天周一")
   })
 
-  it("缺失变量替换为空�?, () => {
+  it("缺失变量替换为空串", () => {
     expect(renderTemplate("a={{A}} b={{B}}", { A: "1" })).toBe("a=1 b=")
   })
 
@@ -24,7 +24,7 @@ describe("renderTemplate", () => {
 })
 
 describe("getTemplateRoot / readTemplate", () => {
-  it("LK_HARNESS_TEMPLATE_DIR 覆盖模板根目�?, () => {
+  it("LK_HARNESS_TEMPLATE_DIR 覆盖模板根目录", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-tpl-"))
     process.env.LK_HARNESS_TEMPLATE_DIR = dir
     try {
@@ -40,13 +40,13 @@ describe("getTemplateRoot / readTemplate", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-tpl-"))
     process.env.LK_HARNESS_TEMPLATE_DIR = dir
     try {
-      expect(() => readTemplate("missing.md")).toThrow(/模板文件不存�?)
+      expect(() => readTemplate("missing.md")).toThrow(/模板文件不存在/)
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 
-  it("默认能找到仓库内置模�?, () => {
+  it("默认能找到仓库内置模板", () => {
     expect(readTemplate("rule/lk-harness.mdc").length).toBeGreaterThan(0)
   })
 })

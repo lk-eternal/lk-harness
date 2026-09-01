@@ -71,7 +71,7 @@ export function listLlmModelsForResource(resource: AgentResource): { id: string;
   return []
 }
 
-/** 自定义网关：从远�?/models 拉列表（需 API Key�?*/
+/** ????????? /models ????? API Key?*/
 export async function listCustomGatewayModels(resource: AgentResource): Promise<{ id: string; label: string }[]> {
   const key = llmApiKey(resource)
   const base = resource.baseUrl?.trim()

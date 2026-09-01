@@ -28,7 +28,7 @@ export function getTemplateRoot(): string {
 export function readTemplate(relativePath: string): string {
   const fullPath = path.join(getTemplateRoot(), relativePath);
   if (!fs.existsSync(fullPath)) {
-    throw new Error(`模板文件不存�? ${fullPath}`);
+    throw new Error(`模板文件不存在: ${fullPath}`);
   }
   return fs.readFileSync(fullPath, "utf-8");
 }

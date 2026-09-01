@@ -12,30 +12,30 @@ describe("flow-hub catalog", () => {
     const cat = emptyCatalog()
     const entry = {
       hubId: "g1",
-      name: "开�?,
-      nodeLabels: ["规划"],
+      name: "??",
+      nodeLabels: ["??"],
       nodeIds: ["plan"],
-      author: "张三",
+      author: "??",
       updatedAt: "2026-08-03",
       contentHash: "abc",
     }
     const next = mergeGroupIntoCatalog(cat, entry)
     expect(next.groups).toHaveLength(1)
-    expect(mergeGroupIntoCatalog(next, { ...entry, name: "开�?" }).groups[0].name).toBe("开�?")
+    expect(mergeGroupIntoCatalog(next, { ...entry, name: "??" }).groups[0].name).toBe("??")
   })
 
   it("filters by author and name", () => {
     const cat = mergeGroupIntoCatalog(emptyCatalog(), {
       hubId: "g1",
-      name: "开�?,
+      name: "??",
       nodeLabels: [],
       nodeIds: [],
-      author: "张三",
+      author: "??",
       updatedAt: "",
       contentHash: "",
     })
-    expect(filterCatalog(cat, "张三").groups).toHaveLength(1)
-    expect(filterCatalog(cat, "不存�?).groups).toHaveLength(0)
+    expect(filterCatalog(cat, "??").groups).toHaveLength(1)
+    expect(filterCatalog(cat, "???").groups).toHaveLength(0)
   })
 
   it("parses valid catalog", () => {
@@ -47,9 +47,9 @@ describe("flow-hub catalog", () => {
   it("upserts node entry", () => {
     const cat = mergeNodeIntoCatalog(emptyCatalog(), {
       hubId: "n1",
-      label: "提缺�?,
+      label: "???",
       localId: "file-bug",
-      author: "张三",
+      author: "??",
       updatedAt: "",
       contentHash: "h",
     })

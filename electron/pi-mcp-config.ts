@@ -1,6 +1,6 @@
 import { buildSdkMcpServers, CLAW_MCP_KEY } from "../src/shared/harness-mcp-store.js"
 
-/** pi-mcp-adapter ServerEntry 子�??�?避�??tsc �??�? adapter 源码�?*/
+/** pi-mcp-adapter ServerEntry 类型，避免 tsc 依赖 adapter 源码 */
 export interface PiMcpServerEntry {
   command?: string
   args?: string[]
@@ -23,7 +23,7 @@ function normalizeServerEntry(cfg: Record<string, unknown>): PiMcpServerEntry {
   return entry
 }
 
-/** LLM ???lk-harness MCP ? /mcp-llm-host?? send_text??? send_question? */
+/** LLM 用 lk-harness MCP 的 /mcp-llm-host（send_text、send_question 等） */
 export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
   const raw = { ...buildSdkMcpServers(port, includeAdmin) }
   if (port != null && port > 0 && raw[CLAW_MCP_KEY]) {
@@ -36,7 +36,7 @@ export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean)
   return { mcpServers }
 }
 
-/** �?Cursor SDK `buildSdkMcpServers` �?�??�?转�?pi-mcp-adapter �??�? config */
+/** 与 Cursor SDK `buildSdkMcpServers` 相同，转为 pi-mcp-adapter config */
 export function buildPiMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
   const raw = buildSdkMcpServers(port, includeAdmin)
   const mcpServers: Record<string, PiMcpServerEntry> = {}

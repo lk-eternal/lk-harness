@@ -147,7 +147,7 @@ export function resolveCustomModelApi(modelId: string, fallback?: LlmApiProtocol
   return fallback ?? "openai-completions"
 }
 
-/** 规范化自定义网关�?URL（用�?/models �?completions�?*/
+/** 规范化自定义网关 URL（用于 /models 与 completions） */
 export function normalizeGatewayRoot(baseUrl: string): string {
   let url = baseUrl.trim().replace(/\/+$/, "")
   url = url.replace(/\/chat\/completions$/i, "")
@@ -205,7 +205,7 @@ export async function fetchGatewayModels(
   return models
 }
 
-/** builtin 供应商：pi-ai 模型�?*/
+/** builtin 供应商：pi-ai 模型表?*/
 export function listBuiltinModels(providerId: string): { id: string; label: string }[] {
   try {
     return getModels(providerId as Parameters<typeof getModels>[0]).map((m: Model<Api>) => ({
