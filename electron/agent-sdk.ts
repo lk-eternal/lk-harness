@@ -68,7 +68,7 @@ interface StreamAgg {
   bornAt: number
 }
 
-interface SdkSessionAgent {
+export interface SdkSessionAgent {
   sessionKey: string
   agent: SDKAgent
   /** 当前活跃 run；null 仅出现在 send 前的短暂窗口（run 结束即整体释放） */
@@ -105,8 +105,10 @@ interface SdkSessionAgent {
   lastStatus?: { status: string; message?: string }
   /** poll 已见 messageId：非阻塞 poll 区分新消息 vs 重投 */
   seenMessageIds: Set<string>
-  /** run 级 poll 等待态（跨换卡存活） */
+  /** run 级 poll 等待态（跨换卡存活）；worker 模式下由宿主 poll，此处仅保留兼容 */
   pollPhase: SessionPollPhase
+  /** Session Worker 托管 poll 时为 true（listening 阶段 run 可能为 null） */
+  workerActive?: boolean
 }
 
 interface SessionPollPhase {
@@ -1503,7 +1505,8 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
 export function isSdkSessionRunning(sessionKey: string): boolean {
   if (pendingLaunches.has(sessionKey)) return true
   const s = sdkSessions.get(sessionKey)
-  return s !== undefined && !s.abortController.signal.aborted && s.run !== null
+  if (!s || s.abortController.signal.aborted) return false
+  return s.run !== null || !!s.workerActive
 }
 
 /** 是否有可 Resume 的历史会话（上下文可恢复，无需完整冷启动提示） */
@@ -1598,26 +1601,34 @@ export interface SdkLaunchOptions {
   digitalIdentityOverride?: string
 }
 
-/** run 生命周期托管：结束即释放 agent 进程（上下文靠持久化的 agentId Resume 恢复） */
-function startRunLifecycle(session: SdkSessionAgent, run: Run): void {
+export interface SdkTurnResult {
+  ok: boolean
+  errorDetail?: string
+  networkFail: boolean
+  permanentFail: boolean
+}
+
+/** run 生命周期托管；workerHosted 时保留 agent 供下轮 poll 继续 */
+function startRunLifecycle(session: SdkSessionAgent, run: Run, opts?: { workerHosted?: boolean }): Promise<SdkTurnResult> {
   session.run = run
   session.lastActivityAt = Date.now()
   lastRunResults.delete(session.sessionKey)
 
-  streamRunEvents(session, run).then(async () => {
+  return streamRunEvents(session, run).then(async () => {
     const sessionKey = session.sessionKey
     if (session.abortController.signal.aborted) {
       session.run = null
-      sdkSessions.delete(sessionKey)
-      broadcastSdkSessionStatus()
+      if (!opts?.workerHosted) {
+        sdkSessions.delete(sessionKey)
+        broadcastSdkSessionStatus()
+      }
       pushUiLog("SDK", "INFO", `[${sessionKey}] Agent 已中止（用户停止或 daemon 关闭）`)
-      return
+      return { ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false }
     }
     let errorDetail: string | undefined
     let networkFail = false
     let permanentFail = false
     if (run.status === "error") {
-      // wait() 返回 RunResult 对象（出错时也不抛），真实原因藏在 RunResult.result / 终态状态事件里
       const wr = await run.wait().catch((e: unknown) => e)
       let detail: string
       if (wr instanceof Error) {
@@ -1636,9 +1647,7 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): void {
       const netHint = recentGlobalErrorHint(120_000)
       errorDetail = `${lastStr}${detail}${netHint ? ` | net=${netHint}` : ""}`.slice(0, 500)
       networkFail = /API key exchange|exchange_user_api_key|fetch failed|unauthenticated|ECONNRESET|socket hang up|GOAWAY|疑似底层网络/i.test(errorDetail)
-      // 鉴权/配额/模型不可用：重试不会自愈，必须退避（网络类优先，仍走零退避快速重连）
       permanentFail = !networkFail && /invalid[_ ]api[_ ]key|api key not valid|401|403|forbidden|quota|rate limit|insufficient|model .*not (found|available)/i.test(errorDetail)
-      // 不清 Resume：agentId 仍在，下次 Agent.resume 换新本地句柄，云端上下文保留
     }
 
     lastRunResults.set(sessionKey, {
@@ -1650,11 +1659,31 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): void {
 
     session.run = null
     const errored = run.status === "error"
+
+    if (opts?.workerHosted) {
+      if (!errored) rememberResumable(session)
+      broadcastSdkSessionStatus()
+      if (errored) {
+        const st = sdkFailStreak.get(sessionKey)
+        const dur = run.durationMs != null ? `${run.durationMs}ms` : "?"
+        if (shouldLogRepeatedFailure(sessionKey, errorDetail, st?.count ?? 1)) {
+          pushUiLog("SDK", (st?.count ?? 0) > 8 ? "ERROR" : "WARN",
+            `[${sessionKey}] worker 回合失败 ${dur} | ${errorDetail || "unknown"}`)
+        }
+      } else {
+        const summary = [
+          run.result && `result=${run.result}`,
+          run.durationMs != null && `duration=${run.durationMs}ms`,
+        ].filter(Boolean).join(", ")
+        pushUiLog("SDK", "INFO", `[${sessionKey}] worker 回合结束 (status=${run.status}${summary ? `, ${summary}` : ""})`)
+      }
+      return { ok: !errored, errorDetail, networkFail, permanentFail }
+    }
+
     closeAndRemoveSession(session)
     broadcastSdkSessionStatus()
 
     if (errored) {
-      // 记账失败次数后叫醒调度器；永久错误由 sdkFailCooldownRemaining 压住重试节奏
       scheduleSdkIdle(sessionKey, true, { network: networkFail, silent: true, permanent: permanentFail })
       const st = sdkFailStreak.get(sessionKey)
       const dur = run.durationMs != null ? `${run.durationMs}ms` : "?"
@@ -1673,7 +1702,75 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): void {
       pushUiLog("SDK", "INFO", `[${sessionKey}] Agent 运行结束 (status=${run.status}${summary ? `, ${summary}` : ""})`)
       scheduleSdkIdle(sessionKey, false)
     }
+    return { ok: !errored, errorDetail, networkFail, permanentFail }
   })
+}
+
+async function sendSdkPrompt(session: SdkSessionAgent, prompt: string): Promise<Run> {
+  const { agent, sessionKey, workspaceDir } = session
+  try {
+    return await agent.send(prompt)
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!msg.includes("already has active run")) throw e
+
+    pushUiLog("SDK", "WARN", `[${sessionKey}] 检测到残留 active run，先 cancel 清 store`)
+    await cancelActiveRun(agent, workspaceDir ?? "", sessionKey)
+
+    try {
+      return await withTimeout(agent.send(prompt), FORCE_SEND_TIMEOUT_MS, "send after cancel")
+    } catch (retryErr: unknown) {
+      const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+      if (!retryMsg.includes("already has active run")) throw retryErr
+      const reattached = await tryReattachActiveRun(agent, workspaceDir ?? "", sessionKey)
+      if (reattached && await probeRunStillLive(reattached)) {
+        throw new Error("active run reattached; worker 不应走到此路径")
+      }
+      pushUiLog("SDK", "WARN", `[${sessionKey}] cancel/挂接均失败，force 恢复重发`)
+      return await withTimeout(
+        agent.send(prompt, { local: { force: true } }),
+        FORCE_SEND_TIMEOUT_MS,
+        "force send",
+      )
+    }
+  }
+}
+
+export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): Promise<SdkTurnResult> {
+  if (session.abortController.signal.aborted) {
+    return { ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false }
+  }
+  pushUiLog("SDK", "INFO", `[${session.sessionKey}] worker 回合 Prompt:\n${prompt}`)
+  const run = await sendSdkPrompt(session, prompt)
+  return startRunLifecycle(session, run, { workerHosted: true })
+}
+
+export async function unregisterSdkSessionForWorker(session: SdkSessionAgent, aborted: boolean): Promise<void> {
+  session.workerActive = false
+  void sealStreamCardForStop(session).catch(() => {})
+  if (!aborted && session.keepSession) rememberResumable(session)
+  await releaseSession(session)
+}
+
+export function onSdkWorkerFinished(
+  sessionKey: string,
+  errored: boolean,
+  opts?: { network?: boolean; permanent?: boolean; errorDetail?: string },
+): void {
+  if (errored) {
+    scheduleSdkIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
+    const st = sdkFailStreak.get(sessionKey)
+    const waitMs = sdkFailCooldownRemaining(sessionKey)
+    const retryTip = waitMs > 0 ? `→ ${Math.round(waitMs / 1000)}s 后重试` : "→ 立即重试"
+    if (shouldLogRepeatedFailure(sessionKey, opts?.errorDetail, st?.count ?? 1)) {
+      pushUiLog("SDK", (st?.count ?? 0) > 8 ? "ERROR" : "WARN",
+        `[${sessionKey}] worker 异常结束×${st?.count ?? 1} ${retryTip} | ${opts?.errorDetail || "unknown"}`)
+    }
+    broadcastLog(`[SDK] 会话 ${sessionKey} worker 异常: ${opts?.errorDetail}`, "ERROR")
+  } else {
+    pushUiLog("SDK", "INFO", `[${sessionKey}] worker 已退出`)
+    scheduleSdkIdle(sessionKey, false)
+  }
 }
 
 export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: boolean; error?: string }> {
@@ -1855,61 +1952,32 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: resumed ? taskMessage : effectiveTask,
     }
-    const prompt = resumed
-      ? assembleWakePrompt(promptCtx, undefined)
-      : buildPrompt(meta, effectiveTask, sessionKey, opts.useMainWorkspace, opts.notifySessionKey, opts.digitalIdentityOverride)
-    pushUiLog("SDK", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Prompt:\n${prompt}`)
     // pack/进程重启后 daemon 内存无卡，飞书旧流式卡仍在：Resume 前先按持久化 cardId 收口，避免再建一张重复卡
     if (resumed && resumable?.streamCardId && session.streamAgg) {
       pushUiLog("SDK", "INFO", `[${sessionKey}] Resume 收口孤儿流式卡 card=${resumable.streamCardId}`)
       await postStreamCard(sessionKey, "finish", { segments: [] }, { cardId: resumable.streamCardId })
       patchResumableStreamCard(sessionKey, undefined, { onlyIf: resumable.streamCardId })
     }
-    // 发 prompt 前通知 daemon 拉起形态：Resume 打 fresh-only 标；全新会话收残留旧卡
     await notifySessionLaunched(sessionKey, resumed)
-    let run: Run
-    try {
-      run = await agent.send(prompt)
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e)
-      if (!msg.includes("already has active run")) throw e
 
-      pushUiLog("SDK", "WARN", `[${sessionKey}] 检测到残留 active run，先 cancel 清 store`)
-      await cancelActiveRun(agent, workspaceDir, sessionKey)
-
-      try {
-        run = await withTimeout(agent.send(prompt), FORCE_SEND_TIMEOUT_MS, "send after cancel")
-      } catch (retryErr: unknown) {
-        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
-        if (!retryMsg.includes("already has active run")) throw retryErr
-        // 非 pack 场景：进程可能仍在，尝试挂接续听（不 send）
-        const reattached = await tryReattachActiveRun(agent, workspaceDir, sessionKey)
-        if (reattached && await probeRunStillLive(reattached)) {
-          return finishLiveReattach(session, reattached, prompt, resetGenAtStart, sessionKey)
-        }
-        pushUiLog("SDK", "WARN", `[${sessionKey}] cancel/挂接均失败，force 恢复重发`)
-        try {
-          run = await withTimeout(
-            agent.send(prompt, { local: { force: true } }),
-            FORCE_SEND_TIMEOUT_MS,
-            "force send",
-          )
-        } catch (forceErr: unknown) {
-          const forceMsg = forceErr instanceof Error ? forceErr.message : String(forceErr)
-          pushUiLog("SDK", "WARN", `[${sessionKey}] force 恢复失败，丢弃 resume 映射下次全新会话: ${forceMsg}`)
-          forgetResumable(sessionKey)
-          throw forceErr instanceof Error ? forceErr : new Error(forceMsg)
-        }
-      }
-    }
-    startRunLifecycle(session, run)
-    // 失败计数不在拉起时清零（断网时 Resume 总能成功、run 中途才死）：
-    // run 成功跑完由 scheduleSdkIdle 清零；失败无冷却，调度器立即再拉
-    // 持久化最新 agentId：run 结束释放进程后靠它 Resume，应用重启后依然有效
-    // send 期间被 /reset 则不回写（否则旧上下文的 agentId 会覆盖掉刚删的映射）
     if ((sessionResetGen.get(sessionKey) ?? 0) === resetGenAtStart) {
       rememberResumable(session)
     }
+
+    const { startSdkWorkerLoop, isSdkWorkerActive } = await import("./sdk-session-worker.js")
+    if (isSdkWorkerActive(sessionKey)) {
+      return { ok: true }
+    }
+
+    pushUiLog("SDK", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Session Worker (persistentPoll=${persistentPoll})`)
+    session.workerActive = true
+    void startSdkWorkerLoop(session, {
+      persistentPoll,
+      promptCtx,
+      taskMessage: promptCtx.taskMessage,
+      firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
+      coldStart: !resumed,
+    })
 
     return { ok: true }
   } catch (e: unknown) {
@@ -1973,6 +2041,8 @@ export async function stopSdkSession(sessionKey: string): Promise<void> {
   for (const k of [...pendingLaunches]) {
     if (sessionKeyEquals(k, sessionKey)) pendingLaunches.delete(k)
   }
+  const { stopSdkWorker } = await import("./sdk-session-worker.js")
+  await stopSdkWorker(sessionKey)
   const s = findSdkSessionLoose(sessionKey)
   if (!s) return
   pushUiLog("SDK", "INFO", `[${s.sessionKey}] 会话已停止`)
@@ -2002,6 +2072,8 @@ export async function switchSdkSessionModel(
 
   if (live) {
     pushUiLog("SDK", "INFO", `[${effectiveKey}] 换模 → ${mid}，停止当前 Agent`)
+    const { stopSdkWorker } = await import("./sdk-session-worker.js")
+    await stopSdkWorker(effectiveKey)
     await releaseSession(live)
     broadcastSdkSessionStatus()
   } else {
@@ -2013,6 +2085,7 @@ export async function switchSdkSessionModel(
 /** 显式重置会话上下文（/reset）：停掉在跑的 run、丢弃 resume 映射，下条消息全新会话 */
 export function resetSdkSessionContext(sessionKey: string): void {
   sessionResetGen.set(sessionKey, (sessionResetGen.get(sessionKey) ?? 0) + 1)
+  void import("./sdk-session-worker.js").then(({ stopSdkWorker }) => stopSdkWorker(sessionKey))
   const live = sdkSessions.get(sessionKey)
   if (live) void releaseSession(live)
   forgetResumable(sessionKey)
@@ -2024,14 +2097,18 @@ export function resetSdkSessionContext(sessionKey: string): void {
  */
 export function stopAllSdkSessions(): Promise<void> {
   pendingLaunches.clear()
-  const sessions = [...sdkSessions.values()]
-  for (const s of sessions) s.abortController.abort()
-  broadcastSdkSessionStatus()
-  const releases = sessions.map(async (s) => {
-    void sealStreamCardForStop(s).catch(() => {})
-    await releaseSession(s)
-  })
-  return Promise.all(releases).then(() => {})
+  return import("./sdk-session-worker.js").then(({ stopAllSdkWorkers }) =>
+    stopAllSdkWorkers().then(() => {
+      const sessions = [...sdkSessions.values()]
+      for (const s of sessions) s.abortController.abort()
+      broadcastSdkSessionStatus()
+      const releases = sessions.map(async (s) => {
+        void sealStreamCardForStop(s).catch(() => {})
+        await releaseSession(s)
+      })
+      return Promise.all(releases).then(() => {})
+    }),
+  )
 }
 
 export async function checkSdkApiKey(apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }> {

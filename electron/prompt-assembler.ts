@@ -234,6 +234,24 @@ export function assembleWakePrompt(
   return lines.join("\n")
 }
 
+/** SDK Session Worker：宿主代管 poll，首轮冷启动附带宿主协议块 */
+export function assembleSdkWorkerTurnPrompt(
+  messages: TurnMessage[],
+  ctx: PromptAssemblyContext,
+  opts?: { firstTurn?: boolean; taskMessage?: string; coldStart?: boolean },
+): string {
+  const chunks: string[] = []
+  if (opts?.coldStart) {
+    chunks.push(...assembleLlmHostProtocolBlocks(ctx))
+    chunks.push("---")
+  }
+  chunks.push(assembleTurnPrompt(messages, ctx, {
+    firstTurn: opts?.firstTurn,
+    taskMessage: opts?.taskMessage,
+  }))
+  return chunks.join("\n")
+}
+
 /** Session Worker 向 Pi 交付一批用户消息（无 poll 指令） */
 export function assembleTurnPrompt(
   messages: TurnMessage[],
