@@ -36,6 +36,7 @@ import {
   type StreamPollPhaseState,
   enqueueTool,
   enqueueThinking,
+  enqueueReply,
   endStreamRound,
   flushStreamCard,
   handleStreamPollPhaseEvent,
@@ -299,6 +300,11 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
     } else if (ev.type === "text_delta" && ev.delta) {
       if (isStartupNotifyDelta(ev.delta)) return
       appendLlmLog(session, "text", ev.delta)
+      if (stream && !stream.finished && !isStreamSilenced(session)) {
+        stream.gateOpen = true
+        enqueueReply(stream, ev.delta)
+        scheduleFlushStreamCard(session, true)
+      }
     }
     return
   }
@@ -348,7 +354,21 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
     if (!stream || stream.finished) return
     sealAllThinking(stream)
     sealRunningTools(stream)
-    void flushStreamCard(session, true)
+    stream.dirty = true
+    scheduleFlushStreamCard(session, true)
+  }
+}
+
+function openStreamForTurn(session: LlmSession): void {
+  // Worker 用 fetch poll，SSE poll-phase 可能晚于本回合；先本地开门，避免 text_delta 被静默
+  session.pollPhase.blocking = false
+  session.pollPhase.nonBlocking = false
+  if (isFeishuStreamEnabled(session.sessionKey)) {
+    if (!session.streamAgg || session.streamAgg.finished) {
+      session.streamAgg = newStreamAgg(true)
+    } else {
+      session.streamAgg.gateOpen = true
+    }
   }
 }
 
@@ -360,13 +380,17 @@ function beginLlmTurn(session: LlmSession): void {
 async function sealLlmStream(session: LlmSession): Promise<void> {
   flushLlmLog(session)
   const agg = session.streamAgg
-  if (!agg || agg.finished) return
-  sealAllThinking(agg)
-  sealRunningTools(agg)
-  await flushStreamCard(session, true)
+  if (!agg) return
+  if (!agg.finished) {
+    sealAllThinking(agg)
+    sealRunningTools(agg)
+    await flushStreamCard(session, true)
+  }
+  await agg.inflight.catch(() => undefined)
 }
 
 export async function executeLlmPiTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
+  openStreamForTurn(session)
   return runPiAgentTurn(session, prompt)
 }
 
@@ -448,8 +472,12 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   }
   const agentErr = session.piSession.state.errorMessage?.trim()
   if (agentErr) return { ok: false, error: agentErr }
-  const replyText = extractAssistantTextSince(session.piSession, msgBefore)
-  return { ok: true, replyText }
+  await sealLlmStream(session)
+  if (!isFeishuStreamEnabled(session.sessionKey)) {
+    const replyText = extractAssistantTextSince(session.piSession, msgBefore)
+    return { ok: true, replyText: replyText || undefined }
+  }
+  return { ok: true }
 }
 
 export function isLlmSessionRunning(sessionKey: string): boolean {
@@ -472,6 +500,18 @@ export function handleLlmPollPhaseEvent(
 ): void {
   const session = llmSessions.get(sessionKey)
   if (!session) return
+  if (phase === "end" && payload.messageIds?.length) {
+    void import("./llm-session-worker.js").then(({ getLlmWorkerPhase }) => {
+      if (getLlmWorkerPhase(sessionKey) !== "processing") {
+        handleStreamPollPhaseEvent(session, phase, payload)
+        return
+      }
+      session.pollPhase.blocking = false
+      session.pollPhase.nonBlocking = false
+      if (session.streamAgg && !session.streamAgg.finished) session.streamAgg.gateOpen = true
+    }).catch(() => handleStreamPollPhaseEvent(session, phase, payload))
+    return
+  }
   handleStreamPollPhaseEvent(session, phase, payload)
 }
 

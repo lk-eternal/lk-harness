@@ -23,10 +23,12 @@ function normalizeServerEntry(cfg: Record<string, unknown>): PiMcpServerEntry {
   return entry
 }
 
-/** LLM host mode: no lk-harness outbound MCP (harness delivers assistant text) */
+/** LLM ???lk-harness MCP ? /mcp-llm-host?? send_text??? send_question? */
 export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
   const raw = { ...buildSdkMcpServers(port, includeAdmin) }
-  delete raw[CLAW_MCP_KEY]
+  if (port != null && port > 0 && raw[CLAW_MCP_KEY]) {
+    raw[CLAW_MCP_KEY] = { url: `http://127.0.0.1:${port}/mcp-llm-host` }
+  }
   const mcpServers: Record<string, PiMcpServerEntry> = {}
   for (const [name, cfg] of Object.entries(raw)) {
     mcpServers[name] = normalizeServerEntry(cfg)

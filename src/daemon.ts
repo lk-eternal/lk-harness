@@ -625,7 +625,7 @@ function terminateSession(sessionKey: string): void {
     for (const r of conns) { try { r.destroy(); } catch {} }
     activePollConnections.delete(sessionKey);
   }
-  sessionAgentRuntime.delete(sessionKey);
+  // sessionAgentRuntime 随 session-launched 登记、跨 poll 连接存活；此处勿删（否则 LLM 流式卡 finish 认不出 runtime → 不 touch → 黑洞重投）
 }
 
 function terminateSessionsByChat(chatId: string): void {
@@ -1681,7 +1681,17 @@ function payloadFingerprint(payload: AgentStreamCardPayload, finish: boolean): s
   return hashStreamPart(JSON.stringify({ segments: payload.segments, finish }));
 }
 
+function getSessionRuntime(sessionKey: string): SessionAgentRuntime | undefined {
+  const sk = normalizeSessionKey(sessionKey) || sessionKey;
+  return sessionAgentRuntime.get(sk);
+}
+
 /** SDK 侧 reply → 思考；空段丢弃；工具相邻合并（思考保持独立块，不吞旧块）；todos 原样保留 */
+function prepareStreamSegments(sessionKey: string, segments: AgentStreamSegment[]): AgentStreamSegment[] {
+  if (getSessionRuntime(sessionKey) === "llm") return coalesceTimeline(segments);
+  return foldSdkRepliesIntoThinking(segments);
+}
+
 function foldSdkRepliesIntoThinking(segments: AgentStreamSegment[]): AgentStreamSegment[] {
   const out: AgentStreamSegment[] = [];
   for (const seg of segments) {
@@ -1741,10 +1751,10 @@ function coalesceTimeline(segments: AgentStreamSegment[]): AgentStreamSegment[] 
 }
 
 /** send_* 入队正文：插到当前时间线末尾（避免 SDK 未 flush 时 insertAt=0 导致正文跑到思考前） */
-function enqueueMcpBody(state: AgentStreamCardState, text: string): void {
+function enqueueMcpBody(sessionKey: string, state: AgentStreamCardState, text: string): void {
   const t = text.trim();
   if (!t) return;
-  const insertAt = foldSdkRepliesIntoThinking(state.lastSegments).length;
+  const insertAt = prepareStreamSegments(sessionKey, state.lastSegments).length;
   const last = state.mcpReplies[state.mcpReplies.length - 1];
   // 连续 send：合并到同一插入点
   if (last && last.insertAt >= insertAt) {
@@ -1755,8 +1765,8 @@ function enqueueMcpBody(state: AgentStreamCardState, text: string): void {
   state.mcpReplies.push({ text: t, insertAt });
 }
 
-function overlayMcpOnPayload(state: AgentStreamCardState, sdkSegments: AgentStreamSegment[]): AgentStreamSegment[] {
-  const segs = foldSdkRepliesIntoThinking(sdkSegments);
+function overlayMcpOnPayload(sessionKey: string, state: AgentStreamCardState, sdkSegments: AgentStreamSegment[]): AgentStreamSegment[] {
+  const segs = prepareStreamSegments(sessionKey, sdkSegments);
   const injections = [...state.mcpReplies].sort((a, b) => a.insertAt - b.insertAt);
   let offset = 0;
   for (const item of injections) {
@@ -1782,7 +1792,7 @@ async function refreshAgentStreamCard(
     if (!state.expandedPanelIds) state.expandedPanelIds = new Set();
     if (state.panelSeq == null) state.panelSeq = 0;
     ensureSegmentPanelIds(state, state.lastSegments);
-    const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(state, state.lastSegments) };
+    const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(sessionKey, state, state.lastSegments) };
     ensureSegmentPanelIds(state, merged.segments, state.lastSegments);
     const q = state.pendingQuestion;
     let closedReply: string | undefined;
@@ -1830,7 +1840,14 @@ async function refreshAgentStreamCard(
     }
     state.sequence += 1;
     const ok = await sender.updateStreamingCard(state.cardId, cardJson, state.sequence);
-    if (ok) state.lastHash = payloadFingerprint(merged, opts.finish);
+    if (ok) {
+      state.lastHash = payloadFingerprint(merged, opts.finish);
+      const sk = normalizeSessionKey(sessionKey) || sessionKey;
+      if (getSessionRuntime(sessionKey) === "llm") {
+        const hasReply = merged.segments.some((s) => s.type === "reply" && s.text.trim());
+        if (hasReply || opts.finish) touchSessionLastReply(sk);
+      }
+    }
     return ok;
   };
   const next = state.inflight.then(run, run);
@@ -1921,7 +1938,7 @@ async function ensureAgentStreamCard(
     // mcpBody 语义 = 「确保这段正文落卡」：SDK 竞态先建卡时正文必须并入已有卡，
     // 绝不能静默丢弃（曾导致回复被吞：Agent 报成功但用户看不到正文）
     if (body && !existing.pendingQuestion) {
-      enqueueMcpBody(existing, body);
+      enqueueMcpBody(sessionKey, existing, body);
       const merged = await refreshAgentStreamCard(sessionKey, existing, ch, { finish: false });
       return { ok: true, cardId: existing.cardId, messageId: existing.messageId, bodyMerged: merged };
     }
@@ -1936,7 +1953,7 @@ async function ensureAgentStreamCard(
   const mcpReplies: Array<{ text: string; insertAt: number }> = mcpBody?.trim()
     ? [{ text: mcpBody.trim(), insertAt: 0 }]
     : [];
-  const folded: AgentStreamCardPayload = { segments: foldSdkRepliesIntoThinking(payload.segments) };
+  const folded: AgentStreamCardPayload = { segments: prepareStreamSegments(sessionKey, payload.segments) };
   if (mcpReplies.length) folded.segments = [...folded.segments, { type: "reply", text: mcpReplies[0].text }];
   const panelBoot: StreamPanelState = { panelSeq: 0, knownPanelIds: new Set(), expandedPanelIds: new Set() };
   ensureSegmentPanelIds(panelBoot, folded.segments);
@@ -2010,7 +2027,7 @@ async function updateAgentStreamCard(
     return { ok: true, cardId: state.cardId, messageId: state.messageId };
   }
   if (!state.mcpReplies.length) {
-    const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(state, state.lastSegments) };
+    const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(sessionKey, state, state.lastSegments) };
     const fp = payloadFingerprint(merged, false);
     if (fp === state.lastHash) {
       return { ok: true, cardId: state.cardId, messageId: state.messageId };
@@ -2112,7 +2129,7 @@ function sealActiveStreamCardOnDelivery(sessionKey: string): Promise<void> {
     if (q) {
       state.pendingQuestion = undefined;
       if (q.text.trim()) {
-        enqueueMcpBody(state, q.text.trim());
+        enqueueMcpBody(sessionKey, state, q.text.trim());
         state.closedFooter = closedQuestionFooter(q.text, "已有新消息，问题已关闭");
       } else {
         state.closedFooter = "⌛ _已有新消息，问题已关闭_";
@@ -2256,7 +2273,7 @@ async function sealQuestionCardByMessageId(messageId: string, entry: CardQuestio
     markCardSealed(sk);
     const qText = (state.pendingQuestion?.text ?? entry.displayBody ?? entry.text ?? "").trim();
     state.pendingQuestion = undefined;
-    if (qText) enqueueMcpBody(state, qText);
+    if (qText) enqueueMcpBody(sk, state, qText);
     state.closedFooter = closedQuestionFooter(qText, note);
     const sch = resolveChannel(sk, { allowDefault: false });
     if (sch.type !== "feishu") return false;
@@ -2466,7 +2483,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         const qText = (state.pendingQuestion?.text ?? entry?.displayBody ?? entry?.text ?? "").trim();
         state.pendingQuestion = undefined;
         state.closedFooter = `✅ 已选择: **${opt}**`;
-        const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(state, state.lastSegments) };
+        const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(sk, state, state.lastSegments) };
         ensureSegmentPanelIds(state, merged.segments, state.lastSegments);
         const chCfg = channels.get(state.channelId)?.cfg;
         const cardSegs = buildCardSegmentsFromPayload(merged, {
@@ -3037,32 +3054,32 @@ function localDaemonUrl(p: string): string {
   return `http://127.0.0.1:${daemonPort}${p}`;
 }
 
-function createMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通" });
-
-  s.tool(
-    "send_text",
-    "发送文本消息到飞书/微信。飞书群聊中 @ 其他成员或机器人：在 text 中使用 `<at user_id=\"ou_xxx\">名字</at>`（open_id 从收到消息的 @名字(open_id=ou_xxx) 内联标注获取）。",
-    {
-      text: z.string().describe("要发送的消息内容"),
-      message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
-      session_key: z.string().optional().describe("目标会话的 sessionKey，用于精确投递"),
-    },
-    async ({ text, message_id, session_key }) => {
-      try {
-        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key });
-        if (!r?.ok) {
-          const detail = r?.error?.trim() || "消息发送失败";
-          log("WARN", `send_text 发送失败: message_id=${message_id} error=${detail.slice(0, 160)}`);
-          return { content: [{ type: "text" as const, text: `[send_failed] ${detail}` }] };
+function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean }): void {
+  if (opts?.sendText !== false) {
+    s.tool(
+      "send_text",
+      "发送文本消息到飞书/微信。飞书群聊中 @ 其他成员或机器人：在 text 中使用 `<at user_id=\"ou_xxx\">名字</at>`（open_id 从收到消息的 @名字(open_id=ou_xxx) 内联标注获取）。",
+      {
+        text: z.string().describe("要发送的消息内容"),
+        message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
+        session_key: z.string().optional().describe("目标会话的 sessionKey，用于精确投递"),
+      },
+      async ({ text, message_id, session_key }) => {
+        try {
+          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key });
+          if (!r?.ok) {
+            const detail = r?.error?.trim() || "消息发送失败";
+            log("WARN", `send_text 发送失败: message_id=${message_id} error=${detail.slice(0, 160)}`);
+            return { content: [{ type: "text" as const, text: `[send_failed] ${detail}` }] };
+          }
+          return { content: [{ type: "text" as const, text: "消息已发送" }] };
+        } catch (e: any) {
+          log("ERROR", `send_text 异常: ${e?.message ?? e}`);
+          return { content: [{ type: "text" as const, text: `[error] ${e?.message ?? "unknown error"}` }] };
         }
-        return { content: [{ type: "text" as const, text: "消息已发送" }] };
-      } catch (e: any) {
-        log("ERROR", `send_text 异常: ${e?.message ?? e}`);
-        return { content: [{ type: "text" as const, text: `[error] ${e?.message ?? "unknown error"}` }] };
-      }
-    },
-  );
+      },
+    );
+  }
 
   s.tool(
     "send_image",
@@ -3125,6 +3142,18 @@ function createMcpServer(): McpServer {
     },
   );
   registerProjectAgentTools(s);
+}
+
+function createMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通" });
+  registerAgentOutboundTools(s, { sendText: true });
+  return s;
+}
+
+/** LLM 宿主模式：无 send_text，保留 send_question / 媒体 / 项目工具 */
+function createLlmHostMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-llm-host", version: PKG_VERSION, description: "LLM 宿主出站 – 提问/媒体/项目" });
+  registerAgentOutboundTools(s, { sendText: false });
   return s;
 }
 
@@ -3142,14 +3171,15 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp" || pathname === "/mcp-admin") {
+        if (pathname === "/mcp" || pathname === "/mcp-admin" || pathname === "/mcp-llm-host") {
           const isAgent = pathname === "/mcp";
-          const srv = isAgent ? createMcpServer() : createAdminMcpServer();
+          const isLlmHost = pathname === "/mcp-llm-host";
+          const srv = isLlmHost ? createLlmHostMcpServer() : isAgent ? createMcpServer() : createAdminMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          if (isAgent) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
+          if (isAgent || isLlmHost) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
           res.on("close", () => {
             transport.close(); srv.close();
-            if (isAgent) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
+            if (isAgent || isLlmHost) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
           await transport.handleRequest(req, res);
@@ -4172,7 +4202,8 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: false, error: "session_key and action required" }, 400);
       return true;
     }
-    const ch = resolveChannel(session_key, { allowDefault: false });
+    const sk = normalizeSessionKey(session_key) || session_key;
+    const ch = resolveChannel(sk, { allowDefault: false });
     if (ch.type === "error") {
       json(res, { ok: false, error: ch.message }, 400);
       return true;
@@ -4188,21 +4219,21 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const payload = normalizeAgentStreamPayload({ segments });
     try {
       // 整段入全序链：gone 判定与 ensure/update/finish 动作同一临界区
-      const result = await enqueueCardOp(session_key, async () => {
+      const result = await enqueueCardOp(sk, async () => {
         // 旧回合队列（诞生早于最近收口）拒绝重建副本卡；收口后诞生的新队列正常放行
         if ((action === "ensure" || action === "update")
-          && !agentStreamCards.has(session_key)
-          && isStaleQueue(session_key, queue_born_at)) {
-          const sealAt = sessionCardSealAt.get(session_key);
-          log("INFO", `[StreamCard] ${action} 旧回合队列已随收口作废 session=${session_key} bornAt=${queue_born_at ?? "none"} sealAt=${sealAt ?? "none"} deltaMs=${queue_born_at != null && sealAt != null ? queue_born_at - sealAt : "?"}`);
+          && !agentStreamCards.has(sk)
+          && isStaleQueue(sk, queue_born_at)) {
+          const sealAt = sessionCardSealAt.get(sk);
+          log("INFO", `[StreamCard] ${action} 旧回合队列已随收口作废 session=${sk} bornAt=${queue_born_at ?? "none"} sealAt=${sealAt ?? "none"} deltaMs=${queue_born_at != null && sealAt != null ? queue_born_at - sealAt : "?"}`);
           return { ok: true, gone: true };
         }
         return action === "ensure"
-          ? ensureAgentStreamCard(session_key, payload, ch)
+          ? ensureAgentStreamCard(sk, payload, ch)
           : action === "update"
-            ? updateAgentStreamCard(session_key, payload, ch, card_id)
+            ? updateAgentStreamCard(sk, payload, ch, card_id)
             : action === "finish"
-              ? finishAgentStreamCard(session_key, payload, ch, card_id)
+              ? finishAgentStreamCard(sk, payload, ch, card_id)
               : { ok: false, error: `unknown action: ${action}` };
       });
       json(res, result, result.ok || (result as { skipped?: boolean }).skipped ? 200 : 500);

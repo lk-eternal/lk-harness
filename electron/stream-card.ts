@@ -160,6 +160,21 @@ export function enqueueThinking(stream: StreamAgg, text: string): void {
   stream.dirty = true
 }
 
+/** 入队正文：与上一块 reply 合并，否则新开 */
+export function enqueueReply(stream: StreamAgg, text: string): void {
+  if (!text) return
+  dropEmptyTail(stream)
+  sealLastThinking(stream)
+  const last = stream.segments[stream.segments.length - 1]
+  if (last?.type === "reply") {
+    last.text += text
+    stream.dirty = true
+    return
+  }
+  stream.segments.push({ type: "reply", text })
+  stream.dirty = true
+}
+
 function summarizeToolArgs(args: unknown): string {
   if (!args || typeof args !== "object") return ""
   const rec = args as Record<string, unknown>
@@ -367,8 +382,8 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
       })
     } else if (seg.type === "reply") {
       const text = seg.text.trim()
-      if (!text || !showThinking) continue
-      segments.push({ type: "thinking", text: text.length > STREAM_THINKING_TAIL ? "…" + text.slice(-STREAM_THINKING_TAIL) : text })
+      if (!text) continue
+      segments.push({ type: "reply", text })
     }
   }
   return { segments }

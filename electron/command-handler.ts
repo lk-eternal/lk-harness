@@ -7,6 +7,8 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import { broadcastLog } from "./ui-logger"
 import { applyProxyEnv, execAgentSync } from "./agent-cli"
 import { listSdkModels, switchSdkSessionModel, getSdkSessionList, hasResumableSdkSession, isSdkSessionRunning } from "./agent-sdk"
+import { getAgentEngine, usesLlmRuntime } from "./agent-engine/factory"
+import { switchLlmSessionModel, getLlmSessionList, isLlmSessionRunning, hasPersistedLlmSession } from "./agent-llm"
 import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/shared/session-model-store.js"
 import { resolveModelLabel, rememberModelLabel } from "../src/shared/model-utils.js"
 import { McpServerEntry, getMcpServerList, getMcpEnabledMap, toggleMcpServer, deleteMcpServer, saveMcpServer } from "./mcp-manager"
@@ -87,12 +89,20 @@ export function parseListModelsStdout(out: string): ListedModel[] {
   return models
 }
 
-async function listCursorModelsForCommands(channel?: MessageChannel): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
-  const resource = getAgentResource(channel?.agentResourceId)
+async function listModelsForCommands(channel: MessageChannel): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
+  const resource = getAgentResource(channel.agentResourceId)
+  if (!resource) return { ok: false, error: "未配置 Agent 资源" }
   if (resource.type === "sdk") {
-    const r = await listSdkModels(resource.apiKey ?? "", channel?.model, channel?.modelParams)
+    const r = await listSdkModels(resource.apiKey ?? "", channel.model, channel.modelParams)
     if (!r.ok) return { ok: false, error: r.error || "获取模型列表失败" }
     return { ok: true, models: r.models }
+  }
+  if (usesLlmRuntime(resource)) {
+    const r = await getAgentEngine(resource).listModels?.(resource, channel, channel.model, channel.modelParams)
+    if (!r?.ok) return { ok: false, error: r?.error || "获取模型列表失败" }
+    const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current }))
+    if (models.length === 0) return { ok: false, error: "暂无可用模型（请检查 Base URL 与 API Key）" }
+    return { ok: true, models }
   }
   const config = getConfig()
   const env: Record<string, string> = { ...process.env as Record<string, string>, NODE_USE_ENV_PROXY: "1" }
@@ -122,8 +132,10 @@ async function resolveModelSessionKey(port: number, chatId?: string, channel?: M
   // 活跃路由优先：用户在项目/目录会话里切模型，必须落在正聊的那个会话上
   const active = await getCurrentActiveSession(port, chatId)
   if (active?.trim()) return active
-  const live = getSdkSessionList().find((s) => s.sessionKey === chatId || s.sessionKey.startsWith(chatId + "::"))
-  if (live) return live.sessionKey
+  const liveSdk = getSdkSessionList().find((s) => s.sessionKey === chatId || s.sessionKey.startsWith(chatId + "::"))
+  if (liveSdk) return liveSdk.sessionKey
+  const liveLlm = getLlmSessionList().find((s) => s.sessionKey === chatId || s.sessionKey.startsWith(chatId + "::"))
+  if (liveLlm) return liveLlm.sessionKey
   const ws = effectiveWorkspaceDir(channel)
   return ws ? `${chatId}::${ws}` : chatId
 }
@@ -142,7 +154,10 @@ async function applySessionModelPick(
     await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
     return
   }
-  const r = await switchSdkSessionModel(sessionKey, picked.id, picked.params ?? "")
+  const resource = getAgentResource(channel.agentResourceId)
+  const r = resource && usesLlmRuntime(resource)
+    ? await switchLlmSessionModel(sessionKey, picked.id, picked.params ?? "")
+    : await switchSdkSessionModel(sessionKey, picked.id, picked.params ?? "")
   if (!r.ok) {
     await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
     return
@@ -201,7 +216,8 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     const lines: string[] = [
       `📝 「${channel.name}」默认模型: ${cfgDisplay}`,
       ovDisplay ? `当前对话模型: ${ovDisplay}` : "当前对话模型: （同默认）",
-      sessionKey && (isSdkSessionRunning(sessionKey) || hasResumableSdkSession(sessionKey))
+      sessionKey && (isSdkSessionRunning(sessionKey) || hasResumableSdkSession(sessionKey)
+        || isLlmSessionRunning(sessionKey) || hasPersistedLlmSession(sessionKey))
         ? "状态: 进行中"
         : "状态: 空闲（切换模型将在下次对话生效）",
     ]
@@ -212,7 +228,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (sub === "ls") {
-    const lr = await listCursorModelsForCommands(channel)
+    const lr = await listModelsForCommands(channel)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
       return
@@ -257,7 +273,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       await applySessionModelPick(port, messageId, channel, chatId, picked, `q${qi}`, patchMessageId)
       return
     }
-    const lr = await listCursorModelsForCommands(channel)
+    const lr = await listModelsForCommands(channel)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
       return

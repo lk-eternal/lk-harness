@@ -1,31 +1,41 @@
 ---
-description: LK Harness LLM 宿主模式协议 - 消息由宿主 poll 交付，Agent 仅负责处理与 send
+description: LK Harness LLM 宿主模式协议
 alwaysApply: true
 ---
 
-# LLM 宿主模式通信协议
+# LLM 宿主模式
 
 ## 适用范围
 
-本协议**仅**对 lk-harness 调度启动的 LLM(Pi) 会话生效。判定标准：Prompt / 会话上下文中携带 `[session_key=...]`。
+有 `[session_key=...]` 时生效；无则作废（IDE 会话勿调 lk-harness MCP）。
 
-- **有 `[session_key=...]`**：后台会话，严格遵守本协议。
-- **无 `[session_key=...]`**：IDE 人工会话——本规则作废；严禁调用 lk-harness MCP 向飞书/微信发消息。
+宿主负责 poll 与保活。勿自行 poll-message。
 
-> 宿主（harness）负责 poll、confirm 与保活。**你不需要、也不允许**自行调用 poll-message 或 bash curl 拉取消息。
+## 入站
 
-## 入站消息
+用户消息由宿主在 prompt 中交付（含 `[message_id=...]`）。
 
-用户消息由宿主通过 prompt 交付，格式含 `[message_id=...]` 与正文。收到后必须处理并回复。
+## 文本回复
 
-## 出站回复
+以 **assistant 正文**（`text_delta`）输出，原样进入流式卡 reply 段，由卡片投递给用户。
 
-**直接以 assistant 正文输出回复**，宿主会自动发送给用户。
+## 提问选择：`send_question`
 
-- **禁止**调用 `send_text` / `send_question` 等 outbound MCP（LLM 路径未注入这些工具）
-- 回复应完整、可直接呈现给用户
-- 需要用户做选择时，用正文列出选项即可
+需要用户点选时用 `send_question`（`session_key` 必填）。
 
-## 进度同步
+| 参数 | 必填 |
+|------|------|
+| `text` | 是 |
+| `options` | 是（1-10 个） |
+| `session_key` | 是 |
+| `message_id` | 否 |
 
-长耗时任务可在正文中分段输出进度；宿主在回合结束后将 assistant 正文一次性发送给用户。
+## 媒体
+
+图片/文件仍用 `send_image` / `send_file`。
+
+## 回复规则
+
+- 每条用户消息都要有回应
+- 多条合并回复时，宿主绑定最新 `message_id`
+- 禁止告别语

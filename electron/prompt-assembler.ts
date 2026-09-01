@@ -242,19 +242,12 @@ export function assembleTurnPrompt(
 ): string {
   const lines: string[] = []
   if (opts?.taskMessage?.trim()) {
-    lines.push(
-      "[宿主交付 / 任务]",
-      "以下是待执行的任务内容，完成后以 assistant 正文输出结果（宿主代发）。",
-      "---",
-      opts.taskMessage.trim(),
-      "---",
-    )
+    lines.push("[宿主交付 / 任务]", opts.taskMessage.trim(), "---")
   } else if (opts?.firstTurn) {
-    lines.push("[宿主交付] 以下是待处理的用户消息，请逐条理解并以 assistant 正文回复（宿主代发，勿调 send 工具）。")
+    lines.push("[宿主交付] 待处理消息：")
   } else {
-    lines.push("[宿主交付] 以下是新到达的用户消息，请处理并以 assistant 正文回复。")
+    lines.push("[宿主交付] 新消息：")
   }
-  lines.push("禁止向用户发送问候、唤醒说明等任何多余消息。")
   lines.push("---")
   for (const m of messages) {
     if (m.messageId) lines.push(`[message_id=${m.messageId}]`)

@@ -153,20 +153,18 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         break
       }
 
+      // 微信等非流式通道：卡片跳过时仍走文本投递
       const replyText = turnResult.replyText?.trim()
       if (replyText) {
         const replyToId = deliverable.map((m) => m.messageId).filter(Boolean).pop()
         try {
           await hostSendText(replyText, sessionKey, replyToId)
-          pushUiLog("LLM", "INFO", `[${sessionKey}] 宿主代发回复 (${replyText.length} 字)`)
         } catch (e: unknown) {
           errored = true
           errorDetail = e instanceof Error ? e.message : String(e)
-          pushUiLog("LLM", "ERROR", `[${sessionKey}] 宿主代发失败: ${errorDetail}`)
+          pushUiLog("LLM", "ERROR", `[${sessionKey}] 非流式通道投递失败: ${errorDetail}`)
           break
         }
-      } else {
-        pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合无 assistant 正文，跳过代发`)
       }
     }
   } catch (e: unknown) {
