@@ -83,6 +83,30 @@ async function notifyChat(sessionKey: string, text: string): Promise<void> {
 // ── 内部工具（CLI 与 SDK 双运行时并存）────────────────────
 
 const launchReserved = new Set<string>()
+/** 用户主动 /stop 或 UI 停止：仅 .claimed 重投时不自动拉起，直到有新 .qmsg */
+const userStoppedSessions = new Set<string>()
+
+function userStopKey(sessionKey: string): string {
+  return process.platform === "win32" ? sessionKey.toLowerCase() : sessionKey
+}
+
+function markUserStoppedSession(sessionKey: string): void {
+  userStoppedSessions.add(userStopKey(sessionKey))
+  const chatId = extractChatId(sessionKey)
+  for (const s of [...getSdkSessionList(), ...getLlmSessionList()]) {
+    const k = s.sessionKey
+    if (k === sessionKey || k.startsWith(`${chatId}::`)) userStoppedSessions.add(userStopKey(k))
+  }
+}
+
+function clearUserStoppedIfPending(sessionKey: string, hasPending: boolean): boolean {
+  const key = userStopKey(sessionKey)
+  if (hasPending) {
+    userStoppedSessions.delete(key)
+    return false
+  }
+  return userStoppedSessions.has(key)
+}
 
 function tryReserveLaunch(sessionKey: string): boolean {
   if (isSessionAgentRunningInner(sessionKey)) return false
@@ -107,12 +131,15 @@ export function isSessionAgentRunning(key: string): boolean {
 }
 
 export async function stopSessionAgent(key: string): Promise<void> {
+  markUserStoppedSession(key)
   await stopLlmSession(key)
   await stopSdkSession(key)
   if (_isCliSessionRunning(key)) _stopCliSession(key)
 }
 
 export async function stopAllSessionAgents(): Promise<void> {
+  for (const s of getSdkSessionList()) markUserStoppedSession(s.sessionKey)
+  for (const s of getLlmSessionList()) markUserStoppedSession(s.sessionKey)
   await stopAllLlmSessions()
   await stopAllSdkSessions()
   _stopAllCliSessions()
@@ -1350,6 +1377,8 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
   if (groupKeys.length > 0 && feishuOn) await fetchChatNames(groupKeys)
 
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
+    // 用户主动停止后：队列只剩 .claimed 重投时不自动拉起，避免 /stop 立刻被 dispatch 顶回来
+    if (clearUserStoppedIfPending(sessionKey, !!hasPending)) continue
     // 有新 .qmsg 时无视失败冷却（手动重触发/新消息应立刻拉起）；仅 .claimed 重投仍遵守退避
     if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
     if (sessionLaunchBusy(sessionKey)) {

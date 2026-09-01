@@ -104,8 +104,7 @@ function getSessionAgentCount(): number {
 
 async function stopAgent(): Promise<void> {
   const timeout = new Promise<void>((r) => setTimeout(r, 12_000))
-  await Promise.race([Promise.all([stopAllSdkSessions(), stopAllLlmSessions()]), timeout])
-  _stopCliAgent()
+  await Promise.race([stopAllSessionAgents(), timeout])
 }
 
 function getIndependentTaskStatuses(): Record<string, { running: boolean; pid?: number; startedAt?: number }> {

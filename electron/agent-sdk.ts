@@ -1356,6 +1356,7 @@ async function streamRunEvents(session: SdkSessionAgent, run: Run): Promise<void
       pushUiLog("SDK", "ERROR", `[${session.sessionKey}] 流处理异常: ${msg}${stack ? ` stack=${stack}` : ""}${cause ? ` cause=${cause}` : ""}`)
     }
   } finally {
+    if (session.abortController.signal.aborted) return
     // run 结束：落最终内容并关闭 streaming_mode（飞书 CardKit）
     // 全程无 thinking/tool/text 则不建空卡
     try {
@@ -1397,6 +1398,7 @@ function summarizeToolArgs(args: unknown): string {
 }
 
 function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
+  if (session.abortController.signal.aborted) return
   const stream = session.streamAgg
   switch (event.type) {
     case "assistant":
@@ -1604,6 +1606,13 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): void {
 
   streamRunEvents(session, run).then(async () => {
     const sessionKey = session.sessionKey
+    if (session.abortController.signal.aborted) {
+      session.run = null
+      sdkSessions.delete(sessionKey)
+      broadcastSdkSessionStatus()
+      pushUiLog("SDK", "INFO", `[${sessionKey}] Agent 已中止（用户停止或 daemon 关闭）`)
+      return
+    }
     let errorDetail: string | undefined
     let networkFail = false
     let permanentFail = false
@@ -1939,10 +1948,10 @@ async function sealStreamCardForStop(session: SdkSessionAgent): Promise<void> {
   } catch { /* best-effort */ }
 }
 
-/** 停止并释放会话：先等 cancel 把 run 落为终态再关进程（直接 close 会残留 active run，拖垮下次 Resume） */
+/** 停止并释放会话：先 abort 再 cancel（工具执行中 cancel 可能延迟，但不再调度/刷卡） */
 function releaseSession(s: SdkSessionAgent): Promise<void> {
-  // 残留的 poll 连接无需专门收口：新回合的任意 poll 会顶掉它，claimed 消息下次 poll 重新可见
   s.abortController.abort()
+  s.run = null
   if (s.streamAgg?.timer) {
     clearTimeout(s.streamAgg.timer)
     s.streamAgg.timer = null
@@ -1953,7 +1962,7 @@ function releaseSession(s: SdkSessionAgent): Promise<void> {
     try { agent.close() } catch { /* best-effort */ }
     return Promise.resolve()
   }
-  const timeout = new Promise<void>((r) => setTimeout(r, 5000))
+  const timeout = new Promise<void>((r) => setTimeout(r, 2000))
   return Promise.race([run.cancel().catch(() => {}), timeout]).then(() => {
     try { agent.close() } catch { /* best-effort */ }
   })
@@ -1961,10 +1970,13 @@ function releaseSession(s: SdkSessionAgent): Promise<void> {
 
 /** 停止会话进程（保留 resume 映射，下条消息仍可续上下文；清上下文用 resetSdkSessionContext） */
 export async function stopSdkSession(sessionKey: string): Promise<void> {
+  for (const k of [...pendingLaunches]) {
+    if (sessionKeyEquals(k, sessionKey)) pendingLaunches.delete(k)
+  }
   const s = findSdkSessionLoose(sessionKey)
   if (!s) return
-  pushUiLog("SDK", "INFO", `[${s.sessionKey}] 会话已停止（队列有未回复消息时将自动重新拉起）`)
-  await sealStreamCardForStop(s)
+  pushUiLog("SDK", "INFO", `[${s.sessionKey}] 会话已停止`)
+  void sealStreamCardForStop(s).catch(() => {})
   await releaseSession(s)
   broadcastSdkSessionStatus()
 }
@@ -2011,13 +2023,14 @@ export function resetSdkSessionContext(sessionKey: string): void {
  * 返回的 Promise 在所有 run 取消落库（或超时）后 resolve——退出前 await 可避免残留 active run。
  */
 export function stopAllSdkSessions(): Promise<void> {
-  const sessions = [...sdkSessions.values()]
   pendingLaunches.clear()
+  const sessions = [...sdkSessions.values()]
+  for (const s of sessions) s.abortController.abort()
+  broadcastSdkSessionStatus()
   const releases = sessions.map(async (s) => {
-    await sealStreamCardForStop(s)
+    void sealStreamCardForStop(s).catch(() => {})
     await releaseSession(s)
   })
-  broadcastSdkSessionStatus()
   return Promise.all(releases).then(() => {})
 }
 
