@@ -25,7 +25,46 @@ interface WorkerState {
 
 const workers = new Map<string, WorkerState>()
 
-const TURN_IDLE_TIMEOUT_MS = 5 * 60_000
+/** 无 Pi 事件（thinking/tool/text）超过此时间才判超时；有活动则一直等 */
+const TURN_NO_ACTIVITY_MS = 30 * 60_000
+const TURN_IDLE_CHECK_MS = 15_000
+
+function racePiTurnWithIdleTimeout(
+  session: LlmWorkerSession,
+  prompt: string,
+  abort: AbortSignal,
+): Promise<{ ok: boolean; error?: string; replyText?: string }> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setInterval> | undefined
+
+    const finish = (result: { ok: boolean; error?: string; replyText?: string }) => {
+      if (settled) return
+      settled = true
+      if (timer) clearInterval(timer)
+      resolve(result)
+    }
+
+    session.lastActivityAt = Date.now()
+    timer = setInterval(() => {
+      if (abort.aborted) {
+        finish({ ok: false, error: "aborted" })
+        return
+      }
+      const idleMs = Date.now() - session.lastActivityAt
+      if (idleMs >= TURN_NO_ACTIVITY_MS) {
+        const mins = Math.round(TURN_NO_ACTIVITY_MS / 60_000)
+        finish({ ok: false, error: `Pi 回合无活动超时（${mins}min）` })
+      }
+    }, TURN_IDLE_CHECK_MS)
+
+    abort.addEventListener("abort", () => finish({ ok: false, error: "aborted" }), { once: true })
+
+    void executeLlmPiTurn(session, prompt).then(finish, (e: unknown) => {
+      finish({ ok: false, error: e instanceof Error ? e.message : String(e) })
+    })
+  })
+}
 
 export function isLlmWorkerActive(sessionKey: string): boolean {
   return workers.has(sessionKey)
@@ -134,13 +173,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
       pushUiLog("LLM", "INFO", `[${sessionKey}] worker 处理 ${deliverable.length} 条消息`)
 
-      const turnResult = await Promise.race([
-        executeLlmPiTurn(session, prompt),
-        new Promise<{ ok: false; error: string }>((resolve) => {
-          const t = setTimeout(() => resolve({ ok: false, error: "Pi 回合超时（5min）" }), TURN_IDLE_TIMEOUT_MS)
-          abort.signal.addEventListener("abort", () => { clearTimeout(t); resolve({ ok: false, error: "aborted" }) }, { once: true })
-        }),
-      ])
+      const turnResult = await racePiTurnWithIdleTimeout(session, prompt, abort.signal)
 
       if (abort.signal.aborted) break
       if (!turnResult.ok) {

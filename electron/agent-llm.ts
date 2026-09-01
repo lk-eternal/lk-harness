@@ -286,6 +286,7 @@ function appendLlmLog(session: LlmSession, kind: "thinking" | "text", delta: str
 }
 
 function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): void {
+  session.lastActivityAt = Date.now()
   const stream = session.streamAgg
 
   if (event.type === "message_update") {
