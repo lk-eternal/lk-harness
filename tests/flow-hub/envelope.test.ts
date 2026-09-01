@@ -12,17 +12,17 @@ describe("flow-hub envelope", () => {
     const env = buildGroupEnvelope({
       hubId: "g-test-uuid",
       hubRevision: 2,
-      author: "张三",
+      author: "??",
       group: {
         id: "develop",
-        name: "开�?,
+        name: "??",
         workspace: "worktree",
-        nodes: [{ hubId: "n1", id: "plan", label: "规划", prompt: "做规�? }],
+        nodes: [{ hubId: "n1", id: "plan", label: "??", prompt: "???" }],
       },
     })
     const parsed = parseGroupEnvelope(env)
     expect(parsed?.hubId).toBe("g-test-uuid")
-    expect(parsed?.group.nodes[0].prompt).toBe("做规�?)
+    expect(parsed?.group.nodes[0].prompt).toBe("???")
     expect(parsed?.contentHash).toBe(env.contentHash)
   })
 
@@ -30,8 +30,8 @@ describe("flow-hub envelope", () => {
     const env = buildNodeEnvelope({
       hubId: "n-test",
       hubRevision: 1,
-      author: "李四",
-      node: { hubId: "n-test", id: "mr", label: "MR", prompt: "�?MR" },
+      author: "??",
+      node: { hubId: "n-test", id: "mr", label: "MR", prompt: "?MR" },
     })
     const parsed = parseNodeEnvelope(env)
     expect(parsed?.node.label).toBe("MR")
@@ -42,9 +42,9 @@ describe("flow-hub envelope", () => {
     const parsed = parseGroupEnvelope({
       kind: "lk-harness-node-group",
       version: 1,
-      group: { id: "qa", name: "质检", nodes: [{ id: "check", label: "检�? }] },
+      group: { id: "qa", name: "??", nodes: [{ id: "check", label: "??" }] },
     })
-    expect(parsed?.group.name).toBe("质检")
+    expect(parsed?.group.name).toBe("??")
     expect(parsed?.hubId).toBeTruthy()
   })
 
@@ -52,8 +52,8 @@ describe("flow-hub envelope", () => {
     const env = buildGroupEnvelope({
       hubId: "g1",
       hubRevision: 3,
-      author: "王五",
-      group: { id: "test", name: "测试�?, nodes: [{ hubId: "n1", id: "a", label: "A" }] },
+      author: "??",
+      group: { id: "test", name: "???", nodes: [{ hubId: "n1", id: "a", label: "A" }] },
     })
     const def = envelopeToGroupDef(env)
     expect(def.hubId).toBe("g1")

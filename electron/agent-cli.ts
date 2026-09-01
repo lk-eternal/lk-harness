@@ -5,6 +5,7 @@ import * as os from "node:os"
 import { promisify } from "node:util"
 import { getConfig } from "./config-store"
 import { pushUiLog, broadcastLog, logCursorAgentInvocation, logCursorAgentResponse } from "./ui-logger"
+import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 
 const execAsync = promisify(exec)
 
@@ -240,10 +241,14 @@ export async function execAgentAsync(
       finish({ ok: false, stdout, stderr, error: "命令超时" })
     }, timeoutMs)
 
-    child.stdout?.on("data", (d: Buffer) => { stdout += d.toString() })
-    child.stderr?.on("data", (d: Buffer) => { stderr += d.toString() })
+    const outDec = createUtf8Decoder()
+    const errDec = createUtf8Decoder()
+    child.stdout?.on("data", (d: Buffer) => { stdout += decodeUtf8Chunk(outDec, d) })
+    child.stderr?.on("data", (d: Buffer) => { stderr += decodeUtf8Chunk(errDec, d) })
     child.on("error", (e) => finish({ ok: false, stdout, stderr, error: e.message }))
     child.on("close", (code) => {
+      stdout += finishUtf8Decoder(outDec)
+      stderr += finishUtf8Decoder(errDec)
       if (code === 0) { finish({ ok: true, stdout, stderr }); return }
       const hint = (stderr || stdout).trim().slice(0, 500) || `进程退出码 ${code}`
       finish({ ok: false, stdout, stderr, error: hint })
@@ -296,9 +301,12 @@ export async function installCli(): Promise<{ ok: boolean; output: string }> {
     }
 
     let output = ""
-    child.stdout?.on("data", (d: Buffer) => { output += d.toString() })
-    child.stderr?.on("data", (d: Buffer) => { output += d.toString() })
+    const outDec = createUtf8Decoder()
+    const errDec = createUtf8Decoder()
+    child.stdout?.on("data", (d: Buffer) => { output += decodeUtf8Chunk(outDec, d) })
+    child.stderr?.on("data", (d: Buffer) => { output += decodeUtf8Chunk(errDec, d) })
     child.on("exit", (code) => {
+      output += finishUtf8Decoder(outDec) + finishUtf8Decoder(errDec)
       if (code === 0) {
         void (async () => {
           const installed = await ensureAgentBinary() || (await checkCliInstalled())

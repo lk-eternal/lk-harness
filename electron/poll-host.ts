@@ -31,6 +31,17 @@ export function isPollTimeoutDirective(directive?: string): boolean {
   return !!directive?.includes(POLL_DIRECTIVE_TIMEOUT_MARK)
 }
 
+function pollFetchSignal(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
+  if (!external) return timeout
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([external, timeout])
+  const ctrl = new AbortController()
+  const fire = () => ctrl.abort()
+  external.addEventListener("abort", fire, { once: true })
+  timeout.addEventListener("abort", fire, { once: true })
+  return ctrl.signal
+}
+
 async function fetchPoll(sessionKey: string, wait: boolean, signal?: AbortSignal): Promise<HostPollResult> {
   const lock = readLockFile()
   if (!lock?.port) throw new Error("Daemon 未运行")
@@ -40,7 +51,7 @@ async function fetchPoll(sessionKey: string, wait: boolean, signal?: AbortSignal
 
   const timeout = wait ? POLL_BLOCK_MS : 30_000
   const res = await fetch(url.toString(), {
-    signal: signal ?? AbortSignal.timeout(timeout),
+    signal: pollFetchSignal(signal, timeout),
   })
   if (!res.ok) throw new Error(`poll HTTP ${res.status}`)
   const data = (await res.json()) as { messages?: PollMessage[]; directive?: string }

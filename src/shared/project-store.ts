@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { randomBytes, randomUUID } from "node:crypto"
 import { DEFAULT_NODE_GROUPS, DEFAULT_NODE_GROUP_ID, projectGroupChatMatches, type Project, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
+import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
 
 let baseDir = ""
 
@@ -288,16 +289,14 @@ function currentPath(): string {
 
 function readJsonSafe<T>(filePath: string, fallback: T): T {
   try {
-    if (fs.existsSync(filePath)) {
-      return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T
-    }
-  } catch { /* ignore */ }
-  return fallback
+    return readJsonFile(filePath, fallback);
+  } catch {
+    return fallback;
+  }
 }
 
 function writeJson(filePath: string, data: unknown): void {
-  ensureDir(path.dirname(filePath))
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8")
+  writeJsonAtomic(filePath, data)
 }
 
 /** 存量 actions[] → lastArtifact*；去掉运行态数组 */

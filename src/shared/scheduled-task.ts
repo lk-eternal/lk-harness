@@ -4,6 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { makeChatKey } from "./channel-types.js";
+import { atomicWriteUtf8 } from "./atomic-json.js";
 
 export interface ScheduledTask {
   id: string;
@@ -22,29 +23,43 @@ export interface ScheduledTask {
   notifyChatId?: string;
 }
 
-/** 读取任务文件：校验必填字段、归一化 enabled 默认 true；文件缺失/损坏返回 [] */
+export class ScheduledTasksReadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScheduledTasksReadError";
+  }
+}
+
+function parseScheduledTasksPayload(parsed: unknown): ScheduledTask[] {
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (t: unknown): t is ScheduledTask =>
+      typeof t === "object" && t !== null &&
+      typeof (t as ScheduledTask).id === "string" &&
+      typeof (t as ScheduledTask).name === "string" &&
+      typeof (t as ScheduledTask).cron === "string" &&
+      typeof (t as ScheduledTask).content === "string",
+  ).map((t) => ({ ...t, enabled: t.enabled !== false }));
+}
+
+/** 读取任务文件：缺失返回 []；损坏备份后抛错（禁止静默降级为空） */
 export function readScheduledTasksFile(file: string): ScheduledTask[] {
+  if (!fs.existsSync(file)) return [];
+  let raw = "";
   try {
-    if (!fs.existsSync(file)) return [];
-    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (t: unknown): t is ScheduledTask =>
-        typeof t === "object" && t !== null &&
-        typeof (t as ScheduledTask).id === "string" &&
-        typeof (t as ScheduledTask).name === "string" &&
-        typeof (t as ScheduledTask).cron === "string" &&
-        typeof (t as ScheduledTask).content === "string",
-    ).map((t) => ({ ...t, enabled: t.enabled !== false }));
-  } catch {
-    return [];
+    raw = fs.readFileSync(file, "utf-8");
+    return parseScheduledTasksPayload(JSON.parse(raw));
+  } catch (e) {
+    try {
+      fs.copyFileSync(file, `${file}.corrupt-${Date.now()}`);
+    } catch { /* ignore backup failure */ }
+    const detail = e instanceof Error ? e.message : String(e);
+    throw new ScheduledTasksReadError(`定时任务文件损坏: ${file} (${detail})`);
   }
 }
 
 export function writeScheduledTasksFile(file: string, tasks: ScheduledTask[]): void {
-  const dir = path.dirname(file);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(tasks, null, 2), "utf-8");
+  atomicWriteUtf8(file, JSON.stringify(tasks, null, 2));
 }
 
 /** 独立定时任务 sessionKey = task.id（裸 id，无 ch_|::） */

@@ -5,6 +5,7 @@ import path from "node:path";
 import http from "node:http";
 import { LOCK_FILE_NAME } from "./shared/constants.js";
 import { parseChatKey } from "./shared/channel-types.js";
+import { concatUtf8 } from "./shared/utf8-stream.js";
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR ?? "";
 
@@ -27,10 +28,10 @@ function txt(text: string) { return { content: [{ type: "text" as const, text }]
 async function daemonGet(path: string): Promise<any> {
   return new Promise((resolve, reject) => {
     http.get(daemonUrl(path), { timeout: 10_000 }, (res) => {
-      const chunks: string[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c.toString()));
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
-        try { resolve(JSON.parse(chunks.join(""))); } catch { reject(new Error("invalid json")); }
+        try { resolve(JSON.parse(concatUtf8(chunks))); } catch { reject(new Error("invalid json")); }
       });
     }).on("error", reject);
   });
@@ -40,10 +41,10 @@ async function daemonPost(path: string, body: unknown): Promise<any> {
   const data = JSON.stringify(body);
   return new Promise((resolve, reject) => {
     const req = http.request(daemonUrl(path), { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data) }, timeout: 10_000 }, (res) => {
-      const chunks: string[] = [];
-      res.on("data", (c: Buffer) => chunks.push(c.toString()));
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
       res.on("end", () => {
-        try { resolve(JSON.parse(chunks.join(""))); } catch { reject(new Error("invalid json")); }
+        try { resolve(JSON.parse(concatUtf8(chunks))); } catch { reject(new Error("invalid json")); }
       });
     });
     req.on("error", reject);

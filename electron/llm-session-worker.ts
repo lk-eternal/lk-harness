@@ -85,10 +85,15 @@ export async function stopLlmWorker(sessionKey: string): Promise<void> {
   if (!w) return
   w.phase = "stopping"
   w.abort.abort()
-  await Promise.race([
-    w.loopPromise.catch(() => undefined),
-    new Promise<void>((r) => setTimeout(r, 5000)),
-  ])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      w.loopPromise.catch(() => undefined),
+      new Promise<void>((r) => { timer = setTimeout(r, 5000) }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 export async function stopAllLlmWorkers(): Promise<void> {
@@ -208,8 +213,16 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
     }
   } finally {
     state.phase = "stopping"
-    workers.delete(sessionKey)
-    await unregisterLlmSession(session, abort.signal.aborted)
-    onLlmWorkerFinished(sessionKey, errored, { network: networkFail, permanent: permanentFail, errorDetail })
+    if (workers.get(sessionKey) === state) workers.delete(sessionKey)
+    try {
+      await unregisterLlmSession(session, abort.signal.aborted)
+    } catch (e: unknown) {
+      pushUiLog("LLM", "WARN", `[${sessionKey}] worker unregister 失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    try {
+      onLlmWorkerFinished(sessionKey, errored, { network: networkFail, permanent: permanentFail, errorDetail })
+    } catch (e: unknown) {
+      pushUiLog("LLM", "WARN", `[${sessionKey}] worker finished 回调失败: ${e instanceof Error ? e.message : String(e)}`)
+    }
   }
 }

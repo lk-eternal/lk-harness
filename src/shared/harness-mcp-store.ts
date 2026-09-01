@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
 
 export interface HarnessMcpServer {
   name: string
@@ -48,17 +49,21 @@ function ensureDir(): void {
 function readStore(): StoreFile {
   if (!userDataRoot) return { order: [], servers: {} }
   try {
-    if (fs.existsSync(storePath())) {
-      const raw = JSON.parse(fs.readFileSync(storePath(), "utf-8")) as StoreFile
-      return { order: Array.isArray(raw.order) ? raw.order : [], servers: raw.servers ?? {} }
-    }
-  } catch { /* empty */ }
-  return { order: [], servers: {} }
+    const raw = readJsonFile(storePath(), { order: [], servers: {} })
+    return { order: Array.isArray(raw.order) ? raw.order : [], servers: raw.servers ?? {} }
+  } catch {
+    return { order: [], servers: {} }
+  }
 }
 
 function writeStore(data: StoreFile): void {
+  try {
+    readJsonFile(storePath(), { order: [], servers: {} })
+  } catch {
+    return
+  }
   ensureDir()
-  fs.writeFileSync(storePath(), JSON.stringify(data, null, 2), "utf-8")
+  writeJsonAtomic(storePath(), data)
 }
 
 export function listHarnessMcpServers(): HarnessMcpServer[] {

@@ -600,11 +600,23 @@ export async function switchLlmSessionModel(
   return { ok: true, deferred: true }
 }
 
+async function disposeOrphanPi(
+  pi: AgentSession | undefined,
+  unsub?: (() => void) | null,
+): Promise<void> {
+  try { unsub?.() } catch { /* ignore */ }
+  if (!pi) return
+  try { await pi.abort().catch(() => undefined) } catch { /* ignore */ }
+  try { pi.dispose() } catch { /* ignore */ }
+}
+
 export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: boolean; error?: string }> {
   const { sessionKey, resource } = opts
   if (isLlmSessionRunning(sessionKey)) return { ok: true }
 
   pendingLaunches.add(sessionKey)
+  let piSession: AgentSession | undefined
+  let session: LlmSession | undefined
   try {
     const apiKey = llmApiKey(resource)
     if (!apiKey) return { ok: false, error: "未配置 API Key（设置 → Agent）" }
@@ -619,7 +631,9 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     const model = resolveLlmModel(resource, modelId)
     if (!model) return { ok: false, error: "无法解析模型，请检查 Agent 配置或通道模型设置" }
 
-    const { session: piSession, resumed } = await createHarnessPiSession(opts, model, apiKey)
+    const created = await createHarnessPiSession(opts, model, apiKey)
+    piSession = created.session
+    const resumed = created.resumed
 
     const currentDaemonPort = resolveDaemonPortForPrompt()
     const stored = getPiResumable(sessionKey)
@@ -645,7 +659,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     pushUiLog("LLM", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Session Worker (persistentPoll=${persistentPoll})`)
 
     const abort = new AbortController()
-    const session: LlmSession = {
+    session = {
       sessionKey,
       channelId: opts.channelId,
       resource,
@@ -679,11 +693,15 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       patchPiResumableStreamCard(sessionKey, undefined, { onlyIf: stored.streamCardId })
     }
 
-    session.piUnsubscribe = piSession.subscribe((event) => handlePiSessionEvent(session, event))
+    session.piUnsubscribe = piSession.subscribe((event) => handlePiSessionEvent(session!, event))
     await notifySessionLaunched(sessionKey, resumed)
 
     const { startLlmWorkerLoop, isLlmWorkerActive } = await import("./llm-session-worker.js")
-    if (isLlmWorkerActive(sessionKey)) return { ok: true }
+    if (isLlmWorkerActive(sessionKey)) {
+      await disposeOrphanPi(piSession, session.piUnsubscribe)
+      session.piUnsubscribe = null
+      return { ok: true }
+    }
 
     session.runPromise = startLlmWorkerLoop(session, {
       persistentPoll,
@@ -696,6 +714,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} worker (${llmProviderId(resource)} / ${model.id}, history=${history})`)
     return { ok: true }
   } catch (e: unknown) {
+    await disposeOrphanPi(piSession, session?.piUnsubscribe)
     const msg = e instanceof Error ? e.message : String(e)
     return { ok: false, error: msg }
   } finally {

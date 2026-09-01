@@ -165,13 +165,13 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
 
 /** 会话收尾模式：poll 响应随路下发（模型以最近一次响应为准，免疫长上下文衰减） */
 function resolveKeepAlive(sessionKey: string): boolean {
-  if (isIndependentTaskSessionKey(sessionKey, readTasks())) return false;
+  if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return false;
   let channelId = channelIdFromSessionKey(sessionKey);
   if (!channelId) {
     const chatKey = sessionToChatMap.get(sessionKey);
     if (chatKey) channelId = parseChatKey(chatKey).channelId;
     if (!channelId) {
-      const task = readTasks().find((t) => t.id === sessionKey);
+      const task = readTasksSafe().find((t) => t.id === sessionKey);
       if (task?.channelId) channelId = task.channelId;
     }
   }
@@ -1197,7 +1197,9 @@ function resolveMentionTags(text: string, mentions: LarkMessageEvent["mentions"]
       : (m.id ? `@${m.name}(open_id=${m.id})` : `@${m.name}`);
     out = out.split(m.key).join(replacement);
   }
-  return out.replace(/@_user_\d+/g, "").replace(/\s{2,}/g, " ").trim();
+  out = out.replace(/@_user_\d+/g, "");
+  if (!mentions.length) return out.trim();
+  return out.replace(/[ \t]{2,}/g, " ").trim();
 }
 
 function sanitizePollMessages(messages: QueueMessage[]): QueueMessage[] {
@@ -2961,7 +2963,9 @@ function getPendingCommands(): CmdEntry[] {
 function claimCommand(fileId: string): Omit<CmdEntry, "id"> | null {
   const queueDir = getQueueDir();
   if (!queueDir) return null;
-  const srcPath = path.join(queueDir, fileId);
+  const basename = path.basename(fileId);
+  if (basename !== fileId || !fileId.endsWith(".fcmd")) return null;
+  const srcPath = path.join(queueDir, basename);
   const claimedPath = srcPath + ".claimed";
   try {
     fs.renameSync(srcPath, claimedPath);
@@ -3006,11 +3010,20 @@ async function handleCommand(text: string, messageId: string, chatId?: string, c
 
 let daemonPort = 0;
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+function readBody(req: http.IncomingMessage, limitBytes = 8 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
-    const chunks: string[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk.toString()));
-    req.on("end", () => resolve(chunks.join("")));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > limitBytes) {
+        reject(new Error("request body too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
     req.on("error", reject);
   });
 }
@@ -3520,6 +3533,15 @@ function readTasks(): ScheduledTask[] {
   return readScheduledTasksFile(TASKS_FILE);
 }
 
+function readTasksSafe(): ScheduledTask[] {
+  try {
+    return readTasks();
+  } catch (e) {
+    log("ERROR", `读取定时任务失败: ${e instanceof Error ? e.message : String(e)}`);
+    return [];
+  }
+}
+
 function writeTasks(tasks: ScheduledTask[]): void {
   writeScheduledTasksFile(TASKS_FILE, tasks);
 }
@@ -3650,7 +3672,11 @@ async function handleSkillsAdmin(method: string, req: http.IncomingMessage, res:
 
 async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    json(res, { ok: true, tasks: readTasks() });
+    try {
+      json(res, { ok: true, tasks: readTasks() });
+    } catch (e) {
+      json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 503);
+    }
     return true;
   }
   if (method === "POST") {
@@ -3659,7 +3685,13 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
       action: string; id?: string; name?: string; cron?: string; content?: string; enabled?: boolean; independent?: boolean
       channelId?: string; model?: string; modelParams?: string
     };
-    const tasks = readTasks();
+    let tasks: ScheduledTask[];
+    try {
+      tasks = readTasks();
+    } catch (e) {
+      json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 503);
+      return true;
+    }
 
     if (action === "add") {
       if (!name || !cron || !content) { json(res, { ok: false, error: "name, cron, content required" }, 400); return true; }

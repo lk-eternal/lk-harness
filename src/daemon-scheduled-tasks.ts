@@ -19,6 +19,8 @@ let watchdogTimer: ReturnType<typeof setInterval> | null = null;
 let lastWatchdogMs = 0;
 const firedSlotKeys = new Set<string>();
 let fileWatcher: fs.FSWatcher | null = null;
+let fileDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let schedulerStopped = false;
 let logFn: ((msg: string) => void) | null = null;
 
 export function setDaemonSchedulerLogger(fn: (msg: string) => void): void {
@@ -32,7 +34,12 @@ function log(msg: string): void {
 }
 
 function readTasksFromFile(): ScheduledTask[] {
-  return readScheduledTasksFile(TASKS_FILE);
+  try {
+    return readScheduledTasksFile(TASKS_FILE);
+  } catch (e) {
+    log(`读取任务文件失败，保留上次快照: ${e instanceof Error ? e.message : String(e)}`);
+    return scheduledTasksSnapshot;
+  }
 }
 
 function isValidCron(expression: string): boolean {
@@ -162,6 +169,10 @@ function reloadTasks(cb: SchedulerCallbacks): void {
 }
 
 function stopFileWatcher(): void {
+  if (fileDebounceTimer) {
+    clearTimeout(fileDebounceTimer);
+    fileDebounceTimer = null;
+  }
   if (fileWatcher) {
     fileWatcher.close();
     fileWatcher = null;
@@ -176,16 +187,17 @@ function startFileWatcher(cb: SchedulerCallbacks): void {
       fs.mkdirSync(APP_DATA_DIR, { recursive: true });
     } catch { /* ignore */ }
   }
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   try {
     fileWatcher = fs.watch(APP_DATA_DIR, (_eventType, filename) => {
       if (filename !== "scheduled-tasks.json") {
         return;
       }
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
+      if (fileDebounceTimer) {
+        clearTimeout(fileDebounceTimer);
       }
-      debounceTimer = setTimeout(() => {
+      fileDebounceTimer = setTimeout(() => {
+        fileDebounceTimer = null;
+        if (schedulerStopped) return;
         log("检测到定时任务配置文件变化，重新加载...");
         reloadTasks(cb);
       }, 500);
@@ -200,6 +212,7 @@ export function startDaemonScheduledTasks(
   enqueue: (task: ScheduledTask, content: string) => void,
   launchIndependent?: (task: ScheduledTask, content: string) => void,
 ): void {
+  schedulerStopped = false;
   const cb: SchedulerCallbacks = { enqueue, launchIndependent };
   reloadTasks(cb);
   startFileWatcher(cb);
@@ -207,6 +220,7 @@ export function startDaemonScheduledTasks(
 }
 
 export function stopDaemonScheduledTasks(): void {
+  schedulerStopped = true;
   const count = scheduledTasksSnapshot.length;
   stopWatchdog();
   stopFileWatcher();

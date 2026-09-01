@@ -7,6 +7,7 @@ import {
   spawnAgentChild, execAgentSync, execAgentAsync, ensureAgentBinary,
   checkCliInstalled,
 } from "./agent-cli"
+import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 import {
   broadcastLog, pushUiLog, flushAgentStreamChunk, logCursorAgentInvocation, logCursorAgentResponse,
   broadcastSessionStatus as broadcastSessionStatusToUi,
@@ -212,17 +213,23 @@ function spawnAgentWithLogs(args: string[], env: Record<string, string>, label: 
 function attachStreamLoggers(child: ChildProcess, onData?: (stream: "stdout" | "stderr", text: string) => void): void {
   const outBuf = { current: "" }
   const errBuf = { current: "" }
+  const outDec = createUtf8Decoder()
+  const errDec = createUtf8Decoder()
   child.stdout?.on("data", (d: Buffer) => {
-    const s = d.toString()
+    const s = decodeUtf8Chunk(outDec, d)
     onData?.("stdout", s)
     flushAgentStreamChunk(outBuf, s, "stdout")
   })
   child.stderr?.on("data", (d: Buffer) => {
-    const s = d.toString()
+    const s = decodeUtf8Chunk(errDec, d)
     onData?.("stderr", s)
     flushAgentStreamChunk(errBuf, s, "stderr")
   })
   child.on("close", () => {
+    const outTail = finishUtf8Decoder(outDec)
+    const errTail = finishUtf8Decoder(errDec)
+    if (outTail) flushAgentStreamChunk(outBuf, outTail, "stdout")
+    if (errTail) flushAgentStreamChunk(errBuf, errTail, "stderr")
     if (outBuf.current.trim()) { pushUiLog("Agent", "INFO", outBuf.current.trim()); outBuf.current = "" }
     if (errBuf.current.trim()) { pushUiLog("Agent", "WARN", errBuf.current.trim()); errBuf.current = "" }
   })
@@ -433,13 +440,14 @@ export async function loginCli(): Promise<{ ok: boolean; output: string }> {
     try {
       const child = spawnAgentChild(["login"], spawnEnv)
 
+      const outDec = createUtf8Decoder()
+      const errDec = createUtf8Decoder()
       child.stdout?.on("data", (d: Buffer) => {
-        const s = d.toString().trim(); output += s + "\n"
-        if (s) broadcastLog(`[CLI Login] ${s}`, "INFO")
+        const s = decodeUtf8Chunk(outDec, d).trim(); if (s) { output += s + "\n"; broadcastLog(`[CLI Login] ${s}`, "INFO") }
       })
       child.stderr?.on("data", (d: Buffer) => {
-        const s = d.toString().trim(); output += s + "\n"
-        if (s) broadcastLog(`[CLI Login:err] ${s}`, "ERROR")
+        const s = decodeUtf8Chunk(errDec, d).trim()
+        if (s) { output += s + "\n"; broadcastLog(`[CLI Login:err] ${s}`, "ERROR") }
       })
       child.on("exit", async (code) => {
         if (settled) return; settled = true

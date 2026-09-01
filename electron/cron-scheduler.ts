@@ -13,10 +13,19 @@ export function getTasksFilePath(): string {
 }
 
 export function readTasksFromFile(): ScheduledTask[] {
-  return readScheduledTasksFile(resolveTasksFile())
+  try {
+    return readScheduledTasksFile(resolveTasksFile())
+  } catch {
+    return []
+  }
 }
 
 export function writeTasksToFile(tasks: ScheduledTask[]): void {
+  try {
+    readScheduledTasksFile(resolveTasksFile())
+  } catch {
+    return
+  }
   try {
     writeScheduledTasksFile(resolveTasksFile(), tasks)
   } catch { /* ignore */ }

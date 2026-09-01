@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { writeJsonAtomic, writeTextAtomic } from "./atomic-json.js"
 
 export interface HarnessRule {
   id: string
@@ -69,9 +70,7 @@ function readManifest(): Manifest {
 }
 
 function writeManifest(m: Manifest): void {
-  const dir = rulesDir()
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(manifestPath(), JSON.stringify(m, null, 2), "utf-8")
+  writeJsonAtomic(manifestPath(), m)
 }
 
 function slugId(name: string): string {
@@ -152,7 +151,7 @@ export function saveHarnessRule(id: string | null, name: string, content: string
   const dir = rulesDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   const body = (enabled ? "" : "<!-- disabled -->\n") + content
-  fs.writeFileSync(rulePath(targetId), body.endsWith("\n") ? body : `${body}\n`, "utf-8")
+  writeTextAtomic(rulePath(targetId), body.endsWith("\n") ? body : `${body}\n`)
   writeManifest({ ...m, order })
   return { id: targetId, name: `${targetId}.mdc`, content, enabled }
 }
@@ -196,7 +195,7 @@ export function writeHarnessRulesStoreRaw(data: HarnessRulesStoreFile): void {
     const entry = data.rules[id]
     if (!entry) continue
     const body = (entry.enabled === false ? "<!-- disabled -->\n" : "") + entry.content
-    fs.writeFileSync(rulePath(id), body.endsWith("\n") ? body : `${body}\n`, "utf-8")
+    writeTextAtomic(rulePath(id), body.endsWith("\n") ? body : `${body}\n`)
   }
 }
 
@@ -229,7 +228,7 @@ export function mergeImportHarnessRulesBundle(data: HarnessRulesBundle): string[
     order.push(id)
     existing.add(id)
     const body = (entry.enabled === false ? "<!-- disabled -->\n" : "") + entry.content
-    fs.writeFileSync(rulePath(id), body.endsWith("\n") ? body : `${body}\n`, "utf-8")
+    writeTextAtomic(rulePath(id), body.endsWith("\n") ? body : `${body}\n`)
   }
   writeManifest({ order, migrated: true })
   return notes

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process"
 import * as path from "node:path"
 import { quoteArg } from "./agent-cli"
+import { concatUtf8 } from "../src/shared/utf8-stream.js"
 import {
   listHarnessMcpServers,
   saveHarnessMcpServer,
@@ -222,8 +223,10 @@ async function queryToolsViaHttp(url: string, headers?: Record<string, string>):
       timeout: 10_000,
     }, (res: any) => {
       let data = ""
-      res.on("data", (chunk: Buffer) => { data += chunk.toString() })
+      const chunks: Buffer[] = []
+      res.on("data", (chunk: Buffer) => { chunks.push(chunk) })
       res.on("end", () => {
+        data = concatUtf8(chunks)
         try {
           if (res.headers["content-type"]?.includes("text/event-stream")) {
             for (const line of data.split("\n")) {

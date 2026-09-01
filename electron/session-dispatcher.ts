@@ -82,8 +82,28 @@ async function notifyChat(sessionKey: string, text: string): Promise<void> {
 
 // ── 内部工具（CLI 与 SDK 双运行时并存）────────────────────
 
+const launchReserved = new Set<string>()
+
+function tryReserveLaunch(sessionKey: string): boolean {
+  if (isSessionAgentRunningInner(sessionKey)) return false
+  launchReserved.add(sessionKey)
+  return true
+}
+
+function releaseLaunch(sessionKey: string): void {
+  launchReserved.delete(sessionKey)
+}
+
+function wrapLaunch(sessionKey: string, fn: () => Promise<void>): Promise<void> {
+  return fn().finally(() => releaseLaunch(sessionKey))
+}
+
+function isSessionAgentRunningInner(key: string): boolean {
+  return launchReserved.has(key) || _isCliSessionRunning(key) || isSdkSessionRunning(key) || isLlmSessionRunning(key)
+}
+
 export function isSessionAgentRunning(key: string): boolean {
-  return _isCliSessionRunning(key) || isSdkSessionRunning(key) || isLlmSessionRunning(key)
+  return isSessionAgentRunningInner(key)
 }
 
 export async function stopSessionAgent(key: string): Promise<void> {
@@ -1290,17 +1310,25 @@ async function isZombieAgent(sessionKey: string): Promise<boolean> {
 
 let dispatching = false
 
-/** 规划阶段互斥；真正的 launch 在锁外并行，避免单会话 force/Resume 挂死堵死其它会话 */
+function enqueueSessionLaunch(sessionKey: string, launches: Promise<void>[], fn: () => Promise<void>): void {
+  if (!tryReserveLaunch(sessionKey)) return
+  launches.push(wrapLaunch(sessionKey, fn))
+}
+
+function sessionLaunchBusy(sessionKey: string): boolean {
+  return isSessionAgentRunning(sessionKey)
+}
+
+/** 规划 + launch 全程互斥，避免 tick 重叠重复拉起 */
 export async function dispatchSessionAgents(): Promise<void> {
   if (dispatching) return
   dispatching = true
-  let launches: Promise<void>[] = []
   try {
-    launches = await _planSessionLaunches()
+    const launches = await _planSessionLaunches()
+    if (launches.length > 0) await Promise.allSettled(launches)
   } finally {
     dispatching = false
   }
-  if (launches.length > 0) await Promise.allSettled(launches)
 }
 
 async function _planSessionLaunches(): Promise<Promise<void>[]> {
@@ -1324,7 +1352,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
     // 有新 .qmsg 时无视失败冷却（手动重触发/新消息应立刻拉起）；仅 .claimed 重投仍遵守退避
     if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
-    if (isSessionAgentRunning(sessionKey)) {
+    if (sessionLaunchBusy(sessionKey)) {
       if (await isZombieAgent(sessionKey)) {
         broadcastLog(`[Agent] ${sessionKey} 疑似僵尸(队列有消息且 ${ZOMBIE_REPLY_SILENCE_MS / 60_000}min 无回复消息)，强制终止并重启`, "WARN")
         await stopSessionAgent(sessionKey)
@@ -1351,7 +1379,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       const channelId = task?.channelId
         || getChannels().find((c) => c.enabled)?.id
       broadcastLog(`[Agent] 任务会话 ${sessionKey} 有新消息，正在启动Agent（${resumableT ? "Resume 恢复上下文" : "全新会话"}/${launchType}${channelId ? `/${channelId}` : ""}）`)
-      launches.push((async () => {
+      enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({
           sessionKey,
           chatType: launchType,
@@ -1362,7 +1390,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${r.error}`, "WARN")
-      })())
+      })
       continue
     }
 
@@ -1399,7 +1427,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       const resumableP = hasResumableAgentSession(sessionKey)
       broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
       if (shouldSendStartupNotify(sessionKey, resumableP)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
-      launches.push((async () => {
+      enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({
           sessionKey,
           chatType: "project",
@@ -1414,7 +1442,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${r.error}`)
           await notifyChat(sessionKey, `⚠️ Agent 启动失败，本条消息未能处理，请稍后重发。\n原因: ${r.error ?? "未知错误"}`)
         }
-      })())
+      })
       continue
     }
 
@@ -1434,11 +1462,9 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     if (shouldSendStartupNotify(sessionKey, resumable)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
 
     const meta: import("./agent-launcher").LaunchMeta = { chatId, chatType: chatType as "p2p" | "group" }
-    launches.push((async () => {
+    enqueueSessionLaunch(sessionKey, launches, async () => {
       const result = await launchSessionAgent(sessionKey, chatType as "p2p" | "group", meta, mainUser, senderOpenId, pendingFor(sessionKey))
       if (result.ok && chatId !== sessionKey) {
-        // 被动拉起（处理残留消息）不得抢占用户已选路由：重启后主会话恢复曾把用户从项目会话踢回主会话。
-        // 仅在该 chat 尚无具体 active 路由（无记录/裸 chatKey 兜底态）时才登记
         const lock = cachedLock()
         if (lock?.port) {
           const cur = await getCurrentActiveSession(lock.port, chatId)
@@ -1454,7 +1480,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           if (drained > 0) broadcastLog(`[Agent] ${sessionKey} 已丢弃 ${drained} 条消息（启动被拒绝）`)
         }
       }
-    })())
+    })
   }
   return launches
 }

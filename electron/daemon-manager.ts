@@ -18,6 +18,7 @@ import { parseChatKey, channelIdFromSessionKey, type DaemonChannelConfig, type C
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-cli"
+import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 import {
   stopAgent as _stopCliAgent,
   isAgentRunning as _isCliAgentRunning, getRunningSessionCount as _getCliRunningCount,
@@ -639,6 +640,8 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
     let earlyExit: number | null = null
     let daemonStdoutBuf = ""
     let daemonStderrBuf = ""
+    const daemonOutDec = createUtf8Decoder()
+    const daemonErrDec = createUtf8Decoder()
 
     daemonProcess = spawn(process.execPath, [entryPath], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -647,7 +650,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
     })
 
     daemonProcess.stdout?.on("data", (d: Buffer) => {
-      const chunk = d.toString()
+      const chunk = decodeUtf8Chunk(daemonOutDec, d)
       earlyOutput += chunk
       daemonStdoutBuf += chunk
       const parts = daemonStdoutBuf.split(/\r?\n/)
@@ -828,7 +831,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
     })
 
     daemonProcess.stderr?.on("data", (d: Buffer) => {
-      const chunk = d.toString()
+      const chunk = decodeUtf8Chunk(daemonErrDec, d)
       earlyOutput += chunk
       daemonStderrBuf += chunk
       const parts = daemonStderrBuf.split(/\r?\n/)
@@ -960,16 +963,24 @@ function stopDaemonPowerSaveBlock(): void {
 let sseBackoff = 1_000
 const SSE_BACKOFF_MAX = 30_000
 
+function scheduleSseReconnect(req: http.ClientRequest): void {
+  if (sseReq !== req) return
+  sseReq = null
+  setTimeout(() => connectSseQueueEvents(), sseBackoff)
+  sseBackoff = Math.min(sseBackoff * 2, SSE_BACKOFF_MAX)
+}
+
 function connectSseQueueEvents(): void {
   disconnectSseQueueEvents()
   const lock = readLockFile()
   if (!lock?.port) return
   const url = `http://127.0.0.1:${lock.port}/api/queue-events`
   let buf = ""
-  sseReq = http.get(url, { timeout: 0 }, (res) => {
+  const sseDec = createUtf8Decoder()
+  const req = http.get(url, { timeout: 0 }, (res) => {
     sseBackoff = 1_000
     res.on("data", (chunk: Buffer) => {
-      buf += chunk.toString()
+      buf += decodeUtf8Chunk(sseDec, chunk)
       const lines = buf.split("\n")
       buf = lines.pop() ?? ""
       for (const line of lines) {
@@ -989,21 +1000,20 @@ function connectSseQueueEvents(): void {
       }
     })
     res.on("end", () => {
-      sseReq = null
-      setTimeout(() => connectSseQueueEvents(), sseBackoff)
-      sseBackoff = Math.min(sseBackoff * 2, SSE_BACKOFF_MAX)
+      buf += finishUtf8Decoder(sseDec)
+      scheduleSseReconnect(req)
     })
   })
-  sseReq.on("error", () => {
-    sseReq = null
-    setTimeout(() => connectSseQueueEvents(), sseBackoff)
-    sseBackoff = Math.min(sseBackoff * 2, SSE_BACKOFF_MAX)
-  })
+  sseReq = req
+  req.on("error", () => scheduleSseReconnect(req))
 }
 
 function disconnectSseQueueEvents(): void {
   if (sseDispatchDebounce) { clearTimeout(sseDispatchDebounce); sseDispatchDebounce = null }
-  if (sseReq) { try { sseReq.destroy() } catch { /* */ }; sseReq = null }
+  if (sseReq) {
+    try { sseReq.removeAllListeners(); sseReq.destroy() } catch { /* */ }
+    sseReq = null
+  }
 }
 
 
