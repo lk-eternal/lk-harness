@@ -6,7 +6,7 @@ import {
   unregisterLlmSession,
   type LlmWorkerSession,
 } from "./agent-llm"
-import { hostBlockingPoll, isPollEndDirective, isPollTimeoutDirective, type PollMessage } from "./poll-host"
+import { hostBlockingPoll, hostSendText, isPollEndDirective, isPollTimeoutDirective, type PollMessage } from "./poll-host"
 import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
@@ -151,6 +151,22 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         permanentFail = !networkFail && /401|403|api key|quota|rate limit/i.test(msg)
         pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合失败: ${msg}`)
         break
+      }
+
+      const replyText = turnResult.replyText?.trim()
+      if (replyText) {
+        const replyToId = deliverable.map((m) => m.messageId).filter(Boolean).pop()
+        try {
+          await hostSendText(replyText, sessionKey, replyToId)
+          pushUiLog("LLM", "INFO", `[${sessionKey}] 宿主代发回复 (${replyText.length} 字)`)
+        } catch (e: unknown) {
+          errored = true
+          errorDetail = e instanceof Error ? e.message : String(e)
+          pushUiLog("LLM", "ERROR", `[${sessionKey}] 宿主代发失败: ${errorDetail}`)
+          break
+        }
+      } else {
+        pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合无 assistant 正文，跳过代发`)
       }
     }
   } catch (e: unknown) {

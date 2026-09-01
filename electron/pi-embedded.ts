@@ -18,7 +18,7 @@ import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
 import { assembleLlmHostProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { piAdditionalSkillPaths } from "./skill-paths"
-import { buildPiMcpConfig } from "./pi-mcp-config"
+import { buildPiHostMcpConfig } from "./pi-mcp-config"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 
 function harnessAgentDir(): string {
@@ -118,7 +118,7 @@ export async function createHarnessPiSession(
 
   const daemonPort = resolveDaemonPortForPrompt()
   const includeAdmin = shouldIncludeAdminMcp(opts.meta, opts.sessionKey)
-  const mcpConfig = buildPiMcpConfig(daemonPort, includeAdmin)
+  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)
 
   // Always inject Harness protocol into appendSystemPrompt so resumed sessions

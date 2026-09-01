@@ -366,7 +366,7 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
   await flushStreamCard(session, true)
 }
 
-export async function executeLlmPiTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string }> {
+export async function executeLlmPiTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
   return runPiAgentTurn(session, prompt)
 }
 
@@ -416,10 +416,30 @@ export function onLlmWorkerFinished(
   }
 }
 
-async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string }> {
+function extractAssistantTextSince(piSession: AgentSession, fromIndex: number): string {
+  const parts: string[] = []
+  for (const msg of piSession.messages.slice(fromIndex)) {
+    if (msg.role !== "assistant") continue
+    const content = msg.content as unknown
+    if (typeof content === "string" && content.trim()) {
+      parts.push(content.trim())
+      continue
+    }
+    if (!Array.isArray(content)) continue
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue
+      const b = block as { type?: string; text?: string }
+      if (b.type === "text" && b.text?.trim()) parts.push(b.text.trim())
+    }
+  }
+  return parts.join("\n\n").trim()
+}
+
+async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
   beginLlmTurn(session)
   await refreshLlmModel(session, session.channelModel)
   session.lastActivityAt = Date.now()
+  const msgBefore = session.piSession.messages.length
   try {
     await session.piSession.prompt(prompt)
     await session.piSession.agent.waitForIdle()
@@ -428,7 +448,8 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   }
   const agentErr = session.piSession.state.errorMessage?.trim()
   if (agentErr) return { ok: false, error: agentErr }
-  return { ok: true }
+  const replyText = extractAssistantTextSince(session.piSession, msgBefore)
+  return { ok: true, replyText }
 }
 
 export function isLlmSessionRunning(sessionKey: string): boolean {

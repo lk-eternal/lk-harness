@@ -244,15 +244,15 @@ export function assembleTurnPrompt(
   if (opts?.taskMessage?.trim()) {
     lines.push(
       "[宿主交付 / 任务]",
-      "以下是待执行的任务内容，完成后用 send_text 汇报结果。",
+      "以下是待执行的任务内容，完成后以 assistant 正文输出结果（宿主代发）。",
       "---",
       opts.taskMessage.trim(),
       "---",
     )
   } else if (opts?.firstTurn) {
-    lines.push("[宿主交付] 以下是待处理的用户消息，请逐条回复（send_text，带 message_id + session_key）。")
+    lines.push("[宿主交付] 以下是待处理的用户消息，请逐条理解并以 assistant 正文回复（宿主代发，勿调 send 工具）。")
   } else {
-    lines.push("[宿主交付] 以下是新到达的用户消息，请处理并回复。")
+    lines.push("[宿主交付] 以下是新到达的用户消息，请处理并以 assistant 正文回复。")
   }
   lines.push("禁止向用户发送问候、唤醒说明等任何多余消息。")
   lines.push("---")

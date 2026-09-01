@@ -1,4 +1,4 @@
-import { readLockFile } from "./daemon-client"
+import { readLockFile, httpPost } from "./daemon-client"
 
 export interface PollMessage {
   text: string
@@ -53,4 +53,14 @@ export async function hostBlockingPoll(sessionKey: string, signal?: AbortSignal)
 
 export async function hostNonBlockingPoll(sessionKey: string): Promise<HostPollResult> {
   return fetchPoll(sessionKey, false)
+}
+
+export async function hostSendText(text: string, sessionKey: string, messageId?: string): Promise<void> {
+  const lock = readLockFile()
+  if (!lock?.port) throw new Error("Daemon 未运行")
+  await httpPost(
+    `http://127.0.0.1:${lock.port}/api/send-text`,
+    { text, session_key: sessionKey, message_id: messageId },
+    60_000,
+  )
 }

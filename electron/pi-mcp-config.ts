@@ -1,6 +1,6 @@
-import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
+import { buildSdkMcpServers, CLAW_MCP_KEY } from "../src/shared/harness-mcp-store.js"
 
-/** pi-mcp-adapter ServerEntry å­é›†ï¼ˆé¿å…?tsc æ‹‰å– adapter æºç ï¼?*/
+/** pi-mcp-adapter ServerEntry å­é??ï¼?é¿å??tsc æ??å? adapter æºç ï¼?*/
 export interface PiMcpServerEntry {
   command?: string
   args?: string[]
@@ -23,7 +23,18 @@ function normalizeServerEntry(cfg: Record<string, unknown>): PiMcpServerEntry {
   return entry
 }
 
-/** ä¸?Cursor SDK `buildSdkMcpServers` åŒæ„ï¼Œè½¬ä¸?pi-mcp-adapter å†…å­˜ config */
+/** LLM host mode: no lk-harness outbound MCP (harness delivers assistant text) */
+export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
+  const raw = { ...buildSdkMcpServers(port, includeAdmin) }
+  delete raw[CLAW_MCP_KEY]
+  const mcpServers: Record<string, PiMcpServerEntry> = {}
+  for (const [name, cfg] of Object.entries(raw)) {
+    mcpServers[name] = normalizeServerEntry(cfg)
+  }
+  return { mcpServers }
+}
+
+/** ä¸?Cursor SDK `buildSdkMcpServers` å?æ??ï¼?è½¬ä¸?pi-mcp-adapter å??å­? config */
 export function buildPiMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
   const raw = buildSdkMcpServers(port, includeAdmin)
   const mcpServers: Record<string, PiMcpServerEntry> = {}
