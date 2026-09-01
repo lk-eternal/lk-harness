@@ -45,8 +45,8 @@ export function formatLogLineForUi(
       return `[${label}]`
     })
 
-  // Prompt 全文 dump 含 notify_session_key 等元数据，不可对其中的 ch_|oc_ 做缩短替换
-  if (/(?:启动|恢复) Prompt:/.test(line)) return replaceTaskBracket(line)
+  // Prompt / worker 回合日志含 session_key 与长 result，不可做缩短替换
+  if (/(?:启动|恢复|worker 回合) Prompt:/.test(line) || /worker 回合结束/.test(line)) return replaceTaskBracket(line)
 
   const withChatKeys = line.replace(
     SESSION_KEY_IN_LOG_RE,

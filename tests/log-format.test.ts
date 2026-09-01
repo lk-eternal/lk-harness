@@ -32,6 +32,14 @@ describe("formatLogLineForUi", () => {
     expect(out).toBe("[SDK] [⏰ 定时任务] Agent 执行中")
   })
 
+  it("preserves session_key inside worker turn Prompt dump", () => {
+    const sk = "ch_c0130dd0|oc_32cb78537b97c685e29f8a77e8a510cc::D:\\\\workspace\\\\lk-harness"
+    const line = `[SDK] INFO [${sk}] worker 回合 Prompt:\n[宿主交付]\n\`\`\`json\n{"session_key":"${sk}"}\n\`\`\``
+    const out = formatLogLineForUi(line, () => "📂 lk-harness")
+    expect(out).toContain(`"session_key":"${sk}"`)
+    expect(out).toContain(`[${sk}] worker 回合 Prompt:`)
+  })
+
   it("preserves notify_session_key inside Prompt dump", () => {
     const id = "e126c5ba-ce6f-4558-8096-9ca5c07e6ea0"
     const notify = "ch_c9fc9ff4|oc_be3ec98dda1e4f0d172474e6c19d98b"

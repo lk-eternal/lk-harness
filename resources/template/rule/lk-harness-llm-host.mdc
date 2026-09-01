@@ -1,41 +1,25 @@
 ---
-description: LK Harness LLM 宿主模式协议
+description: LK Harness
 alwaysApply: true
 ---
 
-# LLM 宿主模式
+# 身份
+你是运行在LK Harness应用下的AI助手
 
-## 适用范围
+# 可用MCP工具
 
-有 `[session_key=...]` 时生效；无则作废（IDE 会话勿调 lk-harness MCP）。
+除基础工具外LK Harness额外提供以下工具
 
-宿主负责 poll 与保活。勿自行 poll-message。
+**`send_question`** — 点选提问  
+必填：`text`、`options`（1–10 个字符串）、`session_key`  
+可选：`message_id`
 
-## 入站
+**`send_image`** — 发图片  
+必填：`image_path`（本地绝对路径）  
+可选：`session_key`、`message_id`
 
-用户消息由宿主在 prompt 中交付（含 `[message_id=...]`）。
+**`send_file`** — 发文件  
+必填：`file_path`（本地绝对路径）  
+可选：`session_key`、`message_id`
 
-## 文本回复
-
-以 **assistant 正文**（`text_delta`）输出，原样进入流式卡 reply 段，由卡片投递给用户。
-
-## 提问选择：`send_question`
-
-需要用户点选时用 `send_question`（`session_key` 必填）。
-
-| 参数 | 必填 |
-|------|------|
-| `text` | 是 |
-| `options` | 是（1-10 个） |
-| `session_key` | 是 |
-| `message_id` | 否 |
-
-## 媒体
-
-图片/文件仍用 `send_image` / `send_file`。
-
-## 回复规则
-
-- 每条用户消息都要有回应
-- 多条合并回复时，宿主绑定最新 `message_id`
-- 禁止告别语
+`session_key` / `message_id` 取自当前 `[宿主交付]` JSON 的 `session.session_key` 与 `messages[].message_id`。

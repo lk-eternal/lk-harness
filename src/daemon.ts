@@ -1688,37 +1688,9 @@ function getSessionRuntime(sessionKey: string): SessionAgentRuntime | undefined 
   return sessionAgentRuntime.get(sk);
 }
 
-/** SDK 侧 reply → 思考；空段丢弃；工具相邻合并（思考保持独立块，不吞旧块）；todos 原样保留 */
-function prepareStreamSegments(sessionKey: string, segments: AgentStreamSegment[]): AgentStreamSegment[] {
-  if (getSessionRuntime(sessionKey) === "llm") return coalesceTimeline(segments);
-  return foldSdkRepliesIntoThinking(segments);
-}
-
-function foldSdkRepliesIntoThinking(segments: AgentStreamSegment[]): AgentStreamSegment[] {
-  const out: AgentStreamSegment[] = [];
-  for (const seg of segments) {
-    if (seg.type === "reply") {
-      const text = seg.text?.trim();
-      if (!text) continue;
-      out.push({ type: "thinking", text });
-      continue;
-    }
-    if (seg.type === "thinking") {
-      const text = seg.text?.trim();
-      if (!text) continue;
-      out.push({ ...seg, text });
-      continue;
-    }
-    if (seg.type === "todos") {
-      if (seg.items?.length) out.push(seg);
-      continue;
-    }
-    if (!seg.tools?.length) continue;
-    const last = out[out.length - 1];
-    if (last?.type === "tools") last.tools.push(...seg.tools);
-    else out.push({ type: "tools", tools: [...seg.tools], panelId: seg.panelId });
-  }
-  return out;
+/** SDK / LLM 统一时间线合并：reply 保留为正文，thinking/tools 独立 */
+function prepareStreamSegments(_sessionKey: string, segments: AgentStreamSegment[]): AgentStreamSegment[] {
+  return coalesceTimeline(segments);
 }
 
 /** 最终时间线：空丢弃；工具/正文相邻合并；思考保持独立块（不吞旧块）；todos 原样保留 */

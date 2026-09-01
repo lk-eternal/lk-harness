@@ -252,36 +252,26 @@ export function assembleSdkWorkerTurnPrompt(
   return chunks.join("\n")
 }
 
-/** Session Worker 向 Pi 交付一批用户消息（无 poll 指令） */
+/** Session Worker 向 Agent 交付一批用户消息（JSON 结构化，避免正文与元数据混淆） */
 export function assembleTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
   opts?: { firstTurn?: boolean; taskMessage?: string },
 ): string {
-  const lines: string[] = []
-  if (opts?.taskMessage?.trim()) {
-    lines.push("[宿主交付 / 任务]", opts.taskMessage.trim(), "---")
-  } else if (opts?.firstTurn) {
-    lines.push("[宿主交付] 待处理消息：")
-  } else {
-    lines.push("[宿主交付] 新消息：")
+  const payload: Record<string, unknown> = {
+    session: {
+      session_key: ctx.sessionKey ?? "",
+      ...(ctx.meta?.chatType ? { chat_type: ctx.meta.chatType } : {}),
+      ...(ctx.notifySessionKey?.trim() ? { notify_session_key: ctx.notifySessionKey.trim() } : {}),
+    },
+    messages: messages.map((m) => ({
+      ...(m.messageId ? { message_id: m.messageId } : {}),
+      ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
+      ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
+      ...(m.meta?.quotedContent?.trim() ? { quoted_content: m.meta.quotedContent.trim() } : {}),
+      text: m.text.trim(),
+    })),
   }
-  lines.push("---")
-  for (const m of messages) {
-    if (m.messageId) lines.push(`[message_id=${m.messageId}]`)
-    if (m.meta?.senderType) lines.push(`[sender_type=${m.meta.senderType}]`)
-    if (m.meta?.senderOpenId) lines.push(`[sender_open_id=${m.meta.senderOpenId}]`)
-    if (m.meta?.quotedContent?.trim()) {
-      lines.push("[quoted]")
-      lines.push(m.meta.quotedContent.trim())
-    }
-    lines.push(m.text.trim())
-    lines.push("---")
-  }
-  lines.push("会话元数据:", `[session_key=${ctx.sessionKey ?? ""}]`)
-  if (ctx.meta?.chatType) lines.push(`[chat_type=${ctx.meta.chatType}]`)
-  if (ctx.notifySessionKey?.trim()) {
-    lines.push(...scheduledTaskNotifyPromptLines(ctx.notifySessionKey.trim()))
-  }
-  return lines.join("\n")
+  if (opts?.taskMessage?.trim()) payload.task = opts.taskMessage.trim()
+  return `[宿主交付]\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``
 }

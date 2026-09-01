@@ -660,6 +660,21 @@ function enqueueThinking(stream: StreamAgg, text: string): void {
   stream.segments.push({ type: "thinking", text, startedAt: Date.now() })
 }
 
+/** 入队正文：与上一块 reply 合并，否则新开 */
+function enqueueReply(stream: StreamAgg, text: string): void {
+  if (!text) return
+  dropEmptyTail(stream)
+  sealLastThinking(stream)
+  const last = stream.segments[stream.segments.length - 1]
+  if (last?.type === "reply") {
+    last.text += text
+    stream.dirty = true
+    return
+  }
+  stream.segments.push({ type: "reply", text })
+  stream.dirty = true
+}
+
 /** updateTodos 工具调用：解析任务快照（merge=true 按 id 合并），原地刷新时间线中的任务清单段 */
 function isTodoUpdateInvocation(name: string): boolean {
   const n = name.trim().toLowerCase().replace(/[_-]/g, "")
@@ -774,7 +789,7 @@ function enqueueTool(
   })
 }
 
-/** 出站 payload：只按队列顺序输出，空段丢弃；SDK reply 残段并入思考 */
+/** 出站 payload：按队列顺序输出，空段丢弃；reply 保留为用户可见正文 */
 function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPayload {
   const showThinking = isShowThinkingEnabled(sessionKey)
   sealClosedThinking(agg)
@@ -790,7 +805,6 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
         thinking = "…" + thinking.slice(-STREAM_THINKING_TAIL)
       }
       const ms = seg.ms ?? (i === lastIdx && seg.startedAt != null ? Date.now() - seg.startedAt : undefined)
-      // 不合并相邻思考：每块独立面板独立计时，避免旧思考被新思考顶出截断窗口
       segments.push({ type: "thinking", text: thinking, ms })
     } else if (seg.type === "tools") {
       if (!seg.tools.length) continue
@@ -820,14 +834,14 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
       if (!seg.items.length) continue
       segments.push({ type: "todos", items: seg.items.map((t) => ({ content: t.content, status: t.status })) })
     } else if (seg.type === "reply") {
-      // 兼容残段：SDK 正文视作思考（独立块，不并入上一块）
       const text = seg.text.trim()
-      if (!text || !showThinking) continue
-      let thinking = text
-      if (thinking.length > STREAM_THINKING_TAIL) {
-        thinking = "…" + thinking.slice(-STREAM_THINKING_TAIL)
+      if (!text) continue
+      const prev = segments[segments.length - 1]
+      if (prev?.type === "reply") {
+        prev.text = prev.text.trim() ? `${prev.text}\n\n${text}` : text
+      } else {
+        segments.push({ type: "reply", text })
       }
-      segments.push({ type: "thinking", text: thinking })
     }
   }
   return { segments }
@@ -1341,6 +1355,13 @@ function appendSdkLog(session: SdkSessionAgent, kind: "thinking" | "text", delta
   if (agg.buf.length >= LOG_FLUSH_LEN) flushSdkLog(session)
 }
 
+function formatRunResultForLog(result: unknown): string | undefined {
+  if (result == null || result === "") return undefined
+  const s = String(result)
+  if (s.length <= 200) return `result=${s}`
+  return `result=${s.slice(0, 200)}…(+${s.length - 200} chars)`
+}
+
 async function streamRunEvents(session: SdkSessionAgent, run: Run): Promise<void> {
   try {
     for await (const event of run.stream()) {
@@ -1407,11 +1428,11 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
       for (const block of event.message.content) {
         if (block.type === "text" && block.text) {
           appendSdkLog(session, "text", block.text)
-          // 阻塞 poll 挂起期间不刷卡（避免重复 poll 思考落成新卡）
           if (isStreamSilenced(session)) continue
-          // SDK 正文视作思考，不进用户可见正文区
-          if (stream && !stream.finished && isShowThinkingEnabled(session.sessionKey)) {
-            enqueueThinking(stream, block.text)
+          // 宿主模式：assistant 正文进用户可见 reply 区（与 Pi LLM text_delta 一致）
+          if (stream && !stream.finished) {
+            stream.gateOpen = true
+            enqueueReply(stream, block.text)
             scheduleFlushStreamCard(session)
           }
         }
@@ -1672,7 +1693,7 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run, opts?: { workerHo
         }
       } else {
         const summary = [
-          run.result && `result=${run.result}`,
+          formatRunResultForLog(run.result),
           run.durationMs != null && `duration=${run.durationMs}ms`,
         ].filter(Boolean).join(", ")
         pushUiLog("SDK", "INFO", `[${sessionKey}] worker 回合结束 (status=${run.status}${summary ? `, ${summary}` : ""})`)
@@ -1696,7 +1717,7 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run, opts?: { workerHo
       }
     } else {
       const summary = [
-        run.result && `result=${run.result}`,
+        formatRunResultForLog(run.result),
         run.durationMs != null && `duration=${run.durationMs}ms`,
       ].filter(Boolean).join(", ")
       pushUiLog("SDK", "INFO", `[${sessionKey}] Agent 运行结束 (status=${run.status}${summary ? `, ${summary}` : ""})`)
@@ -1749,7 +1770,10 @@ export async function unregisterSdkSessionForWorker(session: SdkSessionAgent, ab
   session.workerActive = false
   void sealStreamCardForStop(session).catch(() => {})
   if (!aborted && session.keepSession) rememberResumable(session)
-  await releaseSession(session)
+  // 仅当仍是 map 中的活跃实例时才 release——避免旧 worker finally 误删新 launch 登记的 session
+  if (sdkSessions.get(session.sessionKey) === session) {
+    await releaseSession(session)
+  }
 }
 
 export function onSdkWorkerFinished(
@@ -1757,6 +1781,10 @@ export function onSdkWorkerFinished(
   errored: boolean,
   opts?: { network?: boolean; permanent?: boolean; errorDetail?: string },
 ): void {
+  // 新 launch / 新 worker 已接替时，旧 worker 的 finally 不应再触发调度
+  if (pendingLaunches.has(sessionKey)) return
+  const live = sdkSessions.get(sessionKey)
+  if (live?.workerActive) return
   if (errored) {
     scheduleSdkIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
     const st = sdkFailStreak.get(sessionKey)
@@ -1775,6 +1803,21 @@ export function onSdkWorkerFinished(
 
 export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: boolean; error?: string }> {
   const { sessionKey, chatType, meta, workspaceDir, senderOpenId, chatName, taskMessage } = opts
+
+  const { startSdkWorkerLoop, isSdkWorkerActive, stopSdkWorker } = await import("./sdk-session-worker.js")
+
+  if (isSdkWorkerActive(sessionKey)) {
+    const s = sdkSessions.get(sessionKey)
+    if (s) {
+      s.lastActivityAt = Date.now()
+      if (opts.notifySessionKey?.trim()) s.notifySessionKey = opts.notifySessionKey.trim()
+      if (!s.senderOpenId && senderOpenId) s.senderOpenId = senderOpenId
+      for (const id of opts.pendingMessageIds ?? []) {
+        if (id) s.seenMessageIds.add(id)
+      }
+    }
+    return { ok: true }
+  }
 
   if (isSdkSessionRunning(sessionKey) || pendingLaunches.has(sessionKey)) {
     const s = sdkSessions.get(sessionKey)
@@ -1871,6 +1914,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     // 残留旧实例必须先释放（abort 事件流）再登记新实例：直接 set 覆盖会留下无人管的旧事件流，
     // 新旧两个实例交替刷同一张流式卡（内容来回跳动、任务清单时有时无的根因）
+    await stopSdkWorker(sessionKey)
     const stale = sdkSessions.get(sessionKey)
     if (stale) {
       pushUiLog("SDK", "WARN", `[${sessionKey}] 检测到残留旧会话实例，先行释放防双写 (agentId=${stale.agentId})`)
@@ -1964,8 +2008,8 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       rememberResumable(session)
     }
 
-    const { startSdkWorkerLoop, isSdkWorkerActive } = await import("./sdk-session-worker.js")
     if (isSdkWorkerActive(sessionKey)) {
+      session.workerActive = true
       return { ok: true }
     }
 
