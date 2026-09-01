@@ -25,7 +25,7 @@ export function getDaemonPort(): number | null {
 }
 
 export function clearInjectionCache(_dir?: string): void {
-  /* no-opï¼šå·²é€€å½?workspace æ³¨å…¥ç¼“å­˜ */
+  /* no-opï¼?å·²é??å½?workspace æ³¨å?¥ç¼?å­? */
 }
 
 export function getTemplateRoot(): string {
@@ -37,15 +37,19 @@ export function getRuleTemplatePath(): string {
   return path.join(getTemplateRoot(), "rule", "lk-harness.mdc")
 }
 
+export function getLlmHostRuleTemplatePath(): string {
+  return path.join(getTemplateRoot(), "rule", "lk-harness-llm-host.mdc")
+}
+
 const ADMIN_SKILL_DIR = "lk-harness-admin"
 
-/** æ¸…ç†é¡¹ç›®é‡Œæ®‹ç•™çš„è‡ªç®¡ç?skill ç›®å½•ï¼ˆå·²æ”?prompt inlineï¼Œä¸å†æ³¨å…¥ï¼‰ */
+/** æ¸?ç?é¡¹ç?®é??æ®?ç??ç??è?ªç®¡ç?skill ç?®å½?ï¼?å·²æ??prompt inlineï¼?ä¸å?æ³¨å?¥ï¼? */
 function cleanupStaleAdminSkill(wsDir: string): void {
   const stale = path.join(wsDir, ".cursor", "skills", ADMIN_SKILL_DIR)
   if (!fs.existsSync(stale)) return
   try {
     fs.rmSync(stale, { recursive: true, force: true })
-    broadcastLog(`å·²æ¸…ç†æ®‹ç•™è‡ªç®¡ç† Skill: ${stale}`)
+    broadcastLog(`å·²æ¸?ç?æ®?ç??è?ªç®¡ç? Skill: ${stale}`)
   } catch { /* ignore */ }
 }
 
@@ -62,17 +66,17 @@ function mergeProjectMcpFile(filePath: string, servers: Record<string, unknown>)
   fs.writeFileSync(filePath, JSON.stringify(mcpConfig, null, 2), "utf-8")
 }
 
-/** CLI ä¸“ç”¨ï¼šä»…å‘é¡¹ç›?`.cursor/mcp.json` merge å†…ç½® MCPï¼Œä¸ç¢°å…¨å±€ã€ä¸åˆ ç”¨æˆ·æ¡ç›?*/
+/** CLI ä¸?ç?¨ï¼?ä»?å?é¡¹ç??`.cursor/mcp.json` merge å??ç½® MCPï¼?ä¸ç¢°å?¨å±?ã?ä¸å? ç?¨æ?·æ¡ç??*/
 export function injectCliMcpToProjectDir(wsDir: string, includeAdmin: boolean): boolean {
   if (!daemonPort || !wsDir.trim()) return false
   try {
     const servers = buildBuiltinMcpServers(daemonPort, includeAdmin)
     if (!Object.keys(servers).length) return false
     mergeProjectMcpFile(path.join(wsDir, ".cursor", "mcp.json"), servers)
-    broadcastLog(`CLI MCP å·²æ³¨å…¥é¡¹ç›®ç›®å½? ${wsDir}`)
+    broadcastLog(`CLI MCP å·²æ³¨å?¥é¡¹ç?®ç?®å½? ${wsDir}`)
     return true
   } catch (e: unknown) {
-    broadcastLog(`CLI MCP é¡¹ç›®æ³¨å…¥å¤±è´¥: ${e instanceof Error ? e.message : e}`, "ERROR")
+    broadcastLog(`CLI MCP é¡¹ç?®æ³¨å?¥å¤±è´¥: ${e instanceof Error ? e.message : e}`, "ERROR")
     return false
   }
 }
@@ -98,36 +102,36 @@ export async function injectWorkspaceMcpAndRules(): Promise<{ mcpOk: boolean; ru
   return { mcpOk: true, ruleOk: true, skillOk: false }
 }
 
-export const ADMIN_SKILL_CONTENT = `# LK Harness â€?è‡ªç®¡ç?Skill
+export const ADMIN_SKILL_CONTENT = `# LK Harness â??è?ªç®¡ç?Skill
 
-ä½ å¯ä»¥é€šè¿‡ä»¥ä¸‹ MCP å·¥å…·ç®¡ç† LK Harness åº”ç”¨è‡ªèº«çš„è¿è¡ŒçŠ¶æ€ã€é…ç½®å’Œç¯å¢ƒã€?
+ä½ å¯ä»¥é??è¿?ä»¥ä¸? MCP å·¥å?·ç®¡ç? LK Harness åº?ç?¨è?ªèº«ç??è¿è¡?ç?¶æ?ã?é?ç½®å??ç?¯å¢?ã??
 
-## å¯ç”¨ MCP å·¥å…·
+## å¯ç?¨ MCP å·¥å?·
 
 ### manage_agent
-ç®¡ç† Agent ç”Ÿå‘½å‘¨æœŸã€?
-| action | è¯´æ˜ |
+ç®¡ç? Agent ç??å?½å?¨æ??ã??
+| action | è¯´æ?? |
 |--------|------|
-| status | æŸ¥è¯¢è¿è¡ŒçŠ¶æ€?|
-| stop | åœæ­¢ Agent |
-| restart | é‡å¯åº”ç”¨ |
-| reset | é‡ç½®ä¼šè¯ |
-| clean | æ¸…ç©ºæ¶ˆæ¯é˜Ÿåˆ— |
+| status | æ?¥è¯¢è¿è¡?ç?¶æ??|
+| stop | å?æ­¢ Agent |
+| restart | é?å¯åº?ç?¨ |
+| reset | é?ç½®ä¼?è¯ |
+| clean | æ¸?ç©ºæ¶?æ¯é??å?? |
 
 ### manage_mcp
-ç®¡ç† MCP æœåŠ¡å™¨é…ç½®ï¼ˆlist / add / deleteï¼‰ã€?
+ç®¡ç? MCP æ?å?¡å?¨é?ç½®ï¼?list / add / deleteï¼?ã??
 
 ### manage_rules
-ç®¡ç† Cursor Rules æ–‡ä»¶ï¼ˆlist / read / save / deleteï¼‰ã€?
+ç®¡ç? Cursor Rules æ??ä»¶ï¼?list / read / save / deleteï¼?ã??
 
 ### manage_skills
-ç®¡ç† Agent Skillsï¼ˆlist / read / save / deleteï¼‰ã€?
+ç®¡ç? Agent Skillsï¼?list / read / save / deleteï¼?ã??
 
 ### manage_tasks
-ç®¡ç†å®šæ—¶ä»»åŠ¡ï¼ˆlist / add / update / delete / toggleï¼‰ã€?
+ç®¡ç?å®?æ?¶ä»»å?¡ï¼?list / add / update / delete / toggleï¼?ã??
 
 ### manage_workspace
-ç®¡ç†å·¥ä½œç›®å½•ï¼ˆget / setï¼‰ã€?
+ç®¡ç?å·¥ä½?ç?®å½?ï¼?get / setï¼?ã??
 `
 
 export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
@@ -137,8 +141,8 @@ export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
       .filter((w): w is string => !!w && fs.existsSync(w)),
   )]
   if (dirs.length === 0) {
-    return { results: [{ file: "", action: "skipped", message: "æ— é€šé“å·¥ä½œç›®å½•" }] }
+    return { results: [{ file: "", action: "skipped", message: "æ? é??é?å·¥ä½?ç?®å½?" }] }
   }
   for (const dir of dirs) cleanupStaleAdminSkill(dir)
-  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "å·²é€€å½?workspace æ³¨å…¥ï¼Œä»…æ¸…ç†æ®‹ç•™" }] }
+  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "å·²é??å½?workspace æ³¨å?¥ï¼?ä»?æ¸?ç?æ®?ç??" }] }
 }

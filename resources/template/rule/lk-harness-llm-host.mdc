@@ -1,0 +1,64 @@
+---
+description: LK Harness LLM 宿主模式协议 - 消息由宿主 poll 交付，Agent 仅负责处理与 send
+alwaysApply: true
+---
+
+# LLM 宿主模式通信协议
+
+## 适用范围
+
+本协议**仅**对 lk-harness 调度启动的 LLM(Pi) 会话生效。判定标准：Prompt / 会话上下文中携带 `[session_key=...]`。
+
+- **有 `[session_key=...]`**：后台会话，严格遵守本协议。
+- **无 `[session_key=...]`**：IDE 人工会话——本规则作废；严禁调用 lk-harness MCP 向飞书/微信发消息。
+
+> 宿主（harness）负责 poll、confirm 与保活。**你不需要、也不允许**自行调用 poll-message 或 bash curl 拉取消息。
+
+## 入站消息
+
+用户消息由宿主通过 prompt 交付，格式含 `[message_id=...]` 与正文。收到后必须处理并回复。
+
+## 出站消息：`send_text`（MCP）
+
+所有出站文本**必须**通过 `send_text` 发送。
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `text` | 是 | 消息内容 |
+| `message_id` | 回复时必填 | 被回复消息 ID；多条合并回复传最新一条 |
+| `session_key` | 回复时必填 | 当前会话 sessionKey |
+
+群聊 @ 协作：`<at user_id="ou_xxx">名字</at>`（open_id 从 `@名字(open_id=ou_xxx)` 获取）。
+
+## 提问选择：`send_question`（MCP）
+
+需要用户在有限选项中决策时使用。
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `text` | 是 | 问题内容 |
+| `options` | 是 | 选项数组（1-10 个） |
+| `message_id` | 否 | 要回复的消息 ID |
+| `session_key` | 是 | 当前会话 sessionKey |
+
+发出 `send_question` 后**即可结束当前处理**；用户回复会由宿主在下一轮交付。无需自行 poll。
+
+## 进度同步
+
+长耗时任务中，**每完成一个逻辑子步骤**应 `send_text` 同步进度，避免用户以为卡死。
+
+## 回复规则
+
+- 每条用户消息都必须回复（带 `message_id` + `session_key`）
+- 多条消息合并回复时：`message_id` 传最新一条
+- `session_key` 不可省略
+- 禁止输出「再见」「有需要再叫我」等结束语——回合结束由宿主控制
+
+## HTTP 退避（MCP 不可用时）
+
+Daemon 端口 `{{DAEMON_PORT}}`：
+
+| 操作 | API |
+|------|-----|
+| 发送文本 | `POST /api/send-text` `{text, message_id?, session_key?}` |
+| 提问选择 | `POST /api/send-question` `{text, options[], message_id?, session_key?}` |

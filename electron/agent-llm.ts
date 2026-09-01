@@ -17,8 +17,6 @@ import {
 } from "../src/shared/session-model-store.js"
 import { createHarnessPiSession, hasPersistedPiSession, clearPiSession } from "./pi-embedded"
 import {
-  assembleWakePrompt,
-  assembleColdStartBootstrap,
   hashSystemPrompt,
   computePromptHash,
   resolveDaemonPortForPrompt,
@@ -95,6 +93,8 @@ interface LlmSession extends StreamCardHost {
   /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
 }
+
+export type LlmWorkerSession = LlmSession
 
 const llmSessions = new Map<string, LlmSession>()
 const pendingLaunches = new Set<string>()
@@ -366,6 +366,56 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
   await flushStreamCard(session, true)
 }
 
+export async function executeLlmPiTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string }> {
+  return runPiAgentTurn(session, prompt)
+}
+
+export function registerLlmSession(session: LlmSession): void {
+  llmSessions.set(session.sessionKey, session)
+  broadcastLlmSessionStatus()
+}
+
+export async function unregisterLlmSession(session: LlmSession, aborted: boolean): Promise<void> {
+  session.piUnsubscribe?.()
+  session.piUnsubscribe = null
+  await sealLlmStream(session)
+
+  if (!aborted) {
+    rememberPiResumable(
+      session.sessionKey,
+      session.rulesHash,
+      session.daemonPort,
+      getPiResumable(session.sessionKey)?.streamCardId,
+    )
+  }
+
+  llmSessions.delete(session.sessionKey)
+  broadcastLlmSessionStatus()
+  await session.piSession.abort().catch(() => undefined)
+  session.piSession.dispose()
+}
+
+export function onLlmWorkerFinished(
+  sessionKey: string,
+  errored: boolean,
+  opts?: { network?: boolean; permanent?: boolean; errorDetail?: string },
+): void {
+  if (errored) {
+    scheduleLlmIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
+    const st = llmFailStreak.get(sessionKey)
+    const waitMs = llmFailCooldownRemaining(sessionKey)
+    const retryTip = waitMs > 0 ? `→ ${Math.round(waitMs / 1000)}s 后重试` : "→ 立即重试"
+    if (shouldLogRepeatedFailure(sessionKey, opts?.errorDetail, st?.count ?? 1)) {
+      pushUiLog("LLM", (st?.count ?? 0) > 8 ? "ERROR" : "WARN",
+        `[${sessionKey}] worker 异常结束×${st?.count ?? 1} ${retryTip} | ${opts?.errorDetail || "unknown"}`)
+    }
+    broadcastLog(`[LLM] 会话 ${sessionKey} worker 异常: ${opts?.errorDetail}`, "ERROR")
+  } else {
+    pushUiLog("LLM", "INFO", `[${sessionKey}] worker 已退出`)
+    scheduleLlmIdle(sessionKey, false)
+  }
+}
+
 async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string }> {
   beginLlmTurn(session)
   await refreshLlmModel(session, session.channelModel)
@@ -379,66 +429,6 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   const agentErr = session.piSession.state.errorMessage?.trim()
   if (agentErr) return { ok: false, error: agentErr }
   return { ok: true }
-}
-
-/** 单次 prompt 生命周期：模型通过 MCP 自行 poll/send，harness 不重复外层 poll 循环 */
-async function runLlmLifecycle(session: LlmSession, bootstrap: string): Promise<void> {
-  const { sessionKey, abort } = session
-  const sig = abort.signal
-  let errored = false
-  let errorDetail: string | undefined
-  let networkFail = false
-  let permanentFail = false
-
-  try {
-    const result = await runPiAgentTurn(session, bootstrap)
-    if (sig.aborted) return
-    if (!result.ok) {
-      errored = true
-      errorDetail = result.error
-      const classified = classifyLlmFailure(errorDetail ?? "")
-      networkFail = classified.networkFail
-      permanentFail = classified.permanentFail
-    }
-  } catch (e: unknown) {
-    if (sig.aborted) return
-    errored = true
-    errorDetail = formatLlmError(e)
-    const classified = classifyLlmFailure(errorDetail)
-    networkFail = classified.networkFail
-    permanentFail = classified.permanentFail
-  } finally {
-    session.piUnsubscribe?.()
-    session.piUnsubscribe = null
-    await sealLlmStream(session)
-
-    if (!sig.aborted) {
-      rememberPiResumable(
-        sessionKey,
-        session.rulesHash,
-        session.daemonPort,
-        getPiResumable(sessionKey)?.streamCardId,
-      )
-    }
-
-    llmSessions.delete(sessionKey)
-    broadcastLlmSessionStatus()
-
-    if (errored) {
-      scheduleLlmIdle(sessionKey, true, { network: networkFail, silent: true, permanent: permanentFail })
-      const st = llmFailStreak.get(sessionKey)
-      const waitMs = llmFailCooldownRemaining(sessionKey)
-      const retryTip = waitMs > 0 ? `→ ${Math.round(waitMs / 1000)}s 后重试` : "→ 立即重试"
-      if (shouldLogRepeatedFailure(sessionKey, errorDetail, st?.count ?? 1)) {
-        pushUiLog("LLM", (st?.count ?? 0) > 8 ? "ERROR" : "WARN",
-          `[${sessionKey}] 运行失败×${st?.count ?? 1} ${retryTip} | ${errorDetail || "unknown"}`)
-      }
-      broadcastLog(`[LLM] 会话 ${sessionKey} 异常: ${errorDetail}`, "ERROR")
-    } else {
-      pushUiLog("LLM", "INFO", `[${sessionKey}] Agent 运行结束`)
-      scheduleLlmIdle(sessionKey, false)
-    }
-  }
 }
 
 export function isLlmSessionRunning(sessionKey: string): boolean {
@@ -465,6 +455,11 @@ export function handleLlmPollPhaseEvent(
 }
 
 export async function stopLlmSession(sessionKey: string): Promise<void> {
+  const { stopLlmWorker, isLlmWorkerActive } = await import("./llm-session-worker.js")
+  if (isLlmWorkerActive(sessionKey)) {
+    await stopLlmWorker(sessionKey)
+    return
+  }
   const s = llmSessions.get(sessionKey)
   if (!s) return
   llmSessions.delete(sessionKey)
@@ -482,7 +477,19 @@ export async function stopLlmSession(sessionKey: string): Promise<void> {
 }
 
 export async function stopAllLlmSessions(): Promise<void> {
-  await Promise.all([...llmSessions.keys()].map((k) => stopLlmSession(k)))
+  const { stopAllLlmWorkers } = await import("./llm-session-worker.js")
+  await stopAllLlmWorkers()
+  for (const key of [...llmSessions.keys()]) {
+    const s = llmSessions.get(key)
+    if (!s) continue
+    llmSessions.delete(key)
+    s.abort.abort()
+    s.piUnsubscribe?.()
+    await sealLlmStream(s).catch(() => undefined)
+    await s.piSession.abort().catch(() => undefined)
+    s.piSession.dispose()
+  }
+  broadcastLlmSessionStatus()
 }
 
 export function getLlmSessionCount(): number {
@@ -565,18 +572,9 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: opts.taskMessage,
     }
-    const bootstrap = resumed
-      ? assembleWakePrompt(promptCtx, currentDaemonPort)
-      : assembleColdStartBootstrap({
-        meta: opts.meta,
-        sessionKey: opts.sessionKey,
-        useMainWorkspace: opts.useMainWorkspace,
-        notifySessionKey: opts.notifySessionKey,
-        digitalIdentityOverride: opts.digitalIdentityOverride,
-        taskMessage: opts.taskMessage,
-      }, currentDaemonPort)
+    const persistentPoll = opts.keepSession !== false && (opts.persistentPoll ?? true)
 
-    pushUiLog("LLM", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Prompt:\n${bootstrap}`)
+    pushUiLog("LLM", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Session Worker (persistentPoll=${persistentPoll})`)
 
     const abort = new AbortController()
     const session: LlmSession = {
@@ -590,7 +588,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       chatType: opts.chatType,
       chatName: opts.chatName,
       senderOpenId: opts.senderOpenId,
-      persistentPoll: opts.keepSession !== false && (opts.persistentPoll ?? true),
+      persistentPoll,
       keepSession: opts.keepSession ?? true,
       channelModel: modelId,
       channelModelParams: modelParams,
@@ -616,12 +614,18 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     session.piUnsubscribe = piSession.subscribe((event) => handlePiSessionEvent(session, event))
     await notifySessionLaunched(sessionKey, resumed)
 
-    session.runPromise = runLlmLifecycle(session, bootstrap)
-    llmSessions.set(sessionKey, session)
+    const { startLlmWorkerLoop, isLlmWorkerActive } = await import("./llm-session-worker.js")
+    if (isLlmWorkerActive(sessionKey)) return { ok: true }
+
+    session.runPromise = startLlmWorkerLoop(session, {
+      persistentPoll,
+      promptCtx,
+      taskMessage: opts.taskMessage,
+      firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
+    })
     rememberPiResumable(sessionKey, rulesHash, currentDaemonPort ?? undefined, session.streamAgg?.cardId)
-    broadcastLlmSessionStatus()
     const history = piSession.messages.length
-    broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} (${llmProviderId(resource)} / ${model.id}, history=${history}, MCP=poll/send)`)
+    broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} worker (${llmProviderId(resource)} / ${model.id}, history=${history})`)
     return { ok: true }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)

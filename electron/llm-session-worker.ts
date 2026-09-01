@@ -1,0 +1,168 @@
+import type { LlmLaunchOptions } from "./agent-llm"
+import {
+  executeLlmPiTurn,
+  onLlmWorkerFinished,
+  registerLlmSession,
+  unregisterLlmSession,
+  type LlmWorkerSession,
+} from "./agent-llm"
+import { hostBlockingPoll, isPollEndDirective, isPollTimeoutDirective, type PollMessage } from "./poll-host"
+import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
+import { pushUiLog } from "./ui-logger"
+
+export type LlmWorkerPhase = "listening" | "processing" | "stopping"
+
+interface WorkerState {
+  session: LlmWorkerSession
+  phase: LlmWorkerPhase
+  persistentPoll: boolean
+  promptCtx: PromptAssemblyContext
+  taskMessage?: string
+  firstTurn: boolean
+  abort: AbortController
+  loopPromise: Promise<void>
+}
+
+const workers = new Map<string, WorkerState>()
+
+const TURN_IDLE_TIMEOUT_MS = 5 * 60_000
+
+export function isLlmWorkerActive(sessionKey: string): boolean {
+  return workers.has(sessionKey)
+}
+
+export function getLlmWorkerPhase(sessionKey: string): LlmWorkerPhase | null {
+  return workers.get(sessionKey)?.phase ?? null
+}
+
+export function listLlmWorkerPhases(): Map<string, LlmWorkerPhase> {
+  const out = new Map<string, LlmWorkerPhase>()
+  for (const [k, w] of workers) out.set(k, w.phase)
+  return out
+}
+
+export async function stopLlmWorker(sessionKey: string): Promise<void> {
+  const w = workers.get(sessionKey)
+  if (!w) return
+  w.phase = "stopping"
+  w.abort.abort()
+  await Promise.race([
+    w.loopPromise.catch(() => undefined),
+    new Promise<void>((r) => setTimeout(r, 5000)),
+  ])
+}
+
+export async function stopAllLlmWorkers(): Promise<void> {
+  await Promise.all([...workers.keys()].map((k) => stopLlmWorker(k)))
+}
+
+function filterDeliverable(messages: PollMessage[]): PollMessage[] {
+  return messages.filter((m) => m.text?.trim() && m.messageId)
+}
+
+export function startLlmWorkerLoop(
+  session: LlmWorkerSession,
+  opts: {
+    persistentPoll: boolean
+    promptCtx: PromptAssemblyContext
+    taskMessage?: string
+    firstTurn: boolean
+  },
+): Promise<void> {
+  const state: WorkerState = {
+    session,
+    phase: "listening",
+    persistentPoll: opts.persistentPoll,
+    promptCtx: opts.promptCtx,
+    taskMessage: opts.taskMessage,
+    firstTurn: opts.firstTurn,
+    abort: session.abort,
+    loopPromise: Promise.resolve(),
+  }
+  workers.set(session.sessionKey, state)
+  state.loopPromise = runWorkerLoop(state)
+  return state.loopPromise
+}
+
+async function runWorkerLoop(state: WorkerState): Promise<void> {
+  const { session, abort } = state
+  const { sessionKey } = session
+  let errored = false
+  let errorDetail: string | undefined
+  let networkFail = false
+  let permanentFail = false
+
+  registerLlmSession(session)
+
+  try {
+    while (!abort.signal.aborted) {
+      state.phase = "listening"
+      pushUiLog("LLM", "DEBUG", `[${sessionKey}] worker listening (blocking poll)`)
+
+      let pollResult
+      try {
+        pollResult = await hostBlockingPoll(sessionKey, abort.signal)
+      } catch (e: unknown) {
+        if (abort.signal.aborted) break
+        throw e
+      }
+      if (abort.signal.aborted) break
+
+      if (isPollEndDirective(pollResult.directive)) {
+        pushUiLog("LLM", "INFO", `[${sessionKey}] worker 收到安静退出 directive，结束`)
+        break
+      }
+      if (isPollTimeoutDirective(pollResult.directive)) {
+        pushUiLog("LLM", "DEBUG", `[${sessionKey}] poll 超时保活，继续监听`)
+        continue
+      }
+
+      const deliverable = filterDeliverable(pollResult.messages)
+      if (deliverable.length === 0) continue
+
+      for (const m of deliverable) {
+        if (m.messageId) session.seenMessageIds.add(m.messageId)
+      }
+
+      state.phase = "processing"
+      const prompt = assembleTurnPrompt(deliverable, state.promptCtx, {
+        firstTurn: state.firstTurn,
+        taskMessage: state.firstTurn ? state.taskMessage : undefined,
+      })
+      state.firstTurn = false
+      state.taskMessage = undefined
+
+      pushUiLog("LLM", "INFO", `[${sessionKey}] worker 处理 ${deliverable.length} 条消息`)
+
+      const turnResult = await Promise.race([
+        executeLlmPiTurn(session, prompt),
+        new Promise<{ ok: false; error: string }>((resolve) => {
+          const t = setTimeout(() => resolve({ ok: false, error: "Pi 回合超时（5min）" }), TURN_IDLE_TIMEOUT_MS)
+          abort.signal.addEventListener("abort", () => { clearTimeout(t); resolve({ ok: false, error: "aborted" }) }, { once: true })
+        }),
+      ])
+
+      if (abort.signal.aborted) break
+      if (!turnResult.ok) {
+        errored = true
+        errorDetail = turnResult.error
+        const msg = errorDetail ?? "unknown"
+        networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(msg)
+        permanentFail = !networkFail && /401|403|api key|quota|rate limit/i.test(msg)
+        pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合失败: ${msg}`)
+        break
+      }
+    }
+  } catch (e: unknown) {
+    if (!abort.signal.aborted) {
+      errored = true
+      errorDetail = e instanceof Error ? e.message : String(e)
+      networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(errorDetail)
+    }
+  } finally {
+    state.phase = "stopping"
+    workers.delete(sessionKey)
+    await unregisterLlmSession(session, abort.signal.aborted)
+    onLlmWorkerFinished(sessionKey, errored, { network: networkFail, permanent: permanentFail, errorDetail })
+  }
+}

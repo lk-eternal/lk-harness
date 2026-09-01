@@ -16,7 +16,7 @@ import type { Model, Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
-import { assembleProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { assembleLlmHostProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { piAdditionalSkillPaths } from "./skill-paths"
 import { buildPiMcpConfig } from "./pi-mcp-config"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
@@ -53,7 +53,7 @@ export function clearPiSession(sessionKey: string): void {
 }
 
 function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
-  const blocks = assembleProtocolBlocks({
+  const blocks = assembleLlmHostProtocolBlocks({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
