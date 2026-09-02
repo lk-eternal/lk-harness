@@ -127,30 +127,37 @@ export function lookupCatalogModel(modelId: string): CatalogEntry | undefined {
   return memIndex?.get(modelId.trim())
 }
 
-function lookupPiModelApi(modelId: string): Api | null {
+/** 模型 id 在 pi 内置哪个供应商目录里（含能力字段）——实际发包用的就是这张表 */
+export function lookupPiModel(modelId: string): Model<Api> | null {
   const id = modelId.trim()
   if (!id) return null
   for (const pid of PI_SCAN_PROVIDERS) {
     try {
       const m = getModel(pid as Parameters<typeof getModel>[0], id as never)
-      if (m?.api) return m.api
+      if (m?.api) return m
     } catch { /* not in this provider */ }
   }
   return null
 }
 
-export function resolveCustomModelApi(modelId: string, fallback?: LlmApiProtocol): LlmApiProtocol {
-  const fromCatalog = lookupCatalogModel(modelId)?.api
-  if (fromCatalog) return fromCatalog
-  const fromPi = lookupPiModelApi(modelId)
-  if (fromPi) return fromPi as LlmApiProtocol
-  return fallback ?? "openai-completions"
+function lookupPiModelApi(modelId: string): Api | null {
+  return lookupPiModel(modelId)?.api ?? null
 }
 
-/** 规范化自定义网关 URL（用于 /models 与 completions） */
+/**
+ * 自定义网关协议判定：不读任何配置字段，目录直接定
+ * pi 内置表（实际发包方，精确到模型）> models.dev（`provider.npm` 推协议）> completions
+ */
+export function resolveCustomModelApi(modelId: string): LlmApiProtocol {
+  const fromPi = lookupPiModelApi(modelId)
+  if (fromPi) return fromPi as LlmApiProtocol
+  return lookupCatalogModel(modelId)?.api ?? "openai-completions"
+}
+
+/** 规范化自定义网关根 URL：pi 按 api 自己拼 /chat/completions、/responses 或 /messages，尾缀必须剥掉 */
 export function normalizeGatewayRoot(baseUrl: string): string {
   let url = baseUrl.trim().replace(/\/+$/, "")
-  url = url.replace(/\/chat\/completions$/i, "")
+  url = url.replace(/\/(chat\/completions|responses|messages)$/i, "")
   return url
 }
 

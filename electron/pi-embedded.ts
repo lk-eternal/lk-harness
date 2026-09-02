@@ -142,7 +142,8 @@ export async function createHarnessPiSession(
     sessionManager,
     resourceLoader,
     model,
-    thinkingLevel: "off",
+    // 推理模型不接受 effort="none"（opencode 直接 400）：这类模型只能取最低的可用等级
+    thinkingLevel: model.reasoning ? "low" : "off",
   })
   wrapAgentStreamWithProxy(session)
 

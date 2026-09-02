@@ -139,6 +139,18 @@ async function applySessionModelPick(
   await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, undefined, cmdCardExtra(patchMessageId, "模型", "已切换"))
 }
 
+/**
+ * 常用模型（favoriteModels）是全局列表，历史上混着 Cursor SDK / 其他网关的模型。
+ * /m 只列当前通道 Agent 能用的那些，否则点 q# 必定切换失败。
+ */
+async function quickModelsForChannel(channel: Parameters<typeof listModelsForCommands>[0]): Promise<ModelEntry[]> {
+  const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
+  const lr = await listModelsForCommands(channel)
+  if (!lr.ok) return favs
+  const usable = new Set(lr.models.map((m) => m.id.toLowerCase()))
+  return favs.filter((f) => usable.has(f.model.toLowerCase()))
+}
+
 export async function handleFeishuModelCommand(port: number, messageId: string, raw: string, chatId?: string, patchMessageId?: string): Promise<void> {
   const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0)
   const low = (s: string) => s.toLowerCase()
@@ -151,8 +163,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (parts.length <= 1) {
-    const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
-    const quick = listQuickModels(favs, 6)
+    const quick = listQuickModels(await quickModelsForChannel(channel), 6)
     const subBtns = withNav([
       { label: "📋 模型列表", cmd: "/m ls" },
       { label: "ℹ️ 当前模型", cmd: "/m info" },
@@ -222,8 +233,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     const token = parts[2]
     const qMatch = /^q(\d+)$/i.exec(token)
     if (qMatch) {
-      const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
-      const quick = listQuickModels(favs, 20)
+      const quick = listQuickModels(await quickModelsForChannel(channel), 20)
       const qi = parseInt(qMatch[1], 10)
       if (qi < 1 || qi > quick.length) {
         await reportCommandResult(port, messageId, false, `😅 常用模型序号须为 1～${quick.length}（先 /m）`, chatId, undefined, mExtra())
@@ -260,8 +270,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         return m.id === token || m.id.startsWith(token) || slug === token || m.label === token
       })
       if (!picked) {
-        const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
-        const fromQuick = listQuickModels(favs, 20).find((m) => {
+        const fromQuick = listQuickModels(await quickModelsForChannel(channel), 20).find((m) => {
           const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
           return m.model === token || slug === token
         })
@@ -283,8 +292,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     if (pIdx >= 0 && parts[pIdx + 1] !== undefined) {
       picked = { ...picked, params: parts.slice(pIdx + 1).join(" ") }
     } else if (!picked.params) {
-      const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
-      const hit = listQuickModels(favs, 20).find((m) => m.model === picked!.id)
+      const hit = listQuickModels(await quickModelsForChannel(channel), 20).find((m) => m.model === picked!.id)
       if (hit?.modelParams) picked = { ...picked, params: hit.modelParams }
     }
     await applySessionModelPick(port, messageId, channel, chatId, picked, idxLabel, patchMessageId)

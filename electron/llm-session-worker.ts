@@ -42,12 +42,12 @@ function racePiTurnWithIdleTimeout(
   session: LlmWorkerSession,
   prompt: string,
   abort: AbortSignal,
-): Promise<{ ok: boolean; error?: string; replyText?: string }> {
+): Promise<{ ok: boolean; error?: string; replyText?: string; resumable?: boolean; fatal?: boolean }> {
   return new Promise((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setInterval> | undefined
 
-    const finish = (result: { ok: boolean; error?: string; replyText?: string }) => {
+    const finish = (result: { ok: boolean; error?: string; replyText?: string; resumable?: boolean; fatal?: boolean }) => {
       if (settled) return
       settled = true
       if (timer) clearInterval(timer)
@@ -69,9 +69,12 @@ function racePiTurnWithIdleTimeout(
 
     abort.addEventListener("abort", () => finish({ ok: false, error: "aborted" }), { once: true })
 
-    void executeLlmPiTurn(session, prompt).then(finish, (e: unknown) => {
-      finish({ ok: false, error: e instanceof Error ? e.message : String(e) })
-    })
+    // resumable：executeLlmPiTurn 自己结算了（含报错），该回合已终止，长连接可以接着用；
+    // 超时/abort 早退的不算，那种情况下可能还有 in-flight 回合，只能退出重建
+    void executeLlmPiTurn(session, prompt).then(
+      (r) => finish({ ...r, resumable: true }),
+      (e: unknown) => finish({ ok: false, error: e instanceof Error ? e.message : String(e), resumable: true }),
+    )
   })
 }
 
@@ -209,13 +212,33 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
       if (abort.signal.aborted) break
       if (!turnResult.ok) {
-        errored = true
-        errorDetail = turnResult.error
-        const msg = errorDetail ?? "unknown"
-        networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(msg)
-        permanentFail = !networkFail && /401|403|api key|quota|rate limit/i.test(msg)
+        const msg = turnResult.error ?? "unknown"
         pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合失败: ${msg}`)
-        break
+        if (!turnResult.resumable || turnResult.fatal) {
+          // fatal：通道已换 Agent 资源，这批消息不标已处理，退出后由新引擎重新拉起
+          errored = true
+          errorDetail = turnResult.error
+          networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(msg)
+          permanentFail = !networkFail && /401|403|api key|quota|rate limit/i.test(msg)
+          break
+        }
+        // 回合已结束（模型/网关报错）：这批消息不能重放，但 worker 也不必陪葬
+        for (const m of fresh) {
+          if (m.messageId) session.processedMessageIds.add(m.messageId)
+        }
+        // 必须确认这一次 claim：否则 daemon 把这批 .claimed 重投，worker 重启后内存里的
+        // processedMessageIds 没了就会再跑一次同样的失败回合（同一错误在卡片上出现两遗）
+        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+        try {
+          await hostSendText(
+            `⚠️ 本回合失败：${msg}\n（会话仍在线，可直接继续发送）`,
+            sessionKey,
+            fresh.map((m) => m.messageId).filter(Boolean).pop(),
+          )
+        } catch (e: unknown) {
+          pushUiLog("LLM", "ERROR", `[${sessionKey}] 失败回执投递异常: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        continue
       }
 
       // 微信等非流式通道：卡片跳过时仍走文本投递

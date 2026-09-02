@@ -159,6 +159,11 @@ function createWindow(): void {
   })
 }
 
+/** UI 校验 API Key / 拉模型列表用的临时资源：不落库，故用哨兵 id */
+function adhocSdkResource(apiKey: string): AgentResource {
+  return { id: "sdk_adhoc", name: "临时校验", type: "sdk", apiKey }
+}
+
 function registerIpcHandlers(): void {
   ipcMain.handle("window:minimize", () => mainWindow?.minimize())
   ipcMain.handle("window:maximize", () => {
@@ -332,11 +337,11 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => {
-    const resource: AgentResource = { type: "sdk", apiKey }
+    const resource = adhocSdkResource(apiKey)
     return getAgentEngine(resource).checkCredentials?.(resource) ?? Promise.resolve({ ok: false, error: "不支持" })
   })
   ipcMain.handle("sdk:list-models", (_, apiKey: string, currentModel?: string, currentParams?: string) => {
-    const resource: AgentResource = { type: "sdk", apiKey }
+    const resource = adhocSdkResource(apiKey)
     const engine = getAgentEngine(resource)
     return engine.listModels?.(resource, undefined, currentModel, currentParams)
       ?? Promise.resolve({ ok: false, error: "不支持" })

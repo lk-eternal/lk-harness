@@ -122,9 +122,11 @@ function AgentModelsList({ draft, refreshKey }: { draft: AgentResource; refreshK
       ) : (
         <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/50 px-2 py-1.5">
           {models.map((m) => (
-            <li key={m.id} className="flex items-baseline justify-between gap-2 text-xs">
+            <li key={m.id} className="flex items-center justify-between gap-2 text-xs">
               <span className="truncate text-gray-300" title={m.label}>{m.label}</span>
-              <span className="shrink-0 font-mono text-[10px] text-gray-600">{m.id}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="font-mono text-[10px] text-gray-600">{m.id}</span>
+              </span>
             </li>
           ))}
         </ul>

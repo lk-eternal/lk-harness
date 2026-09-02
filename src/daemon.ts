@@ -4444,7 +4444,11 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         log("INFO", `消息已投递(instant): count=${messages.length} session=${sessionKeyFilter}`);
         touchSessionDelivery(sessionKeyFilter);
         addReactionToMessages(freshIds, sessionKeyFilter, "Get");
-        // instant 投递不关问题卡：expire 会走 sealQuestionCardByMessageId 误 seal 活流式卡（Agent 干活中 poll 拉到新消息）
+        // 空闲「待点选」卡（已 finish 但为未决问题保留）必须摘掉，否则下一回合续写同一张卡。
+        // Agent 正在写的卡（finished=false）不碰，未决问题也不 expire——那是 blocking 路径的活。
+        if (sessionKeyFilter && agentStreamCards.get(sessionKeyFilter)?.finished) {
+          await sealActiveStreamCardOnDelivery(sessionKeyFilter);
+        }
       }
       logPollDeliveryToAgent(sessionKeyFilter, { blocking: false, messages, keepAlive });
       broadcastPollPhaseEvent(sessionKeyFilter, "end", {

@@ -187,38 +187,53 @@ function broadcastLlmSessionStatus(): void {
   broadcastSessionStatus(list, "llm")
 }
 
-function resolveLlmModelRef(opts: LlmLaunchOptions): { modelId: string; modelParams: string } {
+/** 模型解析唯一入口：会话 override/pending 恒优先于传入的 ref */
+function resolveModelRef(sessionKey: string, ref: { model?: string; modelParams?: string }): { modelId: string; modelParams: string } {
   initSessionModelStore(app.getPath("userData"))
-  let modelId = opts.model?.trim() && opts.model.trim() !== "auto" ? opts.model.trim() : ""
-  let modelParams = opts.modelParams ?? ""
-  if (opts.channelId) {
-    const channel = getChannel(opts.channelId)
-    if (channel) {
-      const resolved = resolveChannelModel(channel, "primary")
-      if (resolved.model?.trim() && resolved.model !== "auto") {
-        modelId = resolved.model
-        modelParams = resolved.modelParams ?? ""
-      }
-    }
-  }
-  if (modelId && modelId !== "auto") return { modelId, modelParams }
-  const resolved = resolveModelForSession(opts.sessionKey, { model: modelId, modelParams })
+  const trimmed = ref.model?.trim() ?? ""
+  const usable = trimmed && trimmed !== "auto"
+  const resolved = resolveModelForSession(sessionKey, usable
+    ? { model: trimmed, modelParams: ref.modelParams ?? "" }
+    : { model: "", modelParams: "" })
   return { modelId: resolved.model, modelParams: resolved.modelParams ?? "" }
 }
 
-async function refreshLlmModel(session: LlmSession, fallbackModel: string): Promise<void> {
-  initSessionModelStore(app.getPath("userData"))
-  let modelId = fallbackModel
-  if (session.channelId) {
-    const channel = getChannel(session.channelId)
-    if (channel) {
-      const resolved = resolveChannelModel(channel, "primary")
-      if (resolved.model?.trim() && resolved.model !== "auto") {
-        modelId = resolved.model
-      }
-    }
+/** 通道当前配置的主模型（live 读 config，未配置返空） */
+function channelModelRef(channelId?: string, resourceId?: string): { model: string; modelParams: string } {
+  if (!channelId) return { model: "", modelParams: "" }
+  const channel = getChannel(channelId)
+  // 通道已换绑其它 Agent：它的模型属于另一个引擎，不能拿过来喂本 worker
+  if (resourceId && channel?.agentResourceId && channel.agentResourceId !== resourceId) {
+    return { model: "", modelParams: "" }
   }
-  const llmModel = resolveLlmModel(session.resource, modelId)
+  const resolved = resolveChannelModel(channel, "primary")
+  return { model: resolved.model ?? "", modelParams: resolved.modelParams ?? "" }
+}
+
+/** 通道绑定的资源已不是本会话所用资源：旧引擎 worker 必须让路，新消息由新引擎重新拉起 */
+export function channelResourceSwitched(channelId: string | undefined, resourceId: string): boolean {
+  if (!channelId) return false
+  const bound = getChannel(channelId)?.agentResourceId
+  return !!bound && bound !== resourceId
+}
+
+function resolveLlmModelRef(opts: LlmLaunchOptions): { modelId: string; modelParams: string } {
+  // opts.model 已由上层按场景（primary/others）+ override 解析，通道模型只作兜底
+  const ref = opts.model?.trim() && opts.model.trim() !== "auto"
+    ? { model: opts.model, modelParams: opts.modelParams }
+    : channelModelRef(opts.channelId, opts.resource?.id)
+  return resolveModelRef(opts.sessionKey, ref)
+}
+
+async function refreshLlmModel(session: LlmSession): Promise<void> {
+  // 资源对象每回合从配置重取：设置里改协议/默认模型不用重启会话就生效
+  const resource = getConfig().agentResources?.find((r) => r.id === session.resource.id) ?? session.resource
+  session.resource = resource
+  const live = channelModelRef(session.channelId, resource.id)
+  const { modelId } = resolveModelRef(session.sessionKey, live.model
+    ? live
+    : { model: session.channelModel, modelParams: session.channelModelParams })
+  const llmModel = resolveLlmModel(resource, modelId)
   if (!llmModel || llmModel.id === session.model.id) return
   session.model = llmModel
   await session.piSession.setModel(llmModel)
@@ -410,7 +425,14 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
   await agg.inflight.catch(() => undefined)
 }
 
-export async function executeLlmPiTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
+export async function executeLlmPiTurn(
+  session: LlmSession,
+  prompt: string,
+): Promise<{ ok: boolean; error?: string; replyText?: string; fatal?: boolean }> {
+  // 不建流、不消耗这批消息：这批任务交回给新引擎重新拉起
+  if (channelResourceSwitched(session.channelId, session.resource.id)) {
+    return { ok: false, error: "通道已换 Agent 资源，本会话改用新引擎重新拉起", fatal: true }
+  }
   openStreamForTurn(session)
   return runPiAgentTurn(session, prompt)
 }
@@ -482,18 +504,36 @@ function extractAssistantTextSince(piSession: AgentSession, fromIndex: number): 
 
 async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
   beginLlmTurn(session)
-  await refreshLlmModel(session, session.channelModel)
+  await refreshLlmModel(session)
   session.lastActivityAt = Date.now()
+  // 网关 4xx/5xx 只看这行：协议与端点以实际交给 Pi 的 Model 为准，不靠配置推猜
+  const modelRef = `${session.model.id} · ${session.model.api} · ${session.model.baseUrl ?? "provider 默认"}${session.model.reasoning ? " · reasoning" : ""}`
+  pushUiLog("LLM", "INFO", `[${session.sessionKey}] 本回合模型: ${modelRef}`)
   const msgBefore = session.piSession.messages.length
+  let result: { ok: boolean; error?: string }
+  // 收口日志与下一次挂 poll 之间能差到分钟级：先孨清这三个 await 各占多少
+
+  const turnT0 = Date.now()
+  let tIdle = turnT0
+  let tSeal = turnT0
   try {
     await session.piSession.prompt(prompt)
+    tIdle = Date.now()
     await session.piSession.agent.waitForIdle()
+    tSeal = Date.now()
+    const agentErr = session.piSession.state.errorMessage?.trim()
+    result = agentErr ? { ok: false, error: agentErr } : { ok: true }
   } catch (e: unknown) {
-    return { ok: false, error: formatLlmError(e, session.piSession.state.errorMessage) }
+    result = { ok: false, error: formatLlmError(e, session.piSession.state.errorMessage) }
   }
-  const agentErr = session.piSession.state.errorMessage?.trim()
-  if (agentErr) return { ok: false, error: agentErr }
+  // 回合终结就必须收口（失败也算终结），卡片不能挂在“思考中”等 worker 退出才收
   await sealLlmStream(session)
+  pushUiLog(
+    "LLM",
+    "INFO",
+    `[${session.sessionKey}] 回合耗时 prompt=${Math.round((tIdle - turnT0) / 100) / 10}s waitForIdle=${Math.round((tSeal - tIdle) / 100) / 10}s seal=${Math.round((Date.now() - tSeal) / 100) / 10}s`,
+  )
+  if (!result.ok) return { ...result, error: `${result.error}（${modelRef}）` }
   if (!isFeishuStreamEnabled(session.sessionKey)) {
     const replyText = extractAssistantTextSince(session.piSession, msgBefore)
     return { ok: true, replyText: replyText || undefined }

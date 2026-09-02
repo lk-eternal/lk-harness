@@ -15,8 +15,6 @@ export interface AgentResource {
   providerId?: string;
   /** 自定义网关 Base URL */
   baseUrl?: string;
-  /** 自定义网关 API 协议 */
-  apiProtocol?: LlmApiProtocol;
   /** 自定义网关默认模型 ID 列表 */
   modelIds?: string[];
 }
