@@ -157,7 +157,6 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
 export function assembleLlmHostProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
   const parts: string[] = []
   parts.push("---")
-  parts.push("## LK Harness LLM 宿主协议（必须严格遵守）")
   parts.push(loadLlmHostProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
