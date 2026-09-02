@@ -4,7 +4,7 @@ import {
   isTransientLaunchError,
   launchFailCooldownRemaining,
   recordLaunchFailure,
-  shouldNotifyLaunchFailure,
+  markNotifiedIfDue,
 } from "../electron/launch-fail-tracker"
 
 describe("launch-fail-tracker", () => {
@@ -32,10 +32,17 @@ describe("launch-fail-tracker", () => {
 
   it("通知节流", () => {
     recordLaunchFailure("sk1", "API Key 未配置")
-    expect(shouldNotifyLaunchFailure("sk1")).toBe(true)
-    expect(shouldNotifyLaunchFailure("sk1")).toBe(false)
+    expect(markNotifiedIfDue("sk1")).toBe(true)
+    expect(markNotifiedIfDue("sk1")).toBe(false)
     vi.advanceTimersByTime(60_000)
-    expect(shouldNotifyLaunchFailure("sk1")).toBe(true)
+    expect(markNotifiedIfDue("sk1")).toBe(true)
+  })
+
+  it("permanent 只升不降", () => {
+    recordLaunchFailure("sk1", "API Key 未配置")
+    expect(launchFailCooldownRemaining("sk1")).toBeGreaterThan(0)
+    recordLaunchFailure("sk1", "network timeout")
+    expect(launchFailCooldownRemaining("sk1")).toBeGreaterThan(0)
   })
 
   it("启动成功后清 streak", () => {

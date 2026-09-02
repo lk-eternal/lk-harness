@@ -205,10 +205,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         break
       }
 
-      for (const m of fresh) {
-        if (m.messageId) session.processedMessageIds.add(m.messageId)
-      }
-
       // 微信等非流式通道：卡片跳过时仍走文本投递
       const replyText = turnResult.replyText?.trim()
       if (replyText) {
@@ -221,6 +217,10 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           pushUiLog("LLM", "ERROR", `[${sessionKey}] 非流式通道投递失败: ${errorDetail}`)
           break
         }
+      }
+
+      for (const m of fresh) {
+        if (m.messageId) session.processedMessageIds.add(m.messageId)
       }
     }
   } catch (e: unknown) {

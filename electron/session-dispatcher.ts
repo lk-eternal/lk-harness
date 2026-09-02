@@ -30,6 +30,7 @@ import {
 import {
   launchLlmAgent, stopLlmSession, stopAllLlmSessions,
   isLlmSessionRunning, getLlmSessionList, setLlmIdleHandler,
+  llmFailCooldownRemaining,
 } from "./agent-llm"
 import { usesLlmRuntime } from "./agent-engine/factory"
 import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
@@ -49,8 +50,8 @@ import { isFeishuStreamEnabled } from "./stream-card"
 import {
   clearLaunchFailStreak,
   launchFailCooldownRemaining,
+  markNotifiedIfDue,
   recordLaunchFailure,
-  shouldNotifyLaunchFailure,
 } from "./launch-fail-tracker"
 
 const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
@@ -172,7 +173,7 @@ async function reportLaunchOutcome(
   const err = result.error ?? "未知错误"
   recordLaunchFailure(sessionKey, err)
   broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${err}`, "WARN")
-  if (shouldNotifyLaunchFailure(sessionKey)) {
+  if (markNotifiedIfDue(sessionKey)) {
     await notifyChat(sessionKey, `⚠️ Agent 启动失败，消息仍在队列，修复后自动重试。\n原因: ${err}`)
   }
 }
@@ -1405,9 +1406,10 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
     // 用户主动停止后：队列只剩 .claimed 重投时不自动拉起，避免 /stop 立刻被 dispatch 顶回来
     if (clearUserStoppedIfPending(sessionKey, !!hasPending)) continue
-    // 有新 .qmsg 时无视 worker 失败冷却；launch 永久失败仍遵守退避（防配置错误时反复拉起）
+    // 有新 .qmsg 时无视各类失败冷却，立即重试；仅 .claimed 重投遵守退避
     if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
-    if (launchFailCooldownRemaining(sessionKey) > 0) continue
+    if (!hasPending && llmFailCooldownRemaining(sessionKey) > 0) continue
+    if (!hasPending && launchFailCooldownRemaining(sessionKey) > 0) continue
     if (sessionLaunchBusy(sessionKey)) {
       if (await isZombieAgent(sessionKey)) {
         broadcastLog(`[Agent] ${sessionKey} 疑似僵尸(队列有消息且 ${ZOMBIE_REPLY_SILENCE_MS / 60_000}min 无回复消息)，强制终止并重启`, "WARN")

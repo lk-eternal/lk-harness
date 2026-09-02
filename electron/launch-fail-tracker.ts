@@ -20,7 +20,7 @@ export function recordLaunchFailure(sessionKey: string, error: string): void {
   const st = launchFailStreak.get(sessionKey) ?? { count: 0, lastFailAt: 0, permanent: false, lastNotifyAt: 0 }
   st.count += 1
   st.lastFailAt = Date.now()
-  st.permanent = permanent
+  st.permanent = st.permanent || permanent
   launchFailStreak.set(sessionKey, st)
 }
 
@@ -32,7 +32,8 @@ export function launchFailCooldownRemaining(sessionKey: string): number {
   return Math.max(0, st.lastFailAt + wait - Date.now())
 }
 
-export function shouldNotifyLaunchFailure(sessionKey: string): boolean {
+/** 距上次通知已过间隔则标记并返回 true，否则返回 false */
+export function markNotifiedIfDue(sessionKey: string): boolean {
   const st = launchFailStreak.get(sessionKey)
   if (!st) return true
   const now = Date.now()
