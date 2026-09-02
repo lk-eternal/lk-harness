@@ -9,9 +9,11 @@ import {
 import {
   hostBlockingPoll,
   hostConfirmClaimed,
+  hostNonBlockingPoll,
   hostSendText,
   isPollEndDirective,
   isPollTimeoutDirective,
+  type HostPollResult,
   type PollMessage,
 } from "./poll-host"
 import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
@@ -111,6 +113,20 @@ function filterDeliverable(messages: PollMessage[]): PollMessage[] {
   return messages.filter((m) => m.text?.trim() && m.messageId)
 }
 
+async function pollForWorkerTurn(
+  state: WorkerState,
+  sessionKey: string,
+  abort: AbortSignal,
+): Promise<HostPollResult> {
+  if (state.firstTurn) {
+    pushUiLog("LLM", "DEBUG", `[${sessionKey}] worker bootstrap (instant poll)`)
+    const instant = await hostNonBlockingPoll(sessionKey)
+    if (filterDeliverable(instant.messages).length > 0) return instant
+  }
+  pushUiLog("LLM", "DEBUG", `[${sessionKey}] worker listening (blocking poll)`)
+  return hostBlockingPoll(sessionKey, abort)
+}
+
 export function startLlmWorkerLoop(
   session: LlmWorkerSession,
   opts: {
@@ -146,11 +162,10 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   try {
     while (!abort.signal.aborted) {
       state.phase = "listening"
-      pushUiLog("LLM", "DEBUG", `[${sessionKey}] worker listening (blocking poll)`)
 
       let pollResult
       try {
-        pollResult = await hostBlockingPoll(sessionKey, abort.signal)
+        pollResult = await pollForWorkerTurn(state, sessionKey, abort.signal)
       } catch (e: unknown) {
         if (abort.signal.aborted) break
         throw e

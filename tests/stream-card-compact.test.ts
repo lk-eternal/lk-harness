@@ -140,22 +140,49 @@ describe("完整回复后隐藏折叠块", () => {
 })
 
 describe("问题区样式", () => {
-  it("questionText 时渲染暖色容器，footer（含已选择）在容器内", () => {
+  it("questionText 时渲染灰框 panel，footer（含已选择）在 panel 内且保持展开", () => {
     const card = LarkSender.buildStreamingCardJson({
       status: "completed",
       questionText: "**请选择**\n\n**A.** 是\n**B.** 否",
       buttons: [{ label: "A", value: { kind: "q", opt: "是" } }, { label: "B", value: { kind: "q", opt: "否" } }],
       footer: "✅ 已选择: **是**",
-    }) as { config: { style: { color: Record<string, unknown> } }; body: { elements: unknown[] } }
+    }) as { body: { elements: unknown[] } }
     const json = JSON.stringify(card)
-    expect(json).toContain("cus-question")
+    expect(json).not.toContain("cus-question")
+    expect(json).not.toContain("background_style")
     expect(json).toContain("question_block")
+    expect(json).toContain("collapsible_panel")
+    expect(json).toContain('"color":"grey"')
+    expect(json).toContain('"expanded":true')
     expect(json).toContain("✅ 已选择")
-    expect(card.config.style.color["cus-question"]).toBeTruthy()
     const topLevelFoot = card.body.elements.filter((e) =>
       e && typeof e === "object" && (e as { tag?: string }).tag === "markdown"
         && JSON.stringify(e).includes("已选择"),
     )
     expect(topLevelFoot.length).toBe(0)
+  })
+
+  it("segments 内联 question 时问题块在正文之后、非卡片末尾 hr 区", () => {
+    const card = LarkSender.buildStreamingCardJson({
+      status: "completed",
+      segments: [
+        { type: "reply", text: "上文" },
+        {
+          type: "question",
+          questionText: "**请选择**\n\n**A.** 是",
+          buttons: [{ label: "A", value: { kind: "question", opt: "是" } }],
+          footer: "✅ 已选择: **是**",
+        },
+        { type: "reply", text: "下文" },
+      ],
+    }) as { body: { elements: unknown[] } }
+    const json = JSON.stringify(card)
+    const replyIdx = json.indexOf("上文")
+    const qIdx = json.indexOf("question_block")
+    const afterIdx = json.indexOf("下文")
+    expect(replyIdx).toBeGreaterThan(-1)
+    expect(qIdx).toBeGreaterThan(replyIdx)
+    expect(afterIdx).toBeGreaterThan(qIdx)
+    expect(json).toContain("✅ 已选择")
   })
 })

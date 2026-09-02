@@ -292,6 +292,11 @@ function appendLlmLog(session: LlmSession, kind: "thinking" | "text", delta: str
   if (agg.buf.length >= LOG_FLUSH_LEN) flushLlmLog(session)
 }
 
+/** 用户可见阶段结束：assistant 正常收束且无后续 toolCall（Pi stopReason=stop） */
+function isAssistantVisibleComplete(message: AgentMessage): boolean {
+  return message.role === "assistant" && message.stopReason === "stop"
+}
+
 function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): void {
   session.lastActivityAt = Date.now()
   const stream = session.streamAgg
@@ -354,6 +359,14 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
       status: event.isError ? "error" : "completed",
     }, summary)
     scheduleFlushStreamCard(session)
+    return
+  }
+
+  if (event.type === "message_end") {
+    flushLlmLog(session)
+    if (isAssistantVisibleComplete(event.message)) {
+      void sealLlmStream(session)
+    }
     return
   }
 

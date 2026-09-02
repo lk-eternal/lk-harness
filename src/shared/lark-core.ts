@@ -217,9 +217,6 @@ export class LarkSender {
     default: "142,142,147",
   };
 
-  /** 问题区暖色底（send_question 操作区，与会话色条 cus-hdr 区分） */
-  private static readonly QUESTION_RGB = "255, 136, 0";
-
   static readonly CARD_DISMISSED_MD = "<font color='grey'>菜单已关闭</font>";
   static readonly CARD_BUTTON_BUDGET = 20;
 
@@ -973,13 +970,15 @@ export class LarkSender {
     };
   }
 
-  /** 流式卡：未决/已收口问题区（暖色底 + 圆角边框；题干/按钮/状态同容器） */
+  /** 流式卡：未决/已收口问题区（collapsible_panel 灰框） */
   static buildQuestionBlockElement(opts: {
     questionText: string;
     buttons?: CardButton[];
     input?: CardInput;
     footer?: string;
     elementId?: string;
+    expanded?: boolean;
+    headerTitle?: string;
   }): Record<string, unknown> {
     const inner: Record<string, unknown>[] = [
       { tag: "markdown", content: opts.questionText, element_id: LarkSender.STREAM_QUESTION_ID },
@@ -1005,20 +1004,30 @@ export class LarkSender {
     if (foot) {
       inner.push({ tag: "markdown", content: foot, text_size: "notation" });
     }
+    const headerTitle = opts.headerTitle
+      ?? (foot?.includes("已选择") ? "✅ 已作答"
+        : foot?.includes("已关闭") || foot?.includes("⌛") ? "⌛ 已关闭"
+          : "❓ 待选择");
     return {
-      tag: "column_set",
+      tag: "collapsible_panel",
       element_id: opts.elementId ?? "question_block",
-      margin: "8px 0px 0px 0px",
-      columns: [{
-        tag: "column",
-        width: "weighted",
-        weight: 1,
-        background_style: "cus-question",
-        padding: "10px 12px 10px 12px",
-        vertical_align: "top",
-        border: { color: "orange", corner_radius: "8px" },
-        elements: inner,
-      }],
+      expanded: opts.expanded ?? true,
+      header: {
+        title: {
+          tag: "plain_text",
+          content: headerTitle,
+          text_color: "grey",
+          text_size: "notation",
+        },
+        vertical_align: "center",
+        icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px", color: "grey" },
+        icon_position: "right",
+        icon_expanded_angle: -180,
+      },
+      border: { color: "grey", corner_radius: "5px" },
+      vertical_spacing: "8px",
+      padding: "8px 8px 8px 8px",
+      elements: inner,
     };
   }
 
@@ -1057,18 +1066,19 @@ export class LarkSender {
   /** finish 剥块后无正文时展示的占位（斜体灰字） */
   static readonly THINKING_ONLY_PLACEHOLDER = "<font color='grey'>_💭 仅包含思考,无实质输出_</font>";
 
-  /** finish 关卡时剥除 thinking/tools/todos，仅保留 reply 等非折叠正文 */
+  /** finish 关卡时剥除 thinking/tools/todos，保留 reply 与 question 块 */
   static stripFoldableSegmentsOnFinish<T extends { type: string; text?: string }>(
     segments: T[],
     opts?: { finish?: boolean; hideOnFinish?: boolean },
   ): T[] {
     if (!opts?.finish || opts.hideOnFinish === false) return segments;
-    const kept = segments.filter((s) => s.type === "reply" && s.text?.trim());
+    const kept = segments.filter((s) =>
+      (s.type === "reply" && s.text?.trim()) || s.type === "question");
     if (kept.length) return kept;
     return [{ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER } as T];
   }
 
-  /** 按类型保留最近 keep 个 thinking/tools；reply、todos 全留；不插省略占位 */
+  /** 按类型保留最近 keep 个 thinking/tools；reply、todos、question 全留 */
   static keepRecentStreamSegments<T extends { type: string }>(
     segments: T[],
     keep = LarkSender.STREAM_KEEP_PER_KIND,
@@ -1100,6 +1110,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -1112,7 +1123,7 @@ export class LarkSender {
     buttons?: CardButton[];
     input?: CardInput;
     footer?: string;
-    /** 问题卡：与 segments 正文分开展示，布局为 正文→hr→问题→按钮→hr→footer */
+    /** @deprecated 旧卡末尾问题区；新卡用 segments 内联 question */
     questionText?: string;
     panelState?: { knownPanelIds: Set<string>; expandedPanelIds?: Set<string> };
   }): Record<string, unknown> {
@@ -1155,10 +1166,17 @@ export class LarkSender {
       let todoIdx = 0;
       let replyIdx = 0;
       const replyCount = segs.filter((s) => s.type === "reply" && s.text.trim()).length;
-      const hasQuestion = !!opts?.questionText?.trim();
+      const hasQuestion = !!opts?.questionText?.trim()
+        || segs.some((s) => s.type === "question");
       for (const seg of segs) {
         if (seg.type === "omitted") {
           els.push({ tag: "markdown", content: seg.text, element_id: "omitted_notice" });
+        } else if (seg.type === "question") {
+          els.push(LarkSender.buildQuestionBlockElement({
+            questionText: seg.questionText,
+            buttons: seg.buttons?.length ? seg.buttons : undefined,
+            footer: seg.footer,
+          }));
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
           const thinkEid = seg.panelId ? `think_${seg.panelId}` : `think_${thinkIdx++}`;
@@ -1289,7 +1307,8 @@ export class LarkSender {
       }
     }
 
-    const interactive = (opts?.buttons?.length ?? 0) > 0 || !!opts?.input;
+    const interactive = (opts?.buttons?.length ?? 0) > 0 || !!opts?.input
+      || (segments ?? []).some((s) => s.type === "question" && (s as { buttons?: CardButton[] }).buttons?.length);
     return {
       schema: "2.0",
       config: {
@@ -1302,10 +1321,6 @@ export class LarkSender {
             "cus-hdr": {
               light_mode: `rgba(${sessionRgb},0.14)`,
               dark_mode: `rgba(${sessionRgb},0.26)`,
-            },
-            "cus-question": {
-              light_mode: `rgba(${LarkSender.QUESTION_RGB},0.12)`,
-              dark_mode: `rgba(${LarkSender.QUESTION_RGB},0.24)`,
             },
           },
         },
@@ -1330,6 +1345,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
