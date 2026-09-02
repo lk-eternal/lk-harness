@@ -30,16 +30,30 @@ interface WorkerState {
 
 const workers = new Map<string, WorkerState>()
 
+function sessionKeyEquals(a: string, b: string): boolean {
+  if (a === b) return true
+  return process.platform === "win32" && a.toLowerCase() === b.toLowerCase()
+}
+
+function findWorkerState(sessionKey: string): WorkerState | undefined {
+  const exact = workers.get(sessionKey)
+  if (exact) return exact
+  for (const [k, w] of workers) {
+    if (sessionKeyEquals(k, sessionKey)) return w
+  }
+  return undefined
+}
+
 export function isSdkWorkerActive(sessionKey: string): boolean {
-  return workers.has(sessionKey)
+  return findWorkerState(sessionKey) !== undefined
 }
 
 export function getSdkWorkerPhase(sessionKey: string): SdkWorkerPhase | null {
-  return workers.get(sessionKey)?.phase ?? null
+  return findWorkerState(sessionKey)?.phase ?? null
 }
 
 export async function stopSdkWorker(sessionKey: string): Promise<void> {
-  const w = workers.get(sessionKey)
+  const w = findWorkerState(sessionKey)
   if (!w) return
   w.phase = "stopping"
   w.abort.abort()

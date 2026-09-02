@@ -143,8 +143,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   let networkFail = false
   let permanentFail = false
 
-  registerLlmSession(session)
-
   try {
     while (!abort.signal.aborted) {
       state.phase = "listening"

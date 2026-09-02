@@ -489,7 +489,13 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
 }
 
 export function isLlmSessionRunning(sessionKey: string): boolean {
-  return llmSessions.has(sessionKey) || pendingLaunches.has(sessionKey)
+  if (llmSessions.has(sessionKey) || pendingLaunches.has(sessionKey)) return true
+  try {
+    const { isLlmWorkerActive } = require("./llm-session-worker.js") as typeof import("./llm-session-worker.js")
+    return isLlmWorkerActive(sessionKey)
+  } catch {
+    return false
+  }
 }
 
 export function hasPersistedLlmSession(sessionKey: string): boolean {
@@ -524,6 +530,7 @@ export function handleLlmPollPhaseEvent(
 }
 
 export async function stopLlmSession(sessionKey: string): Promise<void> {
+  pendingLaunches.delete(sessionKey)
   const { stopLlmWorker, isLlmWorkerActive } = await import("./llm-session-worker.js")
   if (isLlmWorkerActive(sessionKey)) {
     await stopLlmWorker(sessionKey)
@@ -546,6 +553,7 @@ export async function stopLlmSession(sessionKey: string): Promise<void> {
 }
 
 export async function stopAllLlmSessions(): Promise<void> {
+  pendingLaunches.clear()
   const { stopAllLlmWorkers } = await import("./llm-session-worker.js")
   await stopAllLlmWorkers()
   for (const key of [...llmSessions.keys()]) {
@@ -711,6 +719,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       return { ok: true }
     }
 
+    registerLlmSession(session)
     session.runPromise = startLlmWorkerLoop(session, {
       persistentPoll,
       promptCtx,

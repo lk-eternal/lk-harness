@@ -92,30 +92,6 @@ async function notifyChat(sessionKey: string, text: string): Promise<void> {
 // ── 内部工具（CLI 与 SDK 双运行时并存）────────────────────
 
 const launchReserved = new Set<string>()
-/** 用户主动 /stop 或 UI 停止：仅 .claimed 重投时不自动拉起，直到有新 .qmsg */
-const userStoppedSessions = new Set<string>()
-
-function userStopKey(sessionKey: string): string {
-  return process.platform === "win32" ? sessionKey.toLowerCase() : sessionKey
-}
-
-function markUserStoppedSession(sessionKey: string): void {
-  userStoppedSessions.add(userStopKey(sessionKey))
-  const chatId = extractChatId(sessionKey)
-  for (const s of [...getSdkSessionList(), ...getLlmSessionList()]) {
-    const k = s.sessionKey
-    if (k === sessionKey || k.startsWith(`${chatId}::`)) userStoppedSessions.add(userStopKey(k))
-  }
-}
-
-function clearUserStoppedIfPending(sessionKey: string, hasPending: boolean): boolean {
-  const key = userStopKey(sessionKey)
-  if (hasPending) {
-    userStoppedSessions.delete(key)
-    return false
-  }
-  return userStoppedSessions.has(key)
-}
 
 function tryReserveLaunch(sessionKey: string): boolean {
   if (isSessionAgentRunningInner(sessionKey)) return false
@@ -140,18 +116,17 @@ export function isSessionAgentRunning(key: string): boolean {
 }
 
 export async function stopSessionAgent(key: string): Promise<void> {
-  markUserStoppedSession(key)
+  releaseLaunch(key)
   await stopLlmSession(key)
   await stopSdkSession(key)
   if (_isCliSessionRunning(key)) _stopCliSession(key)
 }
 
 export async function stopAllSessionAgents(): Promise<void> {
-  for (const s of getSdkSessionList()) markUserStoppedSession(s.sessionKey)
-  for (const s of getLlmSessionList()) markUserStoppedSession(s.sessionKey)
   await stopAllLlmSessions()
   await stopAllSdkSessions()
   _stopAllCliSessions()
+  launchReserved.clear()
 }
 
 // ── Session 状态 ──────────────────────────────────────────
@@ -1368,9 +1343,10 @@ async function isZombieAgent(sessionKey: string): Promise<boolean> {
 
 let dispatching = false
 
-function enqueueSessionLaunch(sessionKey: string, launches: Promise<void>[], fn: () => Promise<void>): void {
-  if (!tryReserveLaunch(sessionKey)) return
+function enqueueSessionLaunch(sessionKey: string, launches: Promise<void>[], fn: () => Promise<void>): boolean {
+  if (!tryReserveLaunch(sessionKey)) return false
   launches.push(wrapLaunch(sessionKey, fn))
+  return true
 }
 
 function sessionLaunchBusy(sessionKey: string): boolean {
@@ -1408,8 +1384,6 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
   if (groupKeys.length > 0 && feishuOn) await fetchChatNames(groupKeys)
 
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
-    // 用户主动停止后：队列只剩 .claimed 重投时不自动拉起，避免 /stop 立刻被 dispatch 顶回来
-    if (clearUserStoppedIfPending(sessionKey, !!hasPending)) continue
     // 有新 .qmsg 时无视各类失败冷却，立即重试；仅 .claimed 重投遵守退避
     if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
     if (!hasPending && llmFailCooldownRemaining(sessionKey) > 0) continue
@@ -1440,8 +1414,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       const task = readTasksFromFile().find((t) => t.id === sessionKey)
       const channelId = task?.channelId
         || getChannels().find((c) => c.enabled)?.id
-      broadcastLog(`[Agent] 任务会话 ${sessionKey} 有新消息，正在启动Agent（${resumableT ? "Resume 恢复上下文" : "全新会话"}/${launchType}${channelId ? `/${channelId}` : ""}）`)
-      enqueueSessionLaunch(sessionKey, launches, async () => {
+      if (enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({
           sessionKey,
           chatType: launchType,
@@ -1452,7 +1425,9 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)
-      })
+      })) {
+        broadcastLog(`[Agent] 任务会话 ${sessionKey} 有新消息，正在启动Agent（${resumableT ? "Resume 恢复上下文" : "全新会话"}/${launchType}${channelId ? `/${channelId}` : ""}）`)
+      }
       continue
     }
 
@@ -1487,9 +1462,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
         continue
       }
       const resumableP = hasResumableAgentSession(sessionKey)
-      broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
-      if (shouldSendStartupNotify(sessionKey, resumableP)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
-      enqueueSessionLaunch(sessionKey, launches, async () => {
+      if (enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({
           sessionKey,
           chatType: "project",
@@ -1501,7 +1474,10 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)
-      })
+      })) {
+        broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
+        if (shouldSendStartupNotify(sessionKey, resumableP)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
+      }
       continue
     }
 
@@ -1516,12 +1492,8 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     const label = chatType === "group"
       ? `群聊 ${chatName ? `「${chatName}」` : chatId}`
       : (mainUser ? `主用户私聊${userName ? ` (${userName})` : ""}` : `私聊 ${p2pName}`)
-    broadcastLog(`[Agent] ${label} 有新消息，正在启动Agent（${resumable ? "Resume 恢复上下文" : "全新会话"}）${mainUser ? "(主工作目录)" : ""}`)
-    // Resume 恢复静默进行；仅真正冷启动（无历史上下文可续）才提示等待
-    if (shouldSendStartupNotify(sessionKey, resumable)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
-
     const meta: import("./agent-launcher").LaunchMeta = { chatId, chatType: chatType as "p2p" | "group" }
-    enqueueSessionLaunch(sessionKey, launches, async () => {
+    if (enqueueSessionLaunch(sessionKey, launches, async () => {
       const result = await launchSessionAgent(sessionKey, chatType as "p2p" | "group", meta, mainUser, senderOpenId, pendingFor(sessionKey))
       if (result.ok && chatId !== sessionKey) {
         const lock = cachedLock()
@@ -1531,7 +1503,10 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
         }
       }
       if (!result.ok) await reportLaunchOutcome(sessionKey, result)
-    })
+    })) {
+      broadcastLog(`[Agent] ${label} 有新消息，正在启动Agent（${resumable ? "Resume 恢复上下文" : "全新会话"}）${mainUser ? "(主工作目录)" : ""}`)
+      if (shouldSendStartupNotify(sessionKey, resumable)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
+    }
   }
   return launches
 }

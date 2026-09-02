@@ -1569,7 +1569,11 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
 
 export function isSdkSessionRunning(sessionKey: string): boolean {
   if (pendingLaunches.has(sessionKey)) return true
-  const s = sdkSessions.get(sessionKey)
+  try {
+    const { isSdkWorkerActive } = require("./sdk-session-worker.js") as typeof import("./sdk-session-worker.js")
+    if (isSdkWorkerActive(sessionKey)) return true
+  } catch { /* worker 未加载 */ }
+  const s = findSdkSessionLoose(sessionKey)
   if (!s || s.abortController.signal.aborted) return false
   return s.run !== null || !!s.workerActive
 }
@@ -1832,8 +1836,12 @@ export function onSdkWorkerFinished(
 ): void {
   // 新 launch / 新 worker 已接替时，旧 worker 的 finally 不应再触发调度
   if (pendingLaunches.has(sessionKey)) return
-  const live = sdkSessions.get(sessionKey)
+  const live = findSdkSessionLoose(sessionKey)
   if (live?.workerActive) return
+  try {
+    const { isSdkWorkerActive } = require("./sdk-session-worker.js") as typeof import("./sdk-session-worker.js")
+    if (isSdkWorkerActive(sessionKey)) return
+  } catch { /* worker 未加载 */ }
   if (errored) {
     scheduleSdkIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
     const st = sdkFailStreak.get(sessionKey)
@@ -1856,7 +1864,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
   const { startSdkWorkerLoop, isSdkWorkerActive, stopSdkWorker } = await import("./sdk-session-worker.js")
 
   if (isSdkWorkerActive(sessionKey)) {
-    const s = sdkSessions.get(sessionKey)
+    const s = findSdkSessionLoose(sessionKey)
     if (s) {
       s.lastActivityAt = Date.now()
       if (opts.notifySessionKey?.trim()) s.notifySessionKey = opts.notifySessionKey.trim()
@@ -1869,7 +1877,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
   }
 
   if (isSdkSessionRunning(sessionKey) || pendingLaunches.has(sessionKey)) {
-    const s = sdkSessions.get(sessionKey)
+    const s = findSdkSessionLoose(sessionKey)
     if (s) {
       s.lastActivityAt = Date.now()
       if (opts.notifySessionKey?.trim()) s.notifySessionKey = opts.notifySessionKey.trim()
