@@ -138,3 +138,24 @@ describe("完整回复后隐藏折叠块", () => {
     expect(json).toContain("仅包含思考,无实质输出")
   })
 })
+
+describe("问题区样式", () => {
+  it("questionText 时渲染暖色容器，footer（含已选择）在容器内", () => {
+    const card = LarkSender.buildStreamingCardJson({
+      status: "completed",
+      questionText: "**请选择**\n\n**A.** 是\n**B.** 否",
+      buttons: [{ label: "A", value: { kind: "q", opt: "是" } }, { label: "B", value: { kind: "q", opt: "否" } }],
+      footer: "✅ 已选择: **是**",
+    }) as { config: { style: { color: Record<string, unknown> } }; body: { elements: unknown[] } }
+    const json = JSON.stringify(card)
+    expect(json).toContain("cus-question")
+    expect(json).toContain("question_block")
+    expect(json).toContain("✅ 已选择")
+    expect(card.config.style.color["cus-question"]).toBeTruthy()
+    const topLevelFoot = card.body.elements.filter((e) =>
+      e && typeof e === "object" && (e as { tag?: string }).tag === "markdown"
+        && JSON.stringify(e).includes("已选择"),
+    )
+    expect(topLevelFoot.length).toBe(0)
+  })
+})

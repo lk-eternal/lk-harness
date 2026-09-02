@@ -1629,7 +1629,7 @@ function hideThinkingOnFinishEnabled(cfg: { hideThinkingOnFinish?: boolean }): b
 
 function buildCardSegmentsFromPayload(
   payload: AgentStreamCardPayload,
-  opts: { finish: boolean; showThinking: boolean; hideThinkingOnFinish?: boolean },
+  opts: { finish: boolean; showThinking: boolean; hideThinkingOnFinish?: boolean; skipThinkingOnlyPlaceholder?: boolean },
   panelState?: StreamPanelState,
 ) {
   const stripFoldables = opts.finish && opts.hideThinkingOnFinish !== false;
@@ -1665,7 +1665,9 @@ function buildCardSegmentsFromPayload(
     }
   }
   if (stripFoldables && !out.some((s) => s.type === "reply" && s.text.trim())) {
-    out.push({ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER });
+    if (!opts.skipThinkingOnlyPlaceholder) {
+      out.push({ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER });
+    }
   }
   // 展开最近 2 个折叠块（思考/工具并排可见）；收口后也保持
   let n = 0;
@@ -1787,6 +1789,7 @@ async function refreshAgentStreamCard(
       finish: opts.finish,
       showThinking: state.showThinking,
       hideThinkingOnFinish: hideThinkingOnFinishEnabled(ch.rt.cfg),
+      skipThinkingOnlyPlaceholder: !!questionText?.trim(),
     }, state);
     const buttons = q ? questionOptionButtons(q.options, sessionKey) : undefined;
     const status = (opts.finish || q) ? "completed" as const : "streaming" as const;
@@ -1906,14 +1909,11 @@ async function ensureAgentStreamCard(
       const prev = [...existing.lastSegments];
       existing.lastSegments = payload.segments;
       ensureSegmentPanelIds(existing, existing.lastSegments, prev);
-      // 未决问题等待用户：只记 segments，禁止刷卡（否则清空飞书输入框）
-      if (!existing.pendingQuestion) {
-        await refreshAgentStreamCard(sessionKey, existing, ch, { finish: false });
-      }
+      await refreshAgentStreamCard(sessionKey, existing, ch, { finish: false });
     }
     // mcpBody 语义 = 「确保这段正文落卡」：SDK 竞态先建卡时正文必须并入已有卡，
     // 绝不能静默丢弃（曾导致回复被吞：Agent 报成功但用户看不到正文）
-    if (body && !existing.pendingQuestion) {
+    if (body) {
       enqueueMcpBody(sessionKey, existing, body);
       const merged = await refreshAgentStreamCard(sessionKey, existing, ch, { finish: false });
       return { ok: true, cardId: existing.cardId, messageId: existing.messageId, bodyMerged: merged };
@@ -1997,10 +1997,6 @@ async function updateAgentStreamCard(
     const prev = [...state.lastSegments];
     state.lastSegments = payload.segments;
     ensureSegmentPanelIds(state, state.lastSegments, prev);
-  }
-  // 未决问题等待用户：禁止刷卡，避免清空飞书自定义输入
-  if (state.pendingQuestion) {
-    return { ok: true, cardId: state.cardId, messageId: state.messageId };
   }
   if (!state.mcpReplies.length) {
     const merged: AgentStreamCardPayload = { segments: overlayMcpOnPayload(sessionKey, state, state.lastSegments) };
@@ -2466,6 +2462,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
           finish: true,
           showThinking: state.showThinking,
           hideThinkingOnFinish: chCfg ? hideThinkingOnFinishEnabled(chCfg) : true,
+          skipThinkingOnlyPlaceholder: !!qText,
         }, state);
         return LarkSender.buildStreamingCardJson({
           status: "completed",

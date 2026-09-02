@@ -217,6 +217,9 @@ export class LarkSender {
     default: "142,142,147",
   };
 
+  /** 问题区暖色底（send_question 操作区，与会话色条 cus-hdr 区分） */
+  private static readonly QUESTION_RGB = "255, 136, 0";
+
   static readonly CARD_DISMISSED_MD = "<font color='grey'>菜单已关闭</font>";
   static readonly CARD_BUTTON_BUDGET = 20;
 
@@ -970,6 +973,54 @@ export class LarkSender {
     };
   }
 
+  /** 流式卡：未决/已收口问题区（暖色底 + 圆角边框；题干/按钮/状态同容器） */
+  static buildQuestionBlockElement(opts: {
+    questionText: string;
+    buttons?: CardButton[];
+    input?: CardInput;
+    footer?: string;
+    elementId?: string;
+  }): Record<string, unknown> {
+    const inner: Record<string, unknown>[] = [
+      { tag: "markdown", content: opts.questionText, element_id: LarkSender.STREAM_QUESTION_ID },
+    ];
+    if (opts.buttons?.length) {
+      LarkSender.appendButtonRows(inner, opts.buttons, { singleCol: !!opts.input });
+    }
+    if (opts.input) {
+      inner.push({
+        tag: "input",
+        name: "custom_input",
+        input_type: "multiline_text",
+        width: "fill",
+        rows: 1,
+        auto_resize: true,
+        max_rows: 8,
+        placeholder: { tag: "plain_text", content: opts.input.placeholder.slice(0, 100) },
+        label_position: "top",
+        behaviors: [{ type: "callback", value: opts.input.value }],
+      });
+    }
+    const foot = opts.footer?.replace(/^\s+|\s+$/gu, "");
+    if (foot) {
+      inner.push({ tag: "markdown", content: foot, text_size: "notation" });
+    }
+    return {
+      tag: "column_set",
+      element_id: opts.elementId ?? "question_block",
+      margin: "8px 0px 0px 0px",
+      columns: [{
+        tag: "column",
+        width: "weighted",
+        weight: 1,
+        background_style: "cus-question",
+        padding: "10px 12px 10px 12px",
+        vertical_align: "top",
+        border: { color: "orange", corner_radius: "8px" },
+        elements: inner,
+      }],
+    };
+  }
 
   /** 飞书 CardKit JSON 2.0：单卡组件/元素合计 ≤200（含嵌套 tag） */
   static readonly STREAM_ELEMENT_BUDGET = 180;
@@ -1142,29 +1193,35 @@ export class LarkSender {
       const qText = opts?.questionText?.replace(/^\s+|\s+$/gu, "");
       if (qText) {
         if (els.length > 0) els.push({ tag: "hr" });
-        els.push({ tag: "markdown", content: qText, element_id: LarkSender.STREAM_QUESTION_ID });
-      }
-      if (buttons.length > 0 || input) {
-        if (buttons.length > 0) LarkSender.appendButtonRows(els, buttons, { singleCol: !!input });
-        if (input) {
-          els.push({
-            tag: "input",
-            name: "custom_input",
-            input_type: "multiline_text",
-            width: "fill",
-            rows: 1,
-            auto_resize: true,
-            max_rows: 8,
-            placeholder: { tag: "plain_text", content: input.placeholder.slice(0, 100) },
-            label_position: "top",
-            behaviors: [{ type: "callback", value: input.value }],
-          });
+        els.push(LarkSender.buildQuestionBlockElement({
+          questionText: qText,
+          buttons: buttons.length ? buttons : undefined,
+          input,
+          footer: foot,
+        }));
+      } else {
+        if (buttons.length > 0 || input) {
+          if (buttons.length > 0) LarkSender.appendButtonRows(els, buttons, { singleCol: !!input });
+          if (input) {
+            els.push({
+              tag: "input",
+              name: "custom_input",
+              input_type: "multiline_text",
+              width: "fill",
+              rows: 1,
+              auto_resize: true,
+              max_rows: 8,
+              placeholder: { tag: "plain_text", content: input.placeholder.slice(0, 100) },
+              label_position: "top",
+              behaviors: [{ type: "callback", value: input.value }],
+            });
+          }
+          if (foot) els.push({ tag: "hr" });
+        } else if (foot) {
+          els.push({ tag: "hr" });
         }
-        if (foot) els.push({ tag: "hr" });
-      } else if (qText && foot) {
-        els.push({ tag: "hr" });
+        if (foot && !qText) els.push({ tag: "markdown", content: foot });
       }
-      if (foot) els.push({ tag: "markdown", content: foot });
       return els;
     };
 
@@ -1245,6 +1302,10 @@ export class LarkSender {
             "cus-hdr": {
               light_mode: `rgba(${sessionRgb},0.14)`,
               dark_mode: `rgba(${sessionRgb},0.26)`,
+            },
+            "cus-question": {
+              light_mode: `rgba(${LarkSender.QUESTION_RGB},0.12)`,
+              dark_mode: `rgba(${LarkSender.QUESTION_RGB},0.24)`,
             },
           },
         },
