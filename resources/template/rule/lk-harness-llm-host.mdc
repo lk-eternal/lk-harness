@@ -23,3 +23,5 @@ alwaysApply: true
 可选：`session_key`、`message_id`
 
 `session_key` / `message_id` 取自当前 `[宿主交付]` JSON 的 `session.session_key` 与 `messages[].message_id`。
+
+{{ADMIN_MCP_SECTION}}

@@ -62,6 +62,8 @@ export interface LlmLaunchOptions {
   model?: string
   modelParams?: string
   useMainWorkspace?: boolean
+  /** 主用户私聊：协议内嵌 admin 段 */
+  includeAdmin?: boolean
   digitalIdentityOverride?: string
   senderOpenId?: string
   chatName?: string
@@ -230,11 +232,12 @@ function classifyLlmFailure(errorDetail: string): { networkFail: boolean; perman
   return { networkFail, permanentFail }
 }
 
-function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride">): string {
+function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">): string {
   return computePromptHash({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
+    includeAdmin: opts.includeAdmin,
     digitalIdentityOverride: opts.digitalIdentityOverride,
   }, resolveDaemonPortForPrompt())
 }

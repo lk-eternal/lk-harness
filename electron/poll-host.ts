@@ -75,3 +75,25 @@ export async function hostSendText(text: string, sessionKey: string, messageId?:
     60_000,
   )
 }
+
+/** 回合成功出站：更新 lastReplyAt，避免阻塞 poll 触发黑洞重投 */
+export async function hostTouchSessionReply(sessionKey: string): Promise<void> {
+  const lock = readLockFile()
+  if (!lock?.port) return
+  await httpPost(
+    `http://127.0.0.1:${lock.port}/api/touch-session-reply`,
+    { session_key: sessionKey },
+    5000,
+  )
+}
+
+/** 确认已处理完的 .claimed，停止 daemon 重投同批消息 */
+export async function hostConfirmClaimed(sessionKey: string): Promise<void> {
+  const lock = readLockFile()
+  if (!lock?.port) return
+  await httpPost(
+    `http://127.0.0.1:${lock.port}/api/confirm-claimed`,
+    { session_key: sessionKey },
+    5000,
+  )
+}

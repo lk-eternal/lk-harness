@@ -4,7 +4,13 @@ import {
   onSdkWorkerFinished,
   unregisterSdkSessionForWorker,
 } from "./agent-sdk"
-import { hostBlockingPoll, isPollEndDirective, isPollTimeoutDirective, type PollMessage } from "./poll-host"
+import {
+  hostBlockingPoll,
+  hostConfirmClaimed,
+  isPollEndDirective,
+  isPollTimeoutDirective,
+  type PollMessage,
+} from "./poll-host"
 import { assembleSdkWorkerTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
@@ -17,7 +23,6 @@ interface WorkerState {
   promptCtx: PromptAssemblyContext
   taskMessage?: string
   firstTurn: boolean
-  coldStart: boolean
   abort: AbortController
   loopPromise: Promise<void>
 }
@@ -64,7 +69,6 @@ export function startSdkWorkerLoop(
     promptCtx: PromptAssemblyContext
     taskMessage?: string
     firstTurn: boolean
-    coldStart: boolean
   },
 ): Promise<void> {
   const abort = new AbortController()
@@ -75,7 +79,6 @@ export function startSdkWorkerLoop(
     promptCtx: opts.promptCtx,
     taskMessage: opts.taskMessage,
     firstTurn: opts.firstTurn,
-    coldStart: opts.coldStart,
     abort,
     loopPromise: Promise.resolve(),
   }
@@ -118,21 +121,26 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       const deliverable = filterDeliverable(pollResult.messages)
       if (deliverable.length === 0) continue
 
-      for (const m of deliverable) {
+      const fresh = deliverable.filter((m) => m.messageId && !session.processedMessageIds.has(m.messageId))
+      if (fresh.length === 0) {
+        pushUiLog("SDK", "INFO", `[${sessionKey}] worker 跳过已处理消息重投 (${deliverable.length}条)`)
+        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+        continue
+      }
+
+      for (const m of fresh) {
         if (m.messageId) session.seenMessageIds.add(m.messageId)
       }
 
       state.phase = "processing"
-      const prompt = assembleSdkWorkerTurnPrompt(deliverable, state.promptCtx, {
+      const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
-        coldStart: state.coldStart && state.firstTurn,
       })
       state.firstTurn = false
-      state.coldStart = false
       state.taskMessage = undefined
 
-      pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${deliverable.length} 条消息`)
+      pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 
       const turnResult = await executeSdkTurn(session, prompt)
       if (abort.signal.aborted || session.abortController.signal.aborted) break
@@ -144,6 +152,10 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         permanentFail = turnResult.permanentFail
         pushUiLog("SDK", "WARN", `[${sessionKey}] SDK 回合失败: ${errorDetail ?? "unknown"}`)
         break
+      }
+
+      for (const m of fresh) {
+        if (m.messageId) session.processedMessageIds.add(m.messageId)
       }
 
       if (!state.persistentPoll) {

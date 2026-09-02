@@ -154,12 +154,14 @@ export function buildPrompt(
   useMainWorkspace?: boolean,
   notifySessionKey?: string,
   digitalIdentityOverride?: string,
+  includeAdmin?: boolean,
 ): string {
   return assembleColdStartPrompt({
     meta,
     taskMessage,
     sessionKey,
     useMainWorkspace,
+    includeAdmin,
     notifySessionKey,
     digitalIdentityOverride,
   }, undefined)
@@ -259,6 +261,8 @@ export interface LaunchAgentOptions {
   notifySessionKey?: string
   /** 通道级数字身份（非主工作区群聊） */
   digitalIdentityOverride?: string
+  /** 主用户私聊：协议内嵌 admin 段 */
+  includeAdmin?: boolean
 }
 
 export async function launchAgent(opts: LaunchAgentOptions): Promise<{ ok: boolean; error?: string }> {
@@ -280,7 +284,7 @@ export async function launchAgent(opts: LaunchAgentOptions): Promise<{ ok: boole
   if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
   if (!resolveAgentBinary()) { pendingLaunches.delete(sessionKey); return { ok: false, error: "Cursor CLI 未安装" } }
 
-  const prompt = buildPrompt(meta, taskMessage, sessionKey, useMainWorkspace, opts.notifySessionKey, opts.digitalIdentityOverride)
+  const prompt = buildPrompt(meta, taskMessage, sessionKey, useMainWorkspace, opts.notifySessionKey, opts.digitalIdentityOverride, opts.includeAdmin)
   const spawnEnv = createAgentEnv({ LARK_WORKSPACE_DIR: workDir })
 
   let resumeChatId: string | false = false

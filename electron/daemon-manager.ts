@@ -1016,16 +1016,28 @@ function disconnectSseQueueEvents(): void {
 }
 
 
-async function consumePackNotify(): Promise<void> {
+async function consumeRestartNotify(): Promise<void> {
   try {
-    const notifyPath = path.join(app.getPath("userData"), "pack-notify.json")
-    if (!fs.existsSync(notifyPath)) return
-    const fileText = fs.readFileSync(notifyPath, "utf8").replace(/^\uFEFF/, "")
-    const raw = JSON.parse(fileText) as { version?: string; packedAt?: number }
-    fs.unlinkSync(notifyPath)
+    const userData = app.getPath("userData")
+    const candidates = [
+      { path: path.join(userData, "pack-notify.json"), label: "Pack" },
+      { path: path.join(userData, "dev-restart-notify.json"), label: "DevRestart" },
+    ]
+    let raw: { version?: string } | null = null
+    let label = "Restart"
+    for (const c of candidates) {
+      if (!fs.existsSync(c.path)) continue
+      try {
+        const fileText = fs.readFileSync(c.path, "utf8").replace(/^\uFEFF/, "")
+        raw = JSON.parse(fileText) as { version?: string }
+        fs.unlinkSync(c.path)
+        label = c.label
+        break
+      } catch { /* try next */ }
+    }
+    if (!raw) return
     const lock = readLockFile()
     if (!lock?.port) return
-    // 等 daemon HTTP 就绪
     for (let i = 0; i < 20; i++) {
       try {
         await httpGet(`http://127.0.0.1:${lock.port}/health`, 1000)
@@ -1036,22 +1048,21 @@ async function consumePackNotify(): Promise<void> {
     }
     const chatId = await resolveMainChatId(lock.port)
     if (!chatId) {
-      broadcastLog("[Pack] 新版已启动，但未找到主用户会话，跳过通知", "WARN")
+      broadcastLog(`[${label}] 新版已启动，但未找到主用户会话，跳过 confirm-claimed`, "WARN")
       return
     }
     const ver = raw.version || "unknown"
-    // 清掉 pack 前残留的 .claimed，防重投的旧「打包」指令被再次执行；队列为空时不入队、不主动唤醒
     const mainSk = await resolveMainSessionKey(lock.port, chatId)
     if (mainSk) {
       try {
         await httpPost(`http://127.0.0.1:${lock.port}/api/confirm-claimed`, { session_key: mainSk }, 5000)
       } catch (e: unknown) {
-        broadcastLog(`[Pack] 确认 claimed 失败: ${e instanceof Error ? e.message : e}`, "WARN")
+        broadcastLog(`[${label}] 确认 claimed 失败: ${e instanceof Error ? e.message : e}`, "WARN")
       }
     }
-    broadcastLog(`[Pack] 新版已启动 v${ver}（已确认 claimed，队列为空不唤醒）`, "INFO")
+    broadcastLog(`[${label}] 新版已启动 v${ver}（已确认主会话 claimed，队列为空不唤醒）`, "INFO")
   } catch (e: unknown) {
-    broadcastLog(`[Pack] 启动通知失败: ${e instanceof Error ? e.message : e}`, "WARN")
+    broadcastLog(`[Restart] 启动通知失败: ${e instanceof Error ? e.message : e}`, "WARN")
   }
 }
 
@@ -1059,7 +1070,7 @@ function startStatusPolling(): void {
   stopStatusPolling()
   startDaemonPowerSaveBlock()
   connectSseQueueEvents()
-  void consumePackNotify()
+  void consumeRestartNotify()
   statusInterval = setInterval(async () => {
     try {
       const status = await getDaemonStatus()

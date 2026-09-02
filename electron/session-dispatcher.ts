@@ -570,15 +570,17 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   // 独立群即使入站 chatType=group，出站/提示词也按 project 语义（禁数字身份）
   const launchChatType: ChatType = projectOwned ? "project" : chatType
   const launchMeta = { ...meta, chatType: launchChatType }
+  const includeAdmin = shouldIncludeAdminMcp(launchMeta, sessionKey, useMain)
 
   if (resource.type === "cli") {
-    injectCliMcpToProjectDir(workDir, shouldIncludeAdminMcp(launchMeta, sessionKey))
+    injectCliMcpToProjectDir(workDir, includeAdmin)
   }
 
   if (resource.type === "sdk") {
     return launchSdkAgent({
       sessionKey, chatType: launchChatType, meta: launchMeta, workspaceDir: workDir,
       useMainWorkspace: skipIdentity,
+      includeAdmin,
       digitalIdentityOverride: channel?.digitalIdentity,
       senderOpenId, chatName, taskMessage,
       notifySessionKey,
@@ -599,6 +601,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
       model,
       modelParams,
       useMainWorkspace: skipIdentity,
+      includeAdmin,
       digitalIdentityOverride: channel?.digitalIdentity,
       senderOpenId,
       chatName,
@@ -614,6 +617,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   return _launchCliAgent({
     sessionKey, chatType: launchChatType, meta: launchMeta,
     useMainWorkspace: skipIdentity,
+    includeAdmin,
     digitalIdentityOverride: channel?.digitalIdentity,
     senderOpenId, chatName, taskMessage,
     notifySessionKey,

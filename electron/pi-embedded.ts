@@ -19,7 +19,6 @@ import { llmProviderId } from "./llm-config"
 import { assembleLlmHostProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { piAdditionalSkillPaths } from "./skill-paths"
 import { buildPiHostMcpConfig } from "./pi-mcp-config"
-import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 
 function harnessAgentDir(): string {
   return getAgentDir()
@@ -57,6 +56,7 @@ function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
+    includeAdmin: opts.includeAdmin,
     digitalIdentityOverride: opts.digitalIdentityOverride,
     notifySessionKey: opts.notifySessionKey,
     taskMessage: opts.taskMessage,
@@ -117,7 +117,7 @@ export async function createHarnessPiSession(
   const resumed = existingCtx.messages.length > 0
 
   const daemonPort = resolveDaemonPortForPrompt()
-  const includeAdmin = shouldIncludeAdminMcp(opts.meta, opts.sessionKey)
+  const includeAdmin = opts.includeAdmin === true
   const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)
 

@@ -1817,9 +1817,11 @@ async function refreshAgentStreamCard(
     if (ok) {
       state.lastHash = payloadFingerprint(merged, opts.finish);
       const sk = normalizeSessionKey(sessionKey) || sessionKey;
-      if (getSessionRuntime(sessionKey) === "llm") {
-        const hasReply = merged.segments.some((s) => s.type === "reply" && s.text.trim());
-        if (hasReply || opts.finish) touchSessionLastReply(sk);
+      const hasReply = merged.segments.some((s) => s.type === "reply" && s.text.trim());
+      if (hasReply) touchSessionLastReply(sk);
+      else if (opts.finish) {
+        const rt = getSessionRuntime(sessionKey);
+        if (rt === "llm" || rt === "sdk") touchSessionLastReply(sk);
       }
     }
     return ok;
@@ -4266,7 +4268,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     return true;
   }
 
-  // pack 重启后：确认主会话残留 .claimed，避免重投的旧「打包」指令被再次执行
+  // pack / dev 重启后：确认主会话残留 .claimed，避免重投的旧消息被再次执行
   if (method === "POST" && pathname === "/api/confirm-claimed") {
     const body = JSON.parse(await readBody(req));
     const { session_key } = body as { session_key?: string };
@@ -4286,6 +4288,16 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
   if (method === "GET" && pathname === "/api/session-last-reply") {
     const sk = new URL(req.url ?? "", "http://localhost").searchParams.get("sessionKey") || "";
     json(res, { lastReplyAt: sk ? (sessionLastReplyAt.get(sk) ?? null) : null });
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/touch-session-reply") {
+    const body = JSON.parse(await readBody(req));
+    const { session_key } = body as { session_key?: string };
+    if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
+    const sk = normalizeSessionKey(session_key) || session_key;
+    touchSessionLastReply(sk);
+    json(res, { ok: true });
     return true;
   }
 

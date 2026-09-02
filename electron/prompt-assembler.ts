@@ -2,9 +2,8 @@ import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import { getConfig } from "./config-store"
 import { listEnabledHarnessRules } from "./harness-rule-store"
-import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { readLockFile } from "./daemon-client"
-import { getRuleTemplatePath, getLlmHostRuleTemplatePath, getDaemonPort, ADMIN_SKILL_CONTENT } from "./workspace-injector"
+import { getRuleTemplatePath, getLlmHostRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
 import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
 import type { LaunchMeta } from "./agent-launcher"
 
@@ -12,6 +11,8 @@ export interface PromptAssemblyContext {
   meta?: LaunchMeta
   sessionKey?: string
   useMainWorkspace?: boolean
+  /** 主用户私聊：协议内嵌 admin MCP 段并挂载 lk-harness-admin 工具 */
+  includeAdmin?: boolean
   notifySessionKey?: string
   taskMessage?: string
   digitalIdentityOverride?: string
@@ -24,8 +25,8 @@ function stripFrontmatter(raw: string): string {
   return raw.slice(end + 4).trim()
 }
 
-let cachedBuiltin: { port: string; body: string } | null = null
-let cachedLlmHost: { port: string; body: string } | null = null
+let cachedBuiltin: { port: string; admin: boolean; body: string } | null = null
+let cachedLlmHost: { port: string; admin: boolean; body: string } | null = null
 
 export interface TurnMessage {
   text: string
@@ -61,26 +62,33 @@ function substituteDaemonPort(raw: string, port: string): string {
     .replace(/Daemon 端口为 [`']19528[`']/g, `Daemon 端口为 \`${port}\``)
 }
 
-export function loadBuiltinProtocol(daemonPort?: number | null): string {
+function substituteAdminSection(raw: string, includeAdmin: boolean): string {
+  const section = includeAdmin ? getAdminMcpProtocolSection() : ""
+  return raw.replace(/\{\{ADMIN_MCP_SECTION\}\}/g, section)
+}
+
+export function loadBuiltinProtocol(daemonPort?: number | null, includeAdmin = false): string {
   const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedBuiltin && cachedBuiltin.port === port) return cachedBuiltin.body
+  if (cachedBuiltin && cachedBuiltin.port === port && cachedBuiltin.admin === includeAdmin) return cachedBuiltin.body
   const tplPath = getRuleTemplatePath()
   let raw = fs.existsSync(tplPath) ? fs.readFileSync(tplPath, "utf-8") : ""
   raw = substituteDaemonPort(raw, port)
+  raw = substituteAdminSection(raw, includeAdmin)
   const body = stripFrontmatter(raw)
-  cachedBuiltin = { port, body }
+  cachedBuiltin = { port, admin: includeAdmin, body }
   return body
 }
 
 /** LLM 宿主模式协议（无 poll，由 harness Session Worker 代管） */
-export function loadLlmHostProtocol(daemonPort?: number | null): string {
+export function loadLlmHostProtocol(daemonPort?: number | null, includeAdmin = false): string {
   const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedLlmHost && cachedLlmHost.port === port) return cachedLlmHost.body
+  if (cachedLlmHost && cachedLlmHost.port === port && cachedLlmHost.admin === includeAdmin) return cachedLlmHost.body
   const tplPath = getLlmHostRuleTemplatePath()
-  let raw = fs.existsSync(tplPath) ? fs.readFileSync(tplPath, "utf-8") : loadBuiltinProtocol(daemonPort)
+  let raw = fs.existsSync(tplPath) ? fs.readFileSync(tplPath, "utf-8") : loadBuiltinProtocol(daemonPort, includeAdmin)
   raw = substituteDaemonPort(raw, port)
+  raw = substituteAdminSection(raw, includeAdmin)
   const body = stripFrontmatter(raw)
-  cachedLlmHost = { port, body }
+  cachedLlmHost = { port, admin: includeAdmin, body }
   return body
 }
 
@@ -105,13 +113,6 @@ function appendUserHarnessRules(parts: string[]): void {
   }
 }
 
-function appendAdminSkill(parts: string[], ctx: PromptAssemblyContext): void {
-  if (!shouldIncludeAdminMcp(ctx.meta, ctx.sessionKey)) return
-  parts.push("---")
-  parts.push("## LK Harness 自管理 Skill")
-  parts.push(ADMIN_SKILL_CONTENT.trim())
-}
-
 function appendTaskAndMeta(
   parts: string[],
   ctx: PromptAssemblyContext,
@@ -130,17 +131,21 @@ function appendTaskAndMeta(
   if (ctx.meta?.chatType) parts.push(`[chat_type=${ctx.meta.chatType}]`)
 }
 
-export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride">, daemonPort?: number | null): string {
+function ctxIncludeAdmin(ctx: PromptAssemblyContext): boolean {
+  return ctx.includeAdmin === true
+}
+
+export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">, daemonPort?: number | null): string {
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
+  const includeAdmin = ctxIncludeAdmin(ctx)
   const h = createHash("md5")
-  h.update(loadLlmHostProtocol(portForAssembly(daemonPort)))
+  h.update(loadLlmHostProtocol(portForAssembly(daemonPort), includeAdmin))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
   for (const r of listEnabledHarnessRules()) {
     h.update(r.id)
     h.update(r.content)
   }
-  if (shouldIncludeAdminMcp(ctx.meta, ctx.sessionKey)) h.update(ADMIN_SKILL_CONTENT)
   return h.digest("hex").slice(0, 16)
 }
 
@@ -148,7 +153,7 @@ export function assembleLlmHostProtocolBlocks(ctx: PromptAssemblyContext, daemon
   const parts: string[] = []
   parts.push("---")
   parts.push("## LK Harness LLM 宿主协议（必须严格遵守）")
-  parts.push(loadLlmHostProtocol(portForAssembly(daemonPort)))
+  parts.push(loadLlmHostProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) {
@@ -157,7 +162,6 @@ export function assembleLlmHostProtocolBlocks(ctx: PromptAssemblyContext, daemon
     parts.push(identity)
   }
   appendUserHarnessRules(parts)
-  appendAdminSkill(parts, ctx)
   return parts
 }
 
@@ -165,7 +169,7 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
   const parts: string[] = []
   parts.push("---")
   parts.push("## LK Harness 协议（必须严格遵守）")
-  parts.push(loadBuiltinProtocol(portForAssembly(daemonPort)))
+  parts.push(loadBuiltinProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) {
@@ -174,7 +178,6 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
     parts.push(identity)
   }
   appendUserHarnessRules(parts)
-  appendAdminSkill(parts, ctx)
   return parts
 }
 
@@ -234,17 +237,15 @@ export function assembleWakePrompt(
   return lines.join("\n")
 }
 
-/** SDK Session Worker：宿主代管 poll，首轮冷启动附带宿主协议块 */
+/** SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则） */
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; coldStart?: boolean },
+  opts?: { firstTurn?: boolean; taskMessage?: string },
 ): string {
   const chunks: string[] = []
-  if (opts?.coldStart) {
-    chunks.push(...assembleLlmHostProtocolBlocks(ctx))
-    chunks.push("---")
-  }
+  chunks.push(...assembleLlmHostProtocolBlocks(ctx))
+  chunks.push("---")
   chunks.push(assembleTurnPrompt(messages, ctx, {
     firstTurn: opts?.firstTurn,
     taskMessage: opts?.taskMessage,

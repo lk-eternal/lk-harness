@@ -25,7 +25,7 @@ export function getDaemonPort(): number | null {
 }
 
 export function clearInjectionCache(_dir?: string): void {
-  /* no-opÔº?Â∑≤È??ÂΩ?workspace Ê≥®Â?•Áº?Â≠? */
+  /* no-op???? workspace ???? */
 }
 
 export function getTemplateRoot(): string {
@@ -43,13 +43,13 @@ export function getLlmHostRuleTemplatePath(): string {
 
 const ADMIN_SKILL_DIR = "lk-harness-admin"
 
-/** Ê∏?Áê?È°πÁ?ÆÈ??ÊÆ?Á??Á??Ë?™ÁÆ°Áê?skill Á?ÆÂΩ?Ôº?Â∑≤Ê??prompt inlineÔº?‰∏çÂ?çÊ≥®Â?•Ôº? */
+/** ?????????? skill ????? prompt inline?????? */
 function cleanupStaleAdminSkill(wsDir: string): void {
   const stale = path.join(wsDir, ".cursor", "skills", ADMIN_SKILL_DIR)
   if (!fs.existsSync(stale)) return
   try {
     fs.rmSync(stale, { recursive: true, force: true })
-    broadcastLog(`Â∑≤Ê∏?Áê?ÊÆ?Á??Ë?™ÁÆ°Áê? Skill: ${stale}`)
+    broadcastLog(`???????? Skill: ${stale}`)
   } catch { /* ignore */ }
 }
 
@@ -66,17 +66,17 @@ function mergeProjectMcpFile(filePath: string, servers: Record<string, unknown>)
   fs.writeFileSync(filePath, JSON.stringify(mcpConfig, null, 2), "utf-8")
 }
 
-/** CLI ‰∏?Á?®Ôº?‰ª?Âê?È°πÁ??`.cursor/mcp.json` merge Â??ÁΩÆ MCPÔº?‰∏çÁ¢∞Â?®Â±?„?Å‰∏çÂ?†Á?®Ê?∑Êù°Á??*/
+/** CLI ??????? `.cursor/mcp.json` merge ?? MCP????????????? */
 export function injectCliMcpToProjectDir(wsDir: string, includeAdmin: boolean): boolean {
   if (!daemonPort || !wsDir.trim()) return false
   try {
     const servers = buildBuiltinMcpServers(daemonPort, includeAdmin)
     if (!Object.keys(servers).length) return false
     mergeProjectMcpFile(path.join(wsDir, ".cursor", "mcp.json"), servers)
-    broadcastLog(`CLI MCP Â∑≤Ê≥®Â?•È°πÁ?ÆÁ?ÆÂΩ? ${wsDir}`)
+    broadcastLog(`CLI MCP ??????? ${wsDir}`)
     return true
   } catch (e: unknown) {
-    broadcastLog(`CLI MCP È°πÁ?ÆÊ≥®Â?•Â§±Ë¥•: ${e instanceof Error ? e.message : e}`, "ERROR")
+    broadcastLog(`CLI MCP ??????: ${e instanceof Error ? e.message : e}`, "ERROR")
     return false
   }
 }
@@ -102,37 +102,22 @@ export async function injectWorkspaceMcpAndRules(): Promise<{ mcpOk: boolean; ru
   return { mcpOk: true, ruleOk: true, skillOk: false }
 }
 
-export const ADMIN_SKILL_CONTENT = `# LK Harness ‚??Ë?™ÁÆ°Áê?Skill
+let adminSkillContentCache: string | null = null
 
-‰Ω†ÂèØ‰ª•È??Ëø?‰ª•‰∏? MCP Â∑•Â?∑ÁÆ°Áê? LK Harness Â∫?Á?®Ë?™Ë∫´Á??ËøêË°?Á?∂Ê?Å„?ÅÈ?çÁΩÆÂ??Á?ØÂ¢?„??
+/** ??? Skill ???? resources/template/skills/lk-harness-admin/SKILL.md ?? */
+export function getAdminSkillContent(): string {
+  if (adminSkillContentCache) return adminSkillContentCache
+  const p = path.join(getTemplateRoot(), "skills", "lk-harness-admin", "SKILL.md")
+  adminSkillContentCache = fs.readFileSync(p, "utf8")
+  return adminSkillContentCache
+}
 
-## ÂèØÁ?® MCP Â∑•Â?∑
-
-### manage_agent
-ÁÆ°Áê? Agent Á??Â?ΩÂ?®Ê??„??
-| action | ËØ¥Ê?? |
-|--------|------|
-| status | Ê?•ËØ¢ËøêË°?Á?∂Ê??|
-| stop | ÂÅ?Ê≠¢ Agent |
-| restart | È?çÂêØÂ∫?Á?® |
-| reset | È?çÁΩÆ‰º?ËØù |
-| clean | Ê∏?Á©∫Ê∂?ÊÅØÈ??Â?? |
-
-### manage_mcp
-ÁÆ°Áê? MCP Ê?çÂ?°Â?®È?çÁΩÆÔº?list / add / deleteÔº?„??
-
-### manage_rules
-ÁÆ°Áê? Cursor Rules Ê??‰ª∂Ôº?list / read / save / deleteÔº?„??
-
-### manage_skills
-ÁÆ°Áê? Agent SkillsÔº?list / read / save / deleteÔº?„??
-
-### manage_tasks
-ÁÆ°Áê?ÂÆ?Ê?∂‰ªªÂ?°Ôº?list / add / update / delete / toggleÔº?„??
-
-### manage_workspace
-ÁÆ°Áê?Â∑•‰Ω?Á?ÆÂΩ?Ôº?get / setÔº?„??
-`
+export function getAdminMcpProtocolSection(): string {
+  let body = getAdminSkillContent().trim()
+  body = body.replace(/^#[^\n]+\n+/, "")
+  body = body.replace(/^## ÂèØÁî® MCP Â∑•ÂÖ∑\n+/, "")
+  return `\n\n### Â∫îÁî®Ëá™ÁÆ°ÁêÜÔºàlk-harness-adminÔºâ\n\n${body}\n`
+}
 
 export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
   const dirs = [...new Set(
@@ -141,8 +126,8 @@ export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
       .filter((w): w is string => !!w && fs.existsSync(w)),
   )]
   if (dirs.length === 0) {
-    return { results: [{ file: "", action: "skipped", message: "Ê?†È??ÈÅ?Â∑•‰Ω?Á?ÆÂΩ?" }] }
+    return { results: [{ file: "", action: "skipped", message: "???????" }] }
   }
   for (const dir of dirs) cleanupStaleAdminSkill(dir)
-  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "Â∑≤È??ÂΩ?workspace Ê≥®Â?•Ôº?‰ª?Ê∏?Áê?ÊÆ?Á??" }] }
+  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "??? workspace ????????" }] }
 }

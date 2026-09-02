@@ -30,6 +30,7 @@
     "dev:mcp": "tsx src/index.ts",
     "dev": "npm run build && electron-vite dev -- --profile=dev",
     "dev:live": "npm run build:mcp && npm run build:bundle && electron-vite dev",
+    "dev:restart": "node scripts/dev-restart-detached.cjs",
     "dev:fresh-setup": "node scripts/dev-fresh-setup.cjs",
     "build": "npm run clean && npm run build:mcp && npm run build:bundle && electron-vite build",
     "preview": "electron-vite preview",

@@ -6,7 +6,7 @@ import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
 import { type ChatType, type LaunchMeta, buildPrompt, resolveSessionChatName } from "./agent-launcher"
 import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
-import { buildSdkMcpServers, shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
+import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource, resolveChannelForSession } from "./config-store"
 import { readLockFile, httpPost, notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
 import {
@@ -84,6 +84,8 @@ export interface SdkSessionAgent {
   notifySessionKey?: string
   /** 是否跳过数字身份（主工作区 / 项目 / 任务） */
   useMainWorkspace?: boolean
+  /** 主用户私聊：协议内嵌 admin 段 */
+  includeAdmin?: boolean
   /** 通道级数字身份 */
   digitalIdentityOverride?: string
   abortController: AbortController
@@ -105,6 +107,8 @@ export interface SdkSessionAgent {
   lastStatus?: { status: string; message?: string }
   /** poll 已见 messageId：非阻塞 poll 区分新消息 vs 重投 */
   seenMessageIds: Set<string>
+  /** 已成功跑完 worker 回合的 messageId：黑洞重投时跳过重复处理 */
+  processedMessageIds: Set<string>
   /** run 级 poll 等待态（跨换卡存活）；worker 模式下由宿主 poll，此处仅保留兼容 */
   pollPhase: SessionPollPhase
   /** Session Worker 托管 poll 时为 true（listening 阶段 run 可能为 null） */
@@ -152,11 +156,12 @@ interface ResumeEntry {
   streamCardId?: string
 }
 
-function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride">): string {
+function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">): string {
   return computePromptHash({
     meta: { chatType: session.chatType },
     sessionKey: session.sessionKey,
     useMainWorkspace: session.useMainWorkspace,
+    includeAdmin: session.includeAdmin,
     digitalIdentityOverride: session.digitalIdentityOverride,
   }, undefined)
 }
@@ -919,56 +924,71 @@ async function flushStreamCard(session: SdkSessionAgent, finish: boolean): Promi
   // 阻塞 poll 期间不发卡；仍保留 dirty，有新消息后开门再刷
   if (!finish && (!agg.gateOpen || session.pollPhase.blocking)) return
 
-  const payload = buildStreamPayload(agg, session.sessionKey)
-  // 空 payload 不建卡（只有会话条的空白卡会闪现给用户）；保留 dirty 等真内容
-  if (!finish && !agg.ensured && payload.segments.length === 0) return
-  agg.dirty = false
-  agg.lastFlushAt = Date.now()
-  // 同步标记，防止 status FINISHED 与 stream finally 双重 finish
-  if (finish) agg.finished = true
+  const pushFrame = async (opts?: { ignoreGate?: boolean }): Promise<boolean> => {
+    if (agg.finished) return false
+    if (!opts?.ignoreGate && (!agg.gateOpen || session.pollPhase.blocking)) return false
+    const payload = buildStreamPayload(agg, session.sessionKey)
+    if (!agg.ensured && payload.segments.length === 0) return false
 
-  const run = async (): Promise<void> => {
-    if (finish) {
-      // 与 endStreamRound 对齐：无 cardId 不 finish，防误杀 MCP 新卡
-      if (!agg.cardId) return
-      await postStreamCard(session.sessionKey, "finish", payload, { cardId: agg.cardId })
-      patchResumableStreamCard(session.sessionKey, undefined, { onlyIf: agg.cardId })
-      return
-    }
-    // finish 已抢占：丢弃排队中的 update
-    if (agg.finished) return
+    agg.dirty = false
+    agg.lastFlushAt = Date.now()
+
     if (!agg.ensured) {
       const ensured = await postStreamCard(session.sessionKey, "ensure", payload, { queueBornAt: agg.bornAt })
       if (ensured?.gone) {
         rotateStaleStreamQueue(session, agg)
-        return
+        return false
       }
       agg.ensured = true
       if (ensured?.cardId) {
         agg.cardId = ensured.cardId
         patchResumableStreamCard(session.sessionKey, ensured.cardId)
       }
-      // Resume 复用 Daemon 已有卡时，ensure 本身不写内容，再补一帧 update
       const updated = await postStreamCard(session.sessionKey, "update", payload, { cardId: agg.cardId, queueBornAt: agg.bornAt })
       if (updated?.gone) {
         rotateStaleStreamQueue(session, agg)
-        return
+        return false
       }
       if (!agg.cardId && updated?.cardId) {
         agg.cardId = updated.cardId
         patchResumableStreamCard(session.sessionKey, updated.cardId)
       }
-      return
+      return true
     }
+
     const updated = await postStreamCard(session.sessionKey, "update", payload, { cardId: agg.cardId, queueBornAt: agg.bornAt })
     if (updated?.gone) {
       rotateStaleStreamQueue(session, agg)
-      return
+      return false
     }
     if (!agg.cardId && updated?.cardId) {
       agg.cardId = updated.cardId
       patchResumableStreamCard(session.sessionKey, updated.cardId)
     }
+    return true
+  }
+
+  const run = async (): Promise<void> => {
+    if (finish) {
+      while (agg.dirty) {
+        if (!await pushFrame({ ignoreGate: true })) break
+      }
+      if (!agg.cardId) {
+        agg.dirty = true
+        await pushFrame({ ignoreGate: true })
+      }
+      if (!agg.cardId) return
+      const payload = buildStreamPayload(agg, session.sessionKey)
+      agg.dirty = false
+      await postStreamCard(session.sessionKey, "finish", payload, { cardId: agg.cardId })
+      patchResumableStreamCard(session.sessionKey, undefined, { onlyIf: agg.cardId })
+      agg.finished = true
+      return
+    }
+    if (agg.finished) return
+    do {
+      if (!await pushFrame()) break
+    } while (agg.dirty)
   }
 
   agg.inflight = agg.inflight.then(run, run)
@@ -1197,6 +1217,19 @@ export interface PollPhaseEventPayload {
   directive?: string
 }
 
+/** 宿主 worker 回合开始：清 poll 等待态并打开流式卡（SSE poll-phase 与 fetch poll 竞态时仍保开门） */
+function openStreamForSdkTurn(session: SdkSessionAgent): void {
+  session.pollPhase.blocking = false
+  session.pollPhase.nonBlocking = false
+  session.pollPhase.questionPause = false
+  if (!isFeishuStreamEnabled(session.sessionKey)) return
+  if (!session.streamAgg || session.streamAgg.finished) {
+    session.streamAgg = newStreamAgg(true)
+  } else {
+    session.streamAgg.gateOpen = true
+  }
+}
+
 /** daemon poll HTTP 生命周期 → 流式卡状态（唯一真值，不解析 command） */
 export function handlePollPhaseEvent(
   sessionKey: string,
@@ -1205,6 +1238,17 @@ export function handlePollPhaseEvent(
 ): void {
   const session = findSdkSessionLoose(sessionKey)
   if (!session) return
+
+  // 宿主 worker 自行 fetch poll：SSE poll-phase 仅同步 messageId，不驱动 gateOpen/换卡
+  if (session.workerActive) {
+    if (phase === "end") {
+      for (const id of payload.messageIds ?? []) {
+        if (id) session.seenMessageIds.add(id)
+      }
+    }
+    pushUiLog("SDK", "DEBUG", `[${session.sessionKey}] poll-phase ${phase} worker-hosted (skip gate)`)
+    return
+  }
 
   if (phase === "start") {
     const blocking = payload.blocking === true
@@ -1620,6 +1664,8 @@ export interface SdkLaunchOptions {
   notifySessionKey?: string
   /** 通道级数字身份 */
   digitalIdentityOverride?: string
+  /** 主用户私聊：挂载 lk-harness-admin 并在协议内嵌 admin 段 */
+  includeAdmin?: boolean
 }
 
 export interface SdkTurnResult {
@@ -1697,6 +1743,8 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run, opts?: { workerHo
           run.durationMs != null && `duration=${run.durationMs}ms`,
         ].filter(Boolean).join(", ")
         pushUiLog("SDK", "INFO", `[${sessionKey}] worker 回合结束 (status=${run.status}${summary ? `, ${summary}` : ""})`)
+        const { hostTouchSessionReply } = await import("./poll-host.js")
+        void hostTouchSessionReply(sessionKey).catch(() => {})
       }
       return { ok: !errored, errorDetail, networkFail, permanentFail }
     }
@@ -1761,6 +1809,7 @@ export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): 
   if (session.abortController.signal.aborted) {
     return { ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false }
   }
+  openStreamForSdkTurn(session)
   pushUiLog("SDK", "INFO", `[${session.sessionKey}] worker 回合 Prompt:\n${prompt}`)
   const run = await sendSdkPrompt(session, prompt)
   return startRunLifecycle(session, run, { workerHosted: true })
@@ -1870,7 +1919,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     }
 
     const sdkPort = resolveDaemonPortForPrompt()
-    const includeAdmin = shouldIncludeAdminMcp(meta, sessionKey)
+    const includeAdmin = opts.includeAdmin === true
     const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin) as Record<string, McpServerConfig>
     const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
 
@@ -1935,6 +1984,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       chatName,
       notifySessionKey: opts.notifySessionKey?.trim() || undefined,
       useMainWorkspace: opts.useMainWorkspace,
+      includeAdmin,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       abortController,
       keepSession,
@@ -1945,6 +1995,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
       todoSnapshot: null,
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),
+      processedMessageIds: new Set<string>(),
       pollPhase: newPollPhase(),
     }
 
@@ -1963,6 +2014,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
         sessionKey,
         chatType,
         useMainWorkspace: opts.useMainWorkspace,
+        includeAdmin,
         digitalIdentityOverride: opts.digitalIdentityOverride,
       })
     const portChanged = resumed && !!resumable?.daemonPort && !!currentDaemonPort
@@ -1992,6 +2044,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       meta,
       sessionKey,
       useMainWorkspace: opts.useMainWorkspace,
+      includeAdmin,
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: resumed ? taskMessage : effectiveTask,
@@ -2020,7 +2073,6 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       promptCtx,
       taskMessage: promptCtx.taskMessage,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
-      coldStart: !resumed,
     })
 
     return { ok: true }

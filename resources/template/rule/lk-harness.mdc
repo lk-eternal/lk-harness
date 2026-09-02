@@ -104,6 +104,8 @@ curl -G -s "http://127.0.0.1:{{DAEMON_PORT}}/api/poll-message" --data-urlencode 
 | 发送图片 | `POST /api/send-image` body: `{image_path, message_id?, session_key?}` |
 | 发送文件 | `POST /api/send-file` body: `{file_path, message_id?, session_key?}` |
 
+{{ADMIN_MCP_SECTION}}
+
 ---
 
 ## 🔄 核心状态机 (State Machine)

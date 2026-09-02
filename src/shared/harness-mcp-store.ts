@@ -167,11 +167,15 @@ export function harnessMcpStoreDir(): string {
   return path.dirname(storePath())
 }
 
-export function shouldIncludeAdminMcp(meta?: { chatType?: string }, sessionKey?: string): boolean {
+export function shouldIncludeAdminMcp(
+  meta?: { chatType?: string },
+  sessionKey?: string,
+  mainUserSession?: boolean,
+): boolean {
   const ct = meta?.chatType
-  if (ct === "project" || ct === "task" || ct === "temp") return false
+  if (ct === "project" || ct === "task" || ct === "temp" || ct === "group") return false
   if (sessionKey?.includes("::project_")) return false
-  return true
+  return mainUserSession === true
 }
 
 export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean): Record<string, Record<string, unknown>> {
