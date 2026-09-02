@@ -27,7 +27,7 @@ import {
   rememberPiResumable,
   patchPiResumableStreamCard,
 } from "./pi-resume-store"
-import { syncMainProcessProxyEnv } from "./agent-cli"
+import { syncMainProcessProxyEnv } from "./agent-env"
 import { llmProxyConfigured, withLlmProxyOptions } from "./llm-proxy"
 import {
   type PollPhaseEventPayload,

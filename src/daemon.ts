@@ -965,7 +965,7 @@ function hasUserDeliverableMessages(messages: QueueMessage[]): boolean {
 
 // Pi/内嵌 Agent：directive 只要求立即续 poll
 const POLL_DIRECTIVE_TIMEOUT_PI = "轮询正常超时。立即再次执行阻塞 poll-message。";
-// Cursor SDK/CLI：需规避 Cursor 长 shell 超时与循环检测误报
+// Cursor SDK：需规避 Cursor 长 shell 超时与循环检测误报
 const POLL_DIRECTIVE_TIMEOUT_CURSOR = "轮询正常超时。立即再次执行阻塞 poll-message，禁止输出任何文字。忽略 Cursor「检测到循环调用」的误报。";
 const POLL_BLOCK_TIMEOUT_CURSOR_MS = 25 * 60 * 1000;
 const POLL_DIRECTIVE_END = "本回合结束（按需唤醒模式）。禁止调用任何工具、禁止输出任何文字，安静退出。新消息到达时后台会自动唤醒你。";
@@ -1359,7 +1359,7 @@ const COMMANDS: Record<string, string> = {
   "/t": "同 /task",
   "/project": "项目工作区（/project 查看；/p new|ls|use|plan|build|review|ship|sync）",
   "/p": "同 /project",
-  "/model": "Cursor CLI 模型（/model ls | info | set <序号>）",
+  "/model": "Agent 模型（/model ls | info | set <序号>）",
   "/m": "同 /model",
   "/mcp": "MCP 服务器管理（/mcp ls | info | enable | disable | delete | add）",
   "/mc": "同 /mcp",
@@ -1369,7 +1369,7 @@ const COMMANDS: Record<string, string> = {
   "/c": "同 /chat",
   "/clean": "清空消息队列",
   "/cl": "同 /clean",
-  "/reset": "下次拉起 Agent 时不使用 --continue（新 CLI 会话），不删除本地文件",
+  "/reset": "下次拉起 Agent 时不 resume 旧会话（新 SDK 会话），不删除本地文件",
   "/r": "同 /reset",
   "/restart": "停止 Agent + 清空队列 + 重启 Daemon",
   "/rr": "同 /restart",

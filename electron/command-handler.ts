@@ -74,20 +74,6 @@ export async function reportCommandResult(
 
 export type ListedModel = { id: string; label: string; current: boolean; params?: string }
 
-export function parseListModelsStdout(out: string): ListedModel[] {
-  const cleaned = out.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\r/g, "")
-  const models: ListedModel[] = []
-  for (const line of cleaned.split("\n")) {
-    const trimmed = line.trim()
-    if (!trimmed || /^available models/i.test(trimmed)) continue
-    const match = trimmed.match(/^(\S+)\s+[–—-]\s+(.+?)(\s+\((?:default|current)\))?\s*$/)
-    if (match) {
-      models.push({ id: match[1], label: match[2].trim(), current: !!match[3] })
-    }
-  }
-  return models
-}
-
 async function listModelsForCommands(channel: MessageChannel): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
   const resource = getAgentResource(channel.agentResourceId)
   if (!resource) return { ok: false, error: "未配置 Agent 资源" }

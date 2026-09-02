@@ -1,5 +1,5 @@
 import { ProxyAgent, fetch as undiciFetch } from "undici"
-import { applyProxyEnv } from "./agent-cli"
+import { applyProxyEnv } from "./agent-env"
 import { getConfig } from "./config-store"
 
 /** Provider-scoped env for pi-ai (HTTP_PROXY / HTTPS_PROXY / NO_PROXY). */

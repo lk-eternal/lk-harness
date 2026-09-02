@@ -63,7 +63,7 @@ export default function ChannelPanel() {
       allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
       digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     })))
-    setResources((cfg.agentResources ?? []).filter((r) => r.type !== "cli"))
+    setResources(cfg.agentResources ?? [])
   }, [])
 
   useEffect(() => { void reload() }, [reload])

@@ -70,7 +70,7 @@ export interface AppConfig {
   wechatEnabled: boolean
   wechatToken: string
   wechatAccountId: string
-  agentMode: "cli" | "sdk"
+  agentMode: "sdk"  // 遗留字段，迁移用
   cursorApiKey: string
   othersModel: string
   othersModelParams: string
@@ -120,7 +120,7 @@ const defaults: AppConfig = {
   wechatEnabled: false,
   wechatToken: "",
   wechatAccountId: "",
-  agentMode: "cli",
+  agentMode: "sdk",
   cursorApiKey: "",
   othersModel: "",
   othersModelParams: "",
@@ -296,8 +296,6 @@ export function isSameWorkspacePath(a: string, b: string): boolean {
 
 // ── 通道 / 资源 工具 ──────────────────────────────────────
 
-export const CLI_RESOURCE_ID = "cli"
-
 function pickDefaultAgentResource(resources: AgentResource[]): AgentResource | undefined {
   const sdk = resources.find((r) => r.type === "sdk" && r.apiKey?.trim())
   if (sdk) return sdk
@@ -339,17 +337,9 @@ export function resolveChannelForSession(sessionKey: string): MessageChannel | u
   return id ? getChannel(id) : undefined
 }
 
-export function getAgentResources(): AgentResource[] {
-  return (getConfig().agentResources ?? []).filter((r) => r.type !== "cli")
-}
-
-export function getDefaultAgentResourceId(): string | undefined {
-  return pickDefaultAgentResource(getConfig().agentResources ?? [])?.id
-}
-
 export function getAgentResource(id?: string): AgentResource {
   const resources = getConfig().agentResources ?? []
-  if (id && id !== CLI_RESOURCE_ID) {
+  if (id) {
     const hit = resources.find((r) => r.id === id)
     if (hit) return hit
   }
@@ -420,8 +410,8 @@ export function effectiveWorkspaceDir(channel?: MessageChannel): string {
   return channel?.workspaceDir?.trim() ?? ""
 }
 
-/** CLI/MCP 探测用的 cwd：首个已启用且配置了目录的通道，否则用户主目录 */
-export function primaryWorkspaceForCli(): string {
+/** Daemon 探测用的 cwd：首个已启用且配置了目录的通道，否则用户主目录 */
+export function primaryProbeWorkspace(): string {
   for (const c of getConfig().channels ?? []) {
     const w = c.workspaceDir?.trim()
     if (c.enabled && w) return w
@@ -466,8 +456,7 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   const cfg = getConfig()
   const partial: Partial<AppConfig> = {}
 
-  // Agent 资源（CLI 已移除；旧 cli 资源不再注入）
-  let resources = [...(cfg.agentResources ?? [])].filter((r) => r.type !== "cli")
+  let resources = [...(cfg.agentResources ?? [])]
   let legacySdkId = resources.find((r) => r.type === "sdk" && r.apiKey === cfg.cursorApiKey?.trim())?.id
   if (cfg.cursorApiKey?.trim() && !legacySdkId) {
     legacySdkId = newSdkResourceId()
@@ -552,7 +541,7 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   }
 
   partial.channels = channels.map((c) =>
-    !c.agentResourceId || c.agentResourceId === CLI_RESOURCE_ID
+    !c.agentResourceId || !resources.some((r) => r.id === c.agentResourceId)
       ? { ...c, agentResourceId }
       : c,
   )
@@ -598,7 +587,7 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   saveConfig(partial)
 }
 
-// ── 主会话 chatId（CLI resume）─────────────────────────────
+// ── 主会话 chatId（SDK resume）─────────────────────────────
 
 export function mainChatScopeKey(channelId: string, workspaceDir: string): string {
   return `${channelId}:${workspaceDir}`

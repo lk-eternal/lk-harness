@@ -25,10 +25,6 @@ export function getAllAgentEngines(): AgentEngine[] {
   return ENGINES
 }
 
-export function usesSdkRuntime(resource: AgentResource): boolean {
-  return resource.type === "sdk"
-}
-
 export function usesLlmRuntime(resource: AgentResource): boolean {
   return resource.type === "llm-builtin" || resource.type === "llm-custom"
 }

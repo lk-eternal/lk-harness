@@ -151,7 +151,7 @@ export default function AgentPanel() {
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
-    setResources((cfg.agentResources ?? []).filter((r) => r.type !== "cli"))
+    setResources(cfg.agentResources ?? [])
     setChannels(cfg.channels ?? [])
   }, [])
 

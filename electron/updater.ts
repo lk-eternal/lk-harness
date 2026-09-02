@@ -8,7 +8,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import semver from "semver"
 import { getConfig } from "./config-store"
-import { syncMainProcessProxyEnv } from "./agent-cli"
+import { syncMainProcessProxyEnv } from "./agent-env"
 
 const execFileAsync = promisify(execFile)
 

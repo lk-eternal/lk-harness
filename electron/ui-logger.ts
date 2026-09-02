@@ -81,29 +81,14 @@ export function clearLogBuffer(): void {
   logBuffer.length = 0
 }
 
-export function flushAgentStreamChunk(
-  bufRef: { current: string },
-  chunk: string,
-  stream: "stdout" | "stderr",
-): void {
-  bufRef.current += chunk
-  const parts = bufRef.current.split(/\r?\n/)
-  bufRef.current = parts.pop() ?? ""
-  const level = stream === "stderr" ? "WARN" : "INFO"
-  for (const raw of parts) {
-    const line = raw.trim()
-    if (line) pushUiLog("Agent", level, line)
-  }
-}
-
-export type SessionSource = "cli" | "sdk" | "llm"
+export type SessionSource = "sdk" | "llm"
 
 type SessionEntry = { sessionKey: string; pid: number; startedAt: number; lastActivityAt: number; chatType: string; chatName?: string; workspaceDir?: string; source?: SessionSource; model?: string; modelParams?: string }
 
 const sessionPartitions = new Map<SessionSource, SessionEntry[]>()
 
 export function broadcastSessionStatus(sessionData: SessionEntry[], source?: SessionSource): void {
-  sessionPartitions.set(source || "cli", sessionData)
+  sessionPartitions.set(source ?? "sdk", sessionData)
 
   const merged: SessionEntry[] = []
   for (const [src, entries] of sessionPartitions) {
@@ -120,27 +105,3 @@ export function broadcastSessionStatus(sessionData: SessionEntry[], source?: Ses
   }
 }
 
-
-export function logCursorAgentInvocation(logLabel: string, agentArgs: string[], cwd?: string): void {
-  const cwdSuffix = cwd != null && cwd !== "" ? `${cwd} ` : ""
-  pushUiLog("Agent", "INFO", `[CLI ${logLabel}] ${cwdSuffix}agent ${agentArgs.join(" ")}`)
-}
-
-const CLI_RESPONSE_LOG_MAX = 200
-
-/** 在对应的 [CLI xxx] 发起日志之后，追加一行合并后的 stdout/stderr 摘要（过长截断） */
-export function logCursorAgentResponse(logLabel: string, result: { ok: boolean; stdout: string; stderr: string; error?: string }): void {
-  const parts: string[] = [`ok=${result.ok}`]
-  if (result.error) parts.push(`⏎err=${escapeLogContentSingleLine(result.error)}`)
-  const combined = [result.stdout, result.stderr].filter(Boolean).join("\n").trim()
-  if (combined) {
-    let body = combined
-    if (body.length > CLI_RESPONSE_LOG_MAX) {
-      body = `${body.slice(0, CLI_RESPONSE_LOG_MAX)} …(+${body.length - CLI_RESPONSE_LOG_MAX} chars)`
-    }
-    parts.push(`⏎${escapeLogContentSingleLine(body)}`)
-  } else if (!result.error) {
-    parts.push("(empty stdout/stderr)")
-  }
-  pushUiLog("Agent", result.ok ? "INFO" : "WARN", `[CLI ${logLabel} →] ${parts.join(" ")}`)
-}

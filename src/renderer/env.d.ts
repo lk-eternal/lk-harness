@@ -35,7 +35,7 @@ declare global {
     wechatEnabled: boolean
     wechatToken: string
     wechatAccountId: string
-    agentMode: "cli" | "sdk"
+    agentMode: "sdk"
     cursorApiKey: string
     gitlabToken?: string
     gitlabHost?: string
@@ -77,7 +77,6 @@ declare global {
     agentRunning?: boolean
     agentPid?: number | null
     sessionAgentCount?: number
-    cliAvailable?: boolean
     error?: string
     workspaceMismatch?: boolean
     daemonWorkspaceDir?: string
@@ -170,11 +169,10 @@ declare global {
     getToolboxStatus(): Promise<{ larkCli: { installed: boolean; version?: string; loggedIn?: boolean; userName?: string }; meegle: { installed: boolean; version?: string }; nodeOk?: boolean; nodeVersion?: string }>
     installToolboxTool(key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }>
     loginLarkCli(): Promise<{ ok: boolean; error?: string }>
-    injectWorkspace(): Promise<{ results: { file: string; action: "created" | "updated" | "skipped"; message: string }[] }>
     startDaemon(): Promise<{ ok: boolean; error?: string }>
     stopDaemon(): Promise<void>
     stopAgent(): Promise<{ ok: boolean }>
-    getSessionAgents(): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "cli" | "sdk" }[]>
+    getSessionAgents(): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm" }[]>
     getSessionDiagnostics(sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>
     exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }>
     stopSessionAgent(sessionKey: string): Promise<{ ok: boolean }>
@@ -189,7 +187,7 @@ declare global {
         mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[]
         activeKey?: string
       }[]
-      running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "cli" | "sdk"; model?: string; modelParams?: string }[]
+      running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]
       error?: string
     }>
     addChannelFavoriteWorkspace(channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }>
@@ -209,7 +207,7 @@ declare global {
     listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string }[] }>
     forgetQuickModel(model: string, modelParams?: string): Promise<{ ok: boolean }>
     stopAllSessionAgents(): Promise<{ ok: boolean }>
-    onSessionAgents(cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "cli" | "sdk" }[]) => void): () => void
+    onSessionAgents(cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]) => void): () => void
     getDaemonStatus(): Promise<DaemonStatus>
     getLogBuffer(): Promise<string[]>
     getQueueMessages(): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>

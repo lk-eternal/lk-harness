@@ -7,7 +7,6 @@ import { app } from "electron"
 import {
   getConfig,
   saveConfig,
-  CLI_RESOURCE_ID,
   type AppConfig,
 } from "./config-store"
 import { exportHarnessRulesBundle, mergeImportHarnessRulesBundle } from "./harness-rule-store"
@@ -61,7 +60,7 @@ export interface ConfigSectionStat {
 }
 
 function agentResourceCount(resources: AgentResource[] | undefined): number {
-  return (resources ?? []).filter((r) => r.type !== "cli" && r.id !== CLI_RESOURCE_ID).length
+  return (resources ?? []).length
 }
 
 function statsFromManifest(manifest: ConfigExportManifest, staging: string): ConfigSectionStat[] {
@@ -260,8 +259,7 @@ function skipNote(label: string): string {
 export function mergeImportAgentResources(incoming: AgentResource[], warnings: string[]): void {
   const cfg = getConfig()
   const existing = cfg.agentResources ?? []
-  const cli = existing.filter((r) => r.id === CLI_RESOURCE_ID || r.type === "cli")
-  const rest = existing.filter((r) => r.id !== CLI_RESOURCE_ID && r.type !== "cli")
+  const rest = [...existing]
   const byId = new Set(rest.map((r) => r.id))
   for (const r of incoming) {
     if (byId.has(r.id)) warnings.push(skipNote(`agent/${r.name || r.id}`))
@@ -270,7 +268,7 @@ export function mergeImportAgentResources(incoming: AgentResource[], warnings: s
       byId.add(r.id)
     }
   }
-  saveConfig({ agentResources: [...cli, ...rest] })
+  saveConfig({ agentResources: rest })
 }
 
 export function mergeImportChannels(incoming: MessageChannel[], warnings: string[]): void {

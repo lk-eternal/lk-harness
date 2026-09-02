@@ -12,12 +12,12 @@ import {
   resolveChannelForSession, getAgentResource, resolveChannelModel,
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, migrateFavoriteWorkspacesToChannels,
   mainChatScopeKey, setMainChatIdForScope, upsertRepoProfiles, type MessageChannel,
-  retireGlobalWorkspaceDir, primaryWorkspaceForCli,
+  retireGlobalWorkspaceDir, primaryProbeWorkspace,
 } from "./config-store"
 import { parseChatKey, channelIdFromSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
-import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-cli"
+import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 import { getAgentEngine, usesLlmRuntime } from "./agent-engine/factory"
 import { stopAllSdkSessions, resetSdkSessionContext, getSdkSessionCount, getSdkSessionList, checkSdkApiKey, listSdkModels, getSdkSessionDiagnostics, getResumableSummary, switchSdkSessionModel, handlePollPhaseEvent, clearSdkFailStreak } from "./agent-sdk"
@@ -29,7 +29,7 @@ import { initHarnessRuleStore } from "../src/shared/harness-rule-store.js"
 import { registerFeishuApp } from "./feishu-register"
 import {
   setDaemonPort,
-  injectWorkspaceToDir, injectWorkspaceMcpAndRules, clearInjectionCache,
+  cleanupChannelWorkspaces, clearInjectionCache,
 } from "./workspace-injector"
 import {
   invalidateMcpEnabledCache,
@@ -39,7 +39,7 @@ import {
   saveMcpServer,
   McpServerEntry,
 } from "./mcp-manager"
-import { FileCommand, reportCommandResult, handleFeishuModelCommand, handleFeishuMcpCommand, handleFeishuTaskCommand, parseListModelsStdout, type TaskRunFn } from "./command-handler"
+import { FileCommand, reportCommandResult, handleFeishuModelCommand, handleFeishuMcpCommand, handleFeishuTaskCommand, type TaskRunFn } from "./command-handler"
 import { handleFeishuProjectCommand, handleProjectSyncSignal, fillProjectNewFromText, handleProjectNewSubmit, replySetupHub, executeProjectDelete, archiveProjectGroup } from "./project-commands"
 import { isGitRepoRoot } from "./project-worktree"
 import { getDefaultNodeGuide } from "./project-prompts"
@@ -76,22 +76,13 @@ import {
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
 } from "./session-dispatcher"
 
-export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv, execAgentSync, execAgentAsync, type ExecAgentOptions as ExecAgentSyncOptions } from "./agent-cli"
+export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
 export { getLogBuffer } from "./ui-logger"
 export { checkSdkApiKey, listSdkModels, noteGlobalSdkError, clearSdkFailStreak } from "./agent-sdk"
-export { injectWorkspaceMcpAndRules, injectWorkspaceToDir, clearInjectionCache } from "./workspace-injector"
 export { getQueueMessages, clearMessageQueue, deleteQueueMessage } from "./session-dispatcher"
 
 
-function isAgentRunning(): boolean {
-  return getSdkSessionCount() > 0 || getLlmSessionCount() > 0
-}
-
-function getRunningSessionCount(): number {
-  return getSdkSessionCount() + getLlmSessionCount()
-}
-
-function getSessionAgentCount(): number {
+function activeAgentSessionCount(): number {
   return getSdkSessionCount() + getLlmSessionCount()
 }
 
@@ -134,7 +125,6 @@ export interface DaemonStatus {
   agentRunning?: boolean
   agentPid?: number | null
   sessionAgentCount?: number
-  cliAvailable?: boolean
   error?: string
   workspaceMismatch?: boolean
   daemonWorkspaceDir?: string
@@ -407,7 +397,7 @@ async function wechatSendTestMessageRaw(token: string, dataDir: string, preferre
 
 
 export async function getDaemonStatus(): Promise<DaemonStatus> {
-  const cfgWs = primaryWorkspaceForCli()
+  const cfgWs = primaryProbeWorkspace()
 
   const statusFromHealth = (port: number, health: Record<string, unknown>): DaemonStatus => {
     cachedPort = port
@@ -419,9 +409,9 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
       queueLength: health.queueLength as number,
       queueCounts: health.queueCounts as { pending: number; processing: number } | undefined,
       hasChatId: health.hasChatId as boolean,
-      agentRunning: isAgentRunning() || getSessionAgentCount() > 0,
+      agentRunning: activeAgentSessionCount() > 0,
       agentPid: null,
-      sessionAgentCount: getRunningSessionCount(),
+      sessionAgentCount: activeAgentSessionCount(),
       channels: health.channels as ChannelStatusInfo[] | undefined,
       feishuEnabled: health.feishuEnabled as boolean | undefined,
       feishuConnected: health.feishuConnected as boolean | undefined,
@@ -474,27 +464,6 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
   }
 
   return { running: false, starting: daemonStarting, error: daemonStarting ? undefined : "Daemon 未运行" }
-}
-
-function ensureCliConfig(): void {
-  try {
-    const cliConfigPath = path.join(os.homedir(), ".cursor", "cli-config.json")
-    let config: Record<string, unknown> = {}
-    if (fs.existsSync(cliConfigPath)) {
-      config = JSON.parse(fs.readFileSync(cliConfigPath, "utf-8"))
-    }
-    const network = (config.network ?? {}) as Record<string, unknown>
-    if (network.useHttp1ForAgent !== true) {
-      network.useHttp1ForAgent = true
-      config.network = network
-      if (!config.version) config.version = 1
-      if (!config.editor) config.editor = { vimMode: false }
-      if (!config.permissions) config.permissions = { allow: [], deny: [] }
-      const dir = path.dirname(cliConfigPath)
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-      fs.writeFileSync(cliConfigPath, JSON.stringify(config, null, 2), "utf-8")
-    }
-  } catch { /* ignore */ }
 }
 
 /** 通道是否凭据齐全可下发给 Daemon */
@@ -581,9 +550,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
   if (channelConfigs.length === 0) {
     return { ok: false, error: "至少需要配置一个可用的消息通道（设置 → 消息通道）" }
   }
-  const wsFallback = primaryWorkspaceForCli()
-
-  ensureCliConfig()
+  const wsFallback = primaryProbeWorkspace()
 
   const existingStatus = await getDaemonStatus()
   if (existingStatus.running) {
@@ -862,7 +829,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
     daemonShouldRun = true
     lastDaemonStartAt = Date.now()
     startStatusPolling()
-    await injectWorkspaceMcpAndRules()
+    cleanupChannelWorkspaces()
     return { ok: true }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -1220,7 +1187,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             await stopSessionAgent(matchedKey)
             await reply(true, "✅ 已停止当前对话")
           } else if (isAdmin) {
-            const wasRunning = isAgentRunning()
+            const wasRunning = activeAgentSessionCount() > 0
             await stopAgent()
             await reply(true, wasRunning ? "✅ 已停止" : "❌ 当前没有进行中的对话")
           } else {
@@ -1577,7 +1544,7 @@ export async function applyChannelWorkspaceSwitch(
   updateChannel(channelId, { workspaceDir: w })
   invalidateMcpEnabledCache()
   clearInjectionCache()
-  await injectWorkspaceMcpAndRules()
+  cleanupChannelWorkspaces()
   broadcastStatus(await getDaemonStatus())
   return { ok: true }
 }
@@ -1617,7 +1584,7 @@ export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions
   // Daemon 侧目录已随切换更新，同步内存记录，否则状态检查会误报"目录与设置不一致"
   if (activeDaemonWorkspaceDir !== null) activeDaemonWorkspaceDir = w
 
-  await injectWorkspaceMcpAndRules()
+  cleanupChannelWorkspaces()
   broadcastStatus(await getDaemonStatus())
   if (notifyMain) void notifyMainUsersWorkspaceSwitched(w)
   return { ok: true }
@@ -1828,7 +1795,7 @@ export function initDaemonManager(): void {
   process.env.APP_DATA_DIR = app.getPath("userData")
   initHarnessMcpStore(app.getPath("userData"))
   initHarnessRuleStore(app.getPath("userData"))
-  // SDK 跑在主进程：启动时就把代理灌进 process.env（仅 spawn CLI 不够）
+  // SDK 跑在主进程：启动时就把代理灌进 process.env
   syncMainProcessProxyEnv(getConfig())
   initSessionModelStore(app.getPath("userData"))
   initProjectStore(app.getPath("userData"))

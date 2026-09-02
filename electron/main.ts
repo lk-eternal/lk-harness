@@ -32,7 +32,6 @@ import {
   getMcpStatusMap,
   warmupMcpCache,
 } from "./mcp-manager"
-import { injectWorkspace } from "./workspace-injector"
 import {
   listSkillRoots,
   listSkills,
@@ -212,7 +211,6 @@ function registerIpcHandlers(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle("workspace:inject", () => injectWorkspace())
   ipcMain.handle("daemon:start", () => startDaemon())
   ipcMain.handle("daemon:stop", () => stopDaemon())
   ipcMain.handle("daemon:status", () => getDaemonStatus())

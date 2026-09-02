@@ -3,10 +3,10 @@
 
 import type { LlmApiProtocol } from "./agent-providers.js"
 
-/** Agent 资源：CLI（唯一）或 SDK Key + 大模型供应商实例 */
+/** Agent 资源：SDK Key 或大模型供应商实例 */
 export interface AgentResource {
-  id: string;            // "cli" | "sdk_<hex>" | "llm_<hex>"
-  type: "cli" | "sdk" | "llm-builtin" | "llm-custom";
+  id: string;            // "sdk_<hex>" | "llm_<hex>"
+  type: "sdk" | "llm-builtin" | "llm-custom";
   name: string;
   apiKey?: string;       // SDK / 大模型供应商
   /** 校验成功后缓存的账号标识（仅展示用） */
@@ -37,7 +37,7 @@ export interface MessageChannel {
   wechatToken?: string;
   wechatAccountId?: string;
   // Agent 绑定
-  agentResourceId: string;        // "cli" 或 sdk 资源 id
+  agentResourceId: string;        // sdk / llm 资源 id
   model: string;                  // 主模型（"" / "auto" = 默认）
   modelParams: string;            // JSON 序列化的 {id,value}[]，仅 SDK
   othersModel: string;            // 其他人/群聊模型，空 = 跟随主模型

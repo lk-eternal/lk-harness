@@ -25,7 +25,7 @@ import {
   clearAllLlmFailStreaks,
 } from "./agent-llm"
 import { getAgentEngine, getAllAgentEngines, isSupportedAgentResource } from "./agent-engine/factory"
-import { injectWorkspaceToDir } from "./workspace-injector"
+import { cleanupWorkspaceDir } from "./workspace-injector"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
@@ -474,7 +474,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   if (!workDir) return { ok: false, error: "工作目录未配置" }
 
   // 清理残留 workspace 注入
-  await injectWorkspaceToDir(workDir, skipIdentity, channel?.digitalIdentity, projectOwned)
+  cleanupWorkspaceDir(workDir)
 
   // 模型解析：显式覆盖 > 会话 override/pending > 通道场景模型
   let model: string
@@ -1233,7 +1233,7 @@ async function isZombieAgent(sessionKey: string): Promise<boolean> {
     ])
     const earliestMsgTime = msgRes?.earliestMsgTime ?? null
     if (earliestMsgTime === null) return false
-    // Agent 有运行时活动（SDK 流事件 / CLI 输出）就不算僵尸——正在干长活未回消息是正常状态
+    // Agent 有运行时活动（SDK/LLM 流事件）就不算僵尸——正在干长活未回消息是正常状态
     const agentActivityAt = getSessionAgentList().find((s) => s.sessionKey === sessionKey)?.lastActivityAt ?? 0
     const startedAt = getSessionAgentList().find((s) => s.sessionKey === sessionKey)?.startedAt ?? 0
     const lastActiveTime = Math.max(replyRes?.lastReplyAt ?? 0, startedAt, agentActivityAt)

@@ -169,7 +169,7 @@ export default function Dashboard({ onSettings, active }: Props) {
   const [modelFavLoading, setModelFavLoading] = useState(false)
   const [modelFavOptions, setModelFavOptions] = useState<{ model: string; modelParams?: string; label?: string; used?: boolean }[]>([])
   const [modelFavQuery, setModelFavQuery] = useState("")
-  const [sessionList, setSessionList] = useState<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "cli" | "sdk"; model?: string; modelParams?: string }[]>([])
+  const [sessionList, setSessionList] = useState<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]>([])
   const [sessionDiag, setSessionDiag] = useState<Record<string, { running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>>({})
   /** 切模后短暂锁住高亮，避免旧 sessionList 把 UI 刷回上一模型 */
   const modelPickHoldRef = useRef<{ sk: string; model: string; modelParams?: string; until: number } | null>(null)

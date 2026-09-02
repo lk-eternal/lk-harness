@@ -39,7 +39,7 @@ const baseCfg = (): AppConfig => ({
   wechatEnabled: false,
   wechatToken: "",
   wechatAccountId: "",
-  agentMode: "cli",
+  agentMode: "sdk",
   cursorApiKey: "",
   othersModel: "",
   othersModelParams: "",

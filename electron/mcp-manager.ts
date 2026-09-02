@@ -1,15 +1,11 @@
 import { spawn } from "node:child_process"
-import * as path from "node:path"
-import { quoteArg } from "./agent-cli"
+import { quoteArg } from "./agent-env"
 import { concatUtf8 } from "../src/shared/utf8-stream.js"
 import {
   listHarnessMcpServers,
   saveHarnessMcpServer,
   deleteHarnessMcpServer,
   setHarnessMcpServerEnabled,
-  readHarnessMcpStoreRaw,
-  writeHarnessMcpStoreRaw,
-  harnessMcpStoreDir,
   CLAW_MCP_KEY,
   ADMIN_MCP_KEY,
 } from "../src/shared/harness-mcp-store.js"
@@ -104,28 +100,6 @@ export async function toggleMcpServer(serverName: string, enabled: boolean): Pro
 
 export function getMcpServerList(): McpServerEntry[] {
   return listHarnessMcpServers().map((s) => buildEntry(s.name, s.config))
-}
-
-export function getMcpJsonPath(_scope: "global" | "project" = "global"): string {
-  return path.join(harnessMcpStoreDir(), "servers.json")
-}
-
-export function readMcpJson(_scope: "global" | "project" = "global"): Record<string, unknown> | null {
-  const raw = readHarnessMcpStoreRaw()
-  if (!raw) return null
-  return { mcpServers: raw.servers, order: raw.order }
-}
-
-export function writeMcpJson(_scope: "global" | "project", data: Record<string, unknown>): boolean {
-  try {
-    const servers = (data.mcpServers ?? data.servers ?? {}) as Record<string, Record<string, unknown>>
-    const order = Array.isArray(data.order) ? data.order as string[] : Object.keys(servers)
-    writeHarnessMcpStoreRaw({ order, servers })
-    invalidateMcpEnabledCache()
-    return true
-  } catch {
-    return false
-  }
 }
 
 export function saveMcpServer(name: string, config: Record<string, unknown>, _scope: "global" | "project" = "global"): { ok: boolean; error?: string } {
