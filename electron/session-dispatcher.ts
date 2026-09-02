@@ -31,6 +31,7 @@ import {
   launchLlmAgent, stopLlmSession, stopAllLlmSessions,
   isLlmSessionRunning, getLlmSessionList, setLlmIdleHandler,
   llmFailCooldownRemaining,
+  clearAllLlmFailStreaks,
 } from "./agent-llm"
 import { usesLlmRuntime } from "./agent-engine/factory"
 import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
@@ -49,6 +50,7 @@ import { hasPersistedPiSession } from "./pi-embedded"
 import { isFeishuStreamEnabled } from "./stream-card"
 import {
   clearLaunchFailStreak,
+  clearAllLaunchFailStreaks,
   launchFailCooldownRemaining,
   markNotifiedIfDue,
   recordLaunchFailure,
@@ -351,6 +353,8 @@ export async function clearMessageQueue(): Promise<number> {
   try {
     const res = await httpPost(`http://127.0.0.1:${lock.port}/clear-queue`, {}) as { cleared?: number }
     clearAllSdkFailStreaks()
+    clearAllLlmFailStreaks()
+    clearAllLaunchFailStreaks()
     return res?.cleared ?? 0
   } catch { return 0 }
 }

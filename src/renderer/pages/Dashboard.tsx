@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, memo } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react"
 import { createPortal } from "react-dom"
 import {
   Play,
@@ -36,6 +36,7 @@ import PanelShell from "../components/dashboard/PanelShell"
 import { modelSlug } from "../model-utils"
 import { disambiguatePathLabel } from "../../shared/path-label"
 import { formatLogLineForUi, cardLabelFromSessionTab } from "../../shared/log-format"
+import { useStickToBottom } from "../hooks/useStickToBottom"
 import { buildDashboardTree, GROUP_IDS, type DashboardChannelNode, type DashboardSessionNode } from "../../shared/dashboard-tree"
 import SessionRow from "../components/dashboard/SessionRow"
 import { makeChatKey } from "../../shared/channel-types"
@@ -562,12 +563,16 @@ export default function Dashboard({ onSettings, active }: Props) {
 
   const [exportingDiag, setExportingDiag] = useState(false)
   const [logFilter, setLogFilter] = useState("")
-  const [logAtBottom, setLogAtBottom] = useState(true)
   const [logMatchCursor, setLogMatchCursor] = useState(0)
   const logRef = useRef<HTMLDivElement>(null)
-  /** 是否贴底跟随：用户上翻后暂停自动滚动，回到底部（或点击按钮）后恢复 */
-  const logStickRef = useRef(true)
-  const programmaticScrollRef = useRef(false)
+  const { sentinelRef: logSentinelRef, atBottom: logAtBottom, stickRef: logStickRef, scrollToBottom: scrollLogToBottom } =
+    useStickToBottom(logRef, [logLines])
+
+  /** 回到底部后再裁到窗口大小；阅读中只增不裁 */
+  useEffect(() => {
+    if (!logAtBottom) return
+    setLogLines((prev) => (prev.length > 300 ? prev.slice(-300) : prev))
+  }, [logAtBottom])
 
   useEffect(() => {
     const syncCliStatus = (s: DaemonStatus) => {
@@ -600,7 +605,8 @@ export default function Dashboard({ onSettings, active }: Props) {
     const unsubLog = window.electronAPI.onDaemonLog((line) => {
       setLogLines((prev) => {
         const next = [...prev, line]
-        return next.length > 300 ? next.slice(-300) : next
+        if (logStickRef.current && next.length > 300) return next.slice(-300)
+        return next
       })
     })
 
@@ -666,56 +672,7 @@ export default function Dashboard({ onSettings, active }: Props) {
     const lineIdx = logMatchIndexes[next]
     const el = logRef.current?.querySelector(`[data-log-idx="${lineIdx}"]`)
     if (!el) return
-    logStickRef.current = false
-    programmaticScrollRef.current = true
-    setLogAtBottom(false)
     el.scrollIntoView({ block: "center" })
-  }
-
-  // layout 阶段同步吸底：避免 append 后 scroll 事件先于 rAF 误判离开底部
-  useLayoutEffect(() => {
-    if (!logStickRef.current) return
-    const el = logRef.current
-    if (!el) return
-    programmaticScrollRef.current = true
-    el.scrollTop = el.scrollHeight
-  }, [logLines, logFilter])
-
-  /** 向上滚 = 明确离开底部的用户意图；scroll 事件可能被程序化标记吞掉，wheel 兜底解除吸底 */
-  const handleLogWheel = (e: React.WheelEvent) => {
-    if (e.deltaY < 0 && logStickRef.current) {
-      logStickRef.current = false
-      programmaticScrollRef.current = false
-      setLogAtBottom(false)
-    }
-  }
-
-  const handleLogScroll = () => {
-    const el = logRef.current
-    if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    // 离开底部：无条件取消吸底（覆盖程序化标记）。
-    // 旧逻辑在 programmatic 期间吞掉一切 scroll，高频日志时用户上翻会被立刻拽回底部。
-    if (!atBottom) {
-      programmaticScrollRef.current = false
-      if (logStickRef.current) logStickRef.current = false
-      setLogAtBottom(false)
-      return
-    }
-    // 仍在底部：程序化吸底触发的 scroll 只清标记，不改 stick
-    if (programmaticScrollRef.current) {
-      programmaticScrollRef.current = false
-      return
-    }
-    logStickRef.current = true
-    setLogAtBottom(true)
-  }
-
-  const scrollLogToBottom = () => {
-    logStickRef.current = true
-    setLogAtBottom(true)
-    programmaticScrollRef.current = true
-    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }
 
   // CLI 已登录也视为 Agent 资源就绪
@@ -1276,9 +1233,7 @@ export default function Dashboard({ onSettings, active }: Props) {
         <div className="relative min-h-0 flex-1">
           <div
             ref={logRef}
-            onScroll={handleLogScroll}
-            onWheel={handleLogWheel}
-            className="h-full overflow-auto rounded-lg border border-gray-800 bg-gray-900/50 p-3 font-mono text-xs leading-5"
+            className="h-full overflow-auto overscroll-contain rounded-lg border border-gray-800 bg-gray-900/50 p-3 font-mono text-xs leading-5"
           >
             {logLines.length > 0
               ? logLines.map((line, i) => (
@@ -1295,6 +1250,7 @@ export default function Dashboard({ onSettings, active }: Props) {
                   </div>
                 ))
               : <span className="text-gray-600">暂无日志</span>}
+            <div ref={logSentinelRef} className="h-px shrink-0" aria-hidden />
           </div>
           {!logAtBottom && (
             <button

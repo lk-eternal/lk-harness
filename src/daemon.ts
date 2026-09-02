@@ -3845,11 +3845,6 @@ async function handleAgentAdmin(_method: string, req: http.IncomingMessage, res:
     json(res, { ok: true, taskId, message: "临时任务已入队" });
     return true;
   }
-  if (action === "clean") {
-    const cleared = clearFileQueue();
-    json(res, { ok: true, cleared });
-    return true;
-  }
   if (supportedActions.includes(action)) {
     if (action === "stop" || action === "restart") {
       for (const key of [...activePollConnections.keys()]) {

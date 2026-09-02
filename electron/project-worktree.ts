@@ -166,7 +166,7 @@ async function checkoutOrCreateFeature(cloneDir: string, featureBranch: string, 
   const baseOrigin = await runGit(cloneDir, ["rev-parse", "--verify", `origin/${baseBranch}`])
   const baseLocal = await runGit(cloneDir, ["rev-parse", "--verify", baseBranch])
   const baseRef = baseOrigin.ok ? `origin/${baseBranch}` : (baseLocal.ok ? baseBranch : "")
-  if (!baseRef) return { ok: false, error: `找不到基线分支 {baseBranch}（本地与 origin 均无）` }
+  if (!baseRef) return { ok: false, error: `找不到基线分支 ${baseBranch}（本地与 origin 均无）` }
   const co = await runGit(cloneDir, ["checkout", "--no-track", "-b", featureBranch, baseRef])
   if (!co.ok) return { ok: false, error: co.stderr || co.stdout }
   return { ok: true }
@@ -215,14 +215,14 @@ export async function syncCheckout(worktreePath: string, featureBranch: string):
   if (!fs.existsSync(worktreePath)) return {}
   const name = path.basename(worktreePath)
   const fetch = await runGit(worktreePath, ["fetch", "origin", "--prune"], 30_000)
-  if (!fetch.ok) return { note: `⚠️ ${name}: 拉取远程失败）{(fetch.stderr || "超时").slice(0, 100)}），暂用本地代码` }
+  if (!fetch.ok) return { note: `⚠️ ${name}: 拉取远程失败（${(fetch.stderr || "超时").slice(0, 100)}），暂用本地代码` }
   const remote = await runGit(worktreePath, ["rev-parse", "--verify", `origin/${featureBranch}`])
   if (!remote.ok) return {}
   const behind = await runGit(worktreePath, ["rev-list", "--count", `HEAD..origin/${featureBranch}`])
   const n = parseInt(behind.stdout, 10)
   if (!behind.ok || isNaN(n) || n === 0) return {}
   const ff = await runGit(worktreePath, ["merge", "--ff-only", `origin/${featureBranch}`])
-  if (ff.ok) return { note: `⬇️ ${name}: 已同步远程 {n} 个新提交` }
+  if (ff.ok) return { note: `⬇️ ${name}: 已同步远程 ${n} 个新提交` }
   return { note: `⚠️ ${name}: 远程有 ${n} 个新提交但与本地有分歧，未自动合并（可在项目会话中 AI 处理）` }
 }
 

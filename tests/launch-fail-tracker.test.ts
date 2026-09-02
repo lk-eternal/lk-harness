@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
 import {
+  clearAllLaunchFailStreaks,
   clearLaunchFailStreak,
   isTransientLaunchError,
   launchFailCooldownRemaining,
@@ -10,7 +11,7 @@ import {
 describe("launch-fail-tracker", () => {
   beforeEach(() => {
     vi.useFakeTimers()
-    clearLaunchFailStreak("sk1")
+    clearAllLaunchFailStreaks()
   })
 
   afterEach(() => {
@@ -49,5 +50,13 @@ describe("launch-fail-tracker", () => {
     recordLaunchFailure("sk1", "永久错误")
     clearLaunchFailStreak("sk1")
     expect(launchFailCooldownRemaining("sk1")).toBe(0)
+  })
+
+  it("clearAllLaunchFailStreaks 清空全部会话", () => {
+    recordLaunchFailure("sk1", "永久错误")
+    recordLaunchFailure("sk2", "永久错误")
+    clearAllLaunchFailStreaks()
+    expect(launchFailCooldownRemaining("sk1")).toBe(0)
+    expect(launchFailCooldownRemaining("sk2")).toBe(0)
   })
 })

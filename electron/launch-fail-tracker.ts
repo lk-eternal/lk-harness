@@ -45,3 +45,7 @@ export function markNotifiedIfDue(sessionKey: string): boolean {
 export function clearLaunchFailStreak(sessionKey: string): void {
   launchFailStreak.delete(sessionKey)
 }
+
+export function clearAllLaunchFailStreaks(): void {
+  launchFailStreak.clear()
+}
