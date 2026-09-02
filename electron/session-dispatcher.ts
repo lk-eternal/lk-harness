@@ -14,17 +14,18 @@ import { reportCommandResult } from "./command-handler"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import { setChatNameResolver, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
 import {
-  getSdkSessionList, setSdkIdleHandler, hasResumableSdkSession,
-  sdkFailCooldownRemaining,
-  listSdkModels,
-  resetSdkSessionContext, clearSdkFailStreak, clearAllSdkFailStreaks,
-} from "./agent-sdk"
-import {
-  getLlmSessionList, setLlmIdleHandler,
-  llmFailCooldownRemaining,
-  clearAllLlmFailStreaks,
-} from "./agent-llm"
-import { getAgentEngine, getAllAgentEngines, isSupportedAgentResource } from "./agent-engine/factory"
+  getAgentEngine,
+  getAllAgentEngines,
+  isSupportedAgentResource,
+  listAllAgentSessions,
+  hasResumableAgentSession,
+  agentFailCooldownRemaining,
+  resetAllSessionContext,
+  clearAllAgentFailStreaks,
+  clearAgentFailStreaks,
+  setAllAgentIdleHandlers,
+  warmupAgentModels,
+} from "./agent-engine"
 import { cleanupWorkspaceDir } from "./workspace-injector"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
@@ -37,7 +38,6 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
-import { hasPersistedPiSession } from "./pi-embedded"
 import { isFeishuStreamEnabled } from "./stream-card"
 import {
   clearLaunchFailStreak,
@@ -48,10 +48,6 @@ import {
 } from "./launch-fail-tracker"
 
 const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
-
-function hasResumableAgentSession(sessionKey: string): boolean {
-  return hasResumableSdkSession(sessionKey) || hasPersistedPiSession(sessionKey)
-}
 
 function shouldSendStartupNotify(sessionKey: string, resumable: boolean): boolean {
   return !resumable && !isFeishuStreamEnabled(sessionKey)
@@ -260,8 +256,7 @@ export async function clearMessageQueue(): Promise<number> {
   if (!lock?.port) return 0
   try {
     const res = await httpPost(`http://127.0.0.1:${lock.port}/clear-queue`, {}) as { cleared?: number }
-    clearAllSdkFailStreaks()
-    clearAllLlmFailStreaks()
+    clearAllAgentFailStreaks()
     clearAllLaunchFailStreaks()
     return res?.cleared ?? 0
   } catch { return 0 }
@@ -570,24 +565,7 @@ export async function notifyChatFallback(chatId: string, text: string): Promise<
 // ── Session 列表 ──────────────────────────────────────────
 
 export function getSessionAgentList() {
-  const rawList = [
-    ...getSdkSessionList().map((s) => ({ ...s, pid: 0, source: "sdk" as const })),
-    ...getLlmSessionList().map((s) => ({ ...s, pid: 0, source: "llm" as const })),
-  ]
-  const byKey = new Map<string, (typeof rawList)[number]>()
-  for (const s of rawList) {
-    const prev = byKey.get(s.sessionKey)
-    if (!prev || s.source === "llm") byKey.set(s.sessionKey, s)
-  }
-  return [...byKey.values()]
-    .map((s) => ({
-      ...s,
-      chatName: resolveSessionChatName(
-        s.sessionKey,
-        "chatName" in s ? s.chatName : undefined,
-        "senderOpenId" in s ? s.senderOpenId : undefined,
-      ),
-    }))
+  return listAllAgentSessions()
 }
 
 /** 未运行但可一键切换的会话：主会话 + 项目 + 常用目录（切换=只改路由，消息到达时自动拉起） */
@@ -853,8 +831,8 @@ export async function deleteUserSession(
   const label = tabLabelForSession(key)
 
   if (isSessionAgentRunning(key)) await stopSessionAgent(key)
-  resetSdkSessionContext(key)
-  clearSdkFailStreak(key)
+  resetAllSessionContext(key)
+  clearAgentFailStreaks(key)
   previousActiveSessionMap.delete(key)
 
   const ws = workspaceDirFromSessionKey(key)
@@ -1066,12 +1044,10 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
   if (!sub || sub === "ls" || sub === "list") {
     if (list.length === 0) { await reply(true, "📭 当前没有会话"); return }
     const channel = chatId ? resolveChannelForSession(chatId) : undefined
-    if (channel) {
-      const resource = getAgentResource(channel.agentResourceId)
-      if (resource.type === "sdk") {
-        void listSdkModels(resource.apiKey ?? "", channel.model, channel.modelParams).catch(() => undefined)
+      if (channel) {
+        const resource = getAgentResource(channel.agentResourceId)
+        if (resource) void warmupAgentModels(resource, channel, channel.model, channel.modelParams)
       }
-    }
     const qAll = await getQueueMessages()
     const now = Date.now()
     const blocks = list.map((entry, i) => sessionListEntryToStatus(entry, i + 1, qAll, now))
@@ -1290,8 +1266,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
 
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
     // 有新 .qmsg 时无视各类失败冷却，立即重试；仅 .claimed 重投遵守退避
-    if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
-    if (!hasPending && llmFailCooldownRemaining(sessionKey) > 0) continue
+    if (!hasPending && agentFailCooldownRemaining(sessionKey) > 0) continue
     if (!hasPending && launchFailCooldownRemaining(sessionKey) > 0) continue
     if (sessionLaunchBusy(sessionKey)) {
       if (await isZombieAgent(sessionKey)) {
@@ -1426,7 +1401,6 @@ export function initSessionDispatcher(): void {
     return channel?.name ? `${channel.name}·访客` : undefined
   })
   const redispatchOnIdle = () => { void dispatchSessionAgents().catch(() => {}) }
-  setSdkIdleHandler(redispatchOnIdle)
-  setLlmIdleHandler(redispatchOnIdle)
+  setAllAgentIdleHandlers(redispatchOnIdle)
 }
 

@@ -25,10 +25,6 @@ export function getAllAgentEngines(): AgentEngine[] {
   return ENGINES
 }
 
-export function usesLlmRuntime(resource: AgentResource): boolean {
-  return resource.type === "llm-builtin" || resource.type === "llm-custom"
-}
-
 export function isSupportedAgentResource(resource: AgentResource): boolean {
   return agentEngineKind(resource) !== null
 }

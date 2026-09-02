@@ -1,4 +1,4 @@
-import type { AgentLaunchParams, ListedModel } from "./types"
+import type { AgentLaunchParams } from "./types"
 import type { AgentResource, MessageChannel } from "../../src/shared/channel-types"
 import {
   launchLlmAgent,
@@ -7,10 +7,23 @@ import {
   isLlmSessionRunning,
   listLlmModels,
   verifyLlmResource,
+  getLlmSessionList,
+  getLlmSessionCount,
+  switchLlmSessionModel,
+  resetLlmSessionContext,
+  handleLlmPollPhaseEvent,
+  setLlmIdleHandler,
+  llmFailCooldownRemaining,
+  clearLlmFailStreak,
+  clearAllLlmFailStreaks,
+  hasPersistedLlmSession,
 } from "../agent-llm"
 
-export const llmEngine = {
+import type { AgentEngine } from "./types"
+
+export const llmEngine: AgentEngine = {
   kind: "llm" as const,
+  runtimeId: "llm" as const,
 
   async launch(p: AgentLaunchParams) {
     return launchLlmAgent({
@@ -38,6 +51,32 @@ export const llmEngine = {
   isRunning: isLlmSessionRunning,
   stop: stopLlmSession,
   stopAll: stopAllLlmSessions,
+
+  listSessions() {
+    return getLlmSessionList().map((s) => ({
+      sessionKey: s.sessionKey,
+      runtimeId: "llm" as const,
+      startedAt: s.startedAt,
+      lastActivityAt: s.lastActivityAt,
+      chatType: s.chatType,
+      chatName: s.chatName,
+      workspaceDir: s.workspaceDir,
+      senderOpenId: s.senderOpenId,
+      model: s.model,
+      modelParams: s.modelParams,
+      workerPhase: s.workerPhase,
+    }))
+  },
+
+  getSessionCount: getLlmSessionCount,
+  switchSessionModel: switchLlmSessionModel,
+  resetSessionContext: resetLlmSessionContext,
+  handlePollPhaseEvent: handleLlmPollPhaseEvent,
+  setIdleHandler: setLlmIdleHandler,
+  failCooldownRemaining: llmFailCooldownRemaining,
+  clearFailStreak: clearLlmFailStreak,
+  clearAllFailStreaks: clearAllLlmFailStreaks,
+  hasResumableSession: hasPersistedLlmSession,
 
   async listModels(resource: AgentResource, channel?: MessageChannel, effModel?: string, effParams?: string) {
     const r = await listLlmModels(resource, effModel ?? channel?.model, effParams ?? channel?.modelParams)

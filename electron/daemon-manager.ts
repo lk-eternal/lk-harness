@@ -19,10 +19,19 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
-import { getAgentEngine, usesLlmRuntime } from "./agent-engine/factory"
-import { stopAllSdkSessions, resetSdkSessionContext, getSdkSessionCount, getSdkSessionList, checkSdkApiKey, listSdkModels, getSdkSessionDiagnostics, getResumableSummary, switchSdkSessionModel, handlePollPhaseEvent, clearSdkFailStreak } from "./agent-sdk"
-import { resetLlmSessionContext, handleLlmPollPhaseEvent, switchLlmSessionModel, clearLlmFailStreak } from "./agent-llm"
-import { stopAllLlmSessions, getLlmSessionCount } from "./agent-llm"
+import {
+  getAgentEngine,
+  activeAgentSessionCount,
+  handleAgentPollPhase,
+  resetAllSessionContext,
+  clearAgentFailStreaks,
+  switchAgentSessionModel,
+  getAgentSessionDiagnostics,
+  getAgentResumableSummary,
+  listAllAgentSessions,
+  warmupAgentModels,
+} from "./agent-engine"
+import { noteGlobalSdkError, clearSdkFailStreak, checkSdkApiKey, listSdkModels } from "./agent-sdk"
 import { initSessionModelStore, listQuickModels, getSessionOverride, removeRecentModel } from "../src/shared/session-model-store.js"
 import { initHarnessMcpStore } from "../src/shared/harness-mcp-store.js"
 import { initHarnessRuleStore } from "../src/shared/harness-rule-store.js"
@@ -82,10 +91,6 @@ export { checkSdkApiKey, listSdkModels, noteGlobalSdkError, clearSdkFailStreak }
 export { getQueueMessages, clearMessageQueue, deleteQueueMessage } from "./session-dispatcher"
 
 
-function activeAgentSessionCount(): number {
-  return getSdkSessionCount() + getLlmSessionCount()
-}
-
 async function stopAgent(): Promise<void> {
   const timeout = new Promise<void>((r) => setTimeout(r, 12_000))
   await Promise.race([stopAllSessionAgents(), timeout])
@@ -93,7 +98,7 @@ async function stopAgent(): Promise<void> {
 
 function getIndependentTaskStatuses(): Record<string, { running: boolean; pid?: number; startedAt?: number }> {
   const out: Record<string, { running: boolean; pid?: number; startedAt?: number }> = {}
-  for (const s of getSdkSessionList()) {
+  for (const s of listAllAgentSessions()) {
     if (s.chatType === "task" || s.chatType === "temp") out[s.sessionKey] = { running: true, startedAt: s.startedAt }
   }
   return out
@@ -952,8 +957,7 @@ function connectSseQueueEvents(): void {
           } else if (ev.type === "command-update") {
             void checkAndExecutePendingCommands().catch(() => {})
           } else if (ev.type === "poll-phase" && ev.sessionKey && ev.phase) {
-            handlePollPhaseEvent(ev.sessionKey, ev.phase, ev)
-            handleLlmPollPhaseEvent(ev.sessionKey, ev.phase, ev)
+            handleAgentPollPhase(ev.sessionKey, ev.phase, ev)
           }
         } catch { /* ignore */ }
       }
@@ -1231,9 +1235,8 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           const effParams = matched?.modelParams ?? override?.modelParams ?? channelModel.modelParams
           if (channel) {
             const resource = getAgentResource(channel.agentResourceId)
-            if (resource?.type === "sdk") {
-              const { getAgentEngine } = await import("./agent-engine/factory.js")
-              await getAgentEngine(resource).listModels?.(resource, channel, effModel, effParams).catch(() => undefined)
+            if (resource) {
+              await warmupAgentModels(resource, channel, effModel, effParams)
             }
           }
 
@@ -1380,8 +1383,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             await stopSessionAgent(sessionKey)
           }
           // SDK / LLM 上下文重置：丢弃 resume 映射，下条消息全新会话
-          if (sessionKey) resetSdkSessionContext(sessionKey)
-          if (sessionKey) resetLlmSessionContext(sessionKey)
+          if (sessionKey) resetAllSessionContext(sessionKey)
           const wsDir = resolveResetWorkspaceDir(sessionKey, claimed.chatId, claimed.chatType)
           const cmdChannelId = claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined
           if (wsDir && cmdChannelId) setMainChatIdForScope(mainChatScopeKey(cmdChannelId, wsDir), "")
@@ -1808,7 +1810,7 @@ export function initDaemonManager(): void {
   ipcMain.handle("agent:stop", async () => { await stopAgent(); return { ok: true } })
   ipcMain.handle("agent:sessions", () => getSessionAgentList())
   ipcMain.handle("diagnostics:session", async (_e, sessionKey: string) => {
-    const diag = getSdkSessionDiagnostics(sessionKey)
+    const diag = getAgentSessionDiagnostics(sessionKey)
     let lastReplyAt: number | null = null
     const lock = readLockFile()
     if (lock?.port) {
@@ -1951,10 +1953,8 @@ export function initDaemonManager(): void {
   ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string) => {
     const channel = resolveChannelForSession(sessionKey)
     const resource = channel ? getAgentResource(channel.agentResourceId) : undefined
-    if (resource && usesLlmRuntime(resource)) {
-      return switchLlmSessionModel(sessionKey, model, modelParams)
-    }
-    return switchSdkSessionModel(sessionKey, model, modelParams)
+    if (!resource) return { ok: false, error: "未配置 Agent 资源" }
+    return switchAgentSessionModel(resource, sessionKey, model, modelParams)
   })
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())
   ipcMain.handle("session:dashboard-tree", () => listDashboardTree())
@@ -2230,8 +2230,7 @@ export function initDaemonManager(): void {
     const lock = readLockFile()
     if (!lock?.port) return { ok: false, error: "守护进程未运行" }
     if (task.independent !== false) {
-      clearSdkFailStreak(task.id)
-      clearLlmFailStreak(task.id)
+      clearAgentFailStreaks(task.id)
       // 与 cron 触发同一套入队逻辑，失败由调度器按队列重拉
       return enqueueToSession(lock.port, task.id, content, "task", {
         channelId: task.channelId,
@@ -2492,7 +2491,7 @@ async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?
       JSON.stringify(getSessionAgentList(), null, 2),
       "",
       "## Resume 映射",
-      JSON.stringify(getResumableSummary(), null, 2),
+      JSON.stringify(getAgentResumableSummary(), null, 2),
       "",
       "## 消息队列快照",
       JSON.stringify(queueSnapshot, null, 2),
