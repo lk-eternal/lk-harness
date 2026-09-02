@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import { app } from "electron"
 import {
   getConfig, getChannel, getChannels, getAgentResource, resolveChannelForSession,
-  resolveChannelModel, effectiveWorkspaceDir, mainChatScopeKey, saveConfig,
+  resolveChannelModel, effectiveWorkspaceDir, saveConfig,
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces,
   type MessageChannel, type ModelScenario,
 } from "./config-store"
@@ -11,30 +11,21 @@ import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChat
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
+import type { ChatType, LaunchMeta } from "./agent-session-types"
+import { setChatNameResolver, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
 import {
-  launchAgent as _launchCliAgent,
-  stopSessionAgent as _stopCliSession, stopAllSessionAgents as _stopAllCliSessions,
-  getSessionAgentList as getRawCliSessionList,
-  isSessionAgentRunning as _isCliSessionRunning,
-  getSessionAgentStartedAt,
-  setChatNameResolver, setChatNameFallback, setSessionCloseHandler, resolveSessionChatName,
-  type ChatType, type SessionExitInfo,
-} from "./agent-launcher"
-import {
-  launchSdkAgent, stopSdkSession, stopAllSdkSessions,
-  isSdkSessionRunning, getSdkSessionList, setSdkIdleHandler, hasResumableSdkSession,
+  getSdkSessionList, setSdkIdleHandler, hasResumableSdkSession,
   sdkFailCooldownRemaining,
   listSdkModels,
   resetSdkSessionContext, clearSdkFailStreak, clearAllSdkFailStreaks,
 } from "./agent-sdk"
 import {
-  launchLlmAgent, stopLlmSession, stopAllLlmSessions,
-  isLlmSessionRunning, getLlmSessionList, setLlmIdleHandler,
+  getLlmSessionList, setLlmIdleHandler,
   llmFailCooldownRemaining,
   clearAllLlmFailStreaks,
 } from "./agent-llm"
-import { usesLlmRuntime } from "./agent-engine/factory"
-import { injectWorkspaceToDir, injectCliMcpToProjectDir } from "./workspace-injector"
+import { getAgentEngine, getAllAgentEngines, isSupportedAgentResource } from "./agent-engine/factory"
+import { injectWorkspaceToDir } from "./workspace-injector"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
@@ -89,7 +80,7 @@ async function notifyChat(sessionKey: string, text: string): Promise<void> {
   }
 }
 
-// ── 内部工具（CLI 与 SDK 双运行时并存）────────────────────
+// ── 内部工具 ─────────────────────────────────────────────
 
 const launchReserved = new Set<string>()
 
@@ -108,7 +99,8 @@ function wrapLaunch(sessionKey: string, fn: () => Promise<void>): Promise<void> 
 }
 
 function isSessionAgentRunningInner(key: string): boolean {
-  return launchReserved.has(key) || _isCliSessionRunning(key) || isSdkSessionRunning(key) || isLlmSessionRunning(key)
+  return launchReserved.has(key)
+    || getAllAgentEngines().some((e) => e.isRunning(key))
 }
 
 export function isSessionAgentRunning(key: string): boolean {
@@ -117,15 +109,11 @@ export function isSessionAgentRunning(key: string): boolean {
 
 export async function stopSessionAgent(key: string): Promise<void> {
   releaseLaunch(key)
-  await stopLlmSession(key)
-  await stopSdkSession(key)
-  if (_isCliSessionRunning(key)) _stopCliSession(key)
+  await Promise.all(getAllAgentEngines().map((e) => e.stop(key)))
 }
 
 export async function stopAllSessionAgents(): Promise<void> {
-  await stopAllLlmSessions()
-  await stopAllSdkSessions()
-  _stopAllCliSessions()
+  await Promise.all(getAllAgentEngines().map((e) => e.stopAll()))
   launchReserved.clear()
 }
 
@@ -136,8 +124,6 @@ export const previousActiveSessionMap = new Map<string, string>()
 
 /** feature 被占用提醒节流：sessionKey → 上次提醒时间（调度器每轮都会撞到占用，避免刷屏） */
 const featureOccupiedNotifyAt = new Map<string, number>()
-const lastCrashAtMap = new Map<string, number>()
-const CRASH_LOOP_WINDOW_MS = 5 * 60 * 1000
 
 async function reportLaunchOutcome(
   sessionKey: string,
@@ -177,59 +163,6 @@ function formatDuration(ms: number): string {
   const m = Math.floor(s / 60)
   if (m < 60) return `${m}m${s % 60}s`
   return `${Math.floor(m / 60)}h${m % 60}m`
-}
-
-// ── Session 生命周期 ──────────────────────────────────────
-
-export async function handleSessionClosed(sessionKey: string, chatType: ChatType, exitInfo?: SessionExitInfo): Promise<void> {
-  const failed = exitInfo && exitInfo.exitCode !== 0 && exitInfo.exitCode !== null
-  const chatId = extractChatId(sessionKey)
-  const mainChat = isMainUser(chatId, chatType)
-  // 非长连接模式下正常退出是常态，不打扰用户
-  const ch = resolveChannelForSession(sessionKey)
-  const persistentPoll = (ch?.keepSession ?? true) && (ch?.persistentPoll ?? true)
-
-  if (failed) {
-    const now = Date.now()
-    const prevCrashAt = lastCrashAtMap.get(sessionKey) ?? 0
-    lastCrashAtMap.set(sessionKey, now)
-    if (now - prevCrashAt < CRASH_LOOP_WINDOW_MS) {
-      // 短时间内连续崩溃：仅告警，未处理消息保留在队列中（不静默丢弃）
-      broadcastLog(`[System] Agent 连续异常退出(exit=${exitInfo.exitCode})，未处理消息保留在队列中`, "WARN")
-      // 主用户也要收到——之前只通知非主用户，导致主用户私聊完全无感
-      await notifyChat(sessionKey, `⚠️ Agent 连续异常退出 (exit=${exitInfo.exitCode})，消息保留在队列中，正在自动重试。`)
-    } else {
-      // 首次崩溃：保留队列消息，调度器轮询会自动重启 Agent 继续处理
-      broadcastLog(`[System] Agent 异常退出(exit=${exitInfo.exitCode})，保留队列消息等待自动重启`, "WARN")
-    }
-    if (mainChat) {
-      const stderrContent = exitInfo.stderr?.trim() || ""
-      const errMsg = stderrContent
-        ? `⚠️ Agent 异常退出 (exit=${exitInfo.exitCode})。\n错误信息：\n${stderrContent}`
-        : `⚠️ Agent 异常退出 (exit=${exitInfo.exitCode})。请检查配置后重试。`
-      await notifyChat(sessionKey, errMsg)
-    }
-  } else if (mainChat && persistentPoll) {
-    const output = exitInfo?.stderr?.trim() || exitInfo?.stdout?.trim() || ""
-    const exitMsg = output ? `Agent已退出\n退出前输出：\n${output}` : "Agent已退出"
-    await notifyChat(sessionKey, exitMsg)
-  }
-
-  const previous = previousActiveSessionMap.get(sessionKey)
-  previousActiveSessionMap.delete(sessionKey)
-  if (!previous) return
-
-  const lock = cachedLock()
-  if (!lock) return
-
-  const currentActive = await getCurrentActiveSession(lock.port, chatId)
-  if (currentActive !== sessionKey) return
-
-  const fallbackKey = isSessionAgentRunning(previous) ? previous : undefined
-  if (fallbackKey) {
-    await syncActiveSession(lock.port, chatId, fallbackKey)
-    broadcastLog(`[System] 临时会话已结束，活跃会话自动回退至: ${fallbackKey}`, "INFO")
-  }
 }
 
 // ── 名称解析 ──────────────────────────────────────────────
@@ -463,7 +396,7 @@ export async function deleteQueueMessage(fileId: string): Promise<boolean> {
 interface LaunchAgentParams {
   sessionKey: string
   chatType: ChatType
-  meta?: import("./agent-launcher").LaunchMeta
+  meta?: LaunchMeta
   useMainWorkspace?: boolean
   senderOpenId?: string
   chatName?: string
@@ -540,7 +473,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   }
   if (!workDir) return { ok: false, error: "工作目录未配置" }
 
-  // 清理残留 workspace 注入；CLI 另在下方 merge 项目级 MCP
+  // 清理残留 workspace 注入
   await injectWorkspaceToDir(workDir, skipIdentity, channel?.digitalIdentity, projectOwned)
 
   // 模型解析：显式覆盖 > 会话 override/pending > 通道场景模型
@@ -574,64 +507,38 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const launchMeta = { ...meta, chatType: launchChatType }
   const includeAdmin = shouldIncludeAdminMcp(launchMeta, sessionKey, useMain)
 
-  if (resource.type === "cli") {
-    injectCliMcpToProjectDir(workDir, includeAdmin)
+  if (!isSupportedAgentResource(resource)) {
+    return { ok: false, error: "请在设置 → Agent 中配置 Cursor SDK 或大模型资源，并绑定到通道" }
+  }
+  if (resource.type === "sdk" && !resource.apiKey?.trim()) {
+    return { ok: false, error: "Cursor SDK API Key 未配置" }
   }
 
-  if (resource.type === "sdk") {
-    return launchSdkAgent({
-      sessionKey, chatType: launchChatType, meta: launchMeta, workspaceDir: workDir,
-      useMainWorkspace: skipIdentity,
-      includeAdmin,
-      digitalIdentityOverride: channel?.digitalIdentity,
-      senderOpenId, chatName, taskMessage,
-      notifySessionKey,
-      apiKey: resource.apiKey ?? "", model, modelParams,
-      keepSession, persistentPoll,
-      pendingMessageIds: p.pendingMessageIds,
-    })
-  }
-
-  if (usesLlmRuntime(resource)) {
-    return launchLlmAgent({
-      sessionKey,
-      chatType: launchChatType,
-      meta: launchMeta,
-      workspaceDir: workDir,
-      resource,
-      channelId: channel?.id,
-      model,
-      modelParams,
-      useMainWorkspace: skipIdentity,
-      includeAdmin,
-      digitalIdentityOverride: channel?.digitalIdentity,
-      senderOpenId,
-      chatName,
-      taskMessage,
-      notifySessionKey,
-      keepSession,
-      persistentPoll,
-      pendingMessageIds: p.pendingMessageIds,
-    })
-  }
-
-  const needResume = launchChatType === "p2p" || launchChatType === "group"
-  return _launchCliAgent({
-    sessionKey, chatType: launchChatType, meta: launchMeta,
+  return getAgentEngine(resource).launch({
+    sessionKey,
+    chatType: launchChatType,
+    meta: launchMeta,
+    workspaceDir: workDir,
     useMainWorkspace: skipIdentity,
-    includeAdmin,
     digitalIdentityOverride: channel?.digitalIdentity,
-    senderOpenId, chatName, taskMessage,
+    senderOpenId,
+    chatName,
+    taskMessage,
     notifySessionKey,
-    workspaceDir: workDir, model,
-    resumeScope: needResume && channel ? mainChatScopeKey(channel.id, workDir) : undefined,
+    model,
+    modelParams,
+    keepSession,
     persistentPoll,
+    pendingMessageIds: p.pendingMessageIds,
+    resource,
+    channelId: channel?.id,
+    includeAdmin,
   })
 }
 
 export async function launchSessionAgent(
   sessionKey: string, chatType: ChatType,
-  meta?: import("./agent-launcher").LaunchMeta,
+  meta?: LaunchMeta,
   useMainWorkspace?: boolean, senderOpenId?: string,
   pendingMessageIds?: string[],
 ): Promise<{ ok: boolean; error?: string }> {
@@ -664,16 +571,13 @@ export async function notifyChatFallback(chatId: string, text: string): Promise<
 
 export function getSessionAgentList() {
   const rawList = [
-    ...getRawCliSessionList().map((s) => ({ ...s, modelParams: undefined as string | undefined, source: "cli" as const })),
     ...getSdkSessionList().map((s) => ({ ...s, pid: 0, source: "sdk" as const })),
     ...getLlmSessionList().map((s) => ({ ...s, pid: 0, source: "llm" as const })),
   ]
-  // 同 sessionKey 只保留一条（llm/sdk 优先于 cli，避免双计）
   const byKey = new Map<string, (typeof rawList)[number]>()
-  const rank = (s: (typeof rawList)[number]["source"]) => (s === "llm" ? 3 : s === "sdk" ? 2 : 1)
   for (const s of rawList) {
     const prev = byKey.get(s.sessionKey)
-    if (!prev || rank(s.source) >= rank(prev.source)) byKey.set(s.sessionKey, s)
+    if (!prev || s.source === "llm") byKey.set(s.sessionKey, s)
   }
   return [...byKey.values()]
     .map((s) => ({
@@ -1331,7 +1235,8 @@ async function isZombieAgent(sessionKey: string): Promise<boolean> {
     if (earliestMsgTime === null) return false
     // Agent 有运行时活动（SDK 流事件 / CLI 输出）就不算僵尸——正在干长活未回消息是正常状态
     const agentActivityAt = getSessionAgentList().find((s) => s.sessionKey === sessionKey)?.lastActivityAt ?? 0
-    const lastActiveTime = Math.max(replyRes?.lastReplyAt ?? 0, getSessionAgentStartedAt(sessionKey) ?? 0, agentActivityAt)
+    const startedAt = getSessionAgentList().find((s) => s.sessionKey === sessionKey)?.startedAt ?? 0
+    const lastActiveTime = Math.max(replyRes?.lastReplyAt ?? 0, startedAt, agentActivityAt)
     const startTime = Math.max(earliestMsgTime, lastActiveTime)
     return Date.now() - startTime > ZOMBIE_REPLY_SILENCE_MS
   } catch {
@@ -1410,7 +1315,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     if (!sessionKey.includes("|") && !sessionKey.includes("::")) {
       const launchType: ChatType = chatType === "task" ? "task" : "temp"
       const resumableT = hasResumableAgentSession(sessionKey)
-      // 队列唤醒必须带回任务绑定的通道，否则 getAgentResource(undefined) 会默落 CLI
+      // 队列唤醒必须带回任务绑定的通道，否则 getAgentResource(undefined) 会回落默认 SDK
       const task = readTasksFromFile().find((t) => t.id === sessionKey)
       const channelId = task?.channelId
         || getChannels().find((c) => c.enabled)?.id
@@ -1492,7 +1397,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     const label = chatType === "group"
       ? `群聊 ${chatName ? `「${chatName}」` : chatId}`
       : (mainUser ? `主用户私聊${userName ? ` (${userName})` : ""}` : `私聊 ${p2pName}`)
-    const meta: import("./agent-launcher").LaunchMeta = { chatId, chatType: chatType as "p2p" | "group" }
+    const meta: LaunchMeta = { chatId, chatType: chatType as "p2p" | "group" }
     if (enqueueSessionLaunch(sessionKey, launches, async () => {
       const result = await launchSessionAgent(sessionKey, chatType as "p2p" | "group", meta, mainUser, senderOpenId, pendingFor(sessionKey))
       if (result.ok && chatId !== sessionKey) {
@@ -1520,8 +1425,6 @@ export function initSessionDispatcher(): void {
     const channel = getChannel(parseChatKey(chatId).channelId)
     return channel?.name ? `${channel.name}·访客` : undefined
   })
-  setSessionCloseHandler(handleSessionClosed)
-  // run 收口释放后立即调度：队列有未处理消息时自动拉起（含异常结束——.claimed 仍在队列中）
   const redispatchOnIdle = () => { void dispatchSessionAgents().catch(() => {}) }
   setSdkIdleHandler(redispatchOnIdle)
   setLlmIdleHandler(redispatchOnIdle)

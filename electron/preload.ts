@@ -74,13 +74,6 @@ export interface InjectResult {
   message: string
 }
 
-export interface CliLoginStatus {
-  cliFound: boolean
-  loggedIn: boolean
-  identityLine?: string
-  error?: string
-}
-
 export type UpdaterCheckResult =
   | { status: "dev"; currentVersion: string; message: string }
   | { status: "error"; currentVersion: string; message: string }
@@ -236,10 +229,6 @@ const api = {
   getQueueMessages: (): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]> => ipcRenderer.invoke("daemon:queue"),
   deleteQueueMessage: (fileId: string): Promise<boolean> => ipcRenderer.invoke("daemon:queue-delete", fileId),
   clearQueueMessages: (): Promise<number> => ipcRenderer.invoke("daemon:queue-clear"),
-  checkCli: (): Promise<boolean> => ipcRenderer.invoke("cli:check"),
-  checkCliLogin: (opts?: { forceRefresh?: boolean }): Promise<CliLoginStatus> => ipcRenderer.invoke("cli:login-status", opts),
-  installCli: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("cli:install"),
-  loginCli: (): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("cli:login"),
   listModels: (): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }> => ipcRenderer.invoke("models:list"),
   checkSdkApiKey: (apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }> => ipcRenderer.invoke("sdk:check-api-key", apiKey),
   verifyLlmResource: (resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }> => ipcRenderer.invoke("llm:verify-resource", resource),

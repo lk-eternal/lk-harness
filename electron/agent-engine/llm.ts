@@ -31,6 +31,7 @@ export const llmEngine = {
       persistentPoll: p.persistentPoll,
       pendingMessageIds: p.pendingMessageIds,
       channelId: p.channelId,
+      includeAdmin: p.includeAdmin,
     })
   },
 

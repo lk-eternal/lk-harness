@@ -298,6 +298,14 @@ export function isSameWorkspacePath(a: string, b: string): boolean {
 
 export const CLI_RESOURCE_ID = "cli"
 
+function pickDefaultAgentResource(resources: AgentResource[]): AgentResource | undefined {
+  const sdk = resources.find((r) => r.type === "sdk" && r.apiKey?.trim())
+  if (sdk) return sdk
+  return resources.find((r) => (r.type === "llm-builtin" || r.type === "llm-custom") && r.apiKey?.trim())
+    ?? resources.find((r) => r.type === "llm-builtin" || r.type === "llm-custom")
+    ?? resources.find((r) => r.type === "sdk")
+}
+
 export function newChannelId(): string {
   return `ch_${randomBytes(4).toString("hex")}`
 }
@@ -332,17 +340,22 @@ export function resolveChannelForSession(sessionKey: string): MessageChannel | u
 }
 
 export function getAgentResources(): AgentResource[] {
-  const list = getConfig().agentResources ?? []
-  if (!list.some((r) => r.id === CLI_RESOURCE_ID)) {
-    return [{ id: CLI_RESOURCE_ID, type: "cli", name: "Cursor CLI" }, ...list]
-  }
-  return list
+  return (getConfig().agentResources ?? []).filter((r) => r.type !== "cli")
+}
+
+export function getDefaultAgentResourceId(): string | undefined {
+  return pickDefaultAgentResource(getConfig().agentResources ?? [])?.id
 }
 
 export function getAgentResource(id?: string): AgentResource {
-  const cli: AgentResource = { id: CLI_RESOURCE_ID, type: "cli", name: "Cursor CLI" }
-  if (!id) return cli
-  return getAgentResources().find((r) => r.id === id) ?? cli
+  const resources = getConfig().agentResources ?? []
+  if (id && id !== CLI_RESOURCE_ID) {
+    const hit = resources.find((r) => r.id === id)
+    if (hit) return hit
+  }
+  const def = pickDefaultAgentResource(resources)
+  if (def) return def
+  return { id: "unset", type: "sdk", name: "未配置 Agent", apiKey: "" }
 }
 
 export function saveChannel(channel: MessageChannel): void {
@@ -453,11 +466,8 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   const cfg = getConfig()
   const partial: Partial<AppConfig> = {}
 
-  // Agent 资源
-  let resources = [...(cfg.agentResources ?? [])]
-  if (!resources.some((r) => r.id === CLI_RESOURCE_ID)) {
-    resources = [{ id: CLI_RESOURCE_ID, type: "cli", name: "Cursor CLI" }, ...resources]
-  }
+  // Agent 资源（CLI 已移除；旧 cli 资源不再注入）
+  let resources = [...(cfg.agentResources ?? [])].filter((r) => r.type !== "cli")
   let legacySdkId = resources.find((r) => r.type === "sdk" && r.apiKey === cfg.cursorApiKey?.trim())?.id
   if (cfg.cursorApiKey?.trim() && !legacySdkId) {
     legacySdkId = newSdkResourceId()
@@ -465,7 +475,11 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   }
   partial.agentResources = resources
 
-  const agentResourceId = cfg.agentMode === "sdk" && legacySdkId ? legacySdkId : CLI_RESOURCE_ID
+  const agentResourceId = legacySdkId ?? pickDefaultAgentResource(resources)?.id ?? newSdkResourceId()
+  if (!resources.some((r) => r.id === agentResourceId)) {
+    resources.push({ id: agentResourceId, type: "sdk", name: "Cursor SDK", apiKey: cfg.cursorApiKey?.trim() ?? "" })
+    partial.agentResources = resources
+  }
   const channels = [...(cfg.channels ?? [])]
 
   const baseModel = {
@@ -537,7 +551,11 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
     }
   }
 
-  partial.channels = channels
+  partial.channels = channels.map((c) =>
+    !c.agentResourceId || c.agentResourceId === CLI_RESOURCE_ID
+      ? { ...c, agentResourceId }
+      : c,
+  )
 
   // 定时任务补默认通道与旧任务模型
   if (!cfg.channelsMigrated && channels.length > 0) {

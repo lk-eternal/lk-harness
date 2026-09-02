@@ -1,11 +1,10 @@
 import { randomUUID } from "node:crypto"
 import {
   getConfig, getAgentResource, updateChannel,
-  resolveChannelForSession, effectiveWorkspaceDir, primaryWorkspaceForCli, type MessageChannel, type ScheduledTask,
+  resolveChannelForSession, effectiveWorkspaceDir, type MessageChannel, type ScheduledTask,
 } from "./config-store"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { broadcastLog } from "./ui-logger"
-import { applyProxyEnv, execAgentSync } from "./agent-cli"
 import { listSdkModels, switchSdkSessionModel, getSdkSessionList, hasResumableSdkSession, isSdkSessionRunning } from "./agent-sdk"
 import { getAgentEngine, usesLlmRuntime } from "./agent-engine/factory"
 import { switchLlmSessionModel, getLlmSessionList, isLlmSessionRunning, hasPersistedLlmSession } from "./agent-llm"
@@ -104,19 +103,7 @@ async function listModelsForCommands(channel: MessageChannel): Promise<{ ok: tru
     if (models.length === 0) return { ok: false, error: "暂无可用模型（请检查 Base URL 与 API Key）" }
     return { ok: true, models }
   }
-  const config = getConfig()
-  const env: Record<string, string> = { ...process.env as Record<string, string>, NODE_USE_ENV_PROXY: "1" }
-  applyProxyEnv(env, config)
-  const ws = primaryWorkspaceForCli()
-  const run = execAgentSync(["--list-models"], env, { timeoutMs: 30_000, logLabel: "list-models-cmd", cwd: ws })
-  if (!run.ok) {
-    return { ok: false, error: run.error || run.stderr.trim() || "获取模型列表失败" }
-  }
-  const models = parseListModelsStdout(run.stdout)
-  if (models.length === 0) {
-    return { ok: false, error: "未解析到任何模型，请检查 agent --list-models 输出格式是否变化" }
-  }
-  return { ok: true, models }
+  return { ok: false, error: "请在设置 → Agent 中配置 Cursor SDK 或大模型资源" }
 }
 
 const MODEL_SUBCMD_HELP = [

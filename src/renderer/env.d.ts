@@ -47,14 +47,7 @@ declare global {
     worktreeRoot?: string
   }
 
-  interface CliLoginStatus {
-    cliFound: boolean
-    loggedIn: boolean
-    identityLine?: string
-    error?: string
-  }
-
-  interface SkillTreeNode {
+  interface DaemonStatus {
     name: string
     type: "file" | "directory"
     children?: SkillTreeNode[]
@@ -222,10 +215,6 @@ declare global {
     getQueueMessages(): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>
     deleteQueueMessage(fileId: string): Promise<boolean>
     clearQueueMessages(): Promise<number>
-    checkCli(): Promise<boolean>
-    checkCliLogin(opts?: { forceRefresh?: boolean }): Promise<CliLoginStatus>
-    installCli(): Promise<{ ok: boolean; output: string }>
-    loginCli(): Promise<{ ok: boolean; output: string }>
     listModels(): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }>
     checkSdkApiKey(apiKey: string): Promise<{ ok: boolean; email?: string; error?: string }>
     verifyLlmResource(resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }>

@@ -449,7 +449,7 @@ const MSG_SESSION_MAP_MAX = 5000;
 const sessionLastReplyAt = new Map<string, number>();
 
 /** Agent 运行时（session-launched 登记）：决定 poll 阻塞超时与 timeout directive 文案 */
-type SessionAgentRuntime = "llm" | "sdk" | "cli";
+type SessionAgentRuntime = "llm" | "sdk";
 const sessionAgentRuntime = new Map<string, SessionAgentRuntime>();
 
 /** 记录出站回复时刻（zombie 假死判定 + 黑洞投递嫌疑判定） */
@@ -4252,7 +4252,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     };
     if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
     const sk = normalizeSessionKey(session_key) || session_key;
-    if (runtime === "llm" || runtime === "sdk" || runtime === "cli") {
+    if (runtime === "llm" || runtime === "sdk") {
       sessionAgentRuntime.set(sk, runtime);
     }
     if (!resumed) {

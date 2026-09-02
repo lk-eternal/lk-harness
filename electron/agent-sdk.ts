@@ -4,7 +4,8 @@ import { resolve, join, dirname } from "node:path"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
-import { type ChatType, type LaunchMeta, buildPrompt, resolveSessionChatName } from "./agent-launcher"
+import type { ChatType, LaunchMeta } from "./agent-session-types"
+import { resolveSessionChatName } from "./session-chat-name"
 import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource, resolveChannelForSession } from "./config-store"
@@ -519,7 +520,6 @@ function broadcastSdkSessionStatus(): void {
   broadcastSessionStatus(list, "sdk")
 }
 
-// prompt 由 agent-launcher.buildPrompt 统一构建
 
 // stream() 发出的 thinking.text / assistant text 均为增量 delta，逐条打印会刷屏；
 // 这里按类型聚合，切换类型 / 超过阈值 / 遇到 tool·status·结束时才落一条日志

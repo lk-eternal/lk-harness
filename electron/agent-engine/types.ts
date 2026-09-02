@@ -1,6 +1,6 @@
 import type { AgentResource, MessageChannel } from "../../src/shared/channel-types"
 
-export type AgentEngineKind = "cursor-cli" | "cursor-sdk" | "llm"
+export type AgentEngineKind = "cursor-sdk" | "llm"
 
 export interface ListedModel {
   id: string
@@ -10,8 +10,8 @@ export interface ListedModel {
 
 export interface AgentLaunchParams {
   sessionKey: string
-  chatType: import("../agent-launcher").ChatType
-  meta?: import("../agent-launcher").LaunchMeta
+  chatType: import("../agent-session-types").ChatType
+  meta?: import("../agent-session-types").LaunchMeta
   workspaceDir: string
   useMainWorkspace: boolean
   digitalIdentityOverride?: string
@@ -26,10 +26,8 @@ export interface AgentLaunchParams {
   pendingMessageIds?: string[]
   resource: AgentResource
   channelId?: string
-  /** CLI resume 作用域*/
-  resumeScope?: string
-  /** 启动前注入 CLI MCP（是否含 admin MCP）*/
-  cliMcpAdmin?: boolean
+  /** 主用户私聊：协议内嵌 admin 段 */
+  includeAdmin?: boolean
 }
 
 export interface AgentEngine {

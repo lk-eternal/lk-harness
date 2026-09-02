@@ -19,19 +19,13 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-cli"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
-import {
-  stopAgent as _stopCliAgent,
-  isAgentRunning as _isCliAgentRunning, getRunningSessionCount as _getCliRunningCount,
-  getAgentChildPid, getSessionAgentCount as _getCliSessionCount, getIndependentTaskStatuses as _getCliTaskStatuses,
-  type ChatType,
-} from "./agent-launcher"
+import { getAgentEngine, usesLlmRuntime } from "./agent-engine/factory"
 import { stopAllSdkSessions, resetSdkSessionContext, getSdkSessionCount, getSdkSessionList, checkSdkApiKey, listSdkModels, getSdkSessionDiagnostics, getResumableSummary, switchSdkSessionModel, handlePollPhaseEvent, clearSdkFailStreak } from "./agent-sdk"
 import { resetLlmSessionContext, handleLlmPollPhaseEvent, switchLlmSessionModel, clearLlmFailStreak } from "./agent-llm"
 import { stopAllLlmSessions, getLlmSessionCount } from "./agent-llm"
 import { initSessionModelStore, listQuickModels, getSessionOverride, removeRecentModel } from "../src/shared/session-model-store.js"
 import { initHarnessMcpStore } from "../src/shared/harness-mcp-store.js"
 import { initHarnessRuleStore } from "../src/shared/harness-rule-store.js"
-import { usesLlmRuntime } from "./agent-engine/factory"
 import { registerFeishuApp } from "./feishu-register"
 import {
   setDaemonPort,
@@ -82,8 +76,7 @@ import {
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
 } from "./session-dispatcher"
 
-export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv, checkCliInstalled, installCli, execAgentSync, execAgentAsync, type ExecAgentOptions as ExecAgentSyncOptions } from "./agent-cli"
-export { checkAgentLoggedIn, loginCli } from "./agent-launcher"
+export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv, execAgentSync, execAgentAsync, type ExecAgentOptions as ExecAgentSyncOptions } from "./agent-cli"
 export { getLogBuffer } from "./ui-logger"
 export { checkSdkApiKey, listSdkModels, noteGlobalSdkError, clearSdkFailStreak } from "./agent-sdk"
 export { injectWorkspaceMcpAndRules, injectWorkspaceToDir, clearInjectionCache } from "./workspace-injector"
@@ -91,15 +84,15 @@ export { getQueueMessages, clearMessageQueue, deleteQueueMessage } from "./sessi
 
 
 function isAgentRunning(): boolean {
-  return _isCliAgentRunning() || getSdkSessionCount() > 0 || getLlmSessionCount() > 0
+  return getSdkSessionCount() > 0 || getLlmSessionCount() > 0
 }
 
 function getRunningSessionCount(): number {
-  return _getCliRunningCount() + getSdkSessionCount() + getLlmSessionCount()
+  return getSdkSessionCount() + getLlmSessionCount()
 }
 
 function getSessionAgentCount(): number {
-  return _getCliSessionCount() + getSdkSessionCount() + getLlmSessionCount()
+  return getSdkSessionCount() + getLlmSessionCount()
 }
 
 async function stopAgent(): Promise<void> {
@@ -108,7 +101,7 @@ async function stopAgent(): Promise<void> {
 }
 
 function getIndependentTaskStatuses(): Record<string, { running: boolean; pid?: number; startedAt?: number }> {
-  const out: Record<string, { running: boolean; pid?: number; startedAt?: number }> = _getCliTaskStatuses()
+  const out: Record<string, { running: boolean; pid?: number; startedAt?: number }> = {}
   for (const s of getSdkSessionList()) {
     if (s.chatType === "task" || s.chatType === "temp") out[s.sessionKey] = { running: true, startedAt: s.startedAt }
   }
@@ -427,7 +420,7 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
       queueCounts: health.queueCounts as { pending: number; processing: number } | undefined,
       hasChatId: health.hasChatId as boolean,
       agentRunning: isAgentRunning() || getSessionAgentCount() > 0,
-      agentPid: getAgentChildPid(),
+      agentPid: null,
       sessionAgentCount: getRunningSessionCount(),
       channels: health.channels as ChannelStatusInfo[] | undefined,
       feishuEnabled: health.feishuEnabled as boolean | undefined,
@@ -2560,8 +2553,7 @@ export async function shutdownDaemonManager(): Promise<void> {
   daemonShouldRun = false
   if (daemonRestartTimer) { clearTimeout(daemonRestartTimer); daemonRestartTimer = null }
   stopStatusPolling()
-  _stopCliAgent()
-  await stopAllSdkSessions()
+  await stopAllSessionAgents()
   if (daemonProcess) {
     try { daemonProcess.kill() } catch { /* ignore */ }
     daemonProcess = null

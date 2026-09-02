@@ -2,19 +2,14 @@ import { app, BrowserWindow, ipcMain, dialog, shell } from "electron"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
-import { getConfig, saveConfig, migrateSecretsToSafeStorage, primaryWorkspaceForCli } from "./config-store"
+import { getConfig, saveConfig, migrateSecretsToSafeStorage, getAgentResource } from "./config-store"
 import {
   startDaemon,
   stopDaemon,
   getDaemonStatus,
   getQueueMessages,
   deleteQueueMessage,
-  checkCliInstalled,
-  checkAgentLoggedIn,
-  installCli,
-  loginCli,
   clearMessageQueue,
-  execAgentAsync,
   applyProxyEnv,
   bootstrapProxyEnv,
   initDaemonManager,
@@ -26,7 +21,6 @@ import {
 } from "./daemon-manager"
 import { verifyLlmResource, listLlmModels } from "./agent-llm"
 import { warmModelsDevCatalog } from "./llm-model-catalog.js"
-import { parseListModelsStdout } from "./command-handler"
 import {
   getMcpServerList,
   saveMcpServer,
@@ -225,10 +219,6 @@ function registerIpcHandlers(): void {
   ipcMain.handle("daemon:queue", () => getQueueMessages())
   ipcMain.handle("daemon:queue-delete", (_e, fileId: string) => deleteQueueMessage(fileId))
   ipcMain.handle("daemon:queue-clear", () => clearMessageQueue())
-  ipcMain.handle("cli:check", () => checkCliInstalled())
-  ipcMain.handle("cli:login-status", (_, opts?: { forceRefresh?: boolean }) => checkAgentLoggedIn(opts))
-  ipcMain.handle("cli:install", () => installCli())
-  ipcMain.handle("cli:login", () => loginCli())
   ipcMain.handle("mcp:list-all", () => getMcpServerList())
   ipcMain.handle("mcp:save", (_, name: string, entry: Record<string, unknown>) => saveMcpServer(name, entry))
   ipcMain.handle("mcp:delete", (_, name: string) => {
@@ -335,15 +325,15 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle("models:list", async () => {
-    const config = getConfig()
-    const env: Record<string, string> = { ...process.env as Record<string, string>, NODE_USE_ENV_PROXY: "1" }
-    applyProxyEnv(env, config)
-    const ws = primaryWorkspaceForCli()
-    const run = await execAgentAsync(["--list-models"], env, { timeoutMs: 30_000, logLabel: "list-models", cwd: ws })
-    if (!run.ok) {
-      return { ok: false, models: [], error: run.error || run.stderr.trim() || "获取模型列表失败" }
+    const channel = getConfig().channels?.find((c) => c.enabled)
+    if (!channel) return { ok: false, models: [], error: "未配置通道" }
+    const resource = getAgentResource(channel.agentResourceId)
+    if (resource.type === "sdk") {
+      const r = await listSdkModels(resource.apiKey ?? "", channel.model, channel.modelParams)
+      return r.ok ? { ok: true, models: r.models } : { ok: false, models: [], error: r.error }
     }
-    return { ok: true, models: parseListModelsStdout(run.stdout) }
+    const r = await listLlmModels(resource, channel.model, channel.modelParams)
+    return r.ok ? { ok: true, models: r.models } : { ok: false, models: [], error: r.error }
   })
 
   ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => checkSdkApiKey(apiKey))

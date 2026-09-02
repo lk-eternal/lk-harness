@@ -70,9 +70,6 @@ export default function Dashboard({ onSettings, active }: Props) {
   const togglePanel = (p: "channels" | "sessions" | "queue") =>
     setActivePanel((cur) => (cur === p ? null : p))
   const [expandedActive, setExpandedActive] = useState<string | null>(null)
-  const [cliStatus, setCliStatus] = useState<"checking" | "installed" | "missing" | "need-login">("checking")
-  const [cliLoggingIn, setCliLoggingIn] = useState(false)
-  const [cliMessage, setCliMessage] = useState("")
   const [stoppingAgent, setStoppingAgent] = useState(false)
   const [clearingQueue, setClearingQueue] = useState(false)
   const [onboard, setOnboard] = useState<OnboardState | null>(null)
@@ -575,18 +572,9 @@ export default function Dashboard({ onSettings, active }: Props) {
   }, [logAtBottom])
 
   useEffect(() => {
-    const syncCliStatus = (s: DaemonStatus) => {
-      if (s.running && s.cliAvailable !== undefined) {
-        setCliStatus((prev) =>
-          !s.cliAvailable && (prev === "installed" || prev === "need-login") ? "missing" : prev,
-        )
-      }
-    }
-
     const refresh = async () => {
       const s = await window.electronAPI.getDaemonStatus()
       setStatus(s)
-      syncCliStatus(s)
       window.electronAPI.getSessionAgents().then(setSessionList).catch(() => {})
       await refreshOnboard()
       await refreshDashboardTree()
@@ -600,7 +588,6 @@ export default function Dashboard({ onSettings, active }: Props) {
 
     const unsub = window.electronAPI.onDaemonStatus((s) => {
       setStatus(s)
-      syncCliStatus(s)
     })
     const unsubLog = window.electronAPI.onDaemonLog((line) => {
       setLogLines((prev) => {
@@ -610,40 +597,10 @@ export default function Dashboard({ onSettings, active }: Props) {
       })
     })
 
-    let cancelCliSchedule: (() => void) | undefined
-    window.electronAPI.getConfig().then((cfg) => {
-      // 仅当存在绑定 CLI 资源的通道时才提示 CLI 安装/登录
-      const cliInUse = (cfg.channels ?? []).some((c) => c.enabled && c.agentResourceId === "cli")
-        || (cfg.channels ?? []).length === 0
-      if (!cliInUse) {
-        setCliStatus("installed")
-        return
-      }
-      const runCliChecks = () => {
-        void (async () => {
-          const installed = await window.electronAPI.checkCli()
-          if (!installed) {
-            setCliStatus("missing")
-            return
-          }
-          const st = await window.electronAPI.checkCliLogin()
-          setCliStatus(st.loggedIn ? "installed" : "need-login")
-        })()
-      }
-      if (typeof requestIdleCallback === "function") {
-        const id = requestIdleCallback(runCliChecks, { timeout: 2500 })
-        cancelCliSchedule = () => cancelIdleCallback(id)
-      } else {
-        const cliTimer = window.setTimeout(runCliChecks, 0)
-        cancelCliSchedule = () => clearTimeout(cliTimer)
-      }
-    })
-
     const unsubSessions = window.electronAPI.onSessionAgents?.((list: typeof sessionList) => { setSessionList(list); void refreshDashboardTree() })
 
     return () => {
       clearInterval(timer)
-      cancelCliSchedule?.()
       unsub()
       unsubLog()
       unsubSessions?.()
@@ -674,13 +631,6 @@ export default function Dashboard({ onSettings, active }: Props) {
     if (!el) return
     el.scrollIntoView({ block: "center" })
   }
-
-  // CLI 已登录也视为 Agent 资源就绪
-  useEffect(() => {
-    if (cliStatus === "installed") {
-      setOnboard((prev) => (prev ? { ...prev, agentReady: true } : prev))
-    }
-  }, [cliStatus])
 
   const handleStart = async () => {
     setStarting(true)
@@ -720,29 +670,6 @@ export default function Dashboard({ onSettings, active }: Props) {
     } else {
       setQueueMessages([])
     }
-  }
-
-  const handleLoginOnly = async () => {
-    setCliLoggingIn(true)
-    setCliMessage("")
-    try {
-      const loginResult = await window.electronAPI.loginCli()
-      if (!loginResult.ok) {
-        setCliMessage(loginResult.output)
-        setCliLoggingIn(false)
-        return
-      }
-      const st = await window.electronAPI.checkCliLogin()
-      if (st.loggedIn) {
-        setCliStatus("installed")
-        setCliMessage("")
-      } else {
-        setCliMessage(st.error ?? loginResult.output ?? "登录后仍未检测到账号，请重试")
-      }
-    } catch (e: unknown) {
-      setCliMessage(e instanceof Error ? e.message : String(e))
-    }
-    setCliLoggingIn(false)
   }
 
   const handleStopAgent = async () => {
@@ -1108,35 +1035,6 @@ export default function Dashboard({ onSettings, active }: Props) {
           onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
         />
         </PanelShell>
-      )}
-
-      {/* CLI 未安装不在首页提示（Agent 资源可选 CLI 或 SDK，向导内可安装） */}
-      {cliStatus === "need-login" && (
-        <div className="mx-6 flex items-center justify-between rounded-lg border border-yellow-800/50 bg-yellow-950/20 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <AlertTriangle size={14} className="text-yellow-400" />
-            <span className="text-xs text-yellow-300">
-              Cursor CLI 未登录 — 请完成授权后再使用自动会话等功能
-            </span>
-          </div>
-          <button
-            onClick={handleLoginOnly}
-            disabled={cliLoggingIn}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600/20 px-3 py-1 text-xs font-medium text-blue-400 transition hover:bg-blue-600/30 disabled:opacity-50"
-          >
-            {cliLoggingIn ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <LogIn size={12} />
-            )}
-            {cliLoggingIn ? "登录中..." : "登录 Cursor"}
-          </button>
-        </div>
-      )}
-      {cliMessage && (
-        <div className="mx-6 mt-1 rounded-lg border border-gray-800 bg-gray-900/50 px-4 py-2">
-          <pre className="whitespace-pre-wrap font-mono text-xs text-gray-400">{cliMessage}</pre>
-        </div>
       )}
 
       {/* Error message */}

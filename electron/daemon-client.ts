@@ -51,7 +51,7 @@ export async function httpPost(url: string, body: object, timeoutMs = 3000): Pro
 
 export async function notifySessionLaunched(
   sessionKey: string,
-  opts: { resumed?: boolean; runtime?: "llm" | "sdk" | "cli" },
+  opts: { resumed?: boolean; runtime?: "llm" | "sdk" },
 ): Promise<void> {
   const lock = readLockFile()
   if (!lock?.port) return

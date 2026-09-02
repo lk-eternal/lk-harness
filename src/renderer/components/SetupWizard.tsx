@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react"
 import {
   FolderOpen, KeyRound, Bird, UserCheck, Wrench, CheckCircle2, Circle,
-  Loader2, ExternalLink, ShieldCheck, ShieldAlert, LogIn, Download, ArrowRight,
-  Terminal, Cloud, Globe,
+  Loader2, ExternalLink, ShieldCheck, ShieldAlert,   LogIn, Download, ArrowRight,
+  Cloud, Globe,
 } from "lucide-react"
 import ConfigMigratePanel from "./ConfigMigratePanel"
 import useInlineModal from "./useInlineModal"
@@ -35,14 +35,13 @@ export default function SetupWizard({ open, onClose }: Props) {
   const [maxStep, setMaxStep] = useState(0)
 
   const [wsDir, setWsDir] = useState("")
-  type AgentMode = "cli" | "sdk" | "llm-builtin" | "llm-custom"
-  const [agentMode, setAgentMode] = useState<AgentMode>("llm-builtin")
-  const [agentResourceId, setAgentResourceId] = useState("cli")
+  type AgentMode = "sdk" | "llm-builtin" | "llm-custom"
+  const [agentMode, setAgentMode] = useState<AgentMode>("sdk")
+  const [agentResourceId, setAgentResourceId] = useState("")
   const [agentConfigured, setAgentConfigured] = useState(false)
   const [apiKey, setApiKey] = useState("")
   const [llmProviderId, setLlmProviderId] = useState("deepseek")
   const [llmBaseUrl, setLlmBaseUrl] = useState("")
-  const [cliLoggedIn, setCliLoggedIn] = useState<boolean | null>(null)
   const [verifying, setVerifying] = useState(false)
   const [verifyErr, setVerifyErr] = useState("")
   const [sdkSaved, setSdkSaved] = useState(false)
@@ -98,12 +97,9 @@ export default function SetupWizard({ open, onClose }: Props) {
         setSdkSaved(true)
         setAgentConfigured(true)
       } else {
-        setAgentMode("llm-builtin")
-        setAgentResourceId("cli")
+        setAgentMode("sdk")
+        setAgentResourceId("")
       }
-      void window.electronAPI.checkCliLogin({ forceRefresh: false }).then((login) => {
-        setCliLoggedIn(login.loggedIn ?? false)
-      }).catch(() => setCliLoggedIn(null))
     })
     const unsub = window.electronAPI.onFeishuSetupQrCode((url) => { setQrUrl(url); setQrState("wait") })
     return () => unsub()
@@ -134,24 +130,7 @@ export default function SetupWizard({ open, onClose }: Props) {
     try {
       const cfg = await window.electronAPI.getConfig()
       const existing = cfg.agentResources ?? []
-      const keepOthers = existing.filter((r) => r.type !== "cli" && r.type !== "sdk" && r.type !== "llm-builtin" && r.type !== "llm-custom")
-      const cliRes = existing.find((r) => r.type === "cli") ?? { id: "cli", type: "cli" as const, name: "Cursor CLI" }
-
-      if (agentMode === "cli") {
-        const cliOk = await window.electronAPI.checkCli()
-        if (!cliOk) { setVerifyErr("未检测到 Cursor CLI"); return }
-        const login = await window.electronAPI.checkCliLogin({ forceRefresh: true })
-        if (!login.loggedIn) {
-          await window.electronAPI.loginCli()
-          const again = await window.electronAPI.checkCliLogin({ forceRefresh: true })
-          if (!again.loggedIn) { setVerifyErr("CLI 仍未登录"); return }
-        }
-        await saveAgentResources([cliRes, ...keepOthers])
-        setAgentResourceId("cli")
-        setAgentConfigured(true)
-        autoNext(2)
-        return
-      }
+      const keepOthers = existing.filter((r) => r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom")
 
       if (agentMode === "sdk") {
         if (!apiKey.trim()) return
@@ -160,7 +139,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         const sdkList = existing.filter((x) => x.type === "sdk")
         const hit = sdkList.find((x) => x.apiKey === apiKey.trim())
         const entry = hit ?? { id: newId("sdk"), type: "sdk" as const, name: `Cursor SDK ${sdkList.length + 1}`, apiKey: apiKey.trim(), email: r.email }
-        await saveAgentResources([cliRes, ...(hit ? sdkList : [...sdkList, entry]), ...keepOthers])
+        await saveAgentResources([...(hit ? sdkList : [...sdkList, entry]), ...keepOthers])
         setAgentResourceId(entry.id)
         setSdkSaved(true)
         setAgentConfigured(true)
@@ -173,7 +152,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         const draft: AgentResource = { id: newId("llm"), type: "llm-custom", name: "自定义网关", baseUrl: llmBaseUrl.trim(), apiKey: apiKey.trim() }
         const r = await window.electronAPI.verifyLlmResource(draft)
         if (!r.ok) { setVerifyErr(r.error ?? "验证失败"); return }
-        await saveAgentResources([cliRes, draft, ...keepOthers])
+        await saveAgentResources([draft, ...keepOthers])
         setAgentResourceId(draft.id)
         setAgentConfigured(true)
         autoNext(2)
@@ -184,7 +163,7 @@ export default function SetupWizard({ open, onClose }: Props) {
       const draft: AgentResource = { id: newId("llm"), type: "llm-builtin", name: builtinProviderLabel(llmProviderId), providerId: llmProviderId, apiKey: apiKey.trim() }
       const r = await window.electronAPI.verifyLlmResource(draft)
       if (!r.ok) { setVerifyErr(r.error ?? "验证失败"); return }
-      await saveAgentResources([cliRes, draft, ...keepOthers])
+      await saveAgentResources([draft, ...keepOthers])
       setAgentResourceId(draft.id)
       setAgentConfigured(true)
       autoNext(2)
@@ -209,8 +188,7 @@ export default function SetupWizard({ open, onClose }: Props) {
       const channels = cfg.channels ?? []
       const agentRes = (cfg.agentResources ?? []).find((r) => r.id === agentResourceId)
         ?? (cfg.agentResources ?? []).find((r) =>
-          r.type === "cli" ||
-          ((r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && !!r.apiKey?.trim()),
+          (r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && !!r.apiKey?.trim(),
         )
       const existing = channels.find((c) => c.id === channelId) ?? channels.find((c) => c.type === "feishu")
       const chan = {
@@ -222,7 +200,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         }),
         larkAppId: id.trim(), larkAppSecret: secret.trim(), larkBotName: info.name,
         larkAppQuickCreated: quickCreated, enabled: true,
-        agentResourceId: agentRes?.id ?? agentResourceId ?? "cli",
+        agentResourceId: agentRes?.id ?? agentResourceId,
         ...(wsDir.trim() ? { workspaceDir: wsDir.trim() } : {}),
       }
       setChannelId(chan.id)
@@ -353,13 +331,12 @@ export default function SetupWizard({ open, onClose }: Props) {
           {step === 1 && (<>
             <h2 className="text-lg font-semibold text-gray-100">第 2 步：接入 AI</h2>
             <p className="mt-2 text-sm leading-relaxed text-gray-400">
-              推荐 <span className="text-gray-200">大模型 API</span>（Pi 内嵌，飞书流式体验最佳），也可选 Cursor CLI / SDK。
+              推荐 <span className="text-gray-200">Cursor SDK</span> 或 <span className="text-gray-200">大模型 API</span>。
             </p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {([
+                { id: "sdk" as const, icon: KeyRound, title: "Cursor SDK", desc: "Cursor API Key（推荐）" },
                 { id: "llm-builtin" as const, icon: Cloud, title: "大模型 API", desc: "DeepSeek / OpenAI 等" },
-                { id: "cli" as const, icon: Terminal, title: "Cursor CLI", desc: "本机 Cursor 登录态" },
-                { id: "sdk" as const, icon: KeyRound, title: "Cursor SDK", desc: "Cursor API Key" },
                 { id: "llm-custom" as const, icon: Globe, title: "自定义网关", desc: "OpenAI 兼容 Base URL" },
               ]).map((opt) => (
                 <button key={opt.id} type="button"
@@ -370,17 +347,6 @@ export default function SetupWizard({ open, onClose }: Props) {
                 </button>
               ))}
             </div>
-
-            {agentMode === "cli" && (
-              <div className="mt-4 space-y-2">
-                <p className="text-xs text-gray-500">确认本机 Cursor CLI 已安装并登录。</p>
-                <button onClick={() => void verifyAndSaveAgent()} disabled={verifying}
-                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
-                  {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  {verifying ? "检测中..." : cliLoggedIn ? "已登录，继续" : "检测并登录 CLI"}
-                </button>
-              </div>
-            )}
 
             {agentMode === "sdk" && (
               <div className="mt-4 space-y-2">
@@ -404,18 +370,15 @@ export default function SetupWizard({ open, onClose }: Props) {
               </div>
             )}
 
-            {agentMode !== "cli" && (
-              <div className="mt-4 flex items-center gap-3">
-                <button onClick={() => void verifyAndSaveAgent()} disabled={verifying || agentConfigured}
-                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
-                  {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                  {verifying ? "验证中..." : agentConfigured ? "已验证" : "验证并继续"}
-                </button>
-                {agentConfigured && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已保存</span>}
-                {verifyErr && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyErr}</span>}
-              </div>
-            )}
-            {agentMode === "cli" && verifyErr && <p className="mt-2 text-xs text-red-400">{verifyErr}</p>}
+            <div className="mt-4 flex items-center gap-3">
+              <button onClick={() => void verifyAndSaveAgent()} disabled={verifying || agentConfigured}
+                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
+                {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                {verifying ? "验证中..." : agentConfigured ? "已验证" : "验证并继续"}
+              </button>
+              {agentConfigured && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已保存</span>}
+              {verifyErr && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyErr}</span>}
+            </div>
             {agentConfigured && (
               <button onClick={() => goto(2)} className="mt-6 flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
                 下一步 <ArrowRight size={14} />

@@ -24,7 +24,7 @@ function emptyChannel(type: "feishu" | "wechat", defaultName: string): ChannelCo
     name: defaultName,
     enabled: true,
     type,
-    agentResourceId: "cli",
+    agentResourceId: "",
     model: "auto",
     modelParams: "",
     othersModel: "",
@@ -63,8 +63,7 @@ export default function ChannelPanel() {
       allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
       digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     })))
-    const list = cfg.agentResources ?? []
-    setResources(list.some((r) => r.id === "cli") ? list : [{ id: "cli", type: "cli", name: "Cursor CLI" }, ...list])
+    setResources((cfg.agentResources ?? []).filter((r) => r.type !== "cli"))
   }, [])
 
   useEffect(() => { void reload() }, [reload])

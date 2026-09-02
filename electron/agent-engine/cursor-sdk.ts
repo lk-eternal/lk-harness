@@ -29,6 +29,7 @@ export const cursorSdkEngine: AgentEngine = {
       keepSession: p.keepSession,
       persistentPoll: p.persistentPoll,
       pendingMessageIds: p.pendingMessageIds,
+      includeAdmin: p.includeAdmin,
     })
   },
 

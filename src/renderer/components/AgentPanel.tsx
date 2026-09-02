@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import {
-  Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, LogIn, RefreshCw, Eye, EyeOff,
-  Terminal, KeyRound, Cloud, Globe,
+  Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff,
+  KeyRound, Cloud, Globe,
 } from "lucide-react"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 import PanelAddMenu from "./PanelAddMenu"
@@ -10,9 +10,8 @@ import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
-const CLI_RESOURCE_ID = "cli"
 
-type AddKind = "cli" | "sdk" | "llm-builtin" | "llm-custom"
+type AddKind = "sdk" | "llm-builtin" | "llm-custom"
 
 function newResourceId(prefix: string): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -20,93 +19,18 @@ function newResourceId(prefix: string): string {
 }
 
 function resourceIcon(r: AgentResource) {
-  if (r.type === "cli") return <Terminal size={14} className="shrink-0 text-gray-400" />
   if (r.type === "sdk") return <KeyRound size={14} className="shrink-0 text-purple-400" />
   if (r.type === "llm-custom") return <Globe size={14} className="shrink-0 text-amber-400" />
   return <Cloud size={14} className="shrink-0 text-sky-400" />
 }
 
 function resourceSubtitle(r: AgentResource): string {
-  if (r.type === "cli") return "本机登录态"
   if (r.type === "sdk") return r.email || "Cursor SDK"
   if (r.type === "llm-custom") return r.baseUrl || "自定义网关"
   return builtinProviderLabel(r.providerId)
 }
 
-function CliStatusPanel({ embedded }: { embedded?: boolean }) {
-  const [status, setStatus] = useState<{ checking: boolean; cliFound?: boolean; loggedIn?: boolean; identity?: string; error?: string }>({ checking: true })
-  const [loggingIn, setLoggingIn] = useState(false)
-
-  const refresh = useCallback(async (force = false) => {
-    setStatus((s) => ({ ...s, checking: true }))
-    try {
-      const cliOk = await window.electronAPI.checkCli()
-      if (!cliOk) { setStatus({ checking: false, cliFound: false }); return }
-      const login = await window.electronAPI.checkCliLogin({ forceRefresh: force })
-      setStatus({ checking: false, cliFound: login.cliFound, loggedIn: login.loggedIn, identity: login.identityLine, error: login.error })
-    } catch (e) {
-      setStatus({ checking: false, error: String(e) })
-    }
-  }, [])
-
-  useEffect(() => { void refresh(true) }, [refresh])
-
-  const handleReLogin = useCallback(async () => {
-    setLoggingIn(true)
-    try {
-      await window.electronAPI.loginCli()
-      await refresh(true)
-    } finally {
-      setLoggingIn(false)
-    }
-  }, [refresh])
-
-  const body = (
-    <>
-      {!embedded && (
-        <>
-          <h3 className="text-sm font-medium text-gray-200">Cursor CLI</h3>
-          <p className="mt-1 text-xs text-gray-500">本机 CLI 登录态，全局唯一；通道可绑定 CLI 作为 Agent。</p>
-        </>
-      )}
-      <div className={embedded ? "" : "mt-4"}>
-        {status.checking ? (
-          <div className="flex items-center gap-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />检测中...</div>
-        ) : !status.cliFound ? (
-          <div className="rounded-lg border border-yellow-800/50 bg-yellow-900/20 px-4 py-3">
-            <div className="flex items-center gap-2 text-sm text-yellow-400"><ShieldAlert size={14} />未检测到 Cursor CLI</div>
-            <p className="mt-1 text-xs text-gray-500">请确认已安装 Cursor 并将 CLI 添加到系统 PATH</p>
-          </div>
-        ) : (
-          <div className={`rounded-lg border px-4 py-3 ${status.loggedIn ? "border-green-800/50 bg-green-900/20" : "border-red-800/50 bg-red-900/20"}`}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-sm">
-                {status.loggedIn ? <><ShieldCheck size={14} className="text-green-400" /><span className="text-green-400">已登录</span></> : <><ShieldAlert size={14} className="text-red-400" /><span className="text-red-400">未登录</span></>}
-              </div>
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={() => void handleReLogin()} disabled={loggingIn} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-blue-400 hover:bg-gray-800 disabled:opacity-50">
-                  {loggingIn ? <Loader2 size={12} className="animate-spin" /> : <LogIn size={12} />}
-                  {loggingIn ? "登录中..." : "重新登录"}
-                </button>
-                <button type="button" onClick={() => void refresh(true)} className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-400 hover:bg-gray-800">
-                  <RefreshCw size={12} />刷新
-                </button>
-              </div>
-            </div>
-            {status.identity && <p className="mt-2 text-xs text-gray-400">{status.identity}</p>}
-            {status.error && <p className="mt-1 text-xs text-red-400">{status.error}</p>}
-          </div>
-        )}
-      </div>
-    </>
-  )
-  return embedded ? body : <div className={PANEL_SCROLL}>{body}</div>
-}
-
 function emptyResource(kind: AddKind, providerId?: string): AgentResource {
-  if (kind === "cli") {
-    return { id: CLI_RESOURCE_ID, type: "cli", name: "Cursor CLI" }
-  }
   if (kind === "sdk") {
     const n = 1
     return { id: newResourceId("sdk"), type: "sdk", name: `Cursor SDK ${n}`, apiKey: "" }
@@ -143,11 +67,6 @@ function AgentModelsList({ draft, refreshKey }: { draft: AgentResource; refreshK
   useEffect(() => {
     let cancelled = false
     const load = async () => {
-      if (draft.type === "cli") {
-        setModels([])
-        setError(null)
-        return
-      }
       setLoading(true)
       setError(null)
       try {
@@ -191,8 +110,6 @@ function AgentModelsList({ draft, refreshKey }: { draft: AgentResource; refreshK
     return () => { cancelled = true }
   }, [draft, refreshKey])
 
-  if (draft.type === "cli") return null
-
   return (
     <div>
       <label className="mb-1 block text-xs text-gray-500">可用模型{models.length > 0 ? ` (${models.length})` : ""}</label>
@@ -234,7 +151,7 @@ export default function AgentPanel() {
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
-    setResources(cfg.agentResources ?? [])
+    setResources((cfg.agentResources ?? []).filter((r) => r.type !== "cli"))
     setChannels(cfg.channels ?? [])
   }, [])
 
@@ -273,10 +190,6 @@ export default function AgentPanel() {
 
   const openAdd = (kind: AddKind, providerId?: string) => {
     setShowAddMenu(false)
-    if (kind === "cli" && resources.some((r) => r.type === "cli")) {
-      void showAlert("提示", "Cursor CLI 全局只能添加一个")
-      return
-    }
     const sdkCount = resources.filter((r) => r.type === "sdk").length
     const r = emptyResource(kind, providerId)
     if (kind === "sdk") r.name = `Cursor SDK ${sdkCount + 1}`
@@ -385,12 +298,6 @@ export default function AgentPanel() {
                 <Plus size={14} />添加
               </button>
               <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
-                {!resources.some((r) => r.type === "cli") && (
-                  <button type="button" onClick={() => openAdd("cli")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800">
-                    <Terminal size={12} className="text-gray-400" />Cursor CLI
-                  </button>
-                )}
-                {!resources.some((r) => r.type === "cli") && <div className="my-1 border-t border-gray-800" />}
                 <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800">
                   <KeyRound size={12} className="text-purple-400" />Cursor SDK
                 </button>
@@ -423,8 +330,6 @@ export default function AgentPanel() {
                     <label className="mb-1 block text-xs text-gray-500">名称</label>
                     <input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} />
                   </div>
-
-                  {draft.type === "cli" && <CliStatusPanel embedded />}
 
                   {draft.type === "sdk" && (
                     <>

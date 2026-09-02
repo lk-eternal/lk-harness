@@ -5,7 +5,7 @@ import { listEnabledHarnessRules } from "./harness-rule-store"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getLlmHostRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
 import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
-import type { LaunchMeta } from "./agent-launcher"
+import type { LaunchMeta } from "./agent-session-types"
 
 export interface PromptAssemblyContext {
   meta?: LaunchMeta
