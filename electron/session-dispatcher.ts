@@ -9,7 +9,7 @@ import {
 } from "./config-store"
 import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey } from "../src/shared/channel-types"
 import { broadcastLog } from "./ui-logger"
-import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, drainSessionMessages, resolveMainChatId, enqueueToSession } from "./daemon-client"
+import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import {
   launchAgent as _launchCliAgent,
@@ -46,6 +46,12 @@ import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
 import { hasPersistedPiSession } from "./pi-embedded"
 import { isFeishuStreamEnabled } from "./stream-card"
+import {
+  clearLaunchFailStreak,
+  launchFailCooldownRemaining,
+  recordLaunchFailure,
+  shouldNotifyLaunchFailure,
+} from "./launch-fail-tracker"
 
 const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
 
@@ -154,6 +160,22 @@ export const previousActiveSessionMap = new Map<string, string>()
 const featureOccupiedNotifyAt = new Map<string, number>()
 const lastCrashAtMap = new Map<string, number>()
 const CRASH_LOOP_WINDOW_MS = 5 * 60 * 1000
+
+async function reportLaunchOutcome(
+  sessionKey: string,
+  result: { ok: boolean; error?: string },
+): Promise<void> {
+  if (result.ok) {
+    clearLaunchFailStreak(sessionKey)
+    return
+  }
+  const err = result.error ?? "未知错误"
+  recordLaunchFailure(sessionKey, err)
+  broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${err}`, "WARN")
+  if (shouldNotifyLaunchFailure(sessionKey)) {
+    await notifyChat(sessionKey, `⚠️ Agent 启动失败，消息仍在队列，修复后自动重试。\n原因: ${err}`)
+  }
+}
 
 // ── Session 工具 ──────────────────────────────────────────
 
@@ -1383,8 +1405,9 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
   for (const { sessionKey, chatType, senderOpenId, hasPending } of sessions) {
     // 用户主动停止后：队列只剩 .claimed 重投时不自动拉起，避免 /stop 立刻被 dispatch 顶回来
     if (clearUserStoppedIfPending(sessionKey, !!hasPending)) continue
-    // 有新 .qmsg 时无视失败冷却（手动重触发/新消息应立刻拉起）；仅 .claimed 重投仍遵守退避
+    // 有新 .qmsg 时无视 worker 失败冷却；launch 永久失败仍遵守退避（防配置错误时反复拉起）
     if (!hasPending && sdkFailCooldownRemaining(sessionKey) > 0) continue
+    if (launchFailCooldownRemaining(sessionKey) > 0) continue
     if (sessionLaunchBusy(sessionKey)) {
       if (await isZombieAgent(sessionKey)) {
         broadcastLog(`[Agent] ${sessionKey} 疑似僵尸(队列有消息且 ${ZOMBIE_REPLY_SILENCE_MS / 60_000}min 无回复消息)，强制终止并重启`, "WARN")
@@ -1422,7 +1445,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           modelParamsOverride: task?.modelParams,
           pendingMessageIds: pendingFor(sessionKey),
         })
-        if (!r.ok) broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${r.error}`, "WARN")
+        if (!r.ok) await reportLaunchOutcome(sessionKey, r)
       })
       continue
     }
@@ -1471,10 +1494,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           taskMessage: resumableP ? undefined : buildProjectSessionPrompt(proj),
           pendingMessageIds: pendingFor(sessionKey),
         })
-        if (!r.ok) {
-          broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${r.error}`)
-          await notifyChat(sessionKey, `⚠️ Agent 启动失败，本条消息未能处理，请稍后重发。\n原因: ${r.error ?? "未知错误"}`)
-        }
+        if (!r.ok) await reportLaunchOutcome(sessionKey, r)
       })
       continue
     }
@@ -1504,15 +1524,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           if (!cur || cur === chatId) await syncActiveSession(lock.port, chatId, sessionKey)
         }
       }
-      if (!result.ok) {
-        broadcastLog(`[Agent] ${sessionKey} 启动跳过: ${result.error}`)
-        await notifyChat(sessionKey, `⚠️ Agent 启动失败，本条消息未能处理，请稍后重发。\n原因: ${result.error ?? "未知错误"}`)
-        const lock = cachedLock()
-        if (lock?.port) {
-          const drained = await drainSessionMessages(lock.port, sessionKey)
-          if (drained > 0) broadcastLog(`[Agent] ${sessionKey} 已丢弃 ${drained} 条消息（启动被拒绝）`)
-        }
-      }
+      if (!result.ok) await reportLaunchOutcome(sessionKey, result)
     })
   }
   return launches

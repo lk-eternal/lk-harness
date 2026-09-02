@@ -2115,12 +2115,12 @@ async function sealStreamCardForStop(session: SdkSessionAgent): Promise<void> {
 /** 停止并释放会话：先 abort 再 cancel（工具执行中 cancel 可能延迟，但不再调度/刷卡） */
 function releaseSession(s: SdkSessionAgent): Promise<void> {
   s.abortController.abort()
-  s.run = null
   if (s.streamAgg?.timer) {
     clearTimeout(s.streamAgg.timer)
     s.streamAgg.timer = null
   }
   const { agent, run } = s
+  s.run = null
   sdkSessions.delete(s.sessionKey)
   if (!run) {
     try { agent.close() } catch { /* best-effort */ }
@@ -2182,7 +2182,7 @@ export async function switchSdkSessionModel(
 export function resetSdkSessionContext(sessionKey: string): void {
   sessionResetGen.set(sessionKey, (sessionResetGen.get(sessionKey) ?? 0) + 1)
   void import("./sdk-session-worker.js").then(({ stopSdkWorker }) => stopSdkWorker(sessionKey))
-  const live = sdkSessions.get(sessionKey)
+  const live = findSdkSessionLoose(sessionKey)
   if (live) void releaseSession(live)
   forgetResumable(sessionKey)
 }

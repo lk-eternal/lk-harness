@@ -6,7 +6,14 @@ import {
   unregisterLlmSession,
   type LlmWorkerSession,
 } from "./agent-llm"
-import { hostBlockingPoll, hostSendText, isPollEndDirective, isPollTimeoutDirective, type PollMessage } from "./poll-host"
+import {
+  hostBlockingPoll,
+  hostConfirmClaimed,
+  hostSendText,
+  isPollEndDirective,
+  isPollTimeoutDirective,
+  type PollMessage,
+} from "./poll-host"
 import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
@@ -164,19 +171,26 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       const deliverable = filterDeliverable(pollResult.messages)
       if (deliverable.length === 0) continue
 
-      for (const m of deliverable) {
+      const fresh = deliverable.filter((m) => m.messageId && !session.processedMessageIds.has(m.messageId))
+      if (fresh.length === 0) {
+        pushUiLog("LLM", "INFO", `[${sessionKey}] worker 跳过已处理消息重投 (${deliverable.length}条)`)
+        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+        continue
+      }
+
+      for (const m of fresh) {
         if (m.messageId) session.seenMessageIds.add(m.messageId)
       }
 
       state.phase = "processing"
-      const prompt = assembleTurnPrompt(deliverable, state.promptCtx, {
+      const prompt = assembleTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
       })
       state.firstTurn = false
       state.taskMessage = undefined
 
-      pushUiLog("LLM", "INFO", `[${sessionKey}] worker 处理 ${deliverable.length} 条消息`)
+      pushUiLog("LLM", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 
       const turnResult = await racePiTurnWithIdleTimeout(session, prompt, abort.signal)
 
@@ -191,10 +205,14 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         break
       }
 
+      for (const m of fresh) {
+        if (m.messageId) session.processedMessageIds.add(m.messageId)
+      }
+
       // 微信等非流式通道：卡片跳过时仍走文本投递
       const replyText = turnResult.replyText?.trim()
       if (replyText) {
-        const replyToId = deliverable.map((m) => m.messageId).filter(Boolean).pop()
+        const replyToId = fresh.map((m) => m.messageId).filter(Boolean).pop()
         try {
           await hostSendText(replyText, sessionKey, replyToId)
         } catch (e: unknown) {

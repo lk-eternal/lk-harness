@@ -92,6 +92,10 @@ interface LlmSession extends StreamCardHost {
   daemonPort?: number
   abort: AbortController
   runPromise: Promise<void>
+  /** poll 已见 messageId：非阻塞 poll 区分新消息 vs 重投 */
+  seenMessageIds: Set<string>
+  /** 已成功跑完 worker 回合的 messageId：黑洞重投时跳过重复处理 */
+  processedMessageIds: Set<string>
   piUnsubscribe: (() => void) | null
   /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
@@ -684,6 +688,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
       pollPhase: { blocking: false, nonBlocking: false, questionPause: false },
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),
+      processedMessageIds: new Set<string>(),
       piUnsubscribe: null,
       logAgg: { kind: null, buf: "" },
       patchStreamCardId: (cardId, patchOpts) => patchPiResumableStreamCard(sessionKey, cardId, patchOpts),
