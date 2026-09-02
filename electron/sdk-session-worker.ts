@@ -7,6 +7,7 @@ import {
 import {
   hostBlockingPoll,
   hostConfirmClaimed,
+  hostTouchSessionReply,
   isPollEndDirective,
   isPollTimeoutDirective,
   type PollMessage,
@@ -151,6 +152,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         networkFail = turnResult.networkFail
         permanentFail = turnResult.permanentFail
         pushUiLog("SDK", "WARN", `[${sessionKey}] SDK 回合失败: ${errorDetail ?? "unknown"}`)
+        if (session.streamAgg?.ensured) {
+          void hostTouchSessionReply(sessionKey).catch(() => {})
+        }
         break
       }
 

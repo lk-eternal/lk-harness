@@ -186,7 +186,7 @@ export async function fetchGatewayModels(
     return parse((await res.json()) as { data?: { id?: string; name?: string }[]; models?: { id?: string; name?: string }[] })
   }
 
-  // ?? Key????????????
+  // 无 Key 时先尝试公开列表
   let models: { id: string; label: string }[] = []
   try {
     models = await fetchOnce(true)
@@ -205,7 +205,7 @@ export async function fetchGatewayModels(
   return models
 }
 
-/** builtin 供应商：pi-ai 模型表?*/
+/** builtin 供应商：pi-ai 模型表 */
 export function listBuiltinModels(providerId: string): { id: string; label: string }[] {
   try {
     return getModels(providerId as Parameters<typeof getModels>[0]).map((m: Model<Api>) => ({

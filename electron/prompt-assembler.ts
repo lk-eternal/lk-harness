@@ -28,6 +28,11 @@ function stripFrontmatter(raw: string): string {
 let cachedBuiltin: { port: string; admin: boolean; body: string } | null = null
 let cachedLlmHost: { port: string; admin: boolean; body: string } | null = null
 
+export function clearProtocolTemplateCache(): void {
+  cachedBuiltin = null
+  cachedLlmHost = null
+}
+
 export interface TurnMessage {
   text: string
   messageId?: string

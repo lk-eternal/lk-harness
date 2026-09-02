@@ -13,8 +13,6 @@ export interface InjectResult {
 
 let daemonPort: number | null = null
 
-function norm(p: string): string { return path.resolve(p) }
-
 export function setDaemonPort(port: number | null): void {
   if (daemonPort === port) return
   daemonPort = port
@@ -25,7 +23,8 @@ export function getDaemonPort(): number | null {
 }
 
 export function clearInjectionCache(_dir?: string): void {
-  /* no-op???? workspace ???? */
+  adminSkillContentCache = null
+  void import("./prompt-assembler.js").then(({ clearProtocolTemplateCache }) => clearProtocolTemplateCache())
 }
 
 export function getTemplateRoot(): string {
@@ -43,13 +42,13 @@ export function getLlmHostRuleTemplatePath(): string {
 
 const ADMIN_SKILL_DIR = "lk-harness-admin"
 
-/** ?????????? skill ????? prompt inline?????? */
+/** 清理项目遗留的自管理 skill 目录（已改 prompt inline，不再注入） */
 function cleanupStaleAdminSkill(wsDir: string): void {
   const stale = path.join(wsDir, ".cursor", "skills", ADMIN_SKILL_DIR)
   if (!fs.existsSync(stale)) return
   try {
     fs.rmSync(stale, { recursive: true, force: true })
-    broadcastLog(`???????? Skill: ${stale}`)
+    broadcastLog(`已清理遗留自管理 Skill: ${stale}`)
   } catch { /* ignore */ }
 }
 
@@ -66,17 +65,17 @@ function mergeProjectMcpFile(filePath: string, servers: Record<string, unknown>)
   fs.writeFileSync(filePath, JSON.stringify(mcpConfig, null, 2), "utf-8")
 }
 
-/** CLI ??????? `.cursor/mcp.json` merge ?? MCP????????????? */
+/** CLI 专用：仅向项目 `.cursor/mcp.json` merge 内置 MCP，不碰规则、不占用用户条目 */
 export function injectCliMcpToProjectDir(wsDir: string, includeAdmin: boolean): boolean {
   if (!daemonPort || !wsDir.trim()) return false
   try {
     const servers = buildBuiltinMcpServers(daemonPort, includeAdmin)
     if (!Object.keys(servers).length) return false
     mergeProjectMcpFile(path.join(wsDir, ".cursor", "mcp.json"), servers)
-    broadcastLog(`CLI MCP ??????? ${wsDir}`)
+    broadcastLog(`CLI MCP 已注入项目目录 ${wsDir}`)
     return true
   } catch (e: unknown) {
-    broadcastLog(`CLI MCP ??????: ${e instanceof Error ? e.message : e}`, "ERROR")
+    broadcastLog(`CLI MCP 项目注入失败: ${e instanceof Error ? e.message : e}`, "ERROR")
     return false
   }
 }
@@ -104,7 +103,6 @@ export async function injectWorkspaceMcpAndRules(): Promise<{ mcpOk: boolean; ru
 
 let adminSkillContentCache: string | null = null
 
-/** ??? Skill ???? resources/template/skills/lk-harness-admin/SKILL.md ?? */
 export function getAdminSkillContent(): string {
   if (adminSkillContentCache) return adminSkillContentCache
   const p = path.join(getTemplateRoot(), "skills", "lk-harness-admin", "SKILL.md")
@@ -112,11 +110,13 @@ export function getAdminSkillContent(): string {
   return adminSkillContentCache
 }
 
+/** 嵌入宿主协议模板的 admin MCP 段（不含 Skill 标题与重复小节） */
 export function getAdminMcpProtocolSection(): string {
   let body = getAdminSkillContent().trim()
-  body = body.replace(/^#[^\n]+\n+/, "")
-  body = body.replace(/^## 可用 MCP 工具\n+/, "")
-  return `\n\n### 应用自管理（lk-harness-admin）\n\n${body}\n`
+  body = body.replace(/^#[^\n]+\r?\n+/, "")
+  body = body.replace(/^[^\n#]+\r?\n+/, "") // 介绍段
+  body = body.replace(/\r?\n## 可用 MCP 工具\r?\n+/, "\n")
+  return `\n\n### 应用自管理（lk-harness-admin）\n\n${body.trim()}\n`
 }
 
 export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
@@ -126,8 +126,8 @@ export async function injectWorkspace(): Promise<{ results: InjectResult[] }> {
       .filter((w): w is string => !!w && fs.existsSync(w)),
   )]
   if (dirs.length === 0) {
-    return { results: [{ file: "", action: "skipped", message: "???????" }] }
+    return { results: [{ file: "", action: "skipped", message: "无有效工作目录" }] }
   }
   for (const dir of dirs) cleanupStaleAdminSkill(dir)
-  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "??? workspace ????????" }] }
+  return { results: [{ file: ADMIN_SKILL_DIR, action: "skipped", message: "已停用 workspace 注入，仅清理残留" }] }
 }
