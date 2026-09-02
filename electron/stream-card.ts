@@ -15,6 +15,13 @@ export type StreamSegment =
   | { type: "thinking"; text: string; startedAt?: number; ms?: number }
   | { type: "tools"; tools: StreamToolEntry[] }
   | { type: "reply"; text: string }
+  | { type: "todos"; items: StreamTodoItem[] }
+
+export interface StreamTodoItem {
+  id?: string
+  content: string
+  status: string
+}
 
 export interface StreamAgg {
   segments: StreamSegment[]
@@ -27,6 +34,8 @@ export interface StreamAgg {
   finished: boolean
   gateOpen: boolean
   forceNewThinking: boolean
+  /** 断线挂起：刷帧但不 finish，Resume 后续写同卡 */
+  suspended?: boolean
   bornAt: number
 }
 
@@ -35,6 +44,7 @@ export interface StreamCardPayload {
     | { type: "thinking"; text: string; ms?: number }
     | { type: "tools"; tools: { name: string; status: string; summary?: string; ms?: number }[] }
     | { type: "reply"; text: string }
+    | { type: "todos"; items: { content: string; status: string }[] }
   >
 }
 
@@ -49,6 +59,8 @@ export interface StreamCardHost {
   streamAgg: StreamAgg | null
   pollPhase: StreamPollPhaseState
   seenMessageIds: Set<string>
+  /** SDK todos 跨换卡快照 */
+  todoSnapshot?: StreamTodoItem[] | null
   /** Resume 持久化 cardId（SDK/LLM 各自实现） */
   patchStreamCardId?: (cardId: string | undefined, opts?: { onlyIf?: string }) => void
 }
@@ -73,6 +85,9 @@ const TOOL_SUMMARY_MAX = 120
 const POLL_DIRECTIVE_END_MARK = "安静退出"
 const POLL_DIRECTIVE_TIMEOUT_MARK = "轮询正常超时"
 const OUTBOUND_MCP_RE = /^(?:send_(?:text|question|image|file)|project_\w+)$/i
+const MEDIA_MCP_RE = /^send_(?:file|image)$/i
+
+export { POLL_DIRECTIVE_END_MARK, POLL_DIRECTIVE_TIMEOUT_MARK }
 
 export function isFeishuStreamEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
@@ -83,6 +98,8 @@ function isShowThinkingEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
   return ch?.showThinking !== false
 }
+
+export { isShowThinkingEnabled }
 
 export function newStreamAgg(gateOpen = false): StreamAgg {
   return {
@@ -95,6 +112,7 @@ export function newStreamAgg(gateOpen = false): StreamAgg {
     finished: false,
     gateOpen,
     forceNewThinking: false,
+    suspended: false,
     bornAt: Date.now(),
   }
 }
@@ -119,6 +137,18 @@ export function sealAllThinking(agg: StreamAgg): void {
   for (const seg of agg.segments) {
     if (seg.type !== "thinking") continue
     if (seg.ms != null || seg.startedAt == null) continue
+    seg.ms = Date.now() - seg.startedAt
+  }
+}
+
+/** 已结束的 thinking 段写入固定 ms，避免后续 flush 继续涨表 */
+export function sealClosedThinking(agg: StreamAgg): void {
+  const last = agg.segments.length - 1
+  for (let i = 0; i < agg.segments.length; i++) {
+    const seg = agg.segments[i]
+    if (seg.type !== "thinking") continue
+    if (seg.ms != null || seg.startedAt == null) continue
+    if (i === last) continue
     seg.ms = Date.now() - seg.startedAt
   }
 }
@@ -175,7 +205,7 @@ export function enqueueReply(stream: StreamAgg, text: string): void {
   stream.dirty = true
 }
 
-function summarizeToolArgs(args: unknown): string {
+export function summarizeToolArgs(args: unknown): string {
   if (!args || typeof args !== "object") return ""
   const rec = args as Record<string, unknown>
   let text = ""
@@ -247,40 +277,35 @@ function bareToolNameFromDisplay(name: string, args?: unknown): string {
 
 function resolveToolDisplayName(name: string, args: unknown): string {
   const raw = name.trim()
-  const { tool, server } = mcpCallPayload(args)
-  if (tool) return server ? `${server} · ${tool}` : tool
-
-  const prefixed = formatPrefixedMcpToolName(raw)
-  if (prefixed) return prefixed
-
+  const isTask = /^task$/i.test(raw) || /^task\b/i.test(raw)
   if (args && typeof args === "object") {
     const rec = args as Record<string, unknown>
-    for (const key of ["toolName", "tool_name", "name"]) {
+    if (isTask) {
+      const desc = typeof rec.description === "string" ? rec.description.trim()
+        : typeof rec.prompt === "string" ? rec.prompt.trim().slice(0, 80) : ""
+      const sub = typeof rec.subagent_type === "string" ? rec.subagent_type.trim() : ""
+      return desc ? `🤖 Subagent · ${desc}` : sub ? `🤖 Subagent · ${sub}` : "🤖 Subagent"
+    }
+    for (const key of ["tool", "toolName", "tool_name", "name"]) {
       const v = rec[key]
       if (typeof v === "string" && v.trim()) {
-        const srv = typeof rec.serverName === "string" ? rec.serverName
+        const server = typeof rec.serverName === "string" ? rec.serverName
           : typeof rec.server === "string" ? rec.server : ""
-        return srv ? `${srv} · ${v.trim()}` : v.trim()
+        return server ? `${server} · ${v.trim()}` : v.trim()
       }
     }
-  }
-
-  if (/^mcp$/i.test(raw) && args && typeof args === "object") {
-    const rec = args as Record<string, unknown>
-    if (typeof rec.action === "string" && rec.action.trim()) {
-      const srv = typeof rec.server === "string" ? rec.server.trim() : ""
-      return srv ? `mcp · ${rec.action.trim()} (${srv})` : `mcp · ${rec.action.trim()}`
+    if (/^mcp$/i.test(raw)) {
+      if (typeof rec.action === "string" && rec.action.trim()) {
+        const server = typeof rec.server === "string" ? rec.server.trim() : ""
+        return server ? `mcp · ${rec.action.trim()} (${server})` : `mcp · ${rec.action.trim()}`
+      }
+      if (typeof rec.connect === "string" && rec.connect.trim()) return `mcp · connect (${rec.connect.trim()})`
+      if (rec.search !== undefined) return "mcp · search"
     }
-    if (typeof rec.connect === "string" && rec.connect.trim()) return `mcp · connect (${rec.connect.trim()})`
-    if (typeof rec.describe === "string" && rec.describe.trim()) return `mcp · describe (${rec.describe.trim()})`
-    if (rec.search !== undefined) return "mcp · search"
-    if (typeof rec.instructions === "string" && rec.instructions.trim()) {
-      return `mcp · instructions (${rec.instructions.trim()})`
-    }
-    if (typeof rec.server === "string" && rec.server.trim()) return `mcp · list (${rec.server.trim()})`
   }
-
-  return raw
+  const prefixed = formatPrefixedMcpToolName(raw)
+  if (prefixed) return prefixed
+  return isTask ? "🤖 Subagent" : raw
 }
 
 function mcpToolName(args: unknown): string {
@@ -304,14 +329,110 @@ function isPollMessageInvocation(name: string, summary: string, args?: unknown):
   return /poll-message/i.test(summary)
 }
 
+/** 仅阻塞 poll 才换卡。必须看完整 command（摘要 120 字会裁掉 wait=false） */
+export function isBlockingPollMessage(name: string, summary: string, args?: unknown): boolean {
+  if (!isPollMessageInvocation(name, summary, args)) return false
+  const full = shellCommandText(args) || summary
+  if (/wait\s*=\s*false/i.test(full)) return false
+  if (/["']wait["']\s*:\s*false/i.test(full)) return false
+  if (/wait%3[Dd]false/i.test(full)) return false
+  return true
+}
+
+export function isPollMessageTool(name: string, summary: string, args?: unknown): boolean {
+  return isPollMessageInvocation(name, summary, args)
+}
+
 export function shouldOmitFromStreamCard(name: string, summary: string, args?: unknown): boolean {
-  const bare = bareToolNameFromDisplay(name, args)
-  if (OUTBOUND_MCP_RE.test(bare)) return true
+  const mcp = mcpToolName(args)
+  if (mcp) return OUTBOUND_MCP_RE.test(mcp)
   if (OUTBOUND_MCP_RE.test(name.trim())) return true
   if (isPollMessageInvocation(name, summary, args)) return true
   const cmd = shellCommandText(args)
   return !!cmd && /\/api\/send-(?:text|question|image|file)/i.test(cmd)
 }
+
+export function isMediaSendInvocation(name: string, summary: string, args?: unknown): boolean {
+  const mcp = mcpToolName(args)
+  if (mcp) return MEDIA_MCP_RE.test(mcp)
+  if (MEDIA_MCP_RE.test(name.trim())) return true
+  const cmd = shellCommandText(args)
+  return !!cmd && /\/api\/send-(?:file|image)/i.test(cmd)
+}
+
+export function isSendQuestionInvocation(name: string, summary: string, args?: unknown): boolean {
+  const mcp = mcpToolName(args)
+  if (mcp) return /^send_question$/i.test(mcp)
+  if (/^send_question$/i.test(name.trim())) return true
+  const cmd = shellCommandText(args)
+  return !!cmd && /\/api\/send-question/i.test(cmd)
+}
+
+function isTodoUpdateInvocation(name: string): boolean {
+  const n = name.trim().toLowerCase().replace(/[_-]/g, "")
+  return n === "updatetodos" || n === "todowrite" || n === "writetodos"
+}
+
+function normalizeTodoStatus(s: unknown): string {
+  const n = String(s ?? "").trim().replace(/[-_\s]/g, "").toLowerCase()
+  if (n === "inprogress") return "in_progress"
+  if (n === "completed" || n === "done") return "completed"
+  if (n === "cancelled" || n === "canceled") return "cancelled"
+  return "pending"
+}
+
+export function applyTodoUpdate(host: StreamCardHost, stream: StreamAgg, args: unknown): void {
+  if (typeof args === "string") {
+    try { args = JSON.parse(args) } catch { return }
+  }
+  if (!args || typeof args !== "object") return
+  const rec = args as { todos?: unknown }
+  if (!Array.isArray(rec.todos)) return
+  const incoming: StreamTodoItem[] = []
+  for (const t of rec.todos) {
+    if (!t || typeof t !== "object") continue
+    const item = t as { id?: unknown; content?: unknown; status?: unknown }
+    const content = typeof item.content === "string" ? item.content.trim() : ""
+    if (!content) continue
+    incoming.push({
+      id: typeof item.id === "string" ? item.id : undefined,
+      content,
+      status: normalizeTodoStatus(item.status),
+    })
+  }
+  if (!incoming.length) return
+
+  const snapshot = host.todoSnapshot ?? []
+  const sameItem = (a: StreamTodoItem, b: StreamTodoItem): boolean =>
+    (!!a.id && a.id === b.id) || a.content === b.content
+  const overlap = incoming.filter((inc) => snapshot.some((x) => sameItem(inc, x))).length
+  if (snapshot.length && overlap === 0) {
+    host.todoSnapshot = incoming
+  } else {
+    for (const inc of incoming) {
+      const hit = snapshot.find((x) => sameItem(inc, x))
+      if (hit) {
+        hit.status = inc.status
+        if (inc.id && !hit.id) hit.id = inc.id
+      } else {
+        snapshot.push(inc)
+      }
+    }
+    host.todoSnapshot = snapshot
+  }
+
+  let seg = stream.segments.find((s): s is Extract<StreamSegment, { type: "todos" }> => s.type === "todos")
+  if (!seg) {
+    dropEmptyTail(stream)
+    sealLastThinking(stream)
+    seg = { type: "todos", items: [] }
+    stream.segments.push(seg)
+  }
+  seg.items = (host.todoSnapshot ?? []).map((t) => ({ ...t }))
+  stream.dirty = true
+}
+
+export { isTodoUpdateInvocation }
 
 export function enqueueTool(
   stream: StreamAgg,
@@ -353,6 +474,7 @@ export function enqueueTool(
 
 function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPayload {
   const showThinking = isShowThinkingEnabled(sessionKey)
+  sealClosedThinking(agg)
   const segments: StreamCardPayload["segments"] = []
   const lastIdx = agg.segments.length - 1
   for (let i = 0; i < agg.segments.length; i++) {
@@ -371,23 +493,43 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
       const tools = seg.tools.length > MAX_STREAM_TOOL_STEPS
         ? seg.tools.slice(-MAX_STREAM_TOOL_STEPS)
         : seg.tools
-      segments.push({
-        type: "tools",
-        tools: tools.map((t) => ({
+      const prev = segments[segments.length - 1]
+      if (prev?.type === "tools") {
+        prev.tools.push(...tools.map((t) => ({
           name: t.name,
           status: t.status,
           summary: t.summary || undefined,
           ms: t.ms,
-        })),
-      })
+        })))
+      } else {
+        segments.push({
+          type: "tools",
+          tools: tools.map((t) => ({
+            name: t.name,
+            status: t.status,
+            summary: t.summary || undefined,
+            ms: t.ms,
+          })),
+        })
+      }
+    } else if (seg.type === "todos") {
+      if (!seg.items.length) continue
+      segments.push({ type: "todos", items: seg.items.map((t) => ({ content: t.content, status: t.status })) })
     } else if (seg.type === "reply") {
       const text = seg.text.trim()
       if (!text) continue
-      segments.push({ type: "reply", text })
+      const prev = segments[segments.length - 1]
+      if (prev?.type === "reply") {
+        prev.text = prev.text.trim() ? `${prev.text}\n\n${text}` : text
+      } else {
+        segments.push({ type: "reply", text })
+      }
     }
   }
   return { segments }
 }
+
+export { buildStreamPayload }
 
 export async function postStreamCard(
   sessionKey: string,
@@ -551,7 +693,7 @@ export function endStreamRound(host: StreamCardHost): void {
   agg.inflight = agg.inflight.then(finishAndClear, finishAndClear)
 }
 
-function enterSilentPollPhase(host: StreamCardHost): void {
+export function enterSilentPollPhase(host: StreamCardHost): void {
   const stream = host.streamAgg
   if (stream && !stream.finished) {
     stream.segments = []

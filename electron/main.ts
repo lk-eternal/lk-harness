@@ -3,6 +3,8 @@ import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import { getConfig, saveConfig, migrateSecretsToSafeStorage, getAgentResource } from "./config-store"
+import { getAgentEngine } from "./agent-engine/factory"
+import type { AgentResource } from "../src/shared/channel-types"
 import {
   startDaemon,
   stopDaemon,
@@ -15,11 +17,8 @@ import {
   initDaemonManager,
   shutdownDaemonManager,
   saveAppConfigFromRenderer,
-  checkSdkApiKey,
-  listSdkModels,
   noteGlobalSdkError,
 } from "./daemon-manager"
-import { verifyLlmResource, listLlmModels } from "./agent-llm"
 import { warmModelsDevCatalog } from "./llm-model-catalog.js"
 import {
   getMcpServerList,
@@ -326,18 +325,30 @@ function registerIpcHandlers(): void {
     const channel = getConfig().channels?.find((c) => c.enabled)
     if (!channel) return { ok: false, models: [], error: "未配置通道" }
     const resource = getAgentResource(channel.agentResourceId)
-    if (resource.type === "sdk") {
-      const r = await listSdkModels(resource.apiKey ?? "", channel.model, channel.modelParams)
-      return r.ok ? { ok: true, models: r.models } : { ok: false, models: [], error: r.error }
-    }
-    const r = await listLlmModels(resource, channel.model, channel.modelParams)
-    return r.ok ? { ok: true, models: r.models } : { ok: false, models: [], error: r.error }
+    const engine = getAgentEngine(resource)
+    if (!engine.listModels) return { ok: false, models: [], error: "该资源不支持模型列表" }
+    const r = await engine.listModels(resource, channel, channel.model, channel.modelParams)
+    return r.ok ? { ok: true, models: r.models ?? [] } : { ok: false, models: [], error: r.error }
   })
 
-  ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => checkSdkApiKey(apiKey))
-  ipcMain.handle("sdk:list-models", (_, apiKey: string, currentModel?: string, currentParams?: string) => listSdkModels(apiKey, currentModel, currentParams))
-  ipcMain.handle("llm:verify-resource", (_, resource) => verifyLlmResource(resource))
-  ipcMain.handle("llm:list-models", (_, resource, currentModel?: string, currentParams?: string) => listLlmModels(resource, currentModel, currentParams))
+  ipcMain.handle("sdk:check-api-key", (_, apiKey: string) => {
+    const resource: AgentResource = { type: "sdk", apiKey }
+    return getAgentEngine(resource).checkCredentials?.(resource) ?? Promise.resolve({ ok: false, error: "不支持" })
+  })
+  ipcMain.handle("sdk:list-models", (_, apiKey: string, currentModel?: string, currentParams?: string) => {
+    const resource: AgentResource = { type: "sdk", apiKey }
+    const engine = getAgentEngine(resource)
+    return engine.listModels?.(resource, undefined, currentModel, currentParams)
+      ?? Promise.resolve({ ok: false, error: "不支持" })
+  })
+  ipcMain.handle("llm:verify-resource", (_, resource: AgentResource) => {
+    return getAgentEngine(resource).checkCredentials?.(resource) ?? Promise.resolve({ ok: false, error: "不支持" })
+  })
+  ipcMain.handle("llm:list-models", (_, resource: AgentResource, currentModel?: string, currentParams?: string) => {
+    const engine = getAgentEngine(resource)
+    return engine.listModels?.(resource, undefined, currentModel, currentParams)
+      ?? Promise.resolve({ ok: false, error: "不支持" })
+  })
 }
 
 let isQuitting = false
