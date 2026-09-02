@@ -16,6 +16,7 @@ import {
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
+import { isFeishuStreamEnabled } from "./stream-card"
 import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
@@ -227,16 +228,19 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           if (m.messageId) session.processedMessageIds.add(m.messageId)
         }
         // 必须确认这一次 claim：否则 daemon 把这批 .claimed 重投，worker 重启后内存里的
-        // processedMessageIds 没了就会再跑一次同样的失败回合（同一错误在卡片上出现两遗）
+        // processedMessageIds 没了就会再跑一次同样的失败回合（同一错误在卡片上出现两遍）
         try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
-        try {
-          await hostSendText(
-            `⚠️ 本回合失败：${msg}\n（会话仍在线，可直接继续发送）`,
-            sessionKey,
-            fresh.map((m) => m.messageId).filter(Boolean).pop(),
-          )
-        } catch (e: unknown) {
-          pushUiLog("LLM", "ERROR", `[${sessionKey}] 失败回执投递异常: ${e instanceof Error ? e.message : String(e)}`)
+        // 流式卡片已会把 Pi 的 errorMessage 渲染进卡片，再发一条 hostSendText 会被合并进同一张卡导致重影
+        if (!isFeishuStreamEnabled(sessionKey)) {
+          try {
+            await hostSendText(
+              `⚠️ 本回合失败：${msg}\n（会话仍在线，可直接继续发送）`,
+              sessionKey,
+              fresh.map((m) => m.messageId).filter(Boolean).pop(),
+            )
+          } catch (e: unknown) {
+            pushUiLog("LLM", "ERROR", `[${sessionKey}] 失败回执投递异常: ${e instanceof Error ? e.message : String(e)}`)
+          }
         }
         continue
       }
