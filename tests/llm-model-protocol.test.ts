@@ -8,12 +8,15 @@ import { resolveCustomModelApi, normalizeGatewayRoot } from "../electron/llm-mod
  * 生产上以每回合那行日志为准：`本回合模型: <id> · <api> · <baseUrl>`。
  */
 describe("自定义网关协议判定", () => {
-  it("只吃 modelId：配置里不再有任何协议覆盖字段（apiProtocol 之类已删）", () => {
-    expect(resolveCustomModelApi.length).toBe(1)
+  it("签名是 modelId + 可选 baseUrl（按网关区分多提供商同名模型）", () => {
+    expect(resolveCustomModelApi.length).toBe(2)
   })
 
   it("目录都认不出时退回 openai-completions（自托管网关绝大多数走这个）", () => {
     expect(resolveCustomModelApi("definitely-not-a-real-model-xyz")).toBe("openai-completions")
+    expect(resolveCustomModelApi("definitely-not-a-real-model-xyz", "https://opencode.ai/zen/go/v1")).toBe(
+      "openai-completions",
+    )
   })
 })
 

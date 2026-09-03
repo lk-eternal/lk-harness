@@ -24,9 +24,11 @@ interface ModelsDevProvider {
 interface CacheFile {
   fetchedAt: number
   index: Record<string, CatalogEntry>
+  byProvider?: Record<string, Record<string, CatalogEntry>>
 }
 
 let memIndex: Map<string, CatalogEntry> | null = null
+let memByProvider: Map<string, Map<string, CatalogEntry>> | null = null
 let loadPromise: Promise<void> | null = null
 
 const PI_SCAN_PROVIDERS = [
@@ -46,18 +48,30 @@ function npmToApi(npm: string | undefined): LlmApiProtocol {
   return "openai-completions"
 }
 
-function buildIndex(raw: Record<string, ModelsDevProvider>): Map<string, CatalogEntry> {
+function buildIndex(raw: Record<string, ModelsDevProvider>): {
+  index: Map<string, CatalogEntry>
+  byProvider: Map<string, Map<string, CatalogEntry>>
+} {
   const index = new Map<string, CatalogEntry>()
-  for (const [, prov] of Object.entries(raw)) {
+  const byProvider = new Map<string, Map<string, CatalogEntry>>()
+  for (const [provId, prov] of Object.entries(raw)) {
+    const provKey = prov.api ? normalizeGatewayRoot(prov.api) : provId
     for (const m of Object.values(prov.models ?? {} as Record<string, any>)) {
       const id = (m as any).id?.trim()
       if (!id) continue
       const perModelNpm = (m as any).provider?.npm as string | undefined
       const api = npmToApi(perModelNpm ?? prov.npm)
-      index.set(id, { api, name: (m as any).name?.trim() || id })
+      const entry: CatalogEntry = { api, name: (m as any).name?.trim() || id }
+      index.set(id, entry)
+      if (!byProvider.has(provKey)) byProvider.set(provKey, new Map())
+      byProvider.get(provKey)!.set(id, entry)
+      if (provId && provId !== provKey) {
+        if (!byProvider.has(provId)) byProvider.set(provId, new Map())
+        byProvider.get(provId)!.set(id, entry)
+      }
     }
   }
-  return index
+  return { index, byProvider }
 }
 
 function readDiskCache(): CacheFile | null {
@@ -70,10 +84,18 @@ function readDiskCache(): CacheFile | null {
   }
 }
 
-function writeDiskCache(index: Map<string, CatalogEntry>): void {
+function writeDiskCache(
+  index: Map<string, CatalogEntry>,
+  byProvider: Map<string, Map<string, CatalogEntry>>,
+): void {
   const obj: Record<string, CatalogEntry> = {}
   for (const [k, v] of index) obj[k] = v
-  const payload: CacheFile = { fetchedAt: Date.now(), index: obj }
+  const byProvObj: Record<string, Record<string, CatalogEntry>> = {}
+  for (const [p, m] of byProvider) {
+    byProvObj[p] = {}
+    for (const [id, entry] of m) byProvObj[p][id] = entry
+  }
+  const payload: CacheFile = { fetchedAt: Date.now(), index: obj, byProvider: byProvObj }
   const dir = path.dirname(cachePath())
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   const tmp = cachePath() + ".tmp"
@@ -81,21 +103,23 @@ function writeDiskCache(index: Map<string, CatalogEntry>): void {
   fs.renameSync(tmp, cachePath())
 }
 
-async function fetchModelsDevIndex(): Promise<Map<string, CatalogEntry>> {
+async function fetchModelsDevIndex(): Promise<{
+  index: Map<string, CatalogEntry>
+  byProvider: Map<string, Map<string, CatalogEntry>>
+}> {
   const proxyFetch = createProxyFetch()
   const res = await (proxyFetch ?? fetch)(MODELS_DEV_URL, { signal: AbortSignal.timeout(60_000) })
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`)
   const raw = (await res.json()) as Record<string, ModelsDevProvider>
-  const index = buildIndex(raw)
-  writeDiskCache(index)
-  return index
+  const built = buildIndex(raw)
+  writeDiskCache(built.index, built.byProvider)
+  return built
 }
 
 export async function ensureModelsDevCatalog(force = false): Promise<void> {
-  if (memIndex && !force) {
+  if (memIndex && memByProvider && !force) {
     const disk = readDiskCache()
     if (disk && Date.now() - disk.fetchedAt < CACHE_TTL_MS) return
-    // 缓存已过期，后台刷新
     void refreshCatalogInBackground()
     return
   }
@@ -104,16 +128,25 @@ export async function ensureModelsDevCatalog(force = false): Promise<void> {
     const disk = readDiskCache()
     if (!force && disk && Date.now() - disk.fetchedAt < CACHE_TTL_MS) {
       memIndex = new Map(Object.entries(disk.index))
+      memByProvider = disk.byProvider
+        ? new Map(Object.entries(disk.byProvider).map(([k, v]) => [k, new Map(Object.entries(v))]))
+        : new Map()
       return
     }
     try {
-      memIndex = await fetchModelsDevIndex()
+      const built = await fetchModelsDevIndex()
+      memIndex = built.index
+      memByProvider = built.byProvider
     } catch {
       if (disk) {
         memIndex = new Map(Object.entries(disk.index))
+        memByProvider = disk.byProvider
+          ? new Map(Object.entries(disk.byProvider).map(([k, v]) => [k, new Map(Object.entries(v))]))
+          : new Map()
         return
       }
       memIndex = new Map()
+      memByProvider = new Map()
     }
   })()
   const p = loadPromise
@@ -124,8 +157,9 @@ export async function ensureModelsDevCatalog(force = false): Promise<void> {
 async function refreshCatalogInBackground(): Promise<void> {
   if (loadPromise) return
   try {
-    const fresh = await fetchModelsDevIndex()
-    memIndex = fresh
+    const built = await fetchModelsDevIndex()
+    memIndex = built.index
+    memByProvider = built.byProvider
   } catch { /* 保留旧缓存 */ }
 }
 
@@ -135,14 +169,23 @@ export function warmModelsDevCatalog(): void {
 }
 
 function ensureMemFromDisk(): void {
-  if (memIndex) return
+  if (memIndex && memByProvider) return
   const disk = readDiskCache()
   memIndex = disk ? new Map(Object.entries(disk.index)) : new Map()
+  memByProvider = disk?.byProvider
+    ? new Map(Object.entries(disk.byProvider).map(([k, v]) => [k, new Map(Object.entries(v))]))
+    : new Map()
 }
 
-export function lookupCatalogModel(modelId: string): CatalogEntry | undefined {
+export function lookupCatalogModel(modelId: string, baseUrl?: string): CatalogEntry | undefined {
   ensureMemFromDisk()
-  const hit = memIndex?.get(modelId.trim())
+  const id = modelId.trim()
+  if (baseUrl) {
+    const key = normalizeGatewayRoot(baseUrl)
+    const hit = memByProvider?.get(key)?.get(id) ?? memByProvider?.get(baseUrl.trim())?.get(id)
+    if (hit) return hit
+  }
+  const hit = memIndex?.get(id)
   if (!hit) {
     const disk = readDiskCache()
     const stale = !disk || Date.now() - disk.fetchedAt > CACHE_TTL_MS
@@ -170,13 +213,12 @@ function lookupPiModelApi(modelId: string): Api | null {
 
 /**
  * 自定义网关协议判定：不读任何配置字段，目录直接定
- * pi 内置表（实际发包方，精确到模型）> models.dev（`provider.npm` 推协议）> completions
- * 未命中时后台刷新 models.dev，下次生效
+ * pi 内置表（实际发包方，精确到模型）> models.dev（按网关 baseUrl 找对应提供商，再 fallback 通用）> completions
  */
-export function resolveCustomModelApi(modelId: string): LlmApiProtocol {
+export function resolveCustomModelApi(modelId: string, baseUrl?: string): LlmApiProtocol {
   const fromPi = lookupPiModelApi(modelId)
   if (fromPi) return fromPi as LlmApiProtocol
-  const fromCatalog = lookupCatalogModel(modelId)?.api
+  const fromCatalog = lookupCatalogModel(modelId, baseUrl)?.api
   if (fromCatalog) return fromCatalog
   return "openai-completions"
 }

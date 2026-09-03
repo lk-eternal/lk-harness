@@ -31,8 +31,8 @@ export function resolveLlmModel(resource: AgentResource, modelId?: string): Mode
   if (resource.type === "llm-custom") {
     const id = modelId?.trim()
     if (!id || !resource.baseUrl?.trim()) return null
-    // 协议不读配置：pi 内置表 > models.dev（provider.npm 推断）> completions
-    const api = resolveCustomModelApi(id) as Api
+    // 协议不读配置：pi 内置表 > models.dev（按网关 baseUrl 找对应提供商）> completions
+    const api = resolveCustomModelApi(id, resource.baseUrl) as Api
     const pi = lookupPiModel(id)
     const meta = lookupCatalogModel(id)
     // 自定义网关只换端点与凭据；推理/输入模态/窗口这些能力描述沿用 pi 目录。
