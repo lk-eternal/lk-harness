@@ -41,19 +41,19 @@ function npmToApi(npm: string | undefined): LlmApiProtocol {
   const n = (npm ?? "").toLowerCase()
   if (n.includes("anthropic")) return "anthropic-messages"
   if (n.includes("google") || n.includes("gemini")) return "google-generative-ai"
+  if (n === "@ai-sdk/openai") return "openai-responses"
   if (n.includes("responses")) return "openai-responses"
   return "openai-completions"
 }
 
 function buildIndex(raw: Record<string, ModelsDevProvider>): Map<string, CatalogEntry> {
   const index = new Map<string, CatalogEntry>()
-  for (const [provId, prov] of Object.entries(raw)) {
+  for (const [, prov] of Object.entries(raw)) {
     for (const m of Object.values(prov.models ?? {} as Record<string, any>)) {
       const id = (m as any).id?.trim()
       if (!id) continue
       const perModelNpm = (m as any).provider?.npm as string | undefined
-      let api = npmToApi(perModelNpm ?? prov.npm)
-      if (provId === "opencode-go") api = "openai-responses"
+      const api = npmToApi(perModelNpm ?? prov.npm)
       index.set(id, { api, name: (m as any).name?.trim() || id })
     }
   }
