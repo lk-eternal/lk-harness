@@ -168,6 +168,28 @@ jobs:
           git clone "https://x-access-token:${GH_TOKEN}@github.com/lk-eternal/homebrew-tap.git" homebrew-tap
           cd homebrew-tap
 
+          # 首发时 cask 文件尚不存在：按命名规则直接生成，后续版本走 awk 原地更新
+          if [ ! -f Casks/lk-harness.rb ]; then
+            mkdir -p Casks
+            printf '%s\n' \
+              'cask "lk-harness" do' \
+              "  version \"$VERSION\"" \
+              '' \
+              '  on_intel do' \
+              "    sha256 \"$INTEL_SHA\"" \
+              '    url "https://github.com/lk-eternal/lk-harness/releases/download/v#{version}/LK%20Harness-#{version}.dmg"' \
+              '  end' \
+              '  on_arm do' \
+              "    sha256 \"$ARM_SHA\""" \
+              '    url "https://github.com/lk-eternal/lk-harness/releases/download/v#{version}/LK%20Harness-#{version}-arm64.dmg"' \
+              '  end' \
+              '' \
+              '  name "LK Harness"' \
+              '  homepage "https://github.com/lk-eternal/lk-harness"' \
+              '' \
+              '  app "LK Harness.app"' \
+              'end' > Casks/lk-harness.rb
+          else
           awk -v ver="$VERSION" -v intel_sha="$INTEL_SHA" -v arm_sha="$ARM_SHA" '
             /^  version / { $0 = "  version \"" ver "\"" }
             /on_intel do/ { intel = 1 }
@@ -176,6 +198,7 @@ jobs:
             arm && /sha256/ { $0 = "    sha256 \"" arm_sha "\""; arm = 0 }
             { print }
           ' Casks/lk-harness.rb > tmp.rb && mv tmp.rb Casks/lk-harness.rb
+          fi
 
           cat Casks/lk-harness.rb
 
