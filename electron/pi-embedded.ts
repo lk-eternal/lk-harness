@@ -142,6 +142,7 @@ export async function createHarnessPiSession(
     sessionManager,
     resourceLoader,
     model,
+    thinkingLevel: model.reasoning ? "medium" : "off",
   })
   wrapAgentStreamWithProxy(session)
 
