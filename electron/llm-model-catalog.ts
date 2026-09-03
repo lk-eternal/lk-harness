@@ -47,8 +47,9 @@ function npmToApi(npm: string | undefined): LlmApiProtocol {
 
 function buildIndex(raw: Record<string, ModelsDevProvider>): Map<string, CatalogEntry> {
   const index = new Map<string, CatalogEntry>()
-  for (const prov of Object.values(raw)) {
-    const api = npmToApi(prov.npm)
+  for (const [provId, prov] of Object.entries(raw)) {
+    let api = npmToApi(prov.npm)
+    if (provId === "opencode-go") api = "openai-responses"
     for (const m of Object.values(prov.models ?? {})) {
       const id = m.id?.trim()
       if (!id) continue
