@@ -34,6 +34,7 @@ import {
   type StreamAgg,
   type StreamCardHost,
   type StreamPollPhaseState,
+  buildStreamPayload,
   enqueueTool,
   enqueueThinking,
   enqueueReply,
@@ -428,7 +429,7 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
 export async function executeLlmPiTurn(
   session: LlmSession,
   prompt: string,
-): Promise<{ ok: boolean; error?: string; replyText?: string; fatal?: boolean }> {
+): Promise<{ ok: boolean; error?: string; replyText?: string; empty?: boolean; fatal?: boolean }> {
   // 不建流、不消耗这批消息：这批任务交回给新引擎重新拉起
   if (channelResourceSwitched(session.channelId, session.resource.id)) {
     return { ok: false, error: "通道已换 Agent 资源，本会话改用新引擎重新拉起", fatal: true }
@@ -502,7 +503,7 @@ function extractAssistantTextSince(piSession: AgentSession, fromIndex: number): 
   return parts.join("\n\n").trim()
 }
 
-async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string }> {
+async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok: boolean; error?: string; replyText?: string; empty?: boolean }> {
   beginLlmTurn(session)
   await refreshLlmModel(session)
   session.lastActivityAt = Date.now()
@@ -536,7 +537,13 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   if (!result.ok) return { ...result, error: `${result.error}（${modelRef}）` }
   if (!isFeishuStreamEnabled(session.sessionKey)) {
     const replyText = extractAssistantTextSince(session.piSession, msgBefore)
-    return { ok: true, replyText: replyText || undefined }
+    if (!replyText.trim()) return { ok: true, empty: true }
+    return { ok: true, replyText }
+  }
+  // 流式通道：未建卡 = 零出站（ensure 要求非空 payload），Daemon 会判黑洞，必须显式标空
+  const agg = session.streamAgg
+  if (!agg || (!agg.ensured && !agg.cardId && buildStreamPayload(agg, session.sessionKey).segments.length === 0)) {
+    return { ok: true, empty: true }
   }
   return { ok: true }
 }

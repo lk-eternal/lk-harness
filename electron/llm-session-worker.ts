@@ -11,6 +11,7 @@ import {
   hostConfirmClaimed,
   hostNonBlockingPoll,
   hostSendText,
+  hostTouchSessionReply,
   isPollEndDirective,
   isPollTimeoutDirective,
   type HostPollResult,
@@ -43,12 +44,12 @@ function racePiTurnWithIdleTimeout(
   session: LlmWorkerSession,
   prompt: string,
   abort: AbortSignal,
-): Promise<{ ok: boolean; error?: string; replyText?: string; resumable?: boolean; fatal?: boolean }> {
+): Promise<{ ok: boolean; error?: string; replyText?: string; empty?: boolean; resumable?: boolean; fatal?: boolean }> {
   return new Promise((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setInterval> | undefined
 
-    const finish = (result: { ok: boolean; error?: string; replyText?: string; resumable?: boolean; fatal?: boolean }) => {
+    const finish = (result: { ok: boolean; error?: string; replyText?: string; empty?: boolean; resumable?: boolean; fatal?: boolean }) => {
       if (settled) return
       settled = true
       if (timer) clearInterval(timer)
@@ -245,6 +246,26 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         continue
       }
 
+      // 空回复显式化：零出站时给可见兜底 + touch，否则 Daemon 判黑洞重投后跳过即吞消息
+      if (turnResult.empty) {
+        pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合空回复，已发兜底`)
+        const replyToId = fresh.map((m) => m.messageId).filter(Boolean).pop()
+        try {
+          await hostSendText(`⚠️ 本回合模型无有效输出，请再发一次（会话仍在线）`, sessionKey, replyToId)
+        } catch (e: unknown) {
+          errored = true
+          errorDetail = e instanceof Error ? e.message : String(e)
+          pushUiLog("LLM", "ERROR", `[${sessionKey}] 空回复兜底投递失败: ${errorDetail}`)
+          break
+        }
+        try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
+        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+        for (const m of fresh) {
+          if (m.messageId) session.processedMessageIds.add(m.messageId)
+        }
+        continue
+      }
+
       // 微信等非流式通道：卡片跳过时仍走文本投递
       const replyText = turnResult.replyText?.trim()
       if (replyText) {
@@ -257,6 +278,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           pushUiLog("LLM", "ERROR", `[${sessionKey}] 非流式通道投递失败: ${errorDetail}`)
           break
         }
+      } else {
+        // 流式成功也要 touch：finish 投递失败时同样零出站，对齐 SDK 避免黑洞误判
+        try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
       }
 
       for (const m of fresh) {

@@ -6,19 +6,32 @@ import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai/c
 import type { LlmApiProtocol } from "../src/shared/agent-providers"
 
 const MODELS_DEV_URL = "https://models.dev/api.json"
-const CACHE_FILE = "models-dev-catalog.json"
+const CACHE_FILE = "models-dev-catalog-v2.json"
 const CACHE_TTL_MS = 6 * 3600 * 1000
 
 interface CatalogEntry {
   api: LlmApiProtocol
   name?: string
+  reasoning?: boolean
+  input?: ("text" | "image")[]
+  contextWindow?: number
+  maxTokens?: number
+}
+
+interface ModelsDevModel {
+  id?: string
+  name?: string
+  reasoning?: boolean
+  modalities?: { input?: string[] }
+  limit?: { context?: number; output?: number }
+  provider?: { npm?: string }
 }
 
 interface ModelsDevProvider {
   npm?: string
   api?: string
   name?: string
-  models?: Record<string, { id?: string; name?: string }>
+  models?: Record<string, ModelsDevModel>
 }
 
 interface CacheFile {
@@ -56,12 +69,19 @@ function buildIndex(raw: Record<string, ModelsDevProvider>): {
   const byProvider = new Map<string, Map<string, CatalogEntry>>()
   for (const [provId, prov] of Object.entries(raw)) {
     const provKey = prov.api ? normalizeGatewayRoot(prov.api) : provId
-    for (const m of Object.values(prov.models ?? {} as Record<string, any>)) {
-      const id = (m as any).id?.trim()
+    for (const m of Object.values(prov.models ?? {})) {
+      const id = m.id?.trim()
       if (!id) continue
-      const perModelNpm = (m as any).provider?.npm as string | undefined
-      const api = npmToApi(perModelNpm ?? prov.npm)
-      const entry: CatalogEntry = { api, name: (m as any).name?.trim() || id }
+      const api = npmToApi(m.provider?.npm ?? prov.npm)
+      const inputs = (m.modalities?.input ?? []).map((s) => s.toLowerCase())
+      const entry: CatalogEntry = {
+        api,
+        name: m.name?.trim() || id,
+        ...(m.reasoning !== undefined ? { reasoning: !!m.reasoning } : {}),
+        ...(inputs.length ? { input: inputs.includes("image") ? ["text", "image"] : ["text"] } : {}),
+        ...(m.limit?.context ? { contextWindow: m.limit.context } : {}),
+        ...(m.limit?.output ? { maxTokens: m.limit.output } : {}),
+      }
       index.set(id, entry)
       if (!byProvider.has(provKey)) byProvider.set(provKey, new Map())
       byProvider.get(provKey)!.set(id, entry)
@@ -212,14 +232,14 @@ function lookupPiModelApi(modelId: string): Api | null {
 }
 
 /**
- * 自定义网关协议判定：不读任何配置字段，目录直接定
- * pi 内置表（实际发包方，精确到模型）> models.dev（按网关 baseUrl 找对应提供商，再 fallback 通用）> completions
+ * 自定义网关协议判定：models.dev 为准（按网关 baseUrl 找对应提供商，per-model npm 已细分）
+ * pi 内置表只作断网/缓存缺失时的兜底，最后退回 completions
  */
 export function resolveCustomModelApi(modelId: string, baseUrl?: string): LlmApiProtocol {
-  const fromPi = lookupPiModelApi(modelId)
-  if (fromPi) return fromPi as LlmApiProtocol
   const fromCatalog = lookupCatalogModel(modelId, baseUrl)?.api
   if (fromCatalog) return fromCatalog
+  const fromPi = lookupPiModelApi(modelId)
+  if (fromPi) return fromPi as LlmApiProtocol
   return "openai-completions"
 }
 

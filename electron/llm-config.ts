@@ -31,23 +31,21 @@ export function resolveLlmModel(resource: AgentResource, modelId?: string): Mode
   if (resource.type === "llm-custom") {
     const id = modelId?.trim()
     if (!id || !resource.baseUrl?.trim()) return null
-    // 协议不读配置：pi 内置表 > models.dev（按网关 baseUrl 找对应提供商）> completions
+    // 自定义网关以 models.dev 为准（按 baseUrl 找对应提供商）；pi 表只作断网/缺失兜底
     const api = resolveCustomModelApi(id, resource.baseUrl) as Api
+    const meta = lookupCatalogModel(id, resource.baseUrl) ?? lookupCatalogModel(id)
     const pi = lookupPiModel(id)
-    const meta = lookupCatalogModel(id)
-    // 自定义网关只换端点与凭据；推理/输入模态/窗口这些能力描述沿用 pi 目录。
-    // 之前硬编码 reasoning:false + input:["text"]，推理模型走 responses 网关会被上游直接拒（500）
     return {
       id,
       name: pi?.name ?? meta?.name ?? id,
       api,
       provider: resource.id,
       baseUrl: normalizeGatewayRoot(resource.baseUrl),
-      reasoning: pi?.reasoning ?? false,
-      input: pi?.input ?? ["text"],
+      reasoning: meta?.reasoning ?? pi?.reasoning ?? false,
+      input: meta?.input ?? pi?.input ?? ["text"],
       cost: pi?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: pi?.contextWindow ?? 128000,
-      maxTokens: pi?.maxTokens ?? 8192,
+      contextWindow: meta?.contextWindow ?? pi?.contextWindow ?? 128000,
+      maxTokens: meta?.maxTokens ?? pi?.maxTokens ?? 8192,
       compat: api === "openai-completions" ? { supportsDeveloperRole: false } : undefined,
     } as Model<Api>
   }
