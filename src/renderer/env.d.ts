@@ -47,7 +47,7 @@ declare global {
     worktreeRoot?: string
   }
 
-  interface DaemonStatus {
+  interface SkillTreeNode {
     name: string
     type: "file" | "directory"
     children?: SkillTreeNode[]
