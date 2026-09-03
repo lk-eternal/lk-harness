@@ -378,7 +378,7 @@ function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
       }
       rememberChatType(chatKey, msg.chatType);
       if (isCommand(msg.text)) {
-        handleCommand(msg.text, msg.messageId, chatKey, msg.chatType).catch((e: any) =>
+        handleCommand(msg.text, msg.messageId, chatKey, msg.chatType, undefined, msg.senderOpenId).catch((e: any) =>
           log("ERROR", `[WeChat:${rt.cfg.name}] 指令处理失败: ${e?.message ?? e}`),
         );
         return;
@@ -1302,7 +1302,7 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
     rememberChatType(chatKey, chatType);
 
     if (messageType === "text" && isCommand(cleanText)) {
-      handleCommand(cleanText, messageId, chatKey, chatType).catch((e: any) =>
+      handleCommand(cleanText, messageId, chatKey, chatType, undefined, senderOpenId).catch((e: any) =>
         log("ERROR", `指令处理失败: ${e?.message ?? e}`),
       );
       return;
@@ -2578,7 +2578,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     log("INFO", `[${rt.cfg.name}] 卡片指令点击: ${cmd}`);
     // 主用户私聊点按钮 → p2p（供 isMainUser）；群内点按钮 → group（供独立群放行 /p）
     const chatType = resolveCardActionChatType(rt, chatKey, evt.chatId);
-    handleCommand(cmd, evt.messageId, chatKey, chatType, true).catch((e: any) => log("ERROR", `卡片指令失败: ${e?.message ?? e}`));
+    handleCommand(cmd, evt.messageId, chatKey, chatType, true, evt.operatorOpenId).catch((e: any) => log("ERROR", `卡片指令失败: ${e?.message ?? e}`));
     return { toast: { type: "info", content: `已执行 ${cmd}` } };
   }
 
@@ -2928,7 +2928,7 @@ async function replyToMessage(
 
 // ── 共享指令文件队列（.fcmd）──────────────────────────────
 
-function pushCommandToQueue(command: string, messageId: string, source: string, chatId?: string, chatType?: string, fromCard?: boolean): boolean {
+function pushCommandToQueue(command: string, messageId: string, source: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string): boolean {
   const queueDir = getQueueDir();
   if (!queueDir) return false;
   const ts = Date.now();
@@ -2940,7 +2940,7 @@ function pushCommandToQueue(command: string, messageId: string, source: string, 
   } catch { /* ignore */ }
 
   try {
-    const data = JSON.stringify({ command, messageId, timestamp: ts, source, chatId, chatType, fromCard });
+    const data = JSON.stringify({ command, messageId, timestamp: ts, source, chatId, chatType, fromCard, senderOpenId });
     const filename = `${ts}_${safeId}.fcmd`;
     const tmpPath = path.join(queueDir, filename + ".tmp");
     const finalPath = path.join(queueDir, filename);
@@ -2953,7 +2953,7 @@ function pushCommandToQueue(command: string, messageId: string, source: string, 
   } catch { return false; }
 }
 
-interface CmdEntry { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean }
+interface CmdEntry { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string }
 
 function getPendingCommands(): CmdEntry[] {
   const queueDir = getQueueDir();
@@ -2964,7 +2964,7 @@ function getPendingCommands(): CmdEntry[] {
       try {
         const raw = fs.readFileSync(path.join(queueDir, f), "utf-8");
         const p = JSON.parse(raw);
-        return { id: f, command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard };
+        return { id: f, command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId };
       } catch { return null; }
     }).filter(Boolean) as CmdEntry[];
   } catch { return []; }
@@ -2982,7 +2982,7 @@ function claimCommand(fileId: string): Omit<CmdEntry, "id"> | null {
     const raw = fs.readFileSync(claimedPath, "utf-8");
     fs.unlinkSync(claimedPath);
     const p = JSON.parse(raw);
-    return { command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard };
+    return { command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId };
   } catch { return null; }
 }
 
@@ -3008,12 +3008,12 @@ function cleanExpiredCommands(): void {
   } catch { /* ignore */ }
 }
 
-async function handleCommand(text: string, messageId: string, chatId?: string, chatType?: string, fromCard?: boolean): Promise<void> {
+async function handleCommand(text: string, messageId: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string): Promise<void> {
   const trimmed = text.trim();
   if (chatId && ["/stop", "/restart"].includes(trimmed.toLowerCase())) {
     terminateSessionsByChat(chatId);
   }
-  pushCommandToQueue(trimmed, messageId, `daemon-${process.pid}`, chatId, chatType, fromCard);
+  pushCommandToQueue(trimmed, messageId, `daemon-${process.pid}`, chatId, chatType, fromCard, senderOpenId);
 }
 
 // ── HTTP Server ──────────────────────────────────────────

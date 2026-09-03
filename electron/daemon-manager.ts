@@ -1144,12 +1144,12 @@ async function checkAndExecutePendingCommands(): Promise<void> {
   if (!cmds || cmds.length === 0) return
 
   for (const cmd of cmds) {
-    let claimed: { command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean } | null
+    let claimed: { command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string } | null
     try {
       const claimRes = await httpPost(`http://127.0.0.1:${lock.port}/commands/claim`, { id: cmd.id }) as
-        { ok: boolean; command?: string; messageId?: string; chatId?: string; chatType?: string; fromCard?: boolean }
+        { ok: boolean; command?: string; messageId?: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string }
       if (!claimRes.ok) continue
-      claimed = { command: claimRes.command!, messageId: claimRes.messageId!, chatId: claimRes.chatId, chatType: claimRes.chatType, fromCard: claimRes.fromCard }
+      claimed = { command: claimRes.command!, messageId: claimRes.messageId!, chatId: claimRes.chatId, chatType: claimRes.chatType, fromCard: claimRes.fromCard, senderOpenId: claimRes.senderOpenId }
     } catch { continue }
 
     const rawCmd = claimed.command.trim()
@@ -1157,6 +1157,15 @@ async function checkAndExecutePendingCommands(): Promise<void> {
     const head = (cmdTokens[0] ?? "").toLowerCase()
     initProjectStore(app.getPath("userData"))
     const isAdmin = isMainUser(claimed.chatId, claimed.chatType)
+    // 群内主用户本人：指令队列带发送人 open_id，与通道主用户绑定比对（飞书 open_id 同一空间）
+    const isMainUserSender = (() => {
+      const sender = claimed.senderOpenId?.trim()
+      if (!sender || !claimed.chatId) return false
+      try {
+        const channel = getChannel(parseChatKey(claimed.chatId).channelId)
+        return !!channel?.mainUserEnabled && !!channel.mainUserChatId?.trim() && sender === channel.mainUserChatId.trim()
+      } catch { return false }
+    })()
     const cmdSessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
     const findProj = findProjectByGroupChat(claimed.chatId)
     const routingSession = await resolveRoutingProjectSession(lock.port, claimed.chatId)
@@ -1168,7 +1177,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
       reportCommandResult(lock.port, claimed!.messageId, ok, msg, claimed!.chatId, buttons, patchTarget ? { patchMessageId: patchTarget } : undefined)
     const denyNonAdmin = () => {
       pushUiLog("Electron", "WARN",
-        `[指令] DENY admin cmd=${rawCmd} chatId=${claimed!.chatId ?? "?"} chatType=${claimed!.chatType ?? "?"} findProject=${findProj?.id ?? "none"} cmdSession=${cmdSessionKey ?? "none"} routingSession=${routingSession ?? "none"}`)
+        `[指令] DENY admin cmd=${rawCmd} chatId=${claimed!.chatId ?? "?"} chatType=${claimed!.chatType ?? "?"} sender=${claimed!.senderOpenId ? "***" + claimed!.senderOpenId.slice(-4) : "none"} findProject=${findProj?.id ?? "none"} cmdSession=${cmdSessionKey ?? "none"} routingSession=${routingSession ?? "none"}`)
       return reply(false, "🔒 该指令仅管理员可用")
     }
     // 原卡更新目标：仅按钮点击来源才 patch（手输指令的 messageId 是用户消息，不可 patch）
@@ -1335,7 +1344,8 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/m":
         case "/model": {
           // 项目专属群内放行（与 /p 一致）：独立群项目的模型切换入口只在群里
-          if (!isAdmin && !isProjectGroup) { await denyNonAdmin(); break }
+          // 普通群主用户本人放行：/m set 只写当前会话 override，不碰通道默认
+          if (!isAdmin && !isProjectGroup && !isMainUserSender) { await denyNonAdmin(); break }
           await handleFeishuModelCommand(lock.port, claimed.messageId, rawCmd, claimed.chatId, patchTarget)
           break
         }
