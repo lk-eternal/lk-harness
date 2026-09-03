@@ -7,7 +7,7 @@ import type { LlmApiProtocol } from "../src/shared/agent-providers"
 
 const MODELS_DEV_URL = "https://models.dev/api.json"
 const CACHE_FILE = "models-dev-catalog.json"
-const CACHE_TTL_MS = 24 * 3600 * 1000
+const CACHE_TTL_MS = 6 * 3600 * 1000
 
 interface CatalogEntry {
   api: LlmApiProtocol
@@ -89,12 +89,18 @@ async function fetchModelsDevIndex(): Promise<Map<string, CatalogEntry>> {
   return index
 }
 
-export async function ensureModelsDevCatalog(): Promise<void> {
-  if (memIndex) return
+export async function ensureModelsDevCatalog(force = false): Promise<void> {
+  if (memIndex && !force) {
+    const disk = readDiskCache()
+    if (disk && Date.now() - disk.fetchedAt < CACHE_TTL_MS) return
+    // 缓存已过期，后台刷新
+    void refreshCatalogInBackground()
+    return
+  }
   if (loadPromise) return loadPromise
   loadPromise = (async () => {
     const disk = readDiskCache()
-    if (disk && Date.now() - disk.fetchedAt < CACHE_TTL_MS) {
+    if (!force && disk && Date.now() - disk.fetchedAt < CACHE_TTL_MS) {
       memIndex = new Map(Object.entries(disk.index))
       return
     }
@@ -108,7 +114,17 @@ export async function ensureModelsDevCatalog(): Promise<void> {
       memIndex = new Map()
     }
   })()
-  return loadPromise
+  const p = loadPromise
+  loadPromise = null
+  return p
+}
+
+async function refreshCatalogInBackground(): Promise<void> {
+  if (loadPromise) return
+  try {
+    const fresh = await fetchModelsDevIndex()
+    memIndex = fresh
+  } catch { /* 保留旧缓存 */ }
 }
 
 /** 后台预热，不阻塞启动 */
@@ -124,7 +140,13 @@ function ensureMemFromDisk(): void {
 
 export function lookupCatalogModel(modelId: string): CatalogEntry | undefined {
   ensureMemFromDisk()
-  return memIndex?.get(modelId.trim())
+  const hit = memIndex?.get(modelId.trim())
+  if (!hit) {
+    const disk = readDiskCache()
+    const stale = !disk || Date.now() - disk.fetchedAt > CACHE_TTL_MS
+    if (stale) void refreshCatalogInBackground()
+  }
+  return hit
 }
 
 /** 模型 id 在 pi 内置哪个供应商目录里（含能力字段）——实际发包用的就是这张表 */
@@ -147,11 +169,14 @@ function lookupPiModelApi(modelId: string): Api | null {
 /**
  * 自定义网关协议判定：不读任何配置字段，目录直接定
  * pi 内置表（实际发包方，精确到模型）> models.dev（`provider.npm` 推协议）> completions
+ * 未命中时后台刷新 models.dev，下次生效
  */
 export function resolveCustomModelApi(modelId: string): LlmApiProtocol {
   const fromPi = lookupPiModelApi(modelId)
   if (fromPi) return fromPi as LlmApiProtocol
-  return lookupCatalogModel(modelId)?.api ?? "openai-completions"
+  const fromCatalog = lookupCatalogModel(modelId)?.api
+  if (fromCatalog) return fromCatalog
+  return "openai-completions"
 }
 
 /** 规范化自定义网关根 URL：pi 按 api 自己拼 /chat/completions、/responses 或 /messages，尾缀必须剥掉 */
