@@ -48,12 +48,13 @@ function npmToApi(npm: string | undefined): LlmApiProtocol {
 function buildIndex(raw: Record<string, ModelsDevProvider>): Map<string, CatalogEntry> {
   const index = new Map<string, CatalogEntry>()
   for (const [provId, prov] of Object.entries(raw)) {
-    let api = npmToApi(prov.npm)
-    if (provId === "opencode-go") api = "openai-responses"
-    for (const m of Object.values(prov.models ?? {})) {
-      const id = m.id?.trim()
+    for (const m of Object.values(prov.models ?? {} as Record<string, any>)) {
+      const id = (m as any).id?.trim()
       if (!id) continue
-      index.set(id, { api, name: m.name?.trim() || id })
+      const perModelNpm = (m as any).provider?.npm as string | undefined
+      let api = npmToApi(perModelNpm ?? prov.npm)
+      if (provId === "opencode-go") api = "openai-responses"
+      index.set(id, { api, name: (m as any).name?.trim() || id })
     }
   }
   return index
