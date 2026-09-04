@@ -35,6 +35,7 @@ Thumbs.db
 
 temp/
 .lk-harness
+.harness/
 # pack:local debug leftovers
 .pack-*.txt
 .pack-local.log
