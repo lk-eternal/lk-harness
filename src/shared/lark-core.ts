@@ -1238,7 +1238,7 @@ export class LarkSender {
         } else if (foot) {
           els.push({ tag: "hr" });
         }
-        if (foot && !qText) els.push({ tag: "markdown", content: foot });
+        if (foot && !qText) els.push({ tag: "markdown", content: foot, text_size: "notation" });
       }
       return els;
     };

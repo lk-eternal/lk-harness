@@ -241,6 +241,7 @@ async function refreshLlmModel(session: LlmSession): Promise<void> {
   const llmModel = resolveLlmModel(resource, modelId)
   if (!llmModel || llmModel.id === session.model.id) return
   session.model = llmModel
+  session.modelLabel = llmModel.name?.trim() || llmModel.id
   await session.piSession.setModel(llmModel)
 }
 
@@ -785,6 +786,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       keepSession: opts.keepSession ?? true,
       channelModel: modelId,
       channelModelParams: modelParams,
+      modelLabel: model.name?.trim() || model.id,
       rulesHash,
       daemonPort: currentDaemonPort ?? undefined,
       abort,

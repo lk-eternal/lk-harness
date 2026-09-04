@@ -1317,6 +1317,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       persistentPoll,
       model: modelId,
       modelParams,
+      modelLabel: modelSlug(modelId, modelSelection.params ?? []),
       logAgg: { kind: null, buf: "" },
       streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
       todoSnapshot: null,

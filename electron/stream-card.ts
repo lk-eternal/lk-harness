@@ -59,6 +59,8 @@ export interface StreamCardHost {
   streamAgg: StreamAgg | null
   pollPhase: StreamPollPhaseState
   seenMessageIds: Set<string>
+  /** 页脚展示用模型名（finish 时随卡下发） */
+  modelLabel?: string
   /** SDK todos 跨换卡快照 */
   todoSnapshot?: StreamTodoItem[] | null
   /** Resume 持久化 cardId（SDK/LLM 各自实现） */
@@ -535,7 +537,7 @@ export async function postStreamCard(
   sessionKey: string,
   action: "ensure" | "update" | "finish",
   payload: StreamCardPayload,
-  opts?: { cardId?: string; queueBornAt?: number },
+  opts?: { cardId?: string; queueBornAt?: number; modelLabel?: string },
 ): Promise<{ cardId?: string; gone?: boolean } | undefined> {
   const lock = readLockFile()
   if (!lock?.port) return undefined
@@ -548,6 +550,7 @@ export async function postStreamCard(
         segments: payload.segments,
         ...(opts?.cardId ? { card_id: opts.cardId } : {}),
         ...(opts?.queueBornAt ? { queue_born_at: opts.queueBornAt } : {}),
+        ...(opts?.modelLabel ? { model_label: opts.modelLabel } : {}),
       },
       15_000,
     ) as { ok?: boolean; skipped?: boolean; error?: string; cardId?: string; gone?: boolean } | null
@@ -653,7 +656,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean): Pr
       if (!agg.cardId) return
       const payload = buildStreamPayload(agg, host.sessionKey)
       agg.dirty = false
-      await postStreamCard(host.sessionKey, "finish", payload, { cardId: agg.cardId })
+      await postStreamCard(host.sessionKey, "finish", payload, { cardId: agg.cardId, modelLabel: host.modelLabel })
       patchCard(undefined, agg.cardId)
       agg.finished = true
       return
@@ -687,7 +690,7 @@ export function endStreamRound(host: StreamCardHost): void {
   if (!shouldPost) return
   const payload = buildStreamPayload(agg, host.sessionKey)
   const finishAndClear = async (): Promise<void> => {
-    await postStreamCard(host.sessionKey, "finish", payload, { cardId: finishCardId })
+    await postStreamCard(host.sessionKey, "finish", payload, { cardId: finishCardId, modelLabel: host.modelLabel })
     host.patchStreamCardId?.(undefined, { onlyIf: finishCardId })
   }
   agg.inflight = agg.inflight.then(finishAndClear, finishAndClear)

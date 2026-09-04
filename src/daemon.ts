@@ -1490,6 +1490,8 @@ interface AgentStreamCardState {
   expandedPanelIds: Set<string>;
   /** 卡已终态：渲染剥块/completed；与 opts.finish（收口动作）分离 */
   finished?: boolean;
+  /** 页脚用模型名（Electron 随 finish 下发，update 刷新） */
+  modelLabel?: string;
 }
 
 const agentStreamCards = new Map<string, AgentStreamCardState>();
@@ -1850,6 +1852,16 @@ function buildCardMergedPayload(sessionKey: string, state: AgentStreamCardState)
   };
 }
 
+/** 页脚耗时：建卡→收口，紧凑英文单位 */
+function formatTurnElapsed(ms: number): string {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m < 60) return rest ? `${m}m${rest}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ""}`;
+}
+
 async function refreshAgentStreamCard(
   sessionKey: string,
   state: AgentStreamCardState,
@@ -1875,6 +1887,15 @@ async function refreshAgentStreamCard(
       skipThinkingOnlyPlaceholder: hasInlineQuestion,
     }, state, sessionKey);
     const status = terminal ? "completed" as const : "streaming" as const;
+    // 页脚只在收口时落：模型 + 本轮耗时（建卡→收口），正文区不掺元信息
+    let footer: string | undefined;
+    if (terminal) {
+      const parts: string[] = [];
+      if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
+      const elapsedMs = Date.now() - (state.createdAt || Date.now());
+      if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
+      if (parts.length > 0) footer = parts.join(" · ");
+    }
     const cardJson = LarkSender.buildStreamingCardJson({
       status,
       showThinking: state.showThinking,
@@ -1883,6 +1904,7 @@ async function refreshAgentStreamCard(
       sessionTemplate: state.sessionTemplate,
       segments: cardSegs,
       panelState: state,
+      ...(footer ? { footer } : {}),
     });
     const sender = ch.rt.sender!;
     if (opts.finish && !state.finished) {
@@ -2064,6 +2086,7 @@ async function updateAgentStreamCard(
   payload: AgentStreamCardPayload,
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   expectCardId?: string,
+  modelLabel?: string,
 ): Promise<{ ok: boolean; cardId?: string; messageId?: string; error?: string; gone?: boolean }> {
   let state = agentStreamCards.get(sessionKey);
   if (!state) {
@@ -2083,6 +2106,7 @@ async function updateAgentStreamCard(
     state.finished = false;
     ensureSegmentPanelIds(state, state.lastSegments, prev);
   }
+  if (modelLabel?.trim()) state.modelLabel = modelLabel.trim();
   if (!state.mcpReplies.length) {
     const fp = payloadFingerprint(buildCardMergedPayload(sessionKey, state), false);
     if (fp === state.lastHash) {
@@ -2117,6 +2141,7 @@ async function finishAgentStreamCard(
   payload: AgentStreamCardPayload,
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   expectCardId?: string,
+  modelLabel?: string,
 ): Promise<{ ok: boolean; cardId?: string; messageId?: string; error?: string; skipped?: boolean }> {
   const state = agentStreamCards.get(sessionKey);
   if (!state) {
@@ -2145,6 +2170,7 @@ async function finishAgentStreamCard(
     state.lastSegments = payload.segments;
     ensureSegmentPanelIds(state, state.lastSegments, prev);
   }
+  if (modelLabel?.trim()) state.modelLabel = modelLabel.trim();
   // 未决问题：同样 finish 剥块/停 streaming，卡仍存活待点选
   if (hasOpenQuestionBlock(state)) {
     const ok = await refreshAgentStreamCard(sessionKey, state, ch, { finish: true });
@@ -4279,12 +4305,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/agent-stream-card") {
     const body = JSON.parse(await readBody(req));
-    const { session_key, action, segments, card_id, queue_born_at } = body as {
+    const { session_key, action, segments, card_id, queue_born_at, model_label } = body as {
       session_key?: string;
       action?: string;
       segments?: AgentStreamSegment[];
       card_id?: string;
       queue_born_at?: number;
+      model_label?: string;
     };
     if (!session_key || !action) {
       json(res, { ok: false, error: "session_key and action required" }, 400);
@@ -4318,9 +4345,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         return action === "ensure"
           ? ensureAgentStreamCard(sk, payload, ch)
           : action === "update"
-            ? updateAgentStreamCard(sk, payload, ch, card_id)
+            ? updateAgentStreamCard(sk, payload, ch, card_id, model_label)
             : action === "finish"
-              ? finishAgentStreamCard(sk, payload, ch, card_id)
+              ? finishAgentStreamCard(sk, payload, ch, card_id, model_label)
               : { ok: false, error: `unknown action: ${action}` };
       });
       json(res, result, result.ok || (result as { skipped?: boolean }).skipped ? 200 : 500);
