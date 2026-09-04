@@ -78,6 +78,17 @@ export async function switchAgentSessionModel(
   return getAgentEngine(resource).switchSessionModel(sessionKey, model, modelParams, resource.id)
 }
 
+/** 会话级切推理档：仅 LLM 引擎支持；写覆盖 + 停进程，下条懒拉起 */
+export async function switchAgentSessionReasoning(
+  resource: AgentResource,
+  sessionKey: string,
+  level: string,
+): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
+  const fn = getAgentEngine(resource).switchSessionReasoning
+  if (!fn) return { ok: false, error: "当前供应商不支持切换推理档" }
+  return fn(sessionKey, level)
+}
+
 /**
  * 会话级切供应商：同账本（llm↔llm）直续；跨账本导出现在家轮次并暂存搬运。
  * 只停旧进程不清旧本子；空导出不暂存（下次按目标原生起）。

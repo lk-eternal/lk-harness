@@ -82,6 +82,11 @@ export interface AgentEngine {
     modelParams?: string,
     resourceId?: string,
   ): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
+  /** 切推理档（仅 LLM；SDK 的档位即 variants，走 switchSessionModel） */
+  switchSessionReasoning?(
+    sessionKey: string,
+    level: string,
+  ): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
   resetSessionContext(sessionKey: string): void
   handlePollPhaseEvent(sessionKey: string, phase: "start" | "end", payload: PollPhaseEventPayload): void
   setIdleHandler(fn: (sessionKey: string) => void): void

@@ -10,6 +10,7 @@ import {
   getLlmSessionList,
   getLlmSessionCount,
   switchLlmSessionModel,
+  switchLlmSessionReasoning,
   resetLlmSessionContext,
   exportLlmTranscript,
   handleLlmPollPhaseEvent,
@@ -20,6 +21,7 @@ import {
   hasPersistedLlmSession,
 } from "../agent-llm"
 
+import { isThinkingLevel } from "../../src/shared/session-thinking-store.js"
 import type { AgentEngine } from "./types"
 
 export const llmEngine: AgentEngine = {
@@ -73,6 +75,10 @@ export const llmEngine: AgentEngine = {
 
   getSessionCount: getLlmSessionCount,
   switchSessionModel: switchLlmSessionModel,
+  switchSessionReasoning: (sessionKey: string, level: string) => {
+    if (!isThinkingLevel(level)) return Promise.resolve({ ok: false as const, error: `未知推理档: ${level}` })
+    return switchLlmSessionReasoning(sessionKey, level)
+  },
   resetSessionContext: resetLlmSessionContext,
   exportTranscript: exportLlmTranscript,
   handlePollPhaseEvent: handleLlmPollPhaseEvent,

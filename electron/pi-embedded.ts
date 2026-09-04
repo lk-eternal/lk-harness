@@ -156,6 +156,15 @@ export async function createHarnessPiSession(
   })
   await resourceLoader.reload()
 
+  // 会话级推理档覆盖优先，其次模型默认；store 未就绪沿用旧规则
+  let thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" =
+    model.reasoning ? "medium" : "off"
+  try {
+    const { initSessionThinkingStore, getSessionThinking } = await import("../src/shared/session-thinking-store.js")
+    initSessionThinkingStore(app.getPath("userData"))
+    thinkingLevel = getSessionThinking(opts.sessionKey) ?? thinkingLevel
+  } catch { /* 沿用模型默认 */ }
+
   const { session } = await createAgentSession({
     cwd,
     agentDir,
@@ -164,7 +173,7 @@ export async function createHarnessPiSession(
     sessionManager,
     resourceLoader,
     model,
-    thinkingLevel: model.reasoning ? "medium" : "off",
+    thinkingLevel,
   })
   wrapAgentStreamWithProxy(session)
 

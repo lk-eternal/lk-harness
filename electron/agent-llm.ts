@@ -16,6 +16,14 @@ import {
   pushRecentModel,
 } from "../src/shared/session-model-store.js"
 import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
+import {
+  initSessionThinkingStore,
+  resolveThinkingLevel,
+  defaultThinkingLevel,
+  setSessionThinking,
+  THINKING_LEVELS,
+  type ThinkingLevel,
+} from "../src/shared/session-thinking-store.js"
 import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns, clearMirror } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import {
@@ -93,6 +101,8 @@ interface LlmSession extends StreamCardHost {
   keepSession: boolean
   channelModel: string
   channelModelParams: string
+  /** 会话有效推理档（覆盖优先，其次模型默认；off=不推理） */
+  thinkingLevel: ThinkingLevel
   rulesHash: string
   daemonPort?: number
   abort: AbortController
@@ -242,7 +252,8 @@ async function refreshLlmModel(session: LlmSession): Promise<void> {
   const llmModel = resolveLlmModel(resource, modelId)
   if (!llmModel || llmModel.id === session.model.id) return
   session.model = llmModel
-  session.modelLabel = llmModel.name?.trim() || llmModel.id
+  session.thinkingLevel = thinkingLevelFor(session.sessionKey, llmModel.reasoning)
+  session.modelLabel = llmModelLabel(llmModel, session.thinkingLevel)
   await session.piSession.setModel(llmModel)
 }
 
@@ -683,6 +694,59 @@ export function getLlmSessionList() {
   }))
 }
 
+/** 会话有效推理档（覆盖优先，其次模型默认；store 未就绪按默认） */
+export function thinkingLevelFor(sessionKey: string, modelReasoning?: boolean): ThinkingLevel {
+  try {
+    initSessionThinkingStore(app.getPath("userData"))
+    return resolveThinkingLevel(sessionKey, modelReasoning)
+  } catch {
+    return defaultThinkingLevel(modelReasoning)
+  }
+}
+
+/** /m effort 列表项：7 档全列，当前高亮由 current 标 */
+export function llmEffortOptions(resource: AgentResource, modelId: string, sessionKey: string): {
+  options: { id: string; label: string; params: string; current: boolean }[]
+  current: ThinkingLevel
+} {
+  const model = resolveLlmModel(resource, modelId)
+  const current = thinkingLevelFor(sessionKey, model?.reasoning)
+  const options = THINKING_LEVELS.map((level) => ({
+    id: modelId,
+    label: level === "off" ? `${modelId}（不推理）` : `${modelId} · ${level}`,
+    params: "",
+    current: level === current,
+  }))
+  return { options, current }
+}
+
+/** 卡片页脚用模型名：开推理时带档位，off 保持原样 */
+export function llmModelLabel(model: { id: string; name?: string }, level: ThinkingLevel): string {
+  const base = model.name?.trim() || model.id
+  return level === "off" ? base : `${base} · ${level}`
+}
+
+/** 切推理档：写覆盖 + 停止当前 Agent（如下条懒拉起），与切模型同语义 */
+export async function switchLlmSessionReasoning(
+  sessionKey: string,
+  level: ThinkingLevel,
+): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
+  try {
+    initSessionThinkingStore(app.getPath("userData"))
+  } catch { /* store 未就绪则只记内存 */ }
+  setSessionThinking(sessionKey, level)
+  const live = llmSessions.get(sessionKey)
+  if (live) {
+    live.thinkingLevel = level
+    live.modelLabel = llmModelLabel(live.model, level)
+    pushUiLog("LLM", "INFO", `[${sessionKey}] 换推理档 → ${level}，停止当前 Agent`)
+    await stopLlmSession(sessionKey)
+  } else {
+    pushUiLog("LLM", "INFO", `[${sessionKey}] 已记下推理档 ${level}`)
+  }
+  return { ok: true, deferred: true }
+}
+
 export async function switchLlmSessionModel(
   sessionKey: string,
   model: string,
@@ -772,6 +836,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       taskMessage: opts.taskMessage,
     }
     const persistentPoll = opts.keepSession !== false && (opts.persistentPoll ?? true)
+    const thinkingLevel = thinkingLevelFor(sessionKey, model.reasoning)
 
     pushUiLog("LLM", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Session Worker (persistentPoll=${persistentPoll})`)
 
@@ -791,7 +856,8 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       keepSession: opts.keepSession ?? true,
       channelModel: modelId,
       channelModelParams: modelParams,
-      modelLabel: model.name?.trim() || model.id,
+      thinkingLevel,
+      modelLabel: llmModelLabel(model, thinkingLevel),
       rulesHash,
       daemonPort: currentDaemonPort ?? undefined,
       abort,

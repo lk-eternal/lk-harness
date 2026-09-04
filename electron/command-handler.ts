@@ -7,11 +7,15 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import { broadcastLog } from "./ui-logger"
 import {
   getAgentEngine,
+  agentEngineKind,
   findLiveSessionKey,
   switchAgentSessionModel,
   switchAgentSessionProvider,
+  switchAgentSessionReasoning,
   isAgentSessionRunningOrResumable,
 } from "./agent-engine"
+import { llmEffortOptions } from "./agent-llm"
+import { THINKING_LEVELS } from "../src/shared/session-thinking-store.js"
 import { getSessionResourceOverride, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/shared/session-model-store.js"
 import { resolveModelLabel, rememberModelLabel, selectModelVariants } from "../src/shared/model-utils.js"
@@ -172,22 +176,27 @@ function favProviderName(f: QuickFav): string {
 
 /** 推理等级=会话有效供应商下当前模型的全部 variants；>1 才支持切换 */
 async function effortVariantsForSession(channel: MessageChannel, sessionKey: string): Promise<
-  { ok: true; resource: ReturnType<typeof getAgentResource>; modelId: string; options: { id: string; label: string; params: string; current: boolean }[] }
+  { ok: true; resource: ReturnType<typeof getAgentResource>; modelId: string; kind: "sdk" | "llm"; options: { id: string; label: string; params: string; current: boolean }[] }
   | { ok: false; error: string }
 > {
   const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
   const resource = getAgentResource(effResId)
-  if (!resource || resource.type !== "sdk" || !resource.apiKey?.trim()) {
-    return { ok: false, error: "当前供应商不支持切换推理等级（仅 SDK 模型可用）" }
-  }
   const ov = getSessionOverride(sessionKey)
   const modelId = ov?.model?.trim() || channel.model?.trim()
   if (!modelId) return { ok: false, error: "当前会话无有效模型" }
-  const r = await listSdkModels(resource.apiKey, modelId, ov?.modelParams ?? channel.modelParams ?? "")
-  if (!r.ok) return { ok: false, error: r.error || "获取模型列表失败" }
-  const options = selectModelVariants(r.models, modelId)
-  for (const o of options) rememberModelLabel(o.id, o.params, o.label)
-  return { ok: true, resource, modelId, options }
+  // SDK：档位即同模型 variants；LLM：Pi 的 7 档 thinkingLevel
+  if (resource.type === "sdk" && resource.apiKey?.trim()) {
+    const r = await listSdkModels(resource.apiKey, modelId, ov?.modelParams ?? channel.modelParams ?? "")
+    if (!r.ok) return { ok: false, error: r.error || "获取模型列表失败" }
+    const options = selectModelVariants(r.models, modelId)
+    for (const o of options) rememberModelLabel(o.id, o.params, o.label)
+    return { ok: true, resource, modelId, kind: "sdk", options }
+  }
+  if (agentEngineKind(resource) === "llm") {
+    const { options } = llmEffortOptions(resource, modelId, sessionKey)
+    return { ok: true, resource, modelId, kind: "llm", options }
+  }
+  return { ok: false, error: "当前供应商不支持切换推理等级" }
 }
 
 async function listModelsForResource(resource: Parameters<typeof getAgentResource> extends never ? never : import("../src/shared/channel-types").AgentResource, channel: Parameters<typeof listModelsForCommands>[0]): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
@@ -251,10 +260,15 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     const effResId = sessionKey ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId) : channel.agentResourceId
     const effRes = getAgentResource(effResId)
     const resOv = sessionKey ? getSessionResourceOverride(sessionKey) : undefined
+    const effModelId = ov?.model?.trim() || channel.model?.trim() || ""
+    const thinkingLine = sessionKey && effModelId && agentEngineKind(effRes) === "llm"
+      ? `🧠 推理档: ${llmEffortOptions(effRes, effModelId, sessionKey).current}`
+      : undefined
     const lines: string[] = [
       `📝 「${channel.name}」默认模型: ${cfgDisplay}`,
       `🔀 对话供应商: ${effRes.name || effRes.id}（${providerTypeLabel(effRes.type)}）${resOv ? "（已覆盖通道默认）" : ""}`,
       ovDisplay ? `当前对话模型: ${ovDisplay}` : "当前对话模型: （同默认）",
+      ...(thinkingLine ? [thinkingLine] : []),
       sessionKey && resource && isAgentSessionRunningOrResumable(sessionKey, resource)
         ? "状态: 进行中"
         : "状态: 空闲（切换模型将在下次对话生效）",
@@ -466,6 +480,22 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         return
       }
       const n = ev.options.indexOf(hit) + 1
+      // LLM：档位是会话级 thinking 开关，走停进程+懒拉起；SDK：档位即 variant，走切模型
+      if (ev.kind === "llm") {
+        const level = THINKING_LEVELS[ev.options.indexOf(hit)]
+        const r = await switchAgentSessionReasoning(ev.resource, sessionKey, level)
+        if (!r.ok) {
+          await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
+          return
+        }
+        const lines = [
+          `✅ 已切换推理档（有排队消息时自动拉起）`,
+          ` # · effort ${n}`,
+          `🧠 ${hit.label}`,
+        ]
+        await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, undefined, cmdCardExtra(patchMessageId, "模型", "已切换"))
+        return
+      }
       await applySessionModelPick(port, messageId, channel, chatId,
         { id: hit.id, label: hit.label, current: false, params: hit.params }, `effort ${n}`, patchMessageId, ev.resource)
       return
