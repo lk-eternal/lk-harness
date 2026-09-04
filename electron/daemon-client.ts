@@ -117,7 +117,7 @@ export async function enqueueToSession(
   sessionKey: string,
   content: string,
   chatType = "project",
-  opts?: { channelId?: string; model?: string; modelParams?: string },
+  opts?: { channelId?: string; model?: string; modelParams?: string; messageId?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await httpPost(`http://127.0.0.1:${port}/enqueue`, {
@@ -125,6 +125,7 @@ export async function enqueueToSession(
       channelId: opts?.channelId,
       model: opts?.model,
       modelParams: opts?.modelParams,
+      messageId: opts?.messageId,
     })
     return { ok: true }
   } catch (e) {

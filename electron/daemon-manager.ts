@@ -1234,16 +1234,16 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           const enqueueChatType = (matchedKey && projectIdFromSessionKey(matchedKey))
             ? "project"
             : (claimed.chatType === "group" ? "group" : "p2p")
-          const enq = await enqueueToSession(lock.port, matchedKey, `[打断] ${content}`, enqueueChatType)
+          const enq = await enqueueToSession(lock.port, matchedKey, `[打断] ${content}`, enqueueChatType, { messageId: claimed.messageId })
           if (!enq.ok) {
             await reply(false, `❌ 入队失败: ${enq.error}`)
             break
           }
           if (isSessionAgentRunning(matchedKey)) {
             await stopSessionAgent(matchedKey)
-            await reply(true, `✋ 已打断，带着新指示重开（含积压消息一并处理）`)
+            broadcastLog(`[指令] /f 已打断 ${matchedKey}，新指示已入队等重开`)
           } else {
-            await reply(true, `✅ 已入队（当前无进行中对话，下一轮一并处理）`)
+            broadcastLog(`[指令] /f 已入队 ${matchedKey}（无进行中对话）`)
           }
           break
         }
