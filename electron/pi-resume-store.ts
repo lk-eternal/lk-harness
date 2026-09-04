@@ -1,6 +1,7 @@
 import { app } from "electron"
 import { join } from "node:path"
 import { readFileSync, writeFileSync } from "node:fs"
+import { sessionStateDir } from "../src/shared/data-paths.js"
 
 export interface PiResumeEntry {
   rulesHash: string
@@ -14,7 +15,7 @@ const ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000
 let store: Map<string, PiResumeEntry> | null = null
 
 function storePath(): string {
-  return join(app.getPath("userData"), "pi-resume-map.json")
+  return join(sessionStateDir(app.getPath("userData")), "pi-resume-map.json")
 }
 
 function loadStore(): Map<string, PiResumeEntry> {

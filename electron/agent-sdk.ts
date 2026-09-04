@@ -4,6 +4,7 @@ import { resolve, join, dirname } from "node:path"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
+import { sessionStateDir } from "../src/shared/data-paths.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import { resolveSessionChatName } from "./session-chat-name"
 import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
@@ -139,7 +140,7 @@ const RESUME_ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000
 let resumableAgents: Map<string, ResumeEntry> | null = null
 
 function resumeStorePath(): string {
-  return join(app.getPath("userData"), "sdk-resume-map.json")
+  return join(sessionStateDir(app.getPath("userData")), "sdk-resume-map.json")
 }
 
 function ensureModelStore(): void {
@@ -200,7 +201,7 @@ function patchResumableStreamCard(sessionKey: string, streamCardId: string | und
   saveResumableMap()
 }
 
-function forgetResumable(sessionKey: string): void {
+export function forgetResumable(sessionKey: string): void {
   if (getResumableMap().delete(sessionKey)) saveResumableMap()
 }
 

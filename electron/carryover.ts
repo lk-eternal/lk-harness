@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { transcriptDir } from "../src/shared/data-paths.js"
 import type { TranscriptTurn } from "./agent-engine/types"
 
 /** 搬运块：最近原文轮次，一整块，不做摘要 */
@@ -96,7 +97,7 @@ const MIRROR_KEEP_TURNS = CARRYOVER_TURNS
 
 function mirrorPath(sessionKey: string): string {
   const safe = Buffer.from(sessionKey, "utf8").toString("base64url")
-  return path.join(resolveDataDir(), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
+  return path.join(transcriptDir(resolveDataDir()), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
 }
 
 /** 回合结束记一笔（用户轮 + 助手轮）；失败只记用户轮 */
@@ -104,9 +105,8 @@ export function appendMirrorTurns(sessionKey: string, turns: TranscriptTurn[]): 
   const fresh = turns.filter((t) => t.text?.trim()).map((t) => ({ role: t.role, text: t.text.trim(), at: Date.now() }))
   if (fresh.length === 0) return
   try {
-    const dir = resolveDataDir()
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
     const p = mirrorPath(sessionKey)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
     const prev: string[] = fs.existsSync(p) ? fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()) : []
     const next = [...prev, ...fresh.map((t) => JSON.stringify(t))].slice(-MIRROR_KEEP_TURNS)
     fs.writeFileSync(p, next.join("\n") + "\n", "utf8")
@@ -183,7 +183,7 @@ function resolveDataDir(): string {
 }
 
 function storePath(): string {
-  return path.join(resolveDataDir(), FILE_NAME)
+  return path.join(transcriptDir(resolveDataDir()), FILE_NAME)
 }
 
 function load(): CarryoverFile {
@@ -206,11 +206,11 @@ function load(): CarryoverFile {
 
 function save(): void {
   if (!cache) return
-  const dir = resolveDataDir()
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const tmp = storePath() + ".tmp"
+  const target = storePath()
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const tmp = target + ".tmp"
   fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
-  fs.renameSync(tmp, storePath())
+  fs.renameSync(tmp, target)
 }
 
 export function stashCarryover(sessionKey: string, entry: Omit<PendingCarryover, "at">): void {

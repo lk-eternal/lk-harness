@@ -2,6 +2,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { app } from "electron"
 import { createProxyFetch } from "./llm-proxy"
+import { catalogDir } from "../src/shared/data-paths.js"
 import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai/compat"
 import type { LlmApiProtocol } from "../src/shared/agent-providers"
 
@@ -49,7 +50,7 @@ const PI_SCAN_PROVIDERS = [
 ] as const
 
 function cachePath(): string {
-  return path.join(app.getPath("userData"), CACHE_FILE)
+  return path.join(catalogDir(app.getPath("userData")), CACHE_FILE)
 }
 
 function npmToApi(npm: string | undefined): LlmApiProtocol {

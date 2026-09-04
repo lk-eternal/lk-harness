@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { modelSlug } from "./model-utils.js"
+import { sessionStateDir } from "./data-paths.js"
 
 export interface ModelRef {
   model: string
@@ -41,7 +42,7 @@ function resolveDataDir(): string {
 }
 
 function storePath(): string {
-  return path.join(resolveDataDir(), FILE_NAME)
+  return path.join(sessionStateDir(resolveDataDir()), FILE_NAME)
 }
 
 function emptyStore(): OverrideFile {
@@ -65,11 +66,11 @@ function load(): OverrideFile {
 
 function save(): void {
   if (!cache) return
-  const dir = resolveDataDir()
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const tmp = storePath() + ".tmp"
+  const target = storePath()
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const tmp = target + ".tmp"
   fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
-  fs.renameSync(tmp, storePath())
+  fs.renameSync(tmp, target)
 }
 
 export function modelEntryKey(e: ModelRef): string {

@@ -3,9 +3,10 @@ import cron from "node-cron"
 import { CronExpressionParser } from "cron-parser"
 import { app } from "electron"
 import { readScheduledTasksFile, writeScheduledTasksFile, type ScheduledTask } from "../src/shared/scheduled-task"
+import { configDir } from "../src/shared/data-paths.js"
 
 function resolveTasksFile(): string {
-  return path.join(app.getPath("userData"), "scheduled-tasks.json")
+  return path.join(configDir(app.getPath("userData")), "scheduled-tasks.json")
 }
 
 export function getTasksFilePath(): string {

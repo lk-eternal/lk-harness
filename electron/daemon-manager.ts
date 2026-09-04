@@ -19,6 +19,7 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
+import { migrateDataLayout } from "../src/shared/data-paths.js"
 import {
   getAgentEngine,
   activeAgentSessionCount,
@@ -1852,6 +1853,11 @@ export function initDaemonManager(): void {
   initSessionModelStore(app.getPath("userData"))
   initProjectStore(app.getPath("userData"))
   runLegacyConfigMigration()
+  // 数据目录整理：根下散文件迁入 config/sessions/transcripts/catalogs（幂等）
+  try {
+    const moved = migrateDataLayout(app.getPath("userData"))
+    if (moved.length > 0) broadcastLog(`[DataLayout] 已整理 ${moved.length} 个文件: ${moved.join(", ")}`)
+  } catch { /* 迁移失败不阻断启动 */ }
   // 必须在 legacy 迁移之后：首次运行时通道由上一步创建
   migrateFavoriteWorkspacesToChannels()
   initSessionDispatcher()

@@ -119,6 +119,16 @@ export async function switchAgentSessionProvider(
         stashCarryover(sessionKey, { block: buildCarryoverBlock(exported, fromLabel, toLabel), turns, fromLabel, toLabel })
       }
     } catch { /* 导不出则按空处理：不清不搬 */ }
+    // 换账本旧 resume 已不可用：忘掉两边映射（不清镜像账本），下次 resumableP=false，
+    // 项目提示词与搬运块一起进新家首轮；同账本直续不动
+    try {
+      const { forgetResumable } = await import("../agent-sdk.js")
+      forgetResumable(sessionKey)
+    } catch { /* 旧家无映射则无事可做 */ }
+    try {
+      const { forgetPiResumable } = await import("../pi-resume-store.js")
+      forgetPiResumable(sessionKey)
+    } catch { /* 同上 */ }
   }
 
   try {

@@ -1,5 +1,6 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { sessionStateDir } from "./data-paths.js"
 
 /** 会话级供应商（Agent 资源）覆盖：只影响当前会话，不碰通道默认 */
 
@@ -29,7 +30,7 @@ function resolveDataDir(): string {
 }
 
 function storePath(): string {
-  return path.join(resolveDataDir(), FILE_NAME)
+  return path.join(sessionStateDir(resolveDataDir()), FILE_NAME)
 }
 
 function load(): OverrideFile {
@@ -45,11 +46,11 @@ function load(): OverrideFile {
 
 function save(): void {
   if (!cache) return
-  const dir = resolveDataDir()
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-  const tmp = storePath() + ".tmp"
+  const target = storePath()
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const tmp = target + ".tmp"
   fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
-  fs.renameSync(tmp, storePath())
+  fs.renameSync(tmp, target)
 }
 
 /** Windows 路径大小写不一致时，用已有 key 对齐 */

@@ -43,6 +43,7 @@ import {
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { readScheduledTasksFile, writeScheduledTasksFile, buildNotifySessionKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
+import { configDir, sessionStateDir, migrateDataLayout } from "./shared/data-paths.js";
 import { initSessionModelStore, setSessionOverride } from "./shared/session-model-store.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -521,7 +522,7 @@ function shouldReplyToMessage(ch: { type: "feishu"; rt: ChannelRuntime; chatId?:
 }
 
 // ── 路由映射持久化：daemon 重启后回复历史消息仍能路由到原会话 ──
-const ROUTING_FILE = path.join(APP_DATA_DIR, "session-routing.json");
+const ROUTING_FILE = path.join(sessionStateDir(APP_DATA_DIR), "session-routing.json");
 let routingSaveTimer: NodeJS.Timeout | null = null;
 
 /** 群指令发送人是否为通道主用户：绑定时刻直记的 openId，群/私聊同值 */
@@ -619,6 +620,7 @@ function scheduleRoutingSave(): void {
         chatType: Object.fromEntries(chatTypeByChatKey),
         explicitActive: [...explicitActiveChats],
       };
+      fs.mkdirSync(path.dirname(ROUTING_FILE), { recursive: true });
       fs.writeFileSync(ROUTING_FILE + ".tmp", JSON.stringify(data));
       fs.renameSync(ROUTING_FILE + ".tmp", ROUTING_FILE);
     } catch { /* ignore */ }
@@ -2242,7 +2244,7 @@ interface CardQuestionEntry {
 const cardQuestionMap = new Map<string, CardQuestionEntry>();
 const CARD_QUESTION_MAX = 500;
 const QUESTION_CARD_HINT = "<font color='grey'>请选择上方选项或直接输入</font>";
-const CARD_QUESTION_FILE = path.join(APP_DATA_DIR, "card-questions.json");
+const CARD_QUESTION_FILE = path.join(sessionStateDir(APP_DATA_DIR), "card-questions.json");
 let cardQuestionSaveTimer: NodeJS.Timeout | null = null;
 
 function loadCardQuestions(): void {
@@ -2270,6 +2272,7 @@ function scheduleCardQuestionSave(): void {
     cardQuestionSaveTimer = null;
     try {
       const data = Object.fromEntries(cardQuestionMap);
+      fs.mkdirSync(path.dirname(CARD_QUESTION_FILE), { recursive: true });
       fs.writeFileSync(CARD_QUESTION_FILE + ".tmp", JSON.stringify(data));
       fs.renameSync(CARD_QUESTION_FILE + ".tmp", CARD_QUESTION_FILE);
     } catch { /* ignore */ }
@@ -3587,7 +3590,7 @@ function startHttpServer(): Promise<number> {
 
 const HOME_DIR = os.homedir();
 const SKILLS_DIR = path.join(HOME_DIR, ".cursor", "skills");
-const TASKS_FILE = path.join(APP_DATA_DIR, "scheduled-tasks.json");
+const TASKS_FILE = path.join(configDir(APP_DATA_DIR), "scheduled-tasks.json");
 
 function getProjectMcpPath(): string {
   return path.join(WORKSPACE_DIR, ".cursor", "mcp.json");
@@ -4827,6 +4830,12 @@ export async function daemonMain(): Promise<void> {
   });
 
   initQueue();
+  if (APP_DATA_DIR) {
+    try {
+      const moved = migrateDataLayout(APP_DATA_DIR);
+      if (moved.length > 0) log("INFO", `[DataLayout] 已整理 ${moved.length} 个文件: ${moved.join(", ")}`);
+    } catch { /* 迁移失败不阻断启动 */ }
+  }
   loadRoutingMaps();
   seedMainUserOpenIdFromQueue();
   loadCardQuestions();
