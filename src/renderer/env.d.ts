@@ -13,7 +13,7 @@ declare global {
     channels: ChannelConfig[]
     workspaceDir: string
     favoriteWorkspaces?: string[]
-    favoriteModels?: { model: string; modelParams?: string; label?: string }[]
+    favoriteModels?: { model: string; modelParams?: string; label?: string; resourceId?: string }[]
     autoStart: boolean
     setupComplete: boolean
     httpProxy: string

@@ -219,6 +219,14 @@ export function stashCarryover(sessionKey: string, entry: Omit<PendingCarryover,
   save()
 }
 
+/** 预览不删除；拉起成功后才 consume，失败保留 */
+export function peekCarryover(sessionKey: string): PendingCarryover | undefined {
+  const s = load()
+  const e = s.sessions[sessionKey]
+  if (!e) return undefined
+  return { ...e }
+}
+
 /** 读取并删除；无则返回 undefined */
 export function consumeCarryover(sessionKey: string): PendingCarryover | undefined {
   const s = load()

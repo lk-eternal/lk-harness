@@ -464,15 +464,15 @@ export default function Dashboard({ onSettings, active }: Props) {
     try {
       const cfg = await window.electronAPI.getConfig()
       const favs = cfg.favoriteModels ?? []
-      const favKeys = new Set(favs.map((f) => `${f.model}\0${f.modelParams ?? ""}`))
-      const out: { model: string; modelParams?: string; label?: string; used?: boolean }[] = []
+      const favKeys = new Set(favs.map((f) => `${f.model}\0${f.modelParams ?? ""}\0${f.resourceId ?? ""}`))
+      const out: { model: string; modelParams?: string; label?: string; resourceId?: string; used?: boolean }[] = []
       const seen = new Set<string>()
-      const push = (m: { model: string; modelParams?: string; label?: string }, used?: boolean) => {
+      const push = (m: { model: string; modelParams?: string; label?: string; resourceId?: string }, used?: boolean) => {
         if (!m.model) return
-        const k = `${m.model}\0${m.modelParams ?? ""}`
+        const k = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
         if (favKeys.has(k) || seen.has(k)) return
         seen.add(k)
-        out.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), used })
+        out.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), resourceId: m.resourceId, used })
       }
 
       const quick = await window.electronAPI.listQuickModels()
@@ -491,7 +491,7 @@ export default function Dashboard({ onSettings, active }: Props) {
         const r = await window.electronAPI.listSdkModels(sdkRes.apiKey, activeSessionModel?.model, activeSessionModel?.modelParams)
         if (r.ok) {
           for (const m of r.models) {
-            push({ model: m.id, modelParams: m.params, label: m.label }, false)
+            push({ model: m.id, modelParams: m.params, label: m.label, resourceId: sdkRes.id }, false)
           }
         }
       } else {
@@ -513,28 +513,28 @@ export default function Dashboard({ onSettings, active }: Props) {
     }
   }
 
-  const pickFavoriteModel = async (m: { model: string; modelParams?: string; label?: string }) => {
+  const pickFavoriteModel = async (m: { model: string; modelParams?: string; label?: string; resourceId?: string }) => {
     setActionError("")
     const cfg = await window.electronAPI.getConfig()
     const favs = [...(cfg.favoriteModels ?? [])]
-    if (favs.some((f) => f.model === m.model && (f.modelParams ?? "") === (m.modelParams ?? ""))) {
+    if (favs.some((f) => f.model === m.model && (f.modelParams ?? "") === (m.modelParams ?? "") && (f.resourceId ?? "") === (m.resourceId ?? ""))) {
       setActionError("该模型已在常用列表中")
       setModelFavPickerOpen(false)
       setModelFavQuery("")
       return
     }
-    favs.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams) })
+    favs.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), ...(m.resourceId ? { resourceId: m.resourceId } : {}) })
     await window.electronAPI.saveConfig({ favoriteModels: favs })
     setModelFavPickerOpen(false)
     setModelFavQuery("")
     await refreshModelTabs()
   }
 
-  const removeFavoriteModel = async (m: { model: string; modelParams?: string }) => {
+  const removeFavoriteModel = async (m: { model: string; modelParams?: string; resourceId?: string }) => {
     const cfg = await window.electronAPI.getConfig()
-    const key = `${m.model}\0${m.modelParams ?? ""}`
+    const key = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
     const favs = (cfg.favoriteModels ?? []).filter(
-      (f) => `${f.model}\0${f.modelParams ?? ""}` !== key,
+      (f) => `${f.model}\0${f.modelParams ?? ""}\0${f.resourceId ?? ""}` !== key,
     )
     await window.electronAPI.saveConfig({ favoriteModels: favs })
     // 快捷栏 = 收藏 ∪ 最近；只删收藏会从「最近」补回来，看起来像 ❌ 无效

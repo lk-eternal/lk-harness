@@ -151,15 +151,27 @@ async function applySessionModelPick(
 }
 
 /**
- * 常用模型（favoriteModels）是全局列表，历史上混着 Cursor SDK / 其他网关的模型。
- * /m 只列当前通道 Agent 能用的那些，否则点 q# 必定切换失败。
+ * 常用模型：不再按通道默认过滤，全列 + 供应商后缀。
+ * 供应商+模型是整体：resourceId 随收藏一起存，老条目缺省=未绑定。
  */
-async function quickModelsForChannel(channel: Parameters<typeof listModelsForCommands>[0]): Promise<ModelEntry[]> {
-  const favs = (getConfig().favoriteModels ?? []) as ModelEntry[]
-  const lr = await listModelsForCommands(channel)
-  if (!lr.ok) return favs
-  const usable = new Set(lr.models.map((m) => m.id.toLowerCase()))
-  return favs.filter((f) => usable.has(f.model.toLowerCase()))
+type QuickFav = ModelEntry & { resourceId?: string }
+async function quickModelsForChannel(_channel: Parameters<typeof listModelsForCommands>[0]): Promise<QuickFav[]> {
+  const favs = (getConfig().favoriteModels ?? []) as QuickFav[]
+  return favs
+}
+
+function favProviderName(f: QuickFav): string {
+  if (!f.resourceId) return "未绑定"
+  const r = getAgentResource(f.resourceId)
+  return r.name || r.id
+}
+
+async function listModelsForResource(resource: Parameters<typeof getAgentResource> extends never ? never : import("../src/shared/channel-types").AgentResource, channel: Parameters<typeof listModelsForCommands>[0]): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
+  const r = await getAgentEngine(resource).listModels?.(resource, channel, channel.model, channel.modelParams)
+  if (!r?.ok) return { ok: false, error: r?.error || "获取模型列表失败" }
+  const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current })) as ListedModel[]
+  if (models.length === 0) return { ok: false, error: "暂无可用模型" }
+  return { ok: true, models }
 }
 
 export async function handleFeishuModelCommand(port: number, messageId: string, raw: string, chatId?: string, patchMessageId?: string): Promise<void> {
@@ -174,7 +186,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (parts.length <= 1) {
-    const quick = listQuickModels(await quickModelsForChannel(channel), 6)
+    const quick = listQuickModels(await quickModelsForChannel(channel), 6) as QuickFav[]
     const subBtns = withNav([
       { label: "📋 模型列表", cmd: "/m ls" },
       { label: "ℹ️ 当前模型", cmd: "/m info" },
@@ -182,7 +194,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     ], patchMessageId)
     const favBtns = quick.map((m, i) => {
       const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
-      return { label: `⚡ ${slug}`.slice(0, 40), cmd: `/m use q${i + 1}` }
+      return { label: `⚡ ${slug}（${favProviderName(m)}）`.slice(0, 40), cmd: `/m use q${i + 1}` }
     })
     await reportCommandResult(port, messageId, true, MODEL_SUBCMD_HELP, chatId, [...subBtns, ...favBtns], mExtra("菜单"))
     return
@@ -264,6 +276,45 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       await reportCommandResult(port, messageId, true, body, chatId, btns, mExtra("供应商"))
       return
     }
+    if (action === "pick") {
+      // 最终落子：供应商+模型整体（/m p set 2 --model xxx 同效）
+      const provToken = parts[3]
+      const modelToken = parts[4]
+      if (!provToken || !modelToken) {
+        await reportCommandResult(port, messageId, false, "💡 用法：/m p pick <供应商序号|id> <模型id>", chatId, undefined, mExtra())
+        return
+      }
+      const pIdx = parseInt(provToken, 10)
+      const target = Number.isInteger(pIdx) && String(pIdx) === provToken
+        ? providers[pIdx - 1]
+        : providers.find((r) => r.id === provToken || r.id.startsWith(provToken) || (r.name || "") === provToken)
+      if (!target) {
+        await reportCommandResult(port, messageId, false, `😅 未找到供应商: ${provToken}（先 /m p ls）`, chatId, undefined, mExtra())
+        return
+      }
+      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+      if (!sessionKey) {
+        await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
+        return
+      }
+      const current = getAgentResource(resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+      const hadOverride = !!getSessionResourceOverride(sessionKey)
+      const r = await switchAgentSessionProvider(sessionKey, current, target, { model: modelToken })
+      if (!r.ok) {
+        await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, mExtra("供应商"))
+        return
+      }
+      const display = `${target.name || target.id}（${providerTypeLabel(target.type)}）+ ${modelToken}`
+      const lines = target.id === current.id && hadOverride
+        ? [`🏠 已回到通道默认供应商`, `🔀 ${display}`, "只影响当前对话，历史按下次消息时的账本续上"]
+        : r.sameLedger
+          ? [`✅ 已切换供应商+模型（同账本直续）`, `🔀 ${display}`, "下一条消息生效，只影响当前对话"]
+          : r.turns > 0
+            ? [`✅ 已切换供应商+模型`, `🔀 ${display}`, `📦 搬运 ${r.turns} 轮，下一条消息新家开聊`, "只影响当前对话"]
+            : [`✅ 已切换供应商+模型`, `🔀 ${display}`, "对方无历史可搬，直接续目标原生", "只影响当前对话"]
+      await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, undefined, mExtra("供应商"))
+      return
+    }
     if (action === "set" || action === "use") {
       const token = parts[3]
       if (!token) {
@@ -278,32 +329,52 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         await reportCommandResult(port, messageId, false, `😅 未找到供应商: ${token}（先 /m p ls）`, chatId, undefined, mExtra())
         return
       }
-      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
-      if (!sessionKey) {
-        await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
-        return
-      }
       const mIdx = parts.indexOf("--model")
       const modelPick = mIdx >= 0 ? (parts[mIdx + 1]?.trim() || undefined) : undefined
       if (mIdx >= 0 && !modelPick) {
         await reportCommandResult(port, messageId, false, "💡 用法：/m p set <序号|id> [--model <模型>]", chatId, undefined, mExtra())
         return
       }
+      // 中间态不作数：只选供应商不落子，先列该供应商模型
+      if (!modelPick) {
+        const lr = await listModelsForResource(target, channel)
+        if (!lr.ok) {
+          await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
+          return
+        }
+        const provIdx = providers.indexOf(target) + 1
+        const blocks = lr.models.map((m, i) => {
+          const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
+          return `#${i + 1}  ${display}`
+        })
+        const body = [`🔀 ${target.name || target.id} 的模型（共 ${lr.models.length} 个）`, "", ...blocks, "", "💡 点下方按钮完成切换（供应商+模型整体落子）"].join("\n")
+        const btns = withNav(lr.models.slice(0, 6).map((m) => {
+          const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
+          return { label: `${display}`.slice(0, 40), cmd: `/m p pick ${provIdx} ${m.id}`, section: "选模型落子" }
+        }), patchMessageId)
+        await reportCommandResult(port, messageId, true, body, chatId, btns, mExtra("供应商"))
+        return
+      }
+      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+      if (!sessionKey) {
+        await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
+        return
+      }
       const current = getAgentResource(resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
       const hadOverride = !!getSessionResourceOverride(sessionKey)
-      const r = await switchAgentSessionProvider(sessionKey, current, target, modelPick ? { model: modelPick } : undefined)
+      const r = await switchAgentSessionProvider(sessionKey, current, target, { model: modelPick })
       if (!r.ok) {
         await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, mExtra("供应商"))
         return
       }
-      const display = `${target.name || target.id}（${providerTypeLabel(target.type)}）`
+      const display = `${target.name || target.id}（${providerTypeLabel(target.type)}）+ ${modelPick}`
       const lines = target.id === current.id && hadOverride
         ? [`🏠 已回到通道默认供应商`, `🔀 ${display}`, "只影响当前对话，历史按下次消息时的账本续上"]
         : r.sameLedger
-          ? [`✅ 已切换供应商（同账本直续，无需搬运）`, `🔀 ${display}`, "下一条消息生效，只影响当前对话"]
+          ? [`✅ 已切换供应商+模型（同账本直续）`, `🔀 ${display}`, "下一条消息生效，只影响当前对话"]
           : r.turns > 0
-            ? [`✅ 已切换供应商`, `🔀 ${display}`, `📦 搬运 ${r.turns} 轮，下一条消息新家开聊`, "只影响当前对话"]
-            : [`✅ 已切换供应商`, `🔀 ${display}`, "对方无历史可搬，直接续目标原生", "只影响当前对话"]
+            ? [`✅ 已切换供应商+模型`, `🔀 ${display}`, `📦 搬运 ${r.turns} 轮，下一条消息新家开聊`, "只影响当前对话"]
+            : [`✅ 已切换供应商+模型`, `🔀 ${display}`, "对方无历史可搬，直接续目标原生", "只影响当前对话"]
       await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, undefined, mExtra("供应商"))
       return
     }
@@ -319,13 +390,41 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     const token = parts[2]
     const qMatch = /^q(\d+)$/i.exec(token)
     if (qMatch) {
-      const quick = listQuickModels(await quickModelsForChannel(channel), 20)
+      const quick = listQuickModels(await quickModelsForChannel(channel), 20) as QuickFav[]
       const qi = parseInt(qMatch[1], 10)
       if (qi < 1 || qi > quick.length) {
         await reportCommandResult(port, messageId, false, `😅 常用模型序号须为 1～${quick.length}（先 /m）`, chatId, undefined, mExtra())
         return
       }
       const fromQuick = quick[qi - 1]
+      // 供应商+模型是整体：收藏带供应商且与会话当前不一致 → 原子切换
+      if (fromQuick.resourceId) {
+        const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+        const effId = sessionKey
+          ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+          : channel.agentResourceId
+        if (sessionKey && fromQuick.resourceId !== effId) {
+          const current = getAgentResource(effId)
+          const target = getAgentResource(fromQuick.resourceId)
+          if (!target.id?.trim()) {
+            await reportCommandResult(port, messageId, false, `❌ 收藏的供应商已不存在（先清理常用模型）`, chatId, undefined, mExtra())
+            return
+          }
+          const r = await switchAgentSessionProvider(sessionKey, current, target, { model: fromQuick.model, modelParams: fromQuick.modelParams ?? "" })
+          if (!r.ok) {
+            await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, mExtra())
+            return
+          }
+          const display = resolveModelLabel(fromQuick.model, fromQuick.modelParams, fromQuick.label) || fromQuick.model
+          const lines = r.sameLedger
+            ? [`✅ 已切换模型（同账本直续）`, `🔀 ${target.name || target.id}`, `🧠 ${display}`]
+            : r.turns > 0
+              ? [`✅ 已切换模型（含供应商）`, `🔀 ${target.name || target.id}`, `🧠 ${display}`, `📦 搬运 ${r.turns} 轮，下一条消息新家开聊`]
+              : [`✅ 已切换模型（含供应商）`, `🔀 ${target.name || target.id}`, `🧠 ${display}`, "对方无历史可搬，直接续目标原生"]
+          await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, undefined, mExtra("模型"))
+          return
+        }
+      }
       const picked: ListedModel = {
         id: fromQuick.model,
         label: resolveModelLabel(fromQuick.model, fromQuick.modelParams, fromQuick.label) || fromQuick.model,

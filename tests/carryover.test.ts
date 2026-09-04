@@ -14,6 +14,7 @@ import {
   initCarryoverStore,
   resetCarryoverStoreForTests,
   stashCarryover,
+  peekCarryover,
   consumeCarryover,
 } from "../electron/carryover.js"
 import {
@@ -133,8 +134,10 @@ describe("carryover store", () => {
     resetCarryoverStoreForTests()
     fs.rmSync(dataDir, { recursive: true, force: true })
   })
-  it("单次消费", () => {
+  it("单次消费，peek 不删除", () => {
     stashCarryover("sk", { block: "b", turns: 2, fromLabel: "A", toLabel: "B" })
+    expect(peekCarryover("sk")?.block).toBe("b")
+    expect(peekCarryover("sk")?.block).toBe("b")
     expect(consumeCarryover("sk")?.block).toBe("b")
     expect(consumeCarryover("sk")).toBeUndefined()
   })

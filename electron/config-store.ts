@@ -22,8 +22,8 @@ export interface AppConfig {
   workspaceDir: string
   /** 常用工作目录种子；实际读写以 channel.favoriteWorkspaces 为准（无通道时的兜底） */
   favoriteWorkspaces: string[]
-  /** 常用模型（飞书/Dashboard 快捷切会话模型） */
-  favoriteModels: { model: string; modelParams?: string; label?: string }[]
+  /** 常用模型（飞书/Dashboard 快捷切会话模型；resourceId 缺省=未绑定老条目） */
+  favoriteModels: { model: string; modelParams?: string; label?: string; resourceId?: string }[]
   autoStart: boolean
   setupComplete: boolean
   httpProxy: string
