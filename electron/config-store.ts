@@ -5,6 +5,7 @@ import * as path from "node:path"
 import * as os from "node:os"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
+import { preserveChannelBindings } from "../src/shared/channel-binding.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 
 export type { AgentResource, MessageChannel, ScheduledTask }
@@ -250,6 +251,12 @@ export function saveConfig(partial: Partial<AppConfig>): void {
   const cleaned = Object.fromEntries(
     Object.entries(partial).filter(([, v]) => v !== undefined),
   ) as Partial<AppConfig>
+  if (cleaned.channels) {
+    cleaned.channels = preserveChannelBindings(cleaned.channels, getStore().store.channels) ?? cleaned.channels
+  }
+  if (cleaned.channels) {
+    cleaned.channels = preserveChannelBindings(cleaned.channels, getStore().store.channels) ?? cleaned.channels
+  }
   if (cleaned.favoriteWorkspaces) {
     cleaned.favoriteWorkspaces = dedupeFavoriteWorkspaces(cleaned.favoriteWorkspaces)
   }

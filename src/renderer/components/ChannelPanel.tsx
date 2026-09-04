@@ -438,7 +438,11 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
 
   const handleUnbind = async () => {
     if (!await showConfirm("解绑确认", "确定解除该通道的主用户绑定吗？解绑后该通道私聊将按\"其他人\"模式处理。")) return
-    set({ mainUserChatId: "" })
+    // 真解绑走主进程（清开关+推 daemon），只清草稿 chatId 等于没解（门只看开关）
+    await window.electronAPI.unbindChannel(channel.id)
+    const next = { ...draft, mainUserEnabled: false, mainUserChatId: "" }
+    onChange(next)
+    await onSaveDraft(next)
   }
 
   const handleTest = async () => {
