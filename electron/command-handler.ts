@@ -15,7 +15,7 @@ import {
   isAgentSessionRunningOrResumable,
 } from "./agent-engine"
 import { llmEffortOptions } from "./agent-llm"
-import { THINKING_LEVELS } from "../src/shared/session-thinking-store.js"
+import { THINKING_LEVELS, type ThinkingLevel } from "../src/shared/session-thinking-store.js"
 import { getSessionResourceOverride, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/shared/session-model-store.js"
 import { resolveModelLabel, rememberModelLabel, selectModelVariants } from "../src/shared/model-utils.js"
@@ -176,7 +176,7 @@ function favProviderName(f: QuickFav): string {
 
 /** 推理等级=会话有效供应商下当前模型的全部 variants；>1 才支持切换 */
 async function effortVariantsForSession(channel: MessageChannel, sessionKey: string): Promise<
-  { ok: true; resource: ReturnType<typeof getAgentResource>; modelId: string; kind: "sdk" | "llm"; options: { id: string; label: string; params: string; current: boolean }[] }
+  { ok: true; resource: ReturnType<typeof getAgentResource>; modelId: string; kind: "sdk" | "llm"; options: { id: string; label: string; params: string; current: boolean }[]; levels?: ThinkingLevel[] }
   | { ok: false; error: string }
 > {
   const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
@@ -193,8 +193,8 @@ async function effortVariantsForSession(channel: MessageChannel, sessionKey: str
     return { ok: true, resource, modelId, kind: "sdk", options }
   }
   if (agentEngineKind(resource) === "llm") {
-    const { options } = llmEffortOptions(resource, modelId, sessionKey)
-    return { ok: true, resource, modelId, kind: "llm", options }
+    const { options, levels } = llmEffortOptions(resource, modelId, sessionKey)
+    return { ok: true, resource, modelId, kind: "llm", options, levels }
   }
   return { ok: false, error: "当前供应商不支持切换推理等级" }
 }
@@ -451,7 +451,8 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         return `#${i + 1}  ${display}${o.current ? "  ⭐current" : ""}`
       })
       const body = [`🧠 ${ev.modelId} 的推理等级（共 ${ev.options.length} 个）`, "", ...blocks, "", "💡 点下方按钮切换（运行中会立即停止，下一条消息生效）"].join("\n")
-      const btns = withNav(ev.options.slice(0, 6).map((o, i) => {
+      // 档位列表必须全列（曾用 slice(0, 6) 把第 7 档 max 裁掉，导致永远切不到）
+      const btns = withNav(ev.options.map((o, i) => {
         const display = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
         return { label: `#${i + 1} ${display}`.slice(0, 40), cmd: `/m effort set ${i + 1}`, section: "切换推理等级" }
       }), patchMessageId)
@@ -482,7 +483,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       const n = ev.options.indexOf(hit) + 1
       // LLM：档位是会话级 thinking 开关，走停进程+懒拉起；SDK：档位即 variant，走切模型
       if (ev.kind === "llm") {
-        const level = THINKING_LEVELS[ev.options.indexOf(hit)]
+        const level = (ev.levels ?? THINKING_LEVELS)[ev.options.indexOf(hit)]
         const r = await switchAgentSessionReasoning(ev.resource, sessionKey, level)
         if (!r.ok) {
           await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, cmdCardExtra(patchMessageId, "模型"))

@@ -5,6 +5,7 @@ import { createProxyFetch } from "./llm-proxy"
 import { catalogDir } from "../src/shared/data-paths.js"
 import { getModel, getModels, type Api, type Model } from "@mariozechner/pi-ai/compat"
 import type { LlmApiProtocol } from "../src/shared/agent-providers"
+import { mapEffortLevels, type ThinkingLevel } from "../src/shared/session-thinking-store.js"
 
 const MODELS_DEV_URL = "https://models.dev/api.json"
 const CACHE_FILE = "models-dev-catalog-v2.json"
@@ -14,6 +15,8 @@ interface CatalogEntry {
   api: LlmApiProtocol
   name?: string
   reasoning?: boolean
+  /** models.dev reasoning_options 中 type=effort 的原始取值（如 gpt-5 只有 minimal/low/medium/high） */
+  reasoningLevels?: string[]
   input?: ("text" | "image")[]
   contextWindow?: number
   maxTokens?: number
@@ -23,6 +26,7 @@ interface ModelsDevModel {
   id?: string
   name?: string
   reasoning?: boolean
+  reasoning_options?: { type?: string; values?: string[]; min?: number; max?: number }[]
   modalities?: { input?: string[] }
   limit?: { context?: number; output?: number }
   provider?: { npm?: string }
@@ -75,10 +79,16 @@ function buildIndex(raw: Record<string, ModelsDevProvider>): {
       if (!id) continue
       const api = npmToApi(m.provider?.npm ?? prov.npm)
       const inputs = (m.modalities?.input ?? []).map((s) => s.toLowerCase())
+      const effortValues = (m.reasoning_options ?? [])
+        .filter((o) => o.type === "effort" && Array.isArray(o.values))
+        .flatMap((o) => o.values as string[])
+        .map((v) => v?.trim())
+        .filter(Boolean)
       const entry: CatalogEntry = {
         api,
         name: m.name?.trim() || id,
         ...(m.reasoning !== undefined ? { reasoning: !!m.reasoning } : {}),
+        ...(effortValues.length ? { reasoningLevels: [...new Set(effortValues)] } : {}),
         ...(inputs.length ? { input: inputs.includes("image") ? ["text", "image"] : ["text"] } : {}),
         ...(m.limit?.context ? { contextWindow: m.limit.context } : {}),
         ...(m.limit?.output ? { maxTokens: m.limit.output } : {}),
@@ -213,6 +223,15 @@ export function lookupCatalogModel(modelId: string, baseUrl?: string): CatalogEn
     if (stale) void refreshCatalogInBackground()
   }
   return hit
+}
+
+/**
+ * 某模型的可用推理档：models.dev effort 取值映射到 Pi 档位并保序，恒带 off。
+ * 无 effort 信息（未知模型 / 仅 budget_tokens / 缓存缺失）返回 undefined，调用方回退固定 7 档。
+ */
+/** 按网关 baseUrl 裁决后的可用档（自适应协议同口径）；未知返回 undefined */
+export function lookupModelThinkingLevels(modelId: string, baseUrl?: string): ThinkingLevel[] | undefined {
+  return mapEffortLevels(lookupCatalogModel(modelId, baseUrl)?.reasoningLevels)
 }
 
 /** 模型 id 在 pi 内置哪个供应商目录里（含能力字段）——实际发包用的就是这张表 */

@@ -24,6 +24,7 @@ import {
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "../src/shared/session-thinking-store.js"
+import { lookupModelThinkingLevels } from "./llm-model-catalog"
 import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns, clearMirror } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import {
@@ -704,20 +705,25 @@ export function thinkingLevelFor(sessionKey: string, modelReasoning?: boolean): 
   }
 }
 
-/** /m effort 列表项：7 档全列，当前高亮由 current 标 */
+/** /m effort 列表项：目录有 effort 信息按其裁决（baseUrl 定 provider），未知回退全量档 */
 export function llmEffortOptions(resource: AgentResource, modelId: string, sessionKey: string): {
   options: { id: string; label: string; params: string; current: boolean }[]
   current: ThinkingLevel
+  levels: ThinkingLevel[]
 } {
   const model = resolveLlmModel(resource, modelId)
   const current = thinkingLevelFor(sessionKey, model?.reasoning)
-  const options = THINKING_LEVELS.map((level) => ({
+  const known = lookupModelThinkingLevels(modelId, resource.baseUrl)
+  const levels = known ?? [...THINKING_LEVELS]
+  // 历史覆盖的档位若不在本轮列表里，补上以免 current 无处可标
+  const full = levels.includes(current) ? levels : [current, ...levels]
+  const options = full.map((level) => ({
     id: modelId,
     label: level === "off" ? `${modelId}（不推理）` : `${modelId} · ${level}`,
     params: "",
     current: level === current,
   }))
-  return { options, current }
+  return { options, current, levels: full }
 }
 
 /** 卡片页脚用模型名：开推理时带档位，off 保持原样 */

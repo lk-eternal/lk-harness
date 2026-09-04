@@ -47,6 +47,15 @@ describe("session-thinking-store", () => {
     expect(defaultThinkingLevel(undefined)).toBe("off")
   })
 
+  it("effort 取值映射保序恒带 off", async () => {
+    const { mapEffortLevels } = await import("../src/shared/session-thinking-store.js")
+    expect(mapEffortLevels(["high", "low", "medium"])).toEqual(["off", "low", "medium", "high"])
+    expect(mapEffortLevels(["none", "low"])).toEqual(["off", "low"])
+    expect(mapEffortLevels([])).toBeUndefined()
+    expect(mapEffortLevels(undefined)).toBeUndefined()
+    expect(mapEffortLevels(["bogus"])).toBeUndefined()
+  })
+
   it("覆盖优先于模型默认", () => {
     expect(resolveThinkingLevel(SESSION, true)).toBe("medium")
     setSessionThinking(SESSION, "off")
