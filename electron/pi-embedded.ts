@@ -18,6 +18,8 @@ import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
 import { assembleLlmHostProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { piAdditionalSkillPaths } from "./skill-paths"
+import { turnsFromPiMessages } from "./carryover"
+import type { TranscriptTurn } from "./agent-engine/types"
 import { buildPiHostMcpConfig } from "./pi-mcp-config"
 
 function harnessAgentDir(): string {
@@ -49,6 +51,26 @@ export function clearPiSession(sessionKey: string): void {
   try {
     fs.rmSync(dir, { recursive: true, force: true })
   } catch { /* ignore */ }
+}
+
+/** 搬运用：读落盘 jsonl 最近正文（跳过工具块与报错空回合） */
+export function readPiSessionTurns(sessionKey: string): TranscriptTurn[] {
+  const file = findExistingSessionFile(sessionDirForKey(sessionKey))
+  if (!file) return []
+  try {
+    const lines = fs.readFileSync(file, "utf-8").split("\n")
+    const messages: { role?: string; content?: string | { type?: string; text?: string }[] }[] = []
+    for (const line of lines) {
+      const t = line.trim()
+      if (!t) continue
+      try {
+        const row = JSON.parse(t) as { type?: string; message?: { role?: string; content?: unknown } }
+        if (row.type !== "message" || !row.message) continue
+        messages.push(row.message as { role?: string; content?: string | { type?: string; text?: string }[] })
+      } catch { /* 坏行跳过 */ }
+    }
+    return turnsFromPiMessages(messages)
+  } catch { return [] }
 }
 
 function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {

@@ -15,7 +15,9 @@ import {
   setSessionOverride,
   pushRecentModel,
 } from "../src/shared/session-model-store.js"
-import { createHarnessPiSession, hasPersistedPiSession, clearPiSession } from "./pi-embedded"
+import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
+import { takeLastTurns, turnsFromPiMessages } from "./carryover"
+import type { TranscriptTurn } from "./agent-engine/types"
 import {
   hashSystemPrompt,
   computePromptHash,
@@ -73,6 +75,8 @@ export interface LlmLaunchOptions {
   keepSession?: boolean
   persistentPoll?: boolean
   pendingMessageIds?: string[]
+  /** 切供应商搬运：清本家文件后全新起（旧家在导出时已留档） */
+  newSession?: boolean
 }
 
 interface LlmSession extends StreamCardHost {
@@ -567,6 +571,20 @@ export function resetLlmSessionContext(sessionKey: string): void {
   forgetPiResumable(sessionKey)
 }
 
+/** 搬运用导出：在线会话消息优先，落盘 jsonl 兜底；取不到返回 [] */
+export async function exportLlmTranscript(sessionKey: string): Promise<TranscriptTurn[]> {
+  try {
+    const live = llmSessions.get(sessionKey)
+    if (live) {
+      const turns = turnsFromPiMessages((live.piSession.messages ?? []) as unknown as Parameters<typeof turnsFromPiMessages>[0])
+      if (turns.length > 0) return takeLastTurns(turns)
+    }
+  } catch { /* 落盘兜底 */ }
+  try {
+    return takeLastTurns(readPiSessionTurns(sessionKey))
+  } catch { return [] }
+}
+
 export function handleLlmPollPhaseEvent(
   sessionKey: string,
   phase: "start" | "end",
@@ -705,6 +723,13 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     const { modelId, modelParams } = resolveLlmModelRef(opts)
     const model = resolveLlmModel(resource, modelId)
     if (!model) return { ok: false, error: "无法解析模型，请检查 Agent 配置或通道模型设置" }
+
+    // 切供应商搬运：清本家文件后全新起（旧家轮次已在切换时导出）
+    if (opts.newSession) {
+      clearPiSession(sessionKey)
+      forgetPiResumable(sessionKey)
+      pushUiLog("LLM", "INFO", `[${sessionKey}] 搬运全新起（已清旧上下文）`)
+    }
 
     const created = await createHarnessPiSession(opts, model, apiKey)
     piSession = created.session

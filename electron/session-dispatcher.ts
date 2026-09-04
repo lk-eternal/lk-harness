@@ -435,7 +435,13 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
-  const resourceId = channel?.agentResourceId
+  // 会话级供应商覆盖（/m p set）优先于通道默认，只影响当前会话
+  let resourceId = channel?.agentResourceId
+  try {
+    const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
+    initSessionResourceStore(app.getPath("userData"))
+    resourceId = resolveResourceForSession(sessionKey, channel?.agentResourceId)
+  } catch { /* store 未就绪时沿用通道资源 */ }
   const resource = getAgentResource(resourceId)
   if (resourceId && resource.id !== resourceId) {
     return { ok: false, error: `Agent 资源「${resourceId}」未找到，请在设置 → Agent 中确认并已保存通道配置` }
@@ -509,6 +515,19 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     return { ok: false, error: "Cursor SDK API Key 未配置" }
   }
 
+  // 切供应商搬运：消费待搬运块，全新起并铺进首回合（单次消费）
+  let launchTaskMessage = taskMessage
+  let newSession: boolean | undefined
+  try {
+    const { consumeCarryover, initCarryoverStore } = await import("./carryover.js")
+    initCarryoverStore(app.getPath("userData"))
+    const pending = consumeCarryover(sessionKey)
+    if (pending) {
+      newSession = true
+      launchTaskMessage = pending.block + (taskMessage?.trim() ? `\n---\n${taskMessage.trim()}` : "")
+    }
+  } catch { /* 无搬运则正常拉起 */ }
+
   return getAgentEngine(resource).launch({
     sessionKey,
     chatType: launchChatType,
@@ -518,12 +537,13 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     digitalIdentityOverride: channel?.digitalIdentity,
     senderOpenId,
     chatName,
-    taskMessage,
+    taskMessage: launchTaskMessage,
     notifySessionKey,
     model,
     modelParams,
     keepSession,
     persistentPoll,
+    newSession,
     pendingMessageIds: p.pendingMessageIds,
     resource,
     channelId: channel?.id,

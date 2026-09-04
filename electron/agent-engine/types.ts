@@ -42,6 +42,8 @@ export interface AgentLaunchParams {
   modelParams: string
   keepSession: boolean
   persistentPoll: boolean
+  /** 切供应商搬运：全新起（不清旧家，下家清了重铺） */
+  newSession?: boolean
   pendingMessageIds?: string[]
   resource: AgentResource
   channelId?: string
@@ -54,6 +56,11 @@ export interface AgentSessionDiagnostics {
   resumeAgentId?: string
   resumeUpdatedAt?: number
   lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }
+}
+
+export interface TranscriptTurn {
+  role: "user" | "assistant"
+  text: string
 }
 
 export interface AgentEngine {
@@ -81,6 +88,9 @@ export interface AgentEngine {
   clearFailStreak(sessionKey: string): void
   clearAllFailStreaks(): void
   hasResumableSession(sessionKey: string): boolean
+
+  /** 导出最近正文轮次（搬运用；取不到返回 []，不抛错） */
+  exportTranscript?(sessionKey: string): Promise<TranscriptTurn[]>
 
   listModels?(
     resource: AgentResource,

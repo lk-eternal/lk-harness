@@ -11,6 +11,7 @@ import {
   getLlmSessionCount,
   switchLlmSessionModel,
   resetLlmSessionContext,
+  exportLlmTranscript,
   handleLlmPollPhaseEvent,
   setLlmIdleHandler,
   llmFailCooldownRemaining,
@@ -45,6 +46,7 @@ export const llmEngine: AgentEngine = {
       pendingMessageIds: p.pendingMessageIds,
       channelId: p.channelId,
       includeAdmin: p.includeAdmin,
+      newSession: p.newSession,
     })
   },
 
@@ -71,6 +73,7 @@ export const llmEngine: AgentEngine = {
   getSessionCount: getLlmSessionCount,
   switchSessionModel: switchLlmSessionModel,
   resetSessionContext: resetLlmSessionContext,
+  exportTranscript: exportLlmTranscript,
   handlePollPhaseEvent: handleLlmPollPhaseEvent,
   setIdleHandler: setLlmIdleHandler,
   failCooldownRemaining: llmFailCooldownRemaining,

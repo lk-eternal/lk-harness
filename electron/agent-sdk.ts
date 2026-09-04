@@ -1510,6 +1510,34 @@ export function resetSdkSessionContext(sessionKey: string): void {
   forgetResumable(sessionKey)
 }
 
+/** 搬运用导出：SDK 侧取数弱——transcript API 优先，流式卡正文回退；只取助手正文，用户轮缺失 */
+export async function exportSdkTranscript(sessionKey: string): Promise<import("./agent-engine/types.js").TranscriptTurn[]> {
+  try {
+    const live = sdkSessions.get(sessionKey)
+    if (!live) return []
+    try {
+      const api = (live.agent as unknown as { getTranscript?: () => Promise<unknown> })?.getTranscript
+      if (typeof api === "function") {
+        const raw = await api.call(live.agent)
+        if (Array.isArray(raw)) {
+          const turns = (raw as { role?: unknown; text?: unknown; content?: unknown }[])
+            .filter((m) => (m.role === "user" || m.role === "assistant") && typeof (m.text ?? m.content) === "string" && String(m.text ?? m.content).trim())
+            .map((m) => ({ role: m.role as "user" | "assistant", text: String(m.text ?? m.content).trim() }))
+          if (turns.length > 0) {
+            const { takeLastTurns } = await import("./carryover.js")
+            return takeLastTurns(turns)
+          }
+        }
+      }
+    } catch { /* 流式卡回退 */ }
+    const { takeLastTurns } = await import("./carryover.js")
+    const replies = (live.streamAgg?.segments ?? [])
+      .filter((s): s is { type: "reply"; text: string } => s.type === "reply" && !!s.text.trim())
+      .map((s) => ({ role: "assistant" as const, text: s.text.trim() }))
+    return takeLastTurns(replies)
+  } catch { return [] }
+}
+
 /**
  * 停止全部运行中的会话进程；保留 resume 映射（应用重启后上下文可恢复）。
  * 返回的 Promise 在所有 run 取消落库（或超时）后 resolve——退出前 await 可避免残留 active run。

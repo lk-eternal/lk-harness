@@ -2,7 +2,8 @@ import type { AgentResource } from "../../src/shared/channel-types"
 import type { PollPhaseEventPayload } from "../stream-card"
 import { resolveSessionChatName } from "../session-chat-name"
 import type { AgentEngine, AgentSessionDiagnostics, AgentSessionInfo } from "./types"
-import { getAgentEngine, getAllAgentEngines } from "./factory"
+import { app } from "electron"
+import { getAgentEngine, getAllAgentEngines, agentEngineKind } from "./factory"
 
 export type ListedAgentSession = AgentSessionInfo & { pid: number; source: AgentSessionInfo["runtimeId"] }
 
@@ -75,6 +76,56 @@ export async function switchAgentSessionModel(
   modelParams?: string,
 ): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
   return getAgentEngine(resource).switchSessionModel(sessionKey, model, modelParams)
+}
+
+/**
+ * 会话级切供应商：同账本（llm↔llm）直续；跨账本导出现在家轮次并暂存搬运。
+ * 只停旧进程不清旧本子；空导出不暂存（下次按目标原生起）。
+ */
+export async function switchAgentSessionProvider(
+  sessionKey: string,
+  currentResource: AgentResource,
+  targetResource: AgentResource,
+  opts?: { model?: string; modelParams?: string },
+): Promise<{ ok: boolean; sameLedger: boolean; turns: number; fromLabel: string; toLabel: string; error?: string }> {
+  const { setSessionResourceOverride, clearSessionResourceOverride } = await import("../../src/shared/session-resource-store.js")
+  const { setSessionOverride, clearSessionOverride, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
+  const { stashCarryover, buildCarryoverBlock, initCarryoverStore } = await import("../carryover.js")
+  initSessionModelStore(app.getPath("userData"))
+  initCarryoverStore(app.getPath("userData"))
+
+  const fromLabel = currentResource.name || currentResource.id
+  const toLabel = targetResource.name || targetResource.id
+  const sameLedger = agentEngineKind(currentResource) === "llm" && agentEngineKind(targetResource) === "llm"
+
+  if (targetResource.id === currentResource.id) {
+    clearSessionResourceOverride(sessionKey)
+  } else {
+    setSessionResourceOverride(sessionKey, targetResource.id)
+  }
+  if (opts?.model?.trim()) {
+    setSessionOverride(sessionKey, { model: opts.model.trim(), modelParams: opts.modelParams ?? "" })
+  } else {
+    clearSessionOverride(sessionKey)
+  }
+
+  let turns = 0
+  if (!sameLedger) {
+    try {
+      const live = findEngineForSession(sessionKey) ?? getAgentEngine(currentResource)
+      const exported = (await live.exportTranscript?.(sessionKey)) ?? []
+      if (exported.length > 0) {
+        turns = exported.length
+        stashCarryover(sessionKey, { block: buildCarryoverBlock(exported, fromLabel, toLabel), turns, fromLabel, toLabel })
+      }
+    } catch { /* 导不出则按空处理：不清不搬 */ }
+  }
+
+  try {
+    const live = findEngineForSession(sessionKey)
+    if (live) await live.stop(sessionKey)
+  } catch { /* 停失败不阻断，下次拉起覆盖 */ }
+  return { ok: true, sameLedger, turns, fromLabel, toLabel }
 }
 
 export function findLiveSessionKey(chatId: string): string | undefined {

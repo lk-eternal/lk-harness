@@ -9,6 +9,7 @@ import {
   getSdkSessionCount,
   switchSdkSessionModel,
   resetSdkSessionContext,
+  exportSdkTranscript,
   handlePollPhaseEvent,
   setSdkIdleHandler,
   sdkFailCooldownRemaining,
@@ -41,6 +42,7 @@ export const cursorSdkEngine: AgentEngine = {
       modelParams: p.modelParams,
       keepSession: p.keepSession,
       persistentPoll: p.persistentPoll,
+      newSession: p.newSession,
       pendingMessageIds: p.pendingMessageIds,
       includeAdmin: p.includeAdmin,
     })
@@ -69,6 +71,7 @@ export const cursorSdkEngine: AgentEngine = {
   getSessionCount: getSdkSessionCount,
   switchSessionModel: switchSdkSessionModel,
   resetSessionContext: resetSdkSessionContext,
+  exportTranscript: exportSdkTranscript,
   handlePollPhaseEvent,
   setIdleHandler: setSdkIdleHandler,
   failCooldownRemaining: sdkFailCooldownRemaining,
