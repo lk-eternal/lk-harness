@@ -15,6 +15,7 @@ import {
   type PollMessage,
 } from "./poll-host"
 import { assembleSdkWorkerTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
+import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
@@ -187,6 +188,15 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         }
         break
       }
+
+      // 镜像：用户原文 + 助手正文（搬运统一源；失败不阻断）
+      try {
+        const at = replyTexts(session.streamAgg?.segments ?? []).join("\n\n").trim()
+        appendMirrorTurns(sessionKey, [
+          ...fresh.map((m) => ({ role: "user" as const, text: m.text })),
+          ...(at ? [{ role: "assistant" as const, text: at }] : []),
+        ])
+      } catch { /* ignore */ }
 
       for (const m of fresh) {
         if (m.messageId) session.processedMessageIds.add(m.messageId)

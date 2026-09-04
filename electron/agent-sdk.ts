@@ -1219,6 +1219,10 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
   try {
     ensureSdkBinaryPaths()
     ensureModelStore()
+    try {
+      const { initCarryoverStore } = await import("./carryover.js")
+      initCarryoverStore(app.getPath("userData"))
+    } catch { /* 镜像缺失不阻断 */ }
 
     const fallbackModel = opts.model?.trim() && opts.model.trim() !== "auto" ? opts.model.trim() : "composer-2"
     const resolvedRef = resolveModelForSession(sessionKey, {
@@ -1508,10 +1512,16 @@ export function resetSdkSessionContext(sessionKey: string): void {
   const live = findSdkSessionLoose(sessionKey)
   if (live) void releaseSession(live)
   forgetResumable(sessionKey)
+  void import("./carryover.js").then(({ clearMirror }) => clearMirror(sessionKey)).catch(() => undefined)
 }
 
-/** 搬运用导出：SDK 侧取数弱——transcript API 优先，流式卡正文回退；只取助手正文，用户轮缺失 */
+/** 搬运用导出：镜像优先（双引擎统一源）；无镜像回退 transcript API / 流式卡正文 */
 export async function exportSdkTranscript(sessionKey: string): Promise<import("./agent-engine/types.js").TranscriptTurn[]> {
+  try {
+    const { readMirrorTurns, takeLastTurns } = await import("./carryover.js")
+    const mirror = readMirrorTurns(sessionKey)
+    if (mirror.length > 0) return takeLastTurns(mirror)
+  } catch { /* 旧路径 */ }
   try {
     const live = sdkSessions.get(sessionKey)
     if (!live) return []

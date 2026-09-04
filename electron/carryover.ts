@@ -81,6 +81,71 @@ export function buildCarryoverBlock(turns: TranscriptTurn[], fromLabel: string, 
   return lines.join("\n")
 }
 
+/** 流式段里取正文（搬运镜像用；结构化入参，不依赖 stream-card 运行时） */
+export function replyTexts(segments: { type?: string; text?: string }[]): string[] {
+  return (segments ?? [])
+    .filter((s) => s && s.type === "reply" && s.text?.trim())
+    .map((s) => s.text!.trim())
+}
+
+// ── 逐回合镜像（双引擎统一 transcript 源：用户原文 + 助手正文，落盘 JSONL）──
+
+const MIRROR_FILE_PREFIX = "transcript-"
+/** 滚动存储：只留最近 N 轮，切了直接整包注入，不用临时提取 */
+const MIRROR_KEEP_TURNS = CARRYOVER_TURNS
+
+function mirrorPath(sessionKey: string): string {
+  const safe = Buffer.from(sessionKey, "utf8").toString("base64url")
+  return path.join(resolveDataDir(), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
+}
+
+/** 回合结束记一笔（用户轮 + 助手轮）；失败只记用户轮 */
+export function appendMirrorTurns(sessionKey: string, turns: TranscriptTurn[]): void {
+  const fresh = turns.filter((t) => t.text?.trim()).map((t) => ({ role: t.role, text: t.text.trim(), at: Date.now() }))
+  if (fresh.length === 0) return
+  try {
+    const dir = resolveDataDir()
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    const p = mirrorPath(sessionKey)
+    const prev: string[] = fs.existsSync(p) ? fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()) : []
+    const next = [...prev, ...fresh.map((t) => JSON.stringify(t))].slice(-MIRROR_KEEP_TURNS)
+    fs.writeFileSync(p, next.join("\n") + "\n", "utf8")
+  } catch { /* 镜像失败不影响正事 */ }
+}
+
+export function readMirrorTurns(sessionKey: string): TranscriptTurn[] {
+  try {
+    const p = mirrorPath(sessionKey)
+    if (!fs.existsSync(p)) return []
+    return fs.readFileSync(p, "utf8").split("\n")
+      .filter((l) => l.trim())
+      .flatMap((l) => {
+        try {
+          const r = JSON.parse(l) as { role?: unknown; text?: unknown }
+          if ((r.role === "user" || r.role === "assistant") && typeof r.text === "string" && r.text.trim()) {
+            return [{ role: r.role, text: r.text.trim() }]
+          }
+        } catch { /* 坏行跳过 */ }
+        return []
+      })
+  } catch { return [] }
+}
+
+export function clearMirror(sessionKey: string): void {
+  try {
+    const p = mirrorPath(sessionKey)
+    if (fs.existsSync(p)) fs.unlinkSync(p)
+  } catch { /* ignore */ }
+}
+
+/** 老账本回填合并：镜像在先，老账本去重（按 原文精确匹配）后拼前面 */
+export function mergeLegacyTurns(legacy: TranscriptTurn[], mirror: TranscriptTurn[]): TranscriptTurn[] {
+  if (mirror.length === 0) return legacy
+  if (legacy.length === 0) return mirror
+  const seen = new Set(mirror.map((t) => `${t.role}\0${t.text}`))
+  return [...legacy.filter((t) => !seen.has(`${t.role}\0${t.text}`)), ...mirror]
+}
+
 // ── 待消费搬运（磁盘交接：切换与下次拉起解耦，单次消费，7 天过期）──
 
 interface PendingCarryover {

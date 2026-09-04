@@ -18,6 +18,7 @@ import {
   type PollMessage,
 } from "./poll-host"
 import { isFeishuStreamEnabled } from "./stream-card"
+import { appendMirrorTurns, replyTexts } from "./carryover"
 import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
@@ -258,8 +259,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           pushUiLog("LLM", "ERROR", `[${sessionKey}] 空回复兜底投递失败: ${errorDetail}`)
           break
         }
-        try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
-        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+      // 镜像：用户原文（兜底文本不记，避免污染）
+      try {
+        appendMirrorTurns(sessionKey, fresh.map((m) => ({ role: "user" as const, text: m.text })))
+      } catch { /* ignore */ }
+      try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
+      try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
         for (const m of fresh) {
           if (m.messageId) session.processedMessageIds.add(m.messageId)
         }
@@ -282,6 +287,15 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         // 流式成功也要 touch：finish 投递失败时同样零出站，对齐 SDK 避免黑洞误判
         try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
       }
+
+      // 镜像：用户原文 + 助手正文（搬运统一源；失败不阻断）
+      try {
+        const at = (replyText || replyTexts(session.streamAgg?.segments ?? []).join("\n\n")).trim()
+        appendMirrorTurns(sessionKey, [
+          ...fresh.map((m) => ({ role: "user" as const, text: m.text })),
+          ...(at ? [{ role: "assistant" as const, text: at }] : []),
+        ])
+      } catch { /* ignore */ }
 
       for (const m of fresh) {
         if (m.messageId) session.processedMessageIds.add(m.messageId)

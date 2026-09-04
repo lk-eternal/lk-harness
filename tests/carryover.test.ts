@@ -6,6 +6,11 @@ import {
   turnsFromPiMessages,
   takeLastTurns,
   buildCarryoverBlock,
+  replyTexts,
+  mergeLegacyTurns,
+  appendMirrorTurns,
+  readMirrorTurns,
+  clearMirror,
   initCarryoverStore,
   resetCarryoverStoreForTests,
   stashCarryover,
@@ -65,6 +70,56 @@ describe("buildCarryoverBlock", () => {
     expect(block).toContain("[用户] 看看怎么防")
     expect(block).toContain("[助手] 加幂等键")
     expect(block).toContain("[搬运结束]")
+  })
+})
+
+describe("replyTexts", () => {
+  it("只取 reply 段正文", () => {
+    expect(replyTexts([
+      { type: "reply", text: "好了" },
+      { type: "thinking", text: "想想" },
+      { type: "reply", text: "  " },
+    ])).toEqual(["好了"])
+  })
+})
+
+describe("mergeLegacyTurns", () => {
+  it("老账本去重后拼前面", () => {
+    const legacy = [
+      { role: "user" as const, text: "旧问题" },
+      { role: "assistant" as const, text: "旧回答" },
+    ]
+    const mirror = [{ role: "assistant" as const, text: "旧回答" }]
+    expect(mergeLegacyTurns(legacy, mirror)).toEqual([
+      { role: "user", text: "旧问题" },
+      { role: "assistant", text: "旧回答" },
+    ])
+    expect(mergeLegacyTurns(legacy, [])).toEqual(legacy)
+  })
+})
+
+describe("mirror", () => {
+  let dataDir: string
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-mirror-"))
+    initCarryoverStore(dataDir)
+  })
+  afterEach(() => {
+    resetCarryoverStoreForTests()
+    fs.rmSync(dataDir, { recursive: true, force: true })
+  })
+  it("记一笔、读回、清空", () => {
+    appendMirrorTurns("sk", [
+      { role: "user", text: "你好" },
+      { role: "assistant", text: "在" },
+      { role: "user", text: "  " },
+    ])
+    expect(readMirrorTurns("sk")).toEqual([
+      { role: "user", text: "你好" },
+      { role: "assistant", text: "在" },
+    ])
+    clearMirror("sk")
+    expect(readMirrorTurns("sk")).toEqual([])
   })
 })
 

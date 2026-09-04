@@ -16,7 +16,7 @@ import {
   pushRecentModel,
 } from "../src/shared/session-model-store.js"
 import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
-import { takeLastTurns, turnsFromPiMessages } from "./carryover"
+import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns, clearMirror } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import {
   hashSystemPrompt,
@@ -569,10 +569,19 @@ export function hasPersistedLlmSession(sessionKey: string): boolean {
 export function resetLlmSessionContext(sessionKey: string): void {
   clearPiSession(sessionKey)
   forgetPiResumable(sessionKey)
+  try { clearMirror(sessionKey) } catch { /* ignore */ }
 }
 
-/** 搬运用导出：在线会话消息优先，落盘 jsonl 兜底；取不到返回 [] */
+/** 搬运用导出：镜像优先（双引擎统一源），老账本回填；取不到返回 [] */
 export async function exportLlmTranscript(sessionKey: string): Promise<TranscriptTurn[]> {
+  try {
+    const mirror = readMirrorTurns(sessionKey)
+    if (mirror.length > 0) {
+      let legacy: TranscriptTurn[] = []
+      try { legacy = readPiSessionTurns(sessionKey) } catch { /* 仅镜像 */ }
+      return takeLastTurns(mergeLegacyTurns(legacy, mirror))
+    }
+  } catch { /* 旧路径 */ }
   try {
     const live = llmSessions.get(sessionKey)
     if (live) {
@@ -720,6 +729,8 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     }
 
     initSessionModelStore(app.getPath("userData"))
+    const { initCarryoverStore } = await import("./carryover.js")
+    initCarryoverStore(app.getPath("userData"))
     const { modelId, modelParams } = resolveLlmModelRef(opts)
     const model = resolveLlmModel(resource, modelId)
     if (!model) return { ok: false, error: "无法解析模型，请检查 Agent 配置或通道模型设置" }
