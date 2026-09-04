@@ -20,7 +20,7 @@ import { httpPost, getCurrentActiveSession, enqueueToMainSession } from "./daemo
 
 // ── 共享类型与工具 ─────────────────────────────────────────
 
-export interface FileCommand { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string }
+export interface FileCommand { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string; senderIsMainUser?: boolean }
 
 export interface CommandButton { label: string; cmd: string; /** 分组标题（飞书插在按钮前，微信列表分段） */ section?: string }
 

@@ -490,6 +490,7 @@ function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig | null
     wechatAccountId: c.wechatAccountId?.trim(),
     mainUserEnabled: !!c.mainUserEnabled,
     mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
+    mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
     workspaceDir: c.workspaceDir?.trim() ?? "",
     keepAlive: (c.keepSession ?? true) && (c.persistentPoll ?? true),
     showThinking: c.showThinking ?? true,
@@ -758,11 +759,17 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
             const payload = JSON.parse(line.slice("__BIND_RESULT__:".length))
             const chatId = payload.chatId as string | undefined
             const channelId = payload.channelId as string | undefined
+            const senderOpenId = typeof payload.senderOpenId === "string" && payload.senderOpenId.trim() ? payload.senderOpenId.trim() : undefined
+            const fillOnly = payload.fillOnly === true
             if (chatId && channelId) {
-              updateChannel(channelId, { mainUserEnabled: true, mainUserChatId: chatId })
+              updateChannel(channelId, senderOpenId
+                ? { mainUserEnabled: true, mainUserChatId: chatId, mainUserOpenId: senderOpenId }
+                : { mainUserEnabled: true, mainUserChatId: chatId })
               broadcastLog(`[Bind] 通道 ${channelId} 主用户绑定成功: chat_id=${chatId}`)
-              resolveBindWaiter(channelId, chatId)
-              BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("bind:result", { ok: true, value: chatId, channelId }))
+              if (!fillOnly) {
+                resolveBindWaiter(channelId, chatId)
+                BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("bind:result", { ok: true, value: chatId, channelId }))
+              }
             }
           } catch { /* ignore */ }
           continue
@@ -1144,12 +1151,12 @@ async function checkAndExecutePendingCommands(): Promise<void> {
   if (!cmds || cmds.length === 0) return
 
   for (const cmd of cmds) {
-    let claimed: { command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string } | null
+    let claimed: { command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string; senderIsMainUser?: boolean } | null
     try {
       const claimRes = await httpPost(`http://127.0.0.1:${lock.port}/commands/claim`, { id: cmd.id }) as
-        { ok: boolean; command?: string; messageId?: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string }
+        { ok: boolean; command?: string; messageId?: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string; senderIsMainUser?: boolean }
       if (!claimRes.ok) continue
-      claimed = { command: claimRes.command!, messageId: claimRes.messageId!, chatId: claimRes.chatId, chatType: claimRes.chatType, fromCard: claimRes.fromCard, senderOpenId: claimRes.senderOpenId }
+      claimed = { command: claimRes.command!, messageId: claimRes.messageId!, chatId: claimRes.chatId, chatType: claimRes.chatType, fromCard: claimRes.fromCard, senderOpenId: claimRes.senderOpenId, senderIsMainUser: claimRes.senderIsMainUser }
     } catch { continue }
 
     const rawCmd = claimed.command.trim()
@@ -1157,15 +1164,8 @@ async function checkAndExecutePendingCommands(): Promise<void> {
     const head = (cmdTokens[0] ?? "").toLowerCase()
     initProjectStore(app.getPath("userData"))
     const isAdmin = isMainUser(claimed.chatId, claimed.chatType)
-    // 群内主用户本人：指令队列带发送人 open_id，与通道主用户绑定比对（飞书 open_id 同一空间）
-    const isMainUserSender = (() => {
-      const sender = claimed.senderOpenId?.trim()
-      if (!sender || !claimed.chatId) return false
-      try {
-        const channel = getChannel(parseChatKey(claimed.chatId).channelId)
-        return !!channel?.mainUserEnabled && !!channel.mainUserChatId?.trim() && sender === channel.mainUserChatId.trim()
-      } catch { return false }
-    })()
+    // 群内主用户本人：daemon 入队时已用私聊映射验过（绑定 oc_ → ou_ 比对），这里只认值
+    const isMainUserSender = claimed.senderIsMainUser === true
     const cmdSessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
     const findProj = findProjectByGroupChat(claimed.chatId)
     const routingSession = await resolveRoutingProjectSession(lock.port, claimed.chatId)
@@ -1177,7 +1177,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
       reportCommandResult(lock.port, claimed!.messageId, ok, msg, claimed!.chatId, buttons, patchTarget ? { patchMessageId: patchTarget } : undefined)
     const denyNonAdmin = () => {
       pushUiLog("Electron", "WARN",
-        `[指令] DENY admin cmd=${rawCmd} chatId=${claimed!.chatId ?? "?"} chatType=${claimed!.chatType ?? "?"} sender=${claimed!.senderOpenId ? "***" + claimed!.senderOpenId.slice(-4) : "none"} findProject=${findProj?.id ?? "none"} cmdSession=${cmdSessionKey ?? "none"} routingSession=${routingSession ?? "none"}`)
+        `[指令] DENY admin cmd=${rawCmd} chatId=${claimed!.chatId ?? "?"} chatType=${claimed!.chatType ?? "?"} sender=${claimed!.senderOpenId ? "***" + claimed!.senderOpenId.slice(-4) : "none"} mainUserSender=${claimed!.senderIsMainUser === true} findProject=${findProj?.id ?? "none"} cmdSession=${cmdSessionKey ?? "none"} routingSession=${routingSession ?? "none"}`)
       return reply(false, "🔒 该指令仅管理员可用")
     }
     // 原卡更新目标：仅按钮点击来源才 patch（手输指令的 messageId 是用户消息，不可 patch）
@@ -1205,6 +1205,45 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             await reply(true, wasRunning ? "✅ 已停止" : "❌ 当前没有进行中的对话")
           } else {
             await reply(false, "❌ 当前没有进行中的对话")
+          }
+          break
+        }
+
+        case "/f": {
+          // 打断：先入队再掐旧进程，调度器自动拉起并一并处理积压（含本条）
+          if (!isAdmin && !isProjectGroup && !isMainUserSender) { await denyNonAdmin(); break }
+          const content = cmdTokens.slice(1).join(" ").trim()
+          if (!content) {
+            await reply(false, "💡 用法：/f <内容>（打断当前对话并带新指示重开）")
+            break
+          }
+          const sessionKey = cmdSessionKey
+            ?? (routingSession && projectIdFromSessionKey(routingSession) ? routingSession : undefined)
+          const sessions = getSessionAgentList()
+          const matchedKey = (sessionKey && isSessionAgentRunning(sessionKey) ? sessionKey : undefined)
+            ?? sessions.find((s) => isSessionAgentRunning(s.sessionKey)
+              && claimed.chatId
+              && (s.sessionKey === claimed.chatId || s.sessionKey.startsWith(`${claimed.chatId}::`))
+            )?.sessionKey
+            ?? sessionKey
+            ?? claimed.chatId
+          if (!matchedKey) {
+            await reply(false, "❌ 无法定位会话")
+            break
+          }
+          const enqueueChatType = (matchedKey && projectIdFromSessionKey(matchedKey))
+            ? "project"
+            : (claimed.chatType === "group" ? "group" : "p2p")
+          const enq = await enqueueToSession(lock.port, matchedKey, `[打断] ${content}`, enqueueChatType)
+          if (!enq.ok) {
+            await reply(false, `❌ 入队失败: ${enq.error}`)
+            break
+          }
+          if (isSessionAgentRunning(matchedKey)) {
+            await stopSessionAgent(matchedKey)
+            await reply(true, `✋ 已打断，带着新指示重开（含积压消息一并处理）`)
+          } else {
+            await reply(true, `✅ 已入队（当前无进行中对话，下一轮一并处理）`)
           }
           break
         }
@@ -1663,6 +1702,7 @@ function channelRuntimeFlags(channels: MessageChannel[]) {
     name: c.name,
     mainUserEnabled: !!c.mainUserEnabled,
     mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
+    mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
   }))
 }
 

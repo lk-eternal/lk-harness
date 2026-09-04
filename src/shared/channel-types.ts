@@ -43,6 +43,7 @@ export interface MessageChannel {
   // 主用户（可选）
   mainUserEnabled: boolean;
   mainUserChatId: string;         // 原始 chatId（不含通道前缀）
+  mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
   // 其他人使用（通道级）
   allowOthers: boolean;
   /** 对外身份规则，注入到其他人会话的临时工作目录 */
@@ -74,6 +75,7 @@ export interface DaemonChannelConfig {
   wechatAccountId?: string;
   mainUserEnabled: boolean;
   mainUserChatId: string;
+  mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
   /** 通道级工作目录，空 = 跟随全局 WORKSPACE_DIR */
   workspaceDir: string;
   /** 合成开关（keepSession && persistentPoll）：poll 响应随路下发，作为 Agent 收尾方式的权威来源 */

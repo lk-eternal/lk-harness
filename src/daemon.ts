@@ -145,6 +145,7 @@ interface ChannelRuntimeFlags {
   name?: string;
   mainUserEnabled?: boolean;
   mainUserChatId?: string;
+  mainUserOpenId?: string;
 }
 
 function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
@@ -160,6 +161,7 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
     if (typeof f.hideThinkingOnFinish === "boolean") rt.cfg.hideThinkingOnFinish = f.hideThinkingOnFinish;
     if (typeof f.mainUserEnabled === "boolean") rt.cfg.mainUserEnabled = f.mainUserEnabled;
     if (typeof f.mainUserChatId === "string") rt.cfg.mainUserChatId = f.mainUserChatId;
+    if (typeof f.mainUserOpenId === "string" && f.mainUserOpenId.trim()) rt.cfg.mainUserOpenId = f.mainUserOpenId.trim();
   }
 }
 
@@ -302,16 +304,40 @@ function pickChannel(channelId?: string): ChannelRuntime | null {
 }
 
 /** 主用户绑定（armed bind）命中：写回 Electron 并回执 */
-function completeBind(rt: ChannelRuntime, chatId: string, messageId?: string): void {
+function completeBind(rt: ChannelRuntime, chatId: string, messageId?: string, senderOpenId?: string): void {
   rt.bindArmed = false;
   rt.cfg.mainUserEnabled = true;
   rt.cfg.mainUserChatId = chatId;
+  if (senderOpenId?.trim()) rt.cfg.mainUserOpenId = senderOpenId.trim();
   if (rt.sender) rt.sender.chatId = chatId;
-  process.stdout.write(`__BIND_RESULT__:${JSON.stringify({ channelId: rt.cfg.id, chatId })}\n`);
+  process.stdout.write(`__BIND_RESULT__:${JSON.stringify({ channelId: rt.cfg.id, chatId, senderOpenId: rt.cfg.mainUserOpenId ?? senderOpenId })}\n`);
   log("INFO", `[Bind] 通道「${rt.cfg.name}」主用户绑定成功: ${chatId}`);
   if (messageId) {
     replyToMessage(messageId, "✅ 主用户绑定成功！", makeChatKey(rt.cfg.id, chatId)).catch(() => {});
   }
+}
+
+/** 已绑定但缺 openId 时补记（设置页手动绑 / 老版本升上来）：静默回写，不打扰 */
+function fillMainUserOpenId(rt: ChannelRuntime, senderOpenId: string | undefined): void {
+  const sender = senderOpenId?.trim();
+  if (!sender || rt.cfg.mainUserOpenId?.trim() || !rt.cfg.mainUserChatId?.trim()) return;
+  rt.cfg.mainUserOpenId = sender;
+  process.stdout.write(`__BIND_RESULT__:${JSON.stringify({ channelId: rt.cfg.id, chatId: rt.cfg.mainUserChatId, senderOpenId: sender, fillOnly: true })}\n`);
+  log("INFO", `[Bind] 通道「${rt.cfg.name}」补记主用户 openId`);
+}
+
+/** 启动回填一次：队列残留（.qmsg/.claimed 含发送人）即有现成对应，不必等下一条私聊 */
+function seedMainUserOpenIdFromQueue(): void {
+  try {
+    for (const s of getDistinctSessions()) {
+      if (s.chatType !== "p2p" || !s.senderOpenId) continue;
+      const { channelId, chatId } = parseChatKey(chatIdFromSessionKey(s.sessionKey));
+      const rt = channelId ? channels.get(channelId) : undefined;
+      if (!rt || rt.cfg.mainUserOpenId?.trim()) continue;
+      if (!rt.cfg.mainUserChatId?.trim() || chatId !== rt.cfg.mainUserChatId.trim()) continue;
+      fillMainUserOpenId(rt, s.senderOpenId);
+    }
+  } catch { /* ignore */ }
 }
 
 function isWechatChatId(rawChatId?: string): rawChatId is string {
@@ -369,7 +395,7 @@ function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
         saveWechatState(rt);
       }
       if (rt.bindArmed && msg.chatType === "p2p" && msg.chatId) {
-        completeBind(rt, msg.chatId, msg.messageId);
+        completeBind(rt, msg.chatId, msg.messageId, msg.senderOpenId);
         return;
       }
       if (firstMessage) {
@@ -377,6 +403,7 @@ function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
         return;
       }
       rememberChatType(chatKey, msg.chatType);
+      if (msg.chatType === "p2p" && msg.chatId === rt.cfg.mainUserChatId) fillMainUserOpenId(rt, msg.senderOpenId);
       if (isCommand(msg.text)) {
         handleCommand(msg.text, msg.messageId, chatKey, msg.chatType, undefined, msg.senderOpenId).catch((e: any) =>
           log("ERROR", `[WeChat:${rt.cfg.name}] 指令处理失败: ${e?.message ?? e}`),
@@ -496,6 +523,16 @@ function shouldReplyToMessage(ch: { type: "feishu"; rt: ChannelRuntime; chatId?:
 // ── 路由映射持久化：daemon 重启后回复历史消息仍能路由到原会话 ──
 const ROUTING_FILE = path.join(APP_DATA_DIR, "session-routing.json");
 let routingSaveTimer: NodeJS.Timeout | null = null;
+
+/** 群指令发送人是否为通道主用户：绑定时刻直记的 openId，群/私聊同值 */
+function isMainUserSender(chatKey: string | undefined, senderOpenId: string | undefined): boolean {
+  if (!chatKey || !senderOpenId) return false;
+  const { channelId } = parseChatKey(chatKey);
+  const rt = channelId ? channels.get(channelId) : undefined;
+  const bound = rt?.cfg.mainUserOpenId?.trim();
+  if (!rt?.cfg.mainUserEnabled || !bound) return false;
+  return senderOpenId === bound;
+}
 
 
 /** 清掉误写入的展示标签后缀（无路径分隔符且非 wf_/project_），回写为真实 WORKSPACE_DIR；并压平双重反斜杠 */
@@ -1282,8 +1319,9 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
 
     if (chatType === "p2p" && chatId) {
       rt.lastP2pChatId = chatId;
+      if (chatId === rt.cfg.mainUserChatId) fillMainUserOpenId(rt, senderOpenId);
       if (rt.bindArmed) {
-        completeBind(rt, chatId, messageId);
+        completeBind(rt, chatId, messageId, senderOpenId);
         return;
       }
       if (!sender.chatId) {
@@ -1351,6 +1389,7 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
 const COMMANDS: Record<string, string> = {
   "/stop": "停止当前运行中的 Agent",
   "/x": "同 /stop",
+  "/f": "打断当前对话并带新指示重开（/f <内容>）",
   "/status": "查看 Agent / Daemon 状态",
   "/s": "同 /status",
   "/list": "查看消息队列列表（不消费）",
@@ -2928,7 +2967,7 @@ async function replyToMessage(
 
 // ── 共享指令文件队列（.fcmd）──────────────────────────────
 
-function pushCommandToQueue(command: string, messageId: string, source: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string): boolean {
+function pushCommandToQueue(command: string, messageId: string, source: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string, senderIsMainUser?: boolean): boolean {
   const queueDir = getQueueDir();
   if (!queueDir) return false;
   const ts = Date.now();
@@ -2940,7 +2979,7 @@ function pushCommandToQueue(command: string, messageId: string, source: string, 
   } catch { /* ignore */ }
 
   try {
-    const data = JSON.stringify({ command, messageId, timestamp: ts, source, chatId, chatType, fromCard, senderOpenId });
+    const data = JSON.stringify({ command, messageId, timestamp: ts, source, chatId, chatType, fromCard, senderOpenId, senderIsMainUser });
     const filename = `${ts}_${safeId}.fcmd`;
     const tmpPath = path.join(queueDir, filename + ".tmp");
     const finalPath = path.join(queueDir, filename);
@@ -2953,7 +2992,7 @@ function pushCommandToQueue(command: string, messageId: string, source: string, 
   } catch { return false; }
 }
 
-interface CmdEntry { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string }
+interface CmdEntry { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string; senderIsMainUser?: boolean }
 
 function getPendingCommands(): CmdEntry[] {
   const queueDir = getQueueDir();
@@ -2964,7 +3003,7 @@ function getPendingCommands(): CmdEntry[] {
       try {
         const raw = fs.readFileSync(path.join(queueDir, f), "utf-8");
         const p = JSON.parse(raw);
-        return { id: f, command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId };
+        return { id: f, command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId, senderIsMainUser: p.senderIsMainUser };
       } catch { return null; }
     }).filter(Boolean) as CmdEntry[];
   } catch { return []; }
@@ -2982,7 +3021,7 @@ function claimCommand(fileId: string): Omit<CmdEntry, "id"> | null {
     const raw = fs.readFileSync(claimedPath, "utf-8");
     fs.unlinkSync(claimedPath);
     const p = JSON.parse(raw);
-    return { command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId };
+    return { command: p.command, messageId: p.messageId, chatId: p.chatId, chatType: p.chatType, fromCard: p.fromCard, senderOpenId: p.senderOpenId, senderIsMainUser: p.senderIsMainUser };
   } catch { return null; }
 }
 
@@ -3013,7 +3052,7 @@ async function handleCommand(text: string, messageId: string, chatId?: string, c
   if (chatId && ["/stop", "/restart"].includes(trimmed.toLowerCase())) {
     terminateSessionsByChat(chatId);
   }
-  pushCommandToQueue(trimmed, messageId, `daemon-${process.pid}`, chatId, chatType, fromCard, senderOpenId);
+  pushCommandToQueue(trimmed, messageId, `daemon-${process.pid}`, chatId, chatType, fromCard, senderOpenId, isMainUserSender(chatId, senderOpenId));
 }
 
 // ── HTTP Server ──────────────────────────────────────────
@@ -4760,6 +4799,7 @@ export async function daemonMain(): Promise<void> {
 
   initQueue();
   loadRoutingMaps();
+  seedMainUserOpenIdFromQueue();
   loadCardQuestions();
   if (APP_DATA_DIR) {
     initProjectStore(APP_DATA_DIR);
