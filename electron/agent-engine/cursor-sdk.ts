@@ -38,6 +38,7 @@ export const cursorSdkEngine: AgentEngine = {
       taskMessage: p.taskMessage,
       notifySessionKey: p.notifySessionKey,
       apiKey: p.resource.apiKey ?? "",
+      resourceId: p.resource.id,
       model: p.model,
       modelParams: p.modelParams,
       keepSession: p.keepSession,
@@ -64,6 +65,7 @@ export const cursorSdkEngine: AgentEngine = {
       senderOpenId: s.senderOpenId,
       model: s.model,
       modelParams: s.modelParams,
+      ...(s.resourceId ? { resourceId: s.resourceId } : {}),
       agentId: s.agentId,
     }))
   },

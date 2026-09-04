@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import {
   getConfig, getAgentResource, updateChannel,
-  resolveChannelForSession, effectiveWorkspaceDir, type MessageChannel, type ScheduledTask,
+  resolveChannelForSession, type MessageChannel, type ScheduledTask,
 } from "./config-store"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { broadcastLog } from "./ui-logger"
@@ -14,7 +14,8 @@ import {
 } from "./agent-engine"
 import { getSessionResourceOverride, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/shared/session-model-store.js"
-import { resolveModelLabel, rememberModelLabel } from "../src/shared/model-utils.js"
+import { resolveModelLabel, rememberModelLabel, selectModelVariants } from "../src/shared/model-utils.js"
+import { listSdkModels } from "./agent-sdk"
 import { McpServerEntry, getMcpServerList, getMcpEnabledMap, toggleMcpServer, deleteMcpServer, saveMcpServer } from "./mcp-manager"
 import { httpPost, getCurrentActiveSession, enqueueToMainSession } from "./daemon-client"
 
@@ -93,6 +94,7 @@ const MODEL_SUBCMD_HELP = [
   "💡 /m 模型指令",
   "🔹 /m ls — 查看可选模型",
   "🔹 /m info — 查看当前对话在用的模型",
+  "🔹 /m effort ls — 切换当前模型的推理等级",
   "🔹 /m set <序号> — 切换当前对话的模型",
   "🔹 /m use <序号|id> — 同 set",
   "🔹 /m p ls — 查看供应商列表",
@@ -113,8 +115,9 @@ async function resolveModelSessionKey(port: number, chatId?: string, channel?: M
   if (active?.trim()) return active
   const live = findLiveSessionKey(chatId)
   if (live) return live
-  const ws = effectiveWorkspaceDir(channel)
-  return ws ? `${chatId}::${ws}` : chatId
+  // 无活跃无运行=全新会话：读方（launchAgent）按裸 chatId 拉起，写方不得猜工作区后缀，否则 override 永远命中不了
+  void channel
+  return chatId
 }
 
 async function applySessionModelPick(
@@ -125,13 +128,14 @@ async function applySessionModelPick(
   picked: ListedModel,
   idxLabel?: string,
   patchMessageId?: string,
+  resourceOverride?: ReturnType<typeof getAgentResource>,
 ): Promise<void> {
   const sessionKey = await resolveModelSessionKey(port, chatId, channel)
   if (!sessionKey) {
     await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
     return
   }
-  const resource = getAgentResource(channel.agentResourceId)
+  const resource = resourceOverride ?? getAgentResource(channel.agentResourceId)
   const r = resource
     ? await switchAgentSessionModel(resource, sessionKey, picked.id, picked.params ?? "")
     : { ok: false, error: "未配置 Agent 资源" }
@@ -166,6 +170,26 @@ function favProviderName(f: QuickFav): string {
   return r.name || r.id
 }
 
+/** 推理等级=会话有效供应商下当前模型的全部 variants；>1 才支持切换 */
+async function effortVariantsForSession(channel: MessageChannel, sessionKey: string): Promise<
+  { ok: true; resource: ReturnType<typeof getAgentResource>; modelId: string; options: { id: string; label: string; params: string; current: boolean }[] }
+  | { ok: false; error: string }
+> {
+  const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
+  const resource = getAgentResource(effResId)
+  if (!resource || resource.type !== "sdk" || !resource.apiKey?.trim()) {
+    return { ok: false, error: "当前供应商不支持切换推理等级（仅 SDK 模型可用）" }
+  }
+  const ov = getSessionOverride(sessionKey)
+  const modelId = ov?.model?.trim() || channel.model?.trim()
+  if (!modelId) return { ok: false, error: "当前会话无有效模型" }
+  const r = await listSdkModels(resource.apiKey, modelId, ov?.modelParams ?? channel.modelParams ?? "")
+  if (!r.ok) return { ok: false, error: r.error || "获取模型列表失败" }
+  const options = selectModelVariants(r.models, modelId)
+  for (const o of options) rememberModelLabel(o.id, o.params, o.label)
+  return { ok: true, resource, modelId, options }
+}
+
 async function listModelsForResource(resource: Parameters<typeof getAgentResource> extends never ? never : import("../src/shared/channel-types").AgentResource, channel: Parameters<typeof listModelsForCommands>[0]): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
   const r = await getAgentEngine(resource).listModels?.(resource, channel, channel.model, channel.modelParams)
   if (!r?.ok) return { ok: false, error: r?.error || "获取模型列表失败" }
@@ -187,10 +211,19 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
 
   if (parts.length <= 1) {
     const quick = listQuickModels(await quickModelsForChannel(channel), 6) as QuickFav[]
+    const effortBtns: CommandButton[] = []
+    try {
+      const sk = await resolveModelSessionKey(port, chatId, channel)
+      if (sk) {
+        const ev = await effortVariantsForSession(channel, sk)
+        if (ev.ok && ev.options.length > 1) effortBtns.push({ label: "🧠 修改推理等级", cmd: "/m effort ls" })
+      }
+    } catch { /* 取不到 variants 就不展示入口，菜单照常 */ }
     const subBtns = withNav([
       { label: "📋 模型列表", cmd: "/m ls" },
       { label: "ℹ️ 当前模型", cmd: "/m info" },
       { label: "🔀 供应商", cmd: "/m p ls" },
+      ...effortBtns,
     ], patchMessageId)
     const favBtns = quick.map((m, i) => {
       const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
@@ -382,6 +415,65 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     return
   }
 
+  if (sub === "effort") {
+    const action = low(parts[2] ?? "")
+    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    if (!sessionKey) {
+      await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra())
+      return
+    }
+    const ev = await effortVariantsForSession(channel, sessionKey)
+    if (!ev.ok) {
+      await reportCommandResult(port, messageId, false, `❌ ${ev.error}`, chatId, undefined, mExtra())
+      return
+    }
+    if (ev.options.length <= 1) {
+      await reportCommandResult(port, messageId, false, "当前模型无可选推理等级", chatId, undefined, mExtra())
+      return
+    }
+    if (!action || action === "ls" || action === "list") {
+      const blocks = ev.options.map((o, i) => {
+        const display = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
+        return `#${i + 1}  ${display}${o.current ? "  ⭐current" : ""}`
+      })
+      const body = [`🧠 ${ev.modelId} 的推理等级（共 ${ev.options.length} 个）`, "", ...blocks, "", "💡 点下方按钮切换（运行中会立即停止，下一条消息生效）"].join("\n")
+      const btns = withNav(ev.options.slice(0, 6).map((o, i) => {
+        const display = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
+        return { label: `#${i + 1} ${display}`.slice(0, 40), cmd: `/m effort set ${i + 1}`, section: "切换推理等级" }
+      }), patchMessageId)
+      await reportCommandResult(port, messageId, true, body, chatId, btns, mExtra("推理等级"))
+      return
+    }
+    if (action === "set" || action === "use") {
+      const token = parts[3]
+      if (!token) {
+        await reportCommandResult(port, messageId, false, "💡 用法：/m effort set <序号|等级>", chatId, undefined, mExtra())
+        return
+      }
+      const idx = parseInt(token, 10)
+      let hit = Number.isInteger(idx) && String(idx) === token
+        ? ev.options[idx - 1]
+        : ev.options.find((o) => {
+            const slug = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
+            return o.label === token || slug === token
+          })
+      if (!hit) {
+        await reportCommandResult(port, messageId, false, `😅 未找到等级: ${token}（先 /m effort ls）`, chatId, undefined, mExtra())
+        return
+      }
+      if (hit.current) {
+        await reportCommandResult(port, messageId, true, "已是该等级，无需切换", chatId, undefined, mExtra("推理等级"))
+        return
+      }
+      const n = ev.options.indexOf(hit) + 1
+      await applySessionModelPick(port, messageId, channel, chatId,
+        { id: hit.id, label: hit.label, current: false, params: hit.params }, `effort ${n}`, patchMessageId, ev.resource)
+      return
+    }
+    await reportCommandResult(port, messageId, false, "💡 用法：/m effort ls | /m effort set <序号|等级>", chatId, undefined, mExtra())
+    return
+  }
+
   if (sub === "set" || sub === "use") {
     if (parts.length < 3) {
       await reportCommandResult(port, messageId, false, `💡 用法：/m ${sub} <序号|id|qN>`, chatId, undefined, mExtra())
@@ -455,10 +547,14 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         return m.id === token || m.id.startsWith(token) || slug === token || m.label === token
       })
       if (!picked) {
-        const fromQuick = listQuickModels(await quickModelsForChannel(channel), 20).find((m) => {
+        const allQuick = listQuickModels(await quickModelsForChannel(channel), 20) as QuickFav[]
+        const matches = allQuick.filter((m) => {
           const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
           return m.model === token || slug === token
         })
+        const fromQuick = matches.length > 1
+          ? (matches.find((m) => m.resourceId === channel.agentResourceId) ?? matches.find((m) => m.resourceId) ?? matches[0])
+          : matches[0]
         if (fromQuick) {
           picked = {
             id: fromQuick.model,
@@ -477,7 +573,11 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     if (pIdx >= 0 && parts[pIdx + 1] !== undefined) {
       picked = { ...picked, params: parts.slice(pIdx + 1).join(" ") }
     } else if (!picked.params) {
-      const hit = listQuickModels(await quickModelsForChannel(channel), 20).find((m) => m.model === picked!.id)
+      const allQuick2 = listQuickModels(await quickModelsForChannel(channel), 20) as QuickFav[]
+      const hits = allQuick2.filter((m) => m.model === picked!.id)
+      const hit = hits.length > 1
+        ? (hits.find((m) => m.resourceId === channel.agentResourceId) ?? hits.find((m) => m.resourceId) ?? hits[0])
+        : hits[0]
       if (hit?.modelParams) picked = { ...picked, params: hit.modelParams }
     }
     await applySessionModelPick(port, messageId, channel, chatId, picked, idxLabel, patchMessageId)

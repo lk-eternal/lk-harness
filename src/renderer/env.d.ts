@@ -172,22 +172,22 @@ declare global {
     startDaemon(): Promise<{ ok: boolean; error?: string }>
     stopDaemon(): Promise<void>
     stopAgent(): Promise<{ ok: boolean }>
-    getSessionAgents(): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm" }[]>
+    getSessionAgents(): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]>
     getSessionDiagnostics(sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>
     exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }>
     stopSessionAgent(sessionKey: string): Promise<{ ok: boolean }>
     setSessionModel(sessionKey: string, model: string, modelParams?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
-    listSessionTabs(): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[]; error?: string }>
+    listSessionTabs(): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }>
     listDashboardTree(): Promise<{
       ok: boolean
       channels: {
         channelId: string
         name: string
         mainUserChatId?: string
-        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[]
+        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]
         activeKey?: string
       }[]
-      running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]
+      running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
       error?: string
     }>
     addChannelFavoriteWorkspace(channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }>
@@ -204,10 +204,10 @@ declare global {
       status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>
     }): Promise<{ ok: boolean; error?: string }>
     switchProject(projectId: string): Promise<{ ok: boolean; error?: string }>
-    listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string }[] }>
-    forgetQuickModel(model: string, modelParams?: string): Promise<{ ok: boolean }>
+    listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }>
+    forgetQuickModel(model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }>
     stopAllSessionAgents(): Promise<{ ok: boolean }>
-    onSessionAgents(cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]) => void): () => void
+    onSessionAgents(cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]) => void): () => void
     getDaemonStatus(): Promise<DaemonStatus>
     getLogBuffer(): Promise<string[]>
     getQueueMessages(): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>

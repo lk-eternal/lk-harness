@@ -23,6 +23,7 @@ export interface AgentSessionInfo {
   senderOpenId?: string
   model?: string
   modelParams?: string
+  resourceId?: string
   agentId?: string
   workerPhase?: string
 }
@@ -79,6 +80,7 @@ export interface AgentEngine {
     sessionKey: string,
     model: string,
     modelParams?: string,
+    resourceId?: string,
   ): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
   resetSessionContext(sessionKey: string): void
   handlePollPhaseEvent(sessionKey: string, phase: "start" | "end", payload: PollPhaseEventPayload): void

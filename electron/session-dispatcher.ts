@@ -893,16 +893,17 @@ export type SessionTabItem = {
   removable?: boolean
   model?: string
   modelParams?: string
+  resourceId?: string
 }
 
 /** 未运行会话也要能显示模型：跑着的用实时值，否则回落到 override，最后是通道默认 */
 function tabModelFor(
   sessionKey: string,
-  running?: { model?: string; modelParams?: string },
-): { model?: string; modelParams?: string } {
-  if (running?.model) return { model: running.model, modelParams: running.modelParams }
+  running?: { model?: string; modelParams?: string; resourceId?: string },
+): { model?: string; modelParams?: string; resourceId?: string } {
+  if (running?.model) return { model: running.model, modelParams: running.modelParams, ...(running.resourceId ? { resourceId: running.resourceId } : {}) }
   const ov = getSessionOverride(sessionKey)
-  if (ov) return { model: ov.model, modelParams: ov.modelParams }
+  if (ov) return { model: ov.model, modelParams: ov.modelParams, ...(ov.resourceId ? { resourceId: ov.resourceId } : {}) }
   const fallback = resolveChannelModel(resolveChannelForSession(sessionKey), "primary")
   return fallback.model ? { model: fallback.model, modelParams: fallback.modelParams } : {}
 }

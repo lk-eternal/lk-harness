@@ -75,7 +75,7 @@ export async function switchAgentSessionModel(
   model: string,
   modelParams?: string,
 ): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
-  return getAgentEngine(resource).switchSessionModel(sessionKey, model, modelParams)
+  return getAgentEngine(resource).switchSessionModel(sessionKey, model, modelParams, resource.id)
 }
 
 /**
@@ -104,7 +104,7 @@ export async function switchAgentSessionProvider(
     setSessionResourceOverride(sessionKey, targetResource.id)
   }
   if (opts?.model?.trim()) {
-    setSessionOverride(sessionKey, { model: opts.model.trim(), modelParams: opts.modelParams ?? "" })
+    setSessionOverride(sessionKey, { model: opts.model.trim(), modelParams: opts.modelParams ?? "", resourceId: targetResource.id })
   } else {
     clearSessionOverride(sessionKey)
   }

@@ -188,6 +188,7 @@ function broadcastLlmSessionStatus(): void {
     workspaceDir: workspaceDirFromSessionKey(s.sessionKey),
     model: s.model.id,
     modelParams: s.channelModelParams,
+    ...(s.resource.id ? { resourceId: s.resource.id } : {}),
   }))
   broadcastSessionStatus(list, "llm")
 }
@@ -677,6 +678,7 @@ export function getLlmSessionList() {
     workspaceDir: workspaceDirFromSessionKey(s.sessionKey),
     model: s.model.id,
     modelParams: s.channelModelParams,
+    resourceId: s.resource.id,
     workerPhase: workerPhase?.(s.sessionKey) ?? undefined,
   }))
 }
@@ -685,13 +687,16 @@ export async function switchLlmSessionModel(
   sessionKey: string,
   model: string,
   modelParams?: string,
+  resourceId?: string,
 ): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
   const mid = model?.trim()
   if (!mid) return { ok: false, error: "model 不能为空" }
   initSessionModelStore(app.getPath("userData"))
   const params = modelParams ?? ""
-  setSessionOverride(sessionKey, { model: mid, modelParams: params })
-  pushRecentModel({ model: mid, modelParams: params })
+  const live0 = llmSessions.get(sessionKey)
+  const rid0 = resourceId?.trim() || live0?.resource.id
+  setSessionOverride(sessionKey, { model: mid, modelParams: params, ...(rid0 ? { resourceId: rid0 } : {}) })
+  pushRecentModel({ model: mid, modelParams: params, ...(rid0 ? { resourceId: rid0 } : {}) })
 
   const live = llmSessions.get(sessionKey)
   if (live) {
@@ -827,6 +832,10 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     rememberPiResumable(sessionKey, rulesHash, currentDaemonPort ?? undefined, session.streamAgg?.cardId)
     const history = piSession.messages.length
     broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} worker (${llmProviderId(resource)} / ${model.id}, history=${history})`)
+    try {
+      const { pushRecentModel: pushRecent } = await import("../src/shared/session-model-store.js")
+      pushRecent({ model: model.id, modelParams, ...(resource.id ? { resourceId: resource.id } : {}) })
+    } catch { /* 最近使用写入失败不阻断 */ }
     return { ok: true }
   } catch (e: unknown) {
     await disposeOrphanPi(piSession, session?.piUnsubscribe)

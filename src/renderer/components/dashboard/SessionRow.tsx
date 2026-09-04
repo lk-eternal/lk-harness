@@ -23,15 +23,15 @@ export default function SessionRow({
   onDeleteQueueItem,
 }: {
   node: DashboardSessionNode
-  quickModels: { model: string; modelParams?: string; label?: string }[]
+  quickModels: { model: string; modelParams?: string; label?: string; resourceId?: string }[]
   modelSwitching?: string
   expanded: boolean
   /** 扁平列表（活跃会话）里用来标记会话属于哪个通道 */
   channelName?: string
   onToggle: () => void
-  onSwitchModel: (m: { model: string; modelParams?: string }) => void
+  onSwitchModel: (m: { model: string; modelParams?: string; resourceId?: string }) => void
   onAddFavoriteModel?: () => void
-  onRemoveFavoriteModel?: (m: { model: string; modelParams?: string }) => void
+  onRemoveFavoriteModel?: (m: { model: string; modelParams?: string; resourceId?: string }) => void
   onStop?: () => void
   onDelete?: () => void
   onActivate?: () => void
@@ -149,7 +149,7 @@ export default function SessionRow({
                 <div className="px-2 py-1 text-[11px] text-gray-600">暂无常用模型</div>
               )}
               {quickModels.map((m) => {
-                const k = `${m.model}\0${m.modelParams ?? ""}`
+                const k = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
                 const cur = node.model === m.model && (node.modelParams ?? "") === (m.modelParams ?? "")
                 return (
                   <div key={k} className="group flex items-center hover:bg-violet-950/50">

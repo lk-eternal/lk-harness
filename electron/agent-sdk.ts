@@ -83,6 +83,8 @@ export interface SdkSessionAgent extends StreamCardHost {
   model: string
   /** 模型参数 JSON（与启动时一致，供 UI 展示 slug） */
   modelParams?: string
+  /** 所属供应商（收藏=供应商+模型整体，缺省=老数据未绑定） */
+  resourceId?: string
   /** 流式日志聚合缓冲：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
   /** 飞书流式进度卡；非飞书通道为 null */
@@ -485,6 +487,7 @@ function broadcastSdkSessionStatus(): void {
     workspaceDir: s.workspaceDir,
     model: s.model,
     modelParams: s.modelParams,
+    ...(s.resourceId ? { resourceId: s.resourceId } : {}),
   }))
   broadcastSessionStatus(list, "sdk")
 }
@@ -954,6 +957,7 @@ export function getSdkSessionList() {
     chatName: s.chatName,
     model: s.model,
     modelParams: s.modelParams,
+    ...(s.resourceId ? { resourceId: s.resourceId } : {}),
   }))
 }
 
@@ -968,6 +972,8 @@ export interface SdkLaunchOptions {
   taskMessage?: string
   /** 该会话所属通道绑定的 SDK 资源 API Key */
   apiKey: string
+  /** 该会话所属供应商 id（收藏与最近=供应商+模型整体） */
+  resourceId?: string
   /** 调用方解析好的模型（空 = composer-2） */
   model?: string
   modelParams?: string
@@ -1318,6 +1324,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       persistentPoll,
       model: modelId,
       modelParams,
+      resourceId: opts.resourceId,
       modelLabel: modelSlug(modelId, modelSelection.params ?? []),
       logAgg: { kind: null, buf: "" },
       streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
@@ -1334,7 +1341,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     }
     broadcastLog(`[SDK] 会话 ${sessionKey} 已${resumed ? "恢复" : "创建"}, agentId=${agent.agentId}, model=${JSON.stringify(modelSelection)}`)
     broadcastSdkSessionStatus()
-    pushRecentModel({ model: modelId, modelParams })
+    pushRecentModel({ model: modelId, modelParams, ...(opts.resourceId ? { resourceId: opts.resourceId } : {}) })
 
     // Resume 会话的规则是创建时快照：规则文件变过则在唤醒 prompt 里硬指令重读
     const currentDaemonPort = resolveDaemonPortForPrompt()
@@ -1481,18 +1488,20 @@ export async function switchSdkSessionModel(
   sessionKey: string,
   model: string,
   modelParams?: string,
+  resourceId?: string,
 ): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
   const mid = model?.trim()
   if (!mid) return { ok: false, error: "model 不能为空" }
   ensureModelStore()
   const params = modelParams ?? ""
-  setSessionOverride(sessionKey, { model: mid, modelParams: params })
-  pushRecentModel({ model: mid, modelParams: params })
-
   const live = findSdkSessionLoose(sessionKey)
+  const rid = resourceId?.trim() || live?.resourceId
+  setSessionOverride(sessionKey, { model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
+  pushRecentModel({ model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
+
   const effectiveKey = live?.sessionKey ?? sessionKey
   if (effectiveKey !== sessionKey && !sessionKeyEquals(effectiveKey, sessionKey)) {
-    setSessionOverride(effectiveKey, { model: mid, modelParams: params })
+    setSessionOverride(effectiveKey, { model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
   }
 
   if (live) {

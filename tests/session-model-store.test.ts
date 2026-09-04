@@ -87,3 +87,26 @@ describe("pushRecentModel / listQuickModels", () => {
     expect(quick.filter((q) => q.model === "m9").length).toBe(1)
   })
 })
+
+describe("resourceId（供应商+模型整体）", () => {
+  it("同模型不同供应商是两条", () => {
+    pushRecentModel({ model: "m", modelParams: "", resourceId: "r1" })
+    pushRecentModel({ model: "m", modelParams: "", resourceId: "r2" })
+    const quick = listQuickModels([], 6)
+    expect(quick.filter((q) => q.model === "m").length).toBe(2)
+  })
+
+  it("有绑定条目时未绑定老条目不再补位", () => {
+    pushRecentModel({ model: "m", modelParams: "" })
+    pushRecentModel({ model: "m", modelParams: "", resourceId: "r1" })
+    const quick = listQuickModels([{ model: "m", modelParams: "" }], 6)
+    expect(quick.filter((q) => q.model === "m" && !(q as { resourceId?: string }).resourceId).length).toBe(0)
+    expect(quick.some((q) => (q as { resourceId?: string }).resourceId === "r1")).toBe(true)
+  })
+
+  it("override 不带供应商时保留旧绑定", () => {
+    setSessionOverride(SESSION, { model: "m", modelParams: "", resourceId: "r1" })
+    setSessionOverride(SESSION, { model: "m", modelParams: "" })
+    expect(getSessionOverride(SESSION)?.resourceId).toBe("r1")
+  })
+})

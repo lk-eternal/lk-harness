@@ -2150,9 +2150,9 @@ export function initDaemonManager(): void {
   initProjectStore(app.getPath("userData"))
     return { ok: true as const, models: listQuickModels(getConfig().favoriteModels ?? [], 8) }
   })
-  ipcMain.handle("session:forget-quick-model", (_e, model: string, modelParams?: string) => {
+  ipcMain.handle("session:forget-quick-model", (_e, model: string, modelParams?: string, resourceId?: string) => {
     initSessionModelStore(app.getPath("userData"))
-    removeRecentModel({ model, modelParams })
+    removeRecentModel({ model, modelParams, ...(resourceId ? { resourceId } : {}) })
     return { ok: true as const }
   })
   ipcMain.handle("agent:stop-all-sessions", async () => {

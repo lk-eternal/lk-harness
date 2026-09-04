@@ -66,6 +66,7 @@ export const llmEngine: AgentEngine = {
       senderOpenId: s.senderOpenId,
       model: s.model,
       modelParams: s.modelParams,
+      ...((s as { resourceId?: string }).resourceId ? { resourceId: (s as { resourceId?: string }).resourceId } : {}),
       workerPhase: s.workerPhase,
     }))
   },

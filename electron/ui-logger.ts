@@ -83,7 +83,7 @@ export function clearLogBuffer(): void {
 
 export type SessionSource = "sdk" | "llm"
 
-type SessionEntry = { sessionKey: string; pid: number; startedAt: number; lastActivityAt: number; chatType: string; chatName?: string; workspaceDir?: string; source?: SessionSource; model?: string; modelParams?: string }
+type SessionEntry = { sessionKey: string; pid: number; startedAt: number; lastActivityAt: number; chatType: string; chatName?: string; workspaceDir?: string; source?: SessionSource; model?: string; modelParams?: string; resourceId?: string }
 
 const sessionPartitions = new Map<SessionSource, SessionEntry[]>()
 

@@ -6,6 +6,8 @@ import { sessionStateDir } from "./data-paths.js"
 export interface ModelRef {
   model: string
   modelParams?: string
+  /** 所属供应商；缺省=老数据（未绑定） */
+  resourceId?: string
 }
 
 export interface ModelEntry extends ModelRef {
@@ -74,7 +76,7 @@ function save(): void {
 }
 
 export function modelEntryKey(e: ModelRef): string {
-  return `${e.model}\0${e.modelParams ?? ""}`
+  return `${e.model}\0${e.modelParams ?? ""}\0${e.resourceId ?? ""}`
 }
 
 export function pendingKey(chatKey: string, workspaceDir: string): string {
@@ -103,7 +105,14 @@ export function setSessionOverride(sessionKey: string, ref: ModelRef): void {
   const s = load()
   const prev = findStoredSessionKey(s.sessions, sessionKey)
   if (prev && prev !== sessionKey) delete s.sessions[prev]
-  s.sessions[sessionKey] = { model: ref.model, modelParams: ref.modelParams ?? "", updatedAt: Date.now() }
+  const old = s.sessions[sessionKey]
+  const rid = ref.resourceId ?? (old as ModelRef | undefined)?.resourceId
+  s.sessions[sessionKey] = {
+    model: ref.model,
+    modelParams: ref.modelParams ?? "",
+    ...(rid ? { resourceId: rid } : {}),
+    updatedAt: Date.now(),
+  }
   save()
 }
 
@@ -113,7 +122,7 @@ export function getSessionOverride(sessionKey: string): ModelRef | undefined {
   if (!key) return undefined
   const e = s.sessions[key]
   if (!e?.model) return undefined
-  return { model: e.model, modelParams: e.modelParams ?? "" }
+  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
 }
 
 export function clearSessionOverride(sessionKey: string): void {
@@ -141,14 +150,21 @@ export function clearSessionOverridesForChannel(channelId: string): number {
 
 export function setPendingOverride(key: string, ref: ModelRef): void {
   const s = load()
-  s.pending[key] = { model: ref.model, modelParams: ref.modelParams ?? "", updatedAt: Date.now() }
+  const old = s.pending[key]
+  const rid = ref.resourceId ?? (old as ModelRef | undefined)?.resourceId
+  s.pending[key] = {
+    model: ref.model,
+    modelParams: ref.modelParams ?? "",
+    ...(rid ? { resourceId: rid } : {}),
+    updatedAt: Date.now(),
+  }
   save()
 }
 
 export function getPendingOverride(key: string): ModelRef | undefined {
   const e = load().pending[key]
   if (!e?.model) return undefined
-  return { model: e.model, modelParams: e.modelParams ?? "" }
+  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
 }
 
 /** 读取并删�?pending；不存在返回 undefined */
@@ -158,7 +174,7 @@ export function consumePendingOverride(key: string): ModelRef | undefined {
   if (!e?.model) return undefined
   delete s.pending[key]
   save()
-  return { model: e.model, modelParams: e.modelParams ?? "" }
+  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
 }
 
 /**
@@ -175,13 +191,18 @@ export function resolveModelForSession(sessionKey: string, fallback: ModelRef): 
     return pending
   }
 
-  return { model: fallback.model, modelParams: fallback.modelParams ?? "" }
+  return {
+    model: fallback.model,
+    modelParams: fallback.modelParams ?? "",
+    ...(fallback.resourceId ? { resourceId: fallback.resourceId } : {}),
+  }
 }
 
 export function getRecentModels(): ModelEntry[] {
   return load().recent.map((r) => ({
     model: r.model,
     modelParams: r.modelParams ?? "",
+    ...(r.resourceId ? { resourceId: r.resourceId } : {}),
     usedAt: r.usedAt,
   }))
 }
@@ -190,35 +211,54 @@ export function pushRecentModel(ref: ModelRef, cap = DEFAULT_RECENT_CAP): void {
   const s = load()
   const key = modelEntryKey(ref)
   const next = s.recent.filter((r) => modelEntryKey(r) !== key)
-  next.unshift({ model: ref.model, modelParams: ref.modelParams ?? "", usedAt: Date.now() })
-  s.recent = next.slice(0, Math.max(1, cap))
+  next.unshift({
+    model: ref.model,
+    modelParams: ref.modelParams ?? "",
+    ...(ref.resourceId ? { resourceId: ref.resourceId } : {}),
+    usedAt: Date.now(),
+  })
+  // 同模型无绑定老条目被有绑定新条目替代：避免同一模型出现两条
+  const cleaned = ref.resourceId
+    ? next.filter((r, i) => i === 0 || !(r.model === ref.model && (r.modelParams ?? "") === (ref.modelParams ?? "") && !r.resourceId))
+    : next
+  s.recent = cleaned.slice(0, Math.max(1, cap))
   save()
 }
 
 /** 从「最近使用」去掉一条（常用栏移除时需同步，否则仍会被 listQuickModels 补回来） */
 export function removeRecentModel(ref: ModelRef): void {
   const s = load()
-  const key = modelEntryKey({ model: ref.model, modelParams: ref.modelParams ?? "" })
+  const key = modelEntryKey(ref)
   const next = s.recent.filter((r) => modelEntryKey(r) !== key)
   if (next.length === s.recent.length) return
   s.recent = next
   save()
 }
 
-/** 收藏置顶 + 最近补充，去重，最�?limit �?*/
+/** 收藏置顶 + 最近补充，去重（含供应商维度），最多 limit 条 */
 export function listQuickModels(favorites: ModelEntry[], limit = 6): ModelEntry[] {
   const out: ModelEntry[] = []
   const seen = new Set<string>()
+  // 同模型有绑定条目时，未绑定老条目不再补位
+  const boundModels = new Set<string>()
+  for (const f of favorites) {
+    if (f.model && (f as ModelRef).resourceId) boundModels.add(`${f.model}\0${f.modelParams ?? ""}`)
+  }
+  for (const r of getRecentModels()) {
+    if (r.resourceId) boundModels.add(`${r.model}\0${r.modelParams ?? ""}`)
+  }
   const add = (e: ModelEntry) => {
     if (!e.model || out.length >= limit) return
     const k = modelEntryKey(e)
     if (seen.has(k)) return
+    const ref = e as ModelRef
+    if (!ref.resourceId && boundModels.has(`${e.model}\0${e.modelParams ?? ""}`)) return
     seen.add(k)
     out.push({
       model: e.model,
       modelParams: e.modelParams ?? "",
       label: e.label || modelSlug(e.model, e.modelParams) || e.model,
-      ...((e as { resourceId?: string }).resourceId ? { resourceId: (e as { resourceId?: string }).resourceId } : {}),
+      ...(ref.resourceId ? { resourceId: ref.resourceId } : {}),
     } as ModelEntry)
   }
   for (const f of favorites) add(f)

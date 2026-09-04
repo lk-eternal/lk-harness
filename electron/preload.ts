@@ -161,7 +161,7 @@ const api = {
   loginLarkCli: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:login-lark"),
   startDaemon: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("daemon:start"),
   stopAgent: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop"),
-  getSessionAgents: (): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]> =>
+  getSessionAgents: (): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]> =>
     ipcRenderer.invoke("agent:sessions"),
   getSessionDiagnostics: (sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }> =>
     ipcRenderer.invoke("diagnostics:session", sessionKey),
@@ -170,7 +170,7 @@ const api = {
   stopSessionAgent: (sessionKey: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey),
   setSessionModel: (sessionKey: string, model: string, modelParams?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
     ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams),
-  listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[]; error?: string }> =>
+  listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }> =>
     ipcRenderer.invoke("session:list-tabs"),
   listDashboardTree: (): Promise<{
     ok: boolean
@@ -178,10 +178,10 @@ const api = {
       channelId: string
       name: string
       mainUserChatId?: string
-      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[]
+      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]
       activeKey?: string
     }[]
-    running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]
+    running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
     error?: string
   }> => ipcRenderer.invoke("session:dashboard-tree"),
   addChannelFavoriteWorkspace: (channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }> =>
@@ -205,12 +205,12 @@ const api = {
     ipcRenderer.invoke("project:update", patch),
   switchProject: (projectId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:switch", projectId),
-  listQuickModels: (): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string }[] }> =>
+  listQuickModels: (): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }> =>
     ipcRenderer.invoke("session:list-quick-models"),
-  forgetQuickModel: (model: string, modelParams?: string): Promise<{ ok: boolean }> =>
-    ipcRenderer.invoke("session:forget-quick-model", model, modelParams),
+  forgetQuickModel: (model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke("session:forget-quick-model", model, modelParams, resourceId),
   stopAllSessionAgents: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-all-sessions"),
-  onSessionAgents: (cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]) => void) => {
+  onSessionAgents: (cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, list: Parameters<typeof cb>[0]) => cb(list)
     ipcRenderer.on("agent:sessions", handler)
     return () => { ipcRenderer.removeListener("agent:sessions", handler) }

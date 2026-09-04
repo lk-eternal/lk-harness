@@ -162,17 +162,17 @@ export default function Dashboard({ onSettings, active }: Props) {
 
   const [activeSessionKey, setActiveSessionKey] = useState("")
   const [sessionSwitching, setSessionSwitching] = useState("")
-  const [modelTabs, setModelTabs] = useState<{ model: string; modelParams?: string; label?: string }[]>([])
+  const [modelTabs, setModelTabs] = useState<{ model: string; modelParams?: string; label?: string; resourceId?: string }[]>([])
   const [modelSwitching, setModelSwitching] = useState("")
-  const [activeSessionModel, setActiveSessionModel] = useState<{ model: string; modelParams?: string } | null>(null)
+  const [activeSessionModel, setActiveSessionModel] = useState<{ model: string; modelParams?: string; resourceId?: string } | null>(null)
   const [modelFavPickerOpen, setModelFavPickerOpen] = useState(false)
   const [modelFavLoading, setModelFavLoading] = useState(false)
-  const [modelFavOptions, setModelFavOptions] = useState<{ model: string; modelParams?: string; label?: string; used?: boolean }[]>([])
+  const [modelFavOptions, setModelFavOptions] = useState<{ model: string; modelParams?: string; label?: string; resourceId?: string; used?: boolean }[]>([])
   const [modelFavQuery, setModelFavQuery] = useState("")
-  const [sessionList, setSessionList] = useState<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string }[]>([])
+  const [sessionList, setSessionList] = useState<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]>([])
   const [sessionDiag, setSessionDiag] = useState<Record<string, { running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>>({})
   /** 切模后短暂锁住高亮，避免旧 sessionList 把 UI 刷回上一模型 */
-  const modelPickHoldRef = useRef<{ sk: string; model: string; modelParams?: string; until: number } | null>(null)
+  const modelPickHoldRef = useRef<{ sk: string; model: string; modelParams?: string; resourceId?: string; until: number } | null>(null)
   /** 走 ref 读 sessionList：让 refreshDashboardTree 引用恒定，否则会与 refreshOnboard 的 effect 互相触发成刷新风暴 */
   const sessionListRef = useRef(sessionList)
   sessionListRef.current = sessionList
@@ -431,8 +431,8 @@ export default function Dashboard({ onSettings, active }: Props) {
     return null
   }, [activeSessionKey])
 
-  const switchSessionModel = async (sk: string, m: { model: string; modelParams?: string; label?: string }) => {
-    const key = `${m.model}\0${m.modelParams ?? ""}`
+  const switchSessionModel = async (sk: string, m: { model: string; modelParams?: string; label?: string; resourceId?: string }) => {
+    const key = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
     if (modelSwitching || !sk) return
     setModelSwitching(key)
     try {
@@ -442,8 +442,8 @@ export default function Dashboard({ onSettings, active }: Props) {
         return
       }
       setActionError("")
-      modelPickHoldRef.current = { sk, model: m.model, modelParams: m.modelParams, until: Date.now() + 12_000 }
-      setActiveSessionModel({ model: m.model, modelParams: m.modelParams })
+      modelPickHoldRef.current = { sk, model: m.model, modelParams: m.modelParams, resourceId: m.resourceId, until: Date.now() + 12_000 }
+      setActiveSessionModel({ model: m.model, modelParams: m.modelParams, ...(m.resourceId ? { resourceId: m.resourceId } : {}) })
       await refreshModelTabs()
       await refreshDashboardTree()
     } finally {
@@ -480,7 +480,7 @@ export default function Dashboard({ onSettings, active }: Props) {
         for (const m of quick.models) push(m, true)
       }
       for (const s of sessionList) {
-        if (s.model) push({ model: s.model, modelParams: s.modelParams, label: modelSlug(s.model, s.modelParams) }, true)
+        if (s.model) push({ model: s.model, modelParams: s.modelParams, label: modelSlug(s.model, s.modelParams), ...(s.resourceId ? { resourceId: s.resourceId } : {}) }, true)
       }
       if (activeSessionModel?.model) {
         push({ ...activeSessionModel, label: modelSlug(activeSessionModel.model, activeSessionModel.modelParams) }, true)
@@ -515,6 +515,10 @@ export default function Dashboard({ onSettings, active }: Props) {
 
   const pickFavoriteModel = async (m: { model: string; modelParams?: string; label?: string; resourceId?: string }) => {
     setActionError("")
+    if (!m.resourceId) {
+      setActionError("该模型未绑定供应商，请从供应商模型列表里重选")
+      return
+    }
     const cfg = await window.electronAPI.getConfig()
     const favs = [...(cfg.favoriteModels ?? [])]
     if (favs.some((f) => f.model === m.model && (f.modelParams ?? "") === (m.modelParams ?? "") && (f.resourceId ?? "") === (m.resourceId ?? ""))) {
@@ -523,7 +527,7 @@ export default function Dashboard({ onSettings, active }: Props) {
       setModelFavQuery("")
       return
     }
-    favs.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), ...(m.resourceId ? { resourceId: m.resourceId } : {}) })
+    favs.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), resourceId: m.resourceId })
     await window.electronAPI.saveConfig({ favoriteModels: favs })
     setModelFavPickerOpen(false)
     setModelFavQuery("")
@@ -538,14 +542,14 @@ export default function Dashboard({ onSettings, active }: Props) {
     )
     await window.electronAPI.saveConfig({ favoriteModels: favs })
     // 快捷栏 = 收藏 ∪ 最近；只删收藏会从「最近」补回来，看起来像 ❌ 无效
-    await window.electronAPI.forgetQuickModel(m.model, m.modelParams)
+    await window.electronAPI.forgetQuickModel(m.model, m.modelParams, m.resourceId)
     await refreshModelTabs()
   }
 
   useEffect(() => {
     const hold = modelPickHoldRef.current
     if (hold && Date.now() < hold.until && (!activeSessionKey || activeSessionKey === hold.sk)) {
-      setActiveSessionModel({ model: hold.model, modelParams: hold.modelParams })
+      setActiveSessionModel({ model: hold.model, modelParams: hold.modelParams, ...(hold.resourceId ? { resourceId: hold.resourceId } : {}) })
       const live = sessionList.find((s) => s.sessionKey === hold.sk)
       if (live?.model === hold.model && (live.modelParams ?? "") === (hold.modelParams ?? "")) {
         modelPickHoldRef.current = null
@@ -555,7 +559,7 @@ export default function Dashboard({ onSettings, active }: Props) {
     if (hold && Date.now() >= hold.until) modelPickHoldRef.current = null
     const hit = (activeSessionKey && sessionList.find((s) => s.sessionKey === activeSessionKey && s.model))
       || [...sessionList.filter((s) => s.model)].sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0]
-    if (hit?.model) setActiveSessionModel({ model: hit.model, modelParams: hit.modelParams })
+    if (hit?.model) setActiveSessionModel({ model: hit.model, modelParams: hit.modelParams, ...(hit.resourceId ? { resourceId: hit.resourceId } : {}) })
   }, [sessionList, activeSessionKey])
 
   const [exportingDiag, setExportingDiag] = useState(false)
