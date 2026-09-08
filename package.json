@@ -1,6 +1,6 @@
 {
   "name": "lk-harness",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "LK Harness - 飞书 & 微信 Agent 调度桌面应用",
   "keywords": [
     "mcp",
