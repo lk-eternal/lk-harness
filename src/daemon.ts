@@ -1694,7 +1694,7 @@ type CardBodySegment =
   | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
-  | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string };
+  | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string };
 
 function hideThinkingOnFinishEnabled(cfg: { hideThinkingOnFinish?: boolean }): boolean {
   return cfg.hideThinkingOnFinish !== false;
@@ -1717,10 +1717,10 @@ function buildCardSegmentsFromPayload(
         ? questionOptionButtons(seg.options, sessionKey, seg.blockId)
         : undefined;
       let footer: string | undefined;
-      if (seg.answered) footer = `✅ 已选择: **${seg.answered}**`;
+      if (seg.answered) footer = answeredQuestionFooter(seg.answered);
       else if (seg.closedNote) footer = closedQuestionFooter(seg.text, seg.closedNote);
       else footer = QUESTION_CARD_HINT;
-      out.push({ type: "question", questionText: qText, buttons, footer });
+      out.push({ type: "question", questionText: qText, buttons, footer, elementId: streamQuestionElementId(seg.blockId) });
     } else if (seg.type === "thinking") {
       if (!opts.showThinking || stripFoldables) continue;
       if (!seg.text?.trim()) continue;
@@ -2244,6 +2244,22 @@ interface CardQuestionEntry {
 const cardQuestionMap = new Map<string, CardQuestionEntry>();
 const CARD_QUESTION_MAX = 500;
 const QUESTION_CARD_HINT = "<font color='grey'>请选择上方选项或直接输入</font>";
+
+/** 问题块稳定元素 ID：全量渲染与点选 surgical 更新同源，客户端按 ID 复用不闪 */
+function streamQuestionElementId(blockId: string): string {
+  return `question_${String(blockId).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+}
+
+const answeredQuestionFooter = (opt: string): string => `✅ 已选择: **${opt}**`;
+
+/** 已作答问题块元素：与全量渲染同结构，surgical 替换后不再跳变 */
+function buildAnsweredQuestionElement(qText: string, blockId: string, opt: string): Record<string, unknown> {
+  return LarkSender.buildQuestionBlockElement({
+    questionText: qText,
+    footer: answeredQuestionFooter(opt),
+    elementId: streamQuestionElementId(blockId),
+  });
+}
 const CARD_QUESTION_FILE = path.join(sessionStateDir(APP_DATA_DIR), "card-questions.json");
 let cardQuestionSaveTimer: NodeJS.Timeout | null = null;
 
@@ -2554,15 +2570,17 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         const state = agentStreamCards.get(sk);
         if (!state) return false;
         const blockId = value.blockId as string | undefined;
-        let matched = false;
+        let target: StreamQuestionBlock | undefined;
         for (const b of state.questionBlocks ?? []) {
           if (blockId && b.blockId !== blockId) continue;
           if (b.answered || b.closedNote) continue;
           b.answered = opt;
-          matched = true;
+          target ??= b;
           if (blockId) break;
         }
-        if (!matched) {
+        const ch = resolveChannel(sk, { allowDefault: false });
+        if (ch.type !== "feishu") return false;
+        if (!target) {
           const qText = entry?.displayBody ?? entry?.text ?? opt;
           state.questionBlocks.push({
             blockId: blockId ?? `q${Date.now()}`,
@@ -2571,9 +2589,21 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
             options: entry?.options ?? [],
             answered: opt,
           });
+          return refreshAgentStreamCard(sk, state, ch, { finish: false });
         }
-        const ch = resolveChannel(sk, { allowDefault: false });
-        if (ch.type !== "feishu") return false;
+        // 已渲染块只换这一个元素，不整卡重绘（防点选闪一下）；失败回落全量
+        const qText = target.options?.length ? questionBodyWithOptions(target.text, target.options) : target.text;
+        state.sequence += 1;
+        const replaced = await ch.rt.sender!.replaceCardElement(
+          state.cardId,
+          streamQuestionElementId(target.blockId),
+          buildAnsweredQuestionElement(qText, target.blockId, opt),
+          state.sequence,
+        );
+        if (replaced) {
+          state.lastHash = payloadFingerprint(buildCardMergedPayload(sk, state), false);
+          return true;
+        }
         return refreshAgentStreamCard(sk, state, ch, { finish: false });
       });
       if (refreshed) {

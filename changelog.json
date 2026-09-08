@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.2.0",
+    "date": "2026-09-08",
+    "changes": [
+      "会话级切供应商 /m p：同账本直续，跨账本全量搬运不断上下文；常用模型绑定供应商",
+      "推理档可切：thinkingLevel 会话覆盖 + 页脚显示档位 + /m effort 七档，按 models.dev effort 与 baseUrl 裁决",
+      "跨账本历史改走 messages 前缀：首轮 prompt 历史按原序在前，队列新消息在后，task 只留真任务",
+      "投递标签 [宿主交付] 更名为 [本轮投递]，与 worker turn 语义对齐",
+      "问题卡点选改为单元素 surgical 更新，不整卡重绘，点选不再闪一下",
+      "主用户绑定落盘保护；/f 打断重开；群内主用户本人可过 /m；/f 成功静默且表情落回原消息",
+      "数据目录布局收敛（config/sessions/transcripts/catalogs + 启动迁移）；流式卡收口页脚加模型与耗时"
+    ]
+  },
+  {
     "version": "0.1.0",
     "date": "2026-09-03",
     "changes": [

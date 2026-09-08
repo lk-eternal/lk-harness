@@ -185,4 +185,17 @@ describe("问题区样式", () => {
     expect(afterIdx).toBeGreaterThan(qIdx)
     expect(json).toContain("✅ 已选择")
   })
+
+  it("问题段 elementId 透传到块 element_id，缺省回落 question_block", () => {
+    const card = LarkSender.buildStreamingCardJson({
+      status: "streaming",
+      segments: [
+        { type: "question", questionText: "选 A 还是 B", footer: "请选择", elementId: "question_q123" },
+        { type: "question", questionText: "第二题", footer: "请选择" },
+      ],
+    }) as { body: { elements: unknown[] } }
+    const json = JSON.stringify(card)
+    expect(json).toContain('"element_id":"question_q123"')
+    expect(json).toContain('"element_id":"question_block"')
+  })
 })

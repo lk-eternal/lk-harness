@@ -1110,7 +1110,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -1176,6 +1176,7 @@ export class LarkSender {
             questionText: seg.questionText,
             buttons: seg.buttons?.length ? seg.buttons : undefined,
             footer: seg.footer,
+            elementId: seg.elementId,
           }));
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
@@ -1345,7 +1346,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
