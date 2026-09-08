@@ -2265,15 +2265,6 @@ function questionBodyText(text: string, options: string[]): string {
 }
 
 const answeredQuestionFooter = (opt: string): string => `✅ 已选择: **${opt}**`;
-
-/** 已作答问题块元素：与全量渲染同结构，surgical 替换后不再跳变 */
-function buildAnsweredQuestionElement(qText: string, blockId: string, opt: string): Record<string, unknown> {
-  return LarkSender.buildQuestionBlockElement({
-    questionText: qText,
-    footer: answeredQuestionFooter(opt),
-    elementId: streamQuestionElementId(blockId),
-  });
-}
 const CARD_QUESTION_FILE = path.join(sessionStateDir(APP_DATA_DIR), "card-questions.json");
 let cardQuestionSaveTimer: NodeJS.Timeout | null = null;
 
@@ -2585,19 +2576,15 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         const state = agentStreamCards.get(sk);
         if (!state) return false;
         const blockId = value.blockId as string | undefined;
-        let target: StreamQuestionBlock | undefined;
+        let matched = false;
         for (const b of state.questionBlocks ?? []) {
           if (blockId && b.blockId !== blockId) continue;
           if (b.answered || b.closedNote) continue;
           b.answered = opt;
-          target ??= b;
+          matched = true;
           if (blockId) break;
         }
-        // 先改内存再排空：在途/排队中的全量刷新读到的已是已作答，晚落地也不闪回；1.5s 封顶防回调超时
-        await Promise.race([state.inflight, new Promise((r) => setTimeout(r, 1500))]);
-        const ch = resolveChannel(sk, { allowDefault: false });
-        if (ch.type !== "feishu") return false;
-        if (!target) {
+        if (!matched) {
           const qText = entry?.displayBody ?? entry?.text ?? opt;
           state.questionBlocks.push({
             blockId: blockId ?? `q${Date.now()}`,
@@ -2606,24 +2593,13 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
             options: entry?.options ?? [],
             answered: opt,
           });
-          return refreshAgentStreamCard(sk, state, ch, { finish: false });
         }
-        // 已渲染块只换这一个元素，不整卡重绘（防点选闪一下）；失败回落全量
-        const qText = questionBodyText(target.text, target.options);
-        state.sequence += 1;
-        const replaced = await ch.rt.sender!.replaceCardElement(
-          state.cardId,
-          streamQuestionElementId(target.blockId),
-          buildAnsweredQuestionElement(qText, target.blockId, opt),
-          state.sequence,
-        );
-        if (replaced) {
-          state.lastHash = payloadFingerprint(buildCardMergedPayload(sk, state), false);
-          log("INFO", `[${rt.cfg.name}] 问题卡片已 surgical 更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
-          return true;
-        }
-        log("INFO", `[${rt.cfg.name}] 问题卡片 surgical 失败回落全量 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
-        return refreshAgentStreamCard(sk, state, ch, { finish: false });
+        const ch = resolveChannel(sk, { allowDefault: false });
+        if (ch.type !== "feishu") return false;
+        // 同通道全量刷新：与 streaming 共用 PUT 通道与序号，到达即顺序，不跨通道乱序
+        const ok = await refreshAgentStreamCard(sk, state, ch, { finish: false });
+        if (ok) log("INFO", `[${rt.cfg.name}] 问题卡片已全量更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
+        return ok;
       });
       if (refreshed) {
         if (entry) {
