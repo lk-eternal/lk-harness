@@ -14,7 +14,7 @@ import {
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
-import { assembleSdkWorkerTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
+import { assembleSdkWorkerTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
 
@@ -26,6 +26,7 @@ interface WorkerState {
   persistentPoll: boolean
   promptCtx: PromptAssemblyContext
   taskMessage?: string
+  historyTurns?: HistoryTurn[]
   firstTurn: boolean
   abort: AbortController
   loopPromise: Promise<void>
@@ -101,6 +102,7 @@ export function startSdkWorkerLoop(
     persistentPoll: boolean
     promptCtx: PromptAssemblyContext
     taskMessage?: string
+    historyTurns?: HistoryTurn[]
     firstTurn: boolean
   },
 ): Promise<void> {
@@ -111,6 +113,7 @@ export function startSdkWorkerLoop(
     persistentPoll: opts.persistentPoll,
     promptCtx: opts.promptCtx,
     taskMessage: opts.taskMessage,
+    historyTurns: opts.historyTurns,
     firstTurn: opts.firstTurn,
     abort,
     loopPromise: Promise.resolve(),
@@ -168,9 +171,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
+        historyTurns: state.firstTurn ? state.historyTurns : undefined,
       })
       state.firstTurn = false
       state.taskMessage = undefined
+      state.historyTurns = undefined
 
       pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 

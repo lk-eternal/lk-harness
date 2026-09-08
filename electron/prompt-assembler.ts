@@ -15,6 +15,7 @@ export interface PromptAssemblyContext {
   includeAdmin?: boolean
   notifySessionKey?: string
   taskMessage?: string
+  historyTurns?: HistoryTurn[]
   digitalIdentityOverride?: string
 }
 
@@ -42,6 +43,12 @@ export interface TurnMessage {
     senderType?: string
     quotedContent?: string
   }
+}
+
+/** 跨账本搬运历史：只保留 role + text，无 message_id，不进 poll 去重 */
+export interface HistoryTurn {
+  role: "user" | "assistant"
+  text: string
 }
 
 /** Prompt 内嵌协议用的 Daemon 端口：优先 lock 文件（与当前 profile 实例一致） */
@@ -245,7 +252,7 @@ export function assembleWakePrompt(
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string },
+  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
 ): string {
   const chunks: string[] = []
   chunks.push(...assembleLlmHostProtocolBlocks(ctx))
@@ -253,6 +260,7 @@ export function assembleSdkWorkerTurnPrompt(
   chunks.push(assembleTurnPrompt(messages, ctx, {
     firstTurn: opts?.firstTurn,
     taskMessage: opts?.taskMessage,
+    historyTurns: opts?.historyTurns,
   }))
   return chunks.join("\n")
 }
@@ -261,22 +269,29 @@ export function assembleSdkWorkerTurnPrompt(
 export function assembleTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string },
+  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
 ): string {
+  const history = (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map((t) => ({
+    sender_type: t.role,
+    text: t.text.trim(),
+  }))
   const payload: Record<string, unknown> = {
     session: {
       session_key: ctx.sessionKey ?? "",
       ...(ctx.meta?.chatType ? { chat_type: ctx.meta.chatType } : {}),
       ...(ctx.notifySessionKey?.trim() ? { notify_session_key: ctx.notifySessionKey.trim() } : {}),
     },
-    messages: messages.map((m) => ({
-      ...(m.messageId ? { message_id: m.messageId } : {}),
-      ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
-      ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
-      ...(m.meta?.quotedContent?.trim() ? { quoted_content: m.meta.quotedContent.trim() } : {}),
-      text: m.text.trim(),
-    })),
+    messages: [
+      ...history,
+      ...messages.map((m) => ({
+        ...(m.messageId ? { message_id: m.messageId } : {}),
+        ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
+        ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
+        ...(m.meta?.quotedContent?.trim() ? { quoted_content: m.meta.quotedContent.trim() } : {}),
+        text: m.text.trim(),
+      })),
+    ],
   }
   if (opts?.taskMessage?.trim()) payload.task = opts.taskMessage.trim()
-  return `[宿主交付]\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``
+  return `[本轮投递]\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``
 }

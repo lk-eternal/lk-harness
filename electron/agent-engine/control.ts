@@ -150,7 +150,7 @@ export async function switchAgentSessionProvider(
       const full = takeLastTurns(readMirrorTurns(sessionKey))
       if (full.length > 0) {
         turns = full.length
-        stashCarryover(sessionKey, { block: buildCarryoverBlock(full, fromLabel, toLabel), turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
+        stashCarryover(sessionKey, { block: buildCarryoverBlock(full, fromLabel, toLabel), history: full, turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
       }
     } catch { /* 抄件读不到则按空处理：不清不搬 */ }
     // 真换账本才忘掉旧 resume 映射；视同直续时保留，下次仍可续上

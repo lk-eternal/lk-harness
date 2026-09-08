@@ -81,6 +81,7 @@ export interface LlmLaunchOptions {
   senderOpenId?: string
   chatName?: string
   taskMessage?: string
+  historyTurns?: TranscriptTurn[]
   notifySessionKey?: string
   keepSession?: boolean
   persistentPoll?: boolean
@@ -849,6 +850,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: opts.taskMessage,
+      historyTurns: opts.historyTurns,
     }
     const persistentPoll = opts.keepSession !== false && (opts.persistentPoll ?? true)
     const thinkingLevel = thinkingLevelFor(sessionKey, model.reasoning)
@@ -908,6 +910,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       persistentPoll,
       promptCtx,
       taskMessage: opts.taskMessage,
+      historyTurns: opts.historyTurns,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
     })
     rememberPiResumable(sessionKey, rulesHash, currentDaemonPort ?? undefined, session.streamAgg?.cardId)

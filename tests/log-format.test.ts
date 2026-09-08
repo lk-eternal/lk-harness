@@ -34,7 +34,7 @@ describe("formatLogLineForUi", () => {
 
   it("preserves session_key inside worker turn Prompt dump", () => {
     const sk = "ch_c0130dd0|oc_32cb78537b97c685e29f8a77e8a510cc::D:\\\\workspace\\\\lk-harness"
-    const line = `[SDK] INFO [${sk}] worker 回合 Prompt:\n[宿主交付]\n\`\`\`json\n{"session_key":"${sk}"}\n\`\`\``
+    const line = `[SDK] INFO [${sk}] worker 回合 Prompt:\n[本轮投递]\n\`\`\`json\n{"session_key":"${sk}"}\n\`\`\``
     const out = formatLogLineForUi(line, () => "📂 lk-harness")
     expect(out).toContain(`"session_key":"${sk}"`)
     expect(out).toContain(`[${sk}] worker 回合 Prompt:`)

@@ -19,7 +19,7 @@ import {
 } from "./poll-host"
 import { isFeishuStreamEnabled } from "./stream-card"
 import { appendMirrorTurns, replyTexts } from "./carryover"
-import { assembleTurnPrompt, type PromptAssemblyContext } from "./prompt-assembler"
+import { assembleTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
 
 export type LlmWorkerPhase = "listening" | "processing" | "stopping"
@@ -30,6 +30,7 @@ interface WorkerState {
   persistentPoll: boolean
   promptCtx: PromptAssemblyContext
   taskMessage?: string
+  historyTurns?: HistoryTurn[]
   firstTurn: boolean
   abort: AbortController
   loopPromise: Promise<void>
@@ -139,6 +140,7 @@ export function startLlmWorkerLoop(
     persistentPoll: boolean
     promptCtx: PromptAssemblyContext
     taskMessage?: string
+    historyTurns?: HistoryTurn[]
     firstTurn: boolean
   },
 ): Promise<void> {
@@ -148,6 +150,7 @@ export function startLlmWorkerLoop(
     persistentPoll: opts.persistentPoll,
     promptCtx: opts.promptCtx,
     taskMessage: opts.taskMessage,
+    historyTurns: opts.historyTurns,
     firstTurn: opts.firstTurn,
     abort: session.abort,
     loopPromise: Promise.resolve(),
@@ -205,9 +208,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       const prompt = assembleTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
+        historyTurns: state.firstTurn ? state.historyTurns : undefined,
       })
       state.firstTurn = false
       state.taskMessage = undefined
+      state.historyTurns = undefined
 
       pushUiLog("LLM", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 

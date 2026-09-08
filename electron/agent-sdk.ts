@@ -6,6 +6,7 @@ import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
 import { sessionStateDir } from "../src/shared/data-paths.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
+import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
 import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
@@ -970,6 +971,7 @@ export interface SdkLaunchOptions {
   senderOpenId?: string
   chatName?: string
   taskMessage?: string
+  historyTurns?: TranscriptTurn[]
   /** 该会话所属通道绑定的 SDK 资源 API Key */
   apiKey: string
   /** 该会话所属供应商 id（收藏与最近=供应商+模型整体） */
@@ -1384,6 +1386,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: resumed ? taskMessage : effectiveTask,
+      historyTurns: resumed ? undefined : opts.historyTurns,
     }
     // pack/进程重启后 daemon 内存无卡，飞书旧流式卡仍在：Resume 前先按持久化 cardId 收口，避免再建一张重复卡
     if (resumed && resumable?.streamCardId && session.streamAgg) {
@@ -1408,6 +1411,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       persistentPoll,
       promptCtx,
       taskMessage: promptCtx.taskMessage,
+      historyTurns: promptCtx.historyTurns,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
     })
 

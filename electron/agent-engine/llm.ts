@@ -42,6 +42,7 @@ export const llmEngine: AgentEngine = {
       senderOpenId: p.senderOpenId,
       chatName: p.chatName,
       taskMessage: p.taskMessage,
+      historyTurns: p.historyTurns,
       notifySessionKey: p.notifySessionKey,
       keepSession: p.keepSession,
       persistentPoll: p.persistentPoll,

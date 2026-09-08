@@ -515,16 +515,16 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     return { ok: false, error: "Cursor SDK API Key 未配置" }
   }
 
-  // 切供应商搬运：先 peek 拼首回合，launch 成功后才 consume，失败保留
-  let launchTaskMessage = taskMessage
+  // 切供应商搬运：历史走 messages 前缀，task 只留真任务；launch 成功后才 consume，失败保留
+  let launchHistoryTurns: { role: "user" | "assistant"; text: string }[] | undefined
   let newSession: boolean | undefined
   try {
-    const { peekCarryover, initCarryoverStore } = await import("./carryover.js")
+    const { peekCarryover, pendingHistoryTurns, initCarryoverStore } = await import("./carryover.js")
     initCarryoverStore(app.getPath("userData"))
     const pending = peekCarryover(sessionKey)
     if (pending) {
       newSession = true
-      launchTaskMessage = pending.block + (taskMessage?.trim() ? `\n---\n${taskMessage.trim()}` : "")
+      launchHistoryTurns = pendingHistoryTurns(pending)
     }
   } catch { /* 无搬运则正常拉起 */ }
 
@@ -537,7 +537,8 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     digitalIdentityOverride: channel?.digitalIdentity,
     senderOpenId,
     chatName,
-    taskMessage: launchTaskMessage,
+    taskMessage,
+    historyTurns: launchHistoryTurns,
     notifySessionKey,
     model,
     modelParams,

@@ -40,6 +40,8 @@ export interface AgentLaunchParams {
   senderOpenId?: string
   chatName?: string
   taskMessage?: string
+  /** 跨账本搬运历史：首轮拼进 messages 最前面（无 message_id，不进 poll 去重） */
+  historyTurns?: TranscriptTurn[]
   notifySessionKey?: string
   model: string
   modelParams: string

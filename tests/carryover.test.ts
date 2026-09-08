@@ -27,12 +27,12 @@ import {
 } from "../src/shared/session-resource-store.js"
 
 describe("turnsFromPiMessages", () => {
-  it("跳过工具块与报错空回合，拆出[宿主交付]真用户正文", () => {
+  it("跳过工具块与报错空回合，拆出[本轮投递]真用户正文", () => {
     const turns = turnsFromPiMessages([
       { role: "user", content: "[冷启动] 请先非阻塞 poll-message" },
       {
         role: "user",
-        content: '[宿主交付]\n```json\n{"session":{},"messages":[{"text":"回调重试会重复入账"}]}\n```',
+        content: '[本轮投递]\n```json\n{"session":{},"messages":[{"text":"回调重试会重复入账"}]}\n```',
       },
       { role: "assistant", content: [] },
       {

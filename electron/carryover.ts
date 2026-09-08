@@ -27,12 +27,12 @@ function textOfContent(content: PiMessage["content"]): string {
     .join("\n")
 }
 
-/** [宿主交付] JSON 里包着真用户正文；冷启动/唤醒类系统回合直接扔掉 */
+/** [本轮投递] JSON 里包着真用户正文；冷启动/唤醒类系统回合直接扔掉 */
 function splitUserText(raw: string): string[] {
   const t = raw.trim()
   if (!t) return []
   if (t.startsWith("[冷启动]") || t.startsWith("[SESSION_RESUME")) return []
-  const m = t.match(/\[宿主交付\]\s*```json\s*([\s\S]*?)```/)
+  const m = t.match(/\[本轮投递\]\s*```json\s*([\s\S]*?)```/)
   if (m) {
     try {
       const payload = JSON.parse(m[1]) as { messages?: { text?: string }[] }
@@ -154,6 +154,8 @@ interface PendingCarryover {
   fromLabel: string
   toLabel: string
   at: number
+  /** 结构化历史：首轮拼进 messages，block 仅兼容老数据 */
+  history?: TranscriptTurn[]
   /** 建块时的源/目标账本：切出零聊天回原时凭此丢弃过期块 */
   fromLedger?: string
   toLedger?: string
@@ -241,6 +243,20 @@ export function consumeCarryover(sessionKey: string): PendingCarryover | undefin
   delete s.sessions[sessionKey]
   save()
   return e
+}
+
+/** 待搬运历史轮次：新块直接取 history，老块从 block 文本兼容解析 */
+export function pendingHistoryTurns(pending: PendingCarryover): TranscriptTurn[] {
+  if (pending.history?.length) return pending.history.filter((t) => t.text?.trim())
+  const out: TranscriptTurn[] = []
+  for (const line of (pending.block ?? "").split("\n")) {
+    const m = line.match(/^\[(用户|助手)\]\s*([\s\S]*)$/)
+    if (!m) continue
+    const text = (m[2] ?? "").trim()
+    if (!text) continue
+    out.push({ role: m[1] === "用户" ? "user" : "assistant", text })
+  }
+  return out
 }
 
 // ── 镜像水位（双引擎共用同一份 mirror：切供应商时记下长度，下次只取水位之后的新增）──
