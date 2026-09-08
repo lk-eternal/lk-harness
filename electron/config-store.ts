@@ -38,6 +38,8 @@ export interface AppConfig {
   mainChatIds: Record<string, string>
   /** Daemon 固定端口（0 = 随机） */
   daemonPort: number
+  /** 主窗口位置记忆（缺省=默认居中；显示器拔掉后自动回落） */
+  windowBounds?: { x: number; y: number; width: number; height: number; maximized: boolean }
 
   /** 项目工作区：GitLab token（ship / 私有仓 fetch） */
   gitlabToken: string

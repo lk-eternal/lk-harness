@@ -51,6 +51,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   shortcutName: LK Harness
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
 
 mac:
   target:

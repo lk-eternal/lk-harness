@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron"
+import { app, BrowserWindow, ipcMain, dialog, shell, screen } from "electron"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import { getConfig, saveConfig, migrateSecretsToSafeStorage, getAgentResource } from "./config-store"
+import type { AppConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
 import type { AgentResource } from "../src/shared/channel-types"
 import {
@@ -92,6 +93,42 @@ function installWindowCloseHandler(win: BrowserWindow): void {
   })
 }
 
+/** 上次窗口位置：不可见（显示器拔掉）则回落默认，避免窗口开到看不见的地方 */
+function loadWindowBounds(): NonNullable<AppConfig["windowBounds"]> | undefined {
+  try {
+    const b = getConfig().windowBounds
+    if (!b || b.width < 400 || b.height < 300) return undefined
+    const visible = screen.getAllDisplays().some((d) => {
+      const a = d.workArea
+      return b.x + b.width > a.x + 50 && b.x + 50 < a.x + a.width
+        && b.y + b.height > a.y + 50 && b.y + 50 < a.y + a.height
+    })
+    return visible ? b : undefined
+  } catch { return undefined }
+}
+
+/** 移动/缩放防抖落盘 + 关闭时必存一次（含隐藏到托盘） */
+function trackWindowBounds(win: BrowserWindow): void {
+  let timer: NodeJS.Timeout | null = null
+  const persist = () => {
+    if (win.isDestroyed()) return
+    try {
+      const b = win.getNormalBounds()
+      saveConfig({ windowBounds: { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized() } })
+    } catch { /* 落盘失败不阻断 */ }
+  }
+  const schedule = () => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => { timer = null; persist() }, 400)
+  }
+  win.on("resize", schedule)
+  win.on("move", schedule)
+  win.on("close", () => {
+    if (timer) { clearTimeout(timer); timer = null }
+    persist()
+  })
+}
+
 function resolveIcon(): string {
   const dir = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "resources")
   if (process.platform === "win32") {
@@ -116,12 +153,14 @@ function applyLoginItemSetting(enabled: boolean): void {
 
 function createWindow(): void {
   const iconPath = resolveIcon()
+  const saved = loadWindowBounds()
 
   mainWindow = new BrowserWindow({
-    width: 900,
-    height: 680,
+    width: saved?.width ?? 900,
+    height: saved?.height ?? 680,
     minWidth: 780,
     minHeight: 560,
+    ...(saved && !saved.maximized ? { x: saved.x, y: saved.y } : {}),
     title: profileName ? `LK Harness [${profileName}]` : "LK Harness",
     icon: iconPath,
     autoHideMenuBar: true,
@@ -139,6 +178,8 @@ function createWindow(): void {
   })
 
   installWindowCloseHandler(mainWindow)
+  trackWindowBounds(mainWindow)
+  if (saved?.maximized) mainWindow.maximize()
 
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-change", true))
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-change", false))
