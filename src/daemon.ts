@@ -1872,6 +1872,53 @@ function formatTurnElapsed(ms: number): string {
   return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ""}`;
 }
 
+/** 拼流式卡 JSON（纯构建，不动 sequence/lastHash/终态，供全量刷新与回调回卡共用） */
+function buildAgentStreamCardJson(
+  sessionKey: string,
+  state: AgentStreamCardState,
+  ch: Extract<ResolvedChannel, { type: "feishu" }>,
+  finish: boolean,
+): { cardJson: Record<string, unknown> } {
+  // 每次刷新读 live 开关，避免创建卡后改设置不生效
+  state.showThinking = ch.rt.cfg.showThinking !== false;
+  if (!state.knownPanelIds) state.knownPanelIds = new Set();
+  if (!state.expandedPanelIds) state.expandedPanelIds = new Set();
+  if (state.panelSeq == null) state.panelSeq = 0;
+  if (!state.questionBlocks) state.questionBlocks = [];
+  const terminal = finish || state.finished === true;
+  ensureSegmentPanelIds(state, state.lastSegments);
+  const merged = buildCardMergedPayload(sessionKey, state);
+  ensureSegmentPanelIds(state, merged.segments, state.lastSegments);
+  const hasInlineQuestion = merged.segments.some((s) => s.type === "question");
+  const cardSegs = buildCardSegmentsFromPayload(merged, {
+    finish: terminal,
+    showThinking: state.showThinking,
+    hideThinkingOnFinish: hideThinkingOnFinishEnabled(ch.rt.cfg),
+    skipThinkingOnlyPlaceholder: hasInlineQuestion,
+  }, state, sessionKey);
+  const status = terminal ? "completed" as const : "streaming" as const;
+  // 页脚只在收口时落：模型 + 本轮耗时（建卡→收口），正文区不掺元信息
+  let footer: string | undefined;
+  if (terminal) {
+    const parts: string[] = [];
+    if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
+    const elapsedMs = Date.now() - (state.createdAt || Date.now());
+    if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
+    if (parts.length > 0) footer = parts.join(" · ");
+  }
+  const cardJson = LarkSender.buildStreamingCardJson({
+    status,
+    showThinking: state.showThinking,
+    keepPerKind: LarkSender.normalizeStreamKeepPerKind(ch.rt.cfg.streamKeepPerKind),
+    sessionTitle: state.sessionTitle,
+    sessionTemplate: state.sessionTemplate,
+    segments: cardSegs,
+    panelState: state,
+    ...(footer ? { footer } : {}),
+  });
+  return { cardJson };
+}
+
 /** 全量刷新流式卡（PUT 整卡）。仅允许在 enqueueCardOp 链内调用：与内部 inflight 链双重串行，直接并发调会撞 sequence。 */
 async function refreshAgentStreamCard(
   sessionKey: string,
@@ -1880,43 +1927,9 @@ async function refreshAgentStreamCard(
   opts: { finish: boolean },
 ): Promise<boolean> {
   const run = async (): Promise<boolean> => {
-    // 每次刷新读 live 开关，避免创建卡后改设置不生效
-    state.showThinking = ch.rt.cfg.showThinking !== false;
-    if (!state.knownPanelIds) state.knownPanelIds = new Set();
-    if (!state.expandedPanelIds) state.expandedPanelIds = new Set();
-    if (state.panelSeq == null) state.panelSeq = 0;
-    if (!state.questionBlocks) state.questionBlocks = [];
-    const terminal = opts.finish || state.finished === true;
-    ensureSegmentPanelIds(state, state.lastSegments);
+    const { cardJson } = buildAgentStreamCardJson(sessionKey, state, ch, opts.finish);
     const merged = buildCardMergedPayload(sessionKey, state);
-    ensureSegmentPanelIds(state, merged.segments, state.lastSegments);
-    const hasInlineQuestion = merged.segments.some((s) => s.type === "question");
-    const cardSegs = buildCardSegmentsFromPayload(merged, {
-      finish: terminal,
-      showThinking: state.showThinking,
-      hideThinkingOnFinish: hideThinkingOnFinishEnabled(ch.rt.cfg),
-      skipThinkingOnlyPlaceholder: hasInlineQuestion,
-    }, state, sessionKey);
-    const status = terminal ? "completed" as const : "streaming" as const;
-    // 页脚只在收口时落：模型 + 本轮耗时（建卡→收口），正文区不掺元信息
-    let footer: string | undefined;
-    if (terminal) {
-      const parts: string[] = [];
-      if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
-      const elapsedMs = Date.now() - (state.createdAt || Date.now());
-      if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
-      if (parts.length > 0) footer = parts.join(" · ");
-    }
-    const cardJson = LarkSender.buildStreamingCardJson({
-      status,
-      showThinking: state.showThinking,
-      keepPerKind: LarkSender.normalizeStreamKeepPerKind(ch.rt.cfg.streamKeepPerKind),
-      sessionTitle: state.sessionTitle,
-      sessionTemplate: state.sessionTemplate,
-      segments: cardSegs,
-      panelState: state,
-      ...(footer ? { footer } : {}),
-    });
+    const terminal = opts.finish || state.finished === true;
     const sender = ch.rt.sender!;
     if (opts.finish && !state.finished) {
       state.sequence += 1;
@@ -2572,7 +2585,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         : undefined);
     if (streamHit) {
       const sk = streamHit.sessionKey;
-      const refreshed = await enqueueCardOp(sk, async (): Promise<boolean> => {
+      const opResult = await enqueueCardOp(sk, async (): Promise<{ ok: boolean; cardJson?: Record<string, unknown> }> => {
         const state = agentStreamCards.get(sk);
         if (!state) return false;
         const blockId = value.blockId as string | undefined;
@@ -2598,16 +2611,23 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         if (ch.type !== "feishu") return false;
         // 同通道全量刷新：与 streaming 共用 PUT 通道与序号，到达即顺序，不跨通道乱序
         const ok = await refreshAgentStreamCard(sk, state, ch, { finish: false });
-        if (ok) log("INFO", `[${rt.cfg.name}] 问题卡片已全量更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
-        return ok;
+        if (ok) {
+          log("INFO", `[${rt.cfg.name}] 问题卡片已全量更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
+          const { cardJson } = buildAgentStreamCardJson(sk, state, ch, false);
+          return { ok: true, cardJson };
+        }
+        return { ok: false };
       });
-      if (refreshed) {
+      if (opResult.ok) {
         if (entry) {
           cardQuestionMap.delete(evt.messageId);
           scheduleCardQuestionSave();
         }
         pushMessage(opt, internalId, chatKey, chatType, evt.operatorOpenId, evt.messageId, { senderType: "user" });
-        return { toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` } };
+        // 回调同步回整卡：与 toast 同一时刻落定，客户端不再用缓存补闪；流式后续 PUT 照常
+        const resp: Record<string, unknown> = { toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` } };
+        if (opResult.cardJson) resp.card = { type: "raw", data: opResult.cardJson };
+        return resp;
       }
     }
 
