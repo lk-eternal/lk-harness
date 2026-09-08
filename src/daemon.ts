@@ -2587,7 +2587,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       const sk = streamHit.sessionKey;
       const opResult = await enqueueCardOp(sk, async (): Promise<{ ok: boolean; cardJson?: Record<string, unknown> }> => {
         const state = agentStreamCards.get(sk);
-        if (!state) return false;
+        if (!state) return { ok: false };
         const blockId = value.blockId as string | undefined;
         let matched = false;
         for (const b of state.questionBlocks ?? []) {
@@ -2608,7 +2608,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
           });
         }
         const ch = resolveChannel(sk, { allowDefault: false });
-        if (ch.type !== "feishu") return false;
+        if (ch.type !== "feishu") return { ok: false };
         // 同通道全量刷新：与 streaming 共用 PUT 通道与序号，到达即顺序，不跨通道乱序
         const ok = await refreshAgentStreamCard(sk, state, ch, { finish: false });
         if (ok) {
