@@ -10,6 +10,8 @@ export interface ListedModel {
   id: string
   label: string
   current?: boolean
+  /** variant 参数（SDK 同模型多档位靠它区分；缺省=无参数） */
+  params?: string
 }
 
 export interface AgentSessionInfo {

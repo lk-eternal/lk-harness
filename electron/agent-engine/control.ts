@@ -7,6 +7,16 @@ import { getAgentEngine, getAllAgentEngines, agentEngineKind } from "./factory"
 
 export type ListedAgentSession = AgentSessionInfo & { pid: number; source: AgentSessionInfo["runtimeId"] }
 
+/** 账本身份：LLM 全通用一个账本；SDK 每个供应商（账号）独立账本 */
+function ledgerOf(resource: AgentResource): string {
+  return agentEngineKind(resource) === "llm" ? "llm" : `sdk:${resource.id}`
+}
+
+/** 老待搬运块兼容：供应商 id 自带前后缀（sdk_<hex> | llm_<hex>） */
+function ledgerKeyOfId(resourceId: string): string {
+  return resourceId.startsWith("sdk_") ? `sdk:${resourceId}` : "llm"
+}
+
 /** 合并各引擎会话列表；同 sessionKey 时 LLM 优先（与旧逻辑一致） */
 export function listAllAgentSessions(): ListedAgentSession[] {
   const rawList = getAllAgentEngines().flatMap((e) =>
@@ -101,13 +111,15 @@ export async function switchAgentSessionProvider(
 ): Promise<{ ok: boolean; sameLedger: boolean; turns: number; fromLabel: string; toLabel: string; error?: string }> {
   const { setSessionResourceOverride, clearSessionResourceOverride } = await import("../../src/shared/session-resource-store.js")
   const { setSessionOverride, clearSessionOverride, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
-  const { stashCarryover, buildCarryoverBlock, initCarryoverStore } = await import("../carryover.js")
+  const { stashCarryover, buildCarryoverBlock, initCarryoverStore, readMirrorTurns, takeLastTurns, peekCarryover, consumeCarryover } = await import("../carryover.js")
   initSessionModelStore(app.getPath("userData"))
   initCarryoverStore(app.getPath("userData"))
 
   const fromLabel = currentResource.name || currentResource.id
   const toLabel = targetResource.name || targetResource.id
-  const sameLedger = agentEngineKind(currentResource) === "llm" && agentEngineKind(targetResource) === "llm"
+  const fromLedger = ledgerOf(currentResource)
+  const toLedger = ledgerOf(targetResource)
+  let sameLedger = fromLedger === toLedger
 
   if (targetResource.id === currentResource.id) {
     clearSessionResourceOverride(sessionKey)
@@ -122,24 +134,36 @@ export async function switchAgentSessionProvider(
 
   let turns = 0
   if (!sameLedger) {
+    // 切出后一次都没在新家拉起过（待搬运块还在）就回来=零聊天回原：视同从未离开，丢块直续
     try {
-      const live = findEngineForSession(sessionKey) ?? getAgentEngine(currentResource)
-      const exported = (await live.exportTranscript?.(sessionKey)) ?? []
-      if (exported.length > 0) {
-        turns = exported.length
-        stashCarryover(sessionKey, { block: buildCarryoverBlock(exported, fromLabel, toLabel), turns, fromLabel, toLabel })
+      const pending = peekCarryover(sessionKey)
+      const pendingFrom = pending?.fromLedger ?? (pending?.fromResourceId ? ledgerKeyOfId(pending.fromResourceId) : undefined)
+      if (pending && pendingFrom !== undefined && pendingFrom === toLedger) {
+        consumeCarryover(sessionKey)
+        sameLedger = true
       }
-    } catch { /* 导不出则按空处理：不清不搬 */ }
-    // 换账本旧 resume 已不可用：忘掉两边映射（不清镜像账本），下次 resumableP=false，
-    // 项目提示词与搬运块一起进新家首轮；同账本直续不动
+    } catch { /* 无待搬运则正常搬 */ }
+  }
+  if (!sameLedger) {
+    // 跨账本=新家全新起：逐回合抄件全量搬过去（近 10 轮封顶），下次拉起时注入
     try {
-      const { forgetResumable } = await import("../agent-sdk.js")
-      forgetResumable(sessionKey)
-    } catch { /* 旧家无映射则无事可做 */ }
-    try {
-      const { forgetPiResumable } = await import("../pi-resume-store.js")
-      forgetPiResumable(sessionKey)
-    } catch { /* 同上 */ }
+      const full = takeLastTurns(readMirrorTurns(sessionKey))
+      if (full.length > 0) {
+        turns = full.length
+        stashCarryover(sessionKey, { block: buildCarryoverBlock(full, fromLabel, toLabel), turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
+      }
+    } catch { /* 抄件读不到则按空处理：不清不搬 */ }
+    // 真换账本才忘掉旧 resume 映射；视同直续时保留，下次仍可续上
+    if (!sameLedger) {
+      try {
+        const { forgetResumable } = await import("../agent-sdk.js")
+        forgetResumable(sessionKey)
+      } catch { /* 旧家无映射则无事可做 */ }
+      try {
+        const { forgetPiResumable } = await import("../pi-resume-store.js")
+        forgetPiResumable(sessionKey)
+      } catch { /* 同上 */ }
+    }
   }
 
   try {

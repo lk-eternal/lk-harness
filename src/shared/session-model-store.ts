@@ -217,7 +217,7 @@ export function pushRecentModel(ref: ModelRef, cap = DEFAULT_RECENT_CAP): void {
     ...(ref.resourceId ? { resourceId: ref.resourceId } : {}),
     usedAt: Date.now(),
   })
-  // 同模型无绑定老条目被有绑定新条目替代：避免同一模型出现两条
+  // 同模型无绑定老条目被有绑定新条目替代：避免未绑定条目与绑定条目重复
   const cleaned = ref.resourceId
     ? next.filter((r, i) => i === 0 || !(r.model === ref.model && (r.modelParams ?? "") === (ref.modelParams ?? "") && !r.resourceId))
     : next
@@ -235,7 +235,7 @@ export function removeRecentModel(ref: ModelRef): void {
   save()
 }
 
-/** 收藏置顶 + 最近补充，去重（含供应商维度），最多 limit 条 */
+/** 收藏置顶 + 最近补充，按 model+params+resourceId 去重，最多 limit 条 */
 export function listQuickModels(favorites: ModelEntry[], limit = 6): ModelEntry[] {
   const out: ModelEntry[] = []
   const seen = new Set<string>()

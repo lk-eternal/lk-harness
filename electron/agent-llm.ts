@@ -15,6 +15,7 @@ import {
   setSessionOverride,
   pushRecentModel,
 } from "../src/shared/session-model-store.js"
+import { initSessionResourceStore, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
 import {
   initSessionThinkingStore,
@@ -227,11 +228,19 @@ function channelModelRef(channelId?: string, resourceId?: string): { model: stri
   return { model: resolved.model ?? "", modelParams: resolved.modelParams ?? "" }
 }
 
-/** 通道绑定的资源已不是本会话所用资源：旧引擎 worker 必须让路，新消息由新引擎重新拉起 */
-export function channelResourceSwitched(channelId: string | undefined, resourceId: string): boolean {
+/** 通道/会话有效资源已不是本会话 worker 所用资源：旧引擎必须让路，新消息由新引擎重新拉起 */
+export function channelResourceSwitched(channelId: string | undefined, resourceId: string, sessionKey?: string): boolean {
   if (!channelId) return false
   const bound = getChannel(channelId)?.agentResourceId
-  return !!bound && bound !== resourceId
+  if (!bound) return false
+  let expected = bound
+  if (sessionKey) {
+    try {
+      initSessionResourceStore(app.getPath("userData"))
+      expected = resolveResourceForSession(sessionKey, bound) ?? bound
+    } catch { /* store 未就绪时沿用通道默认 */ }
+  }
+  return expected !== resourceId
 }
 
 function resolveLlmModelRef(opts: LlmLaunchOptions): { modelId: string; modelParams: string } {
@@ -449,7 +458,7 @@ export async function executeLlmPiTurn(
   prompt: string,
 ): Promise<{ ok: boolean; error?: string; replyText?: string; empty?: boolean; fatal?: boolean }> {
   // 不建流、不消耗这批消息：这批任务交回给新引擎重新拉起
-  if (channelResourceSwitched(session.channelId, session.resource.id)) {
+  if (channelResourceSwitched(session.channelId, session.resource.id, session.sessionKey)) {
     return { ok: false, error: "通道已换 Agent 资源，本会话改用新引擎重新拉起", fatal: true }
   }
   openStreamForTurn(session)

@@ -154,6 +154,12 @@ interface PendingCarryover {
   fromLabel: string
   toLabel: string
   at: number
+  /** 建块时的源/目标账本：切出零聊天回原时凭此丢弃过期块 */
+  fromLedger?: string
+  toLedger?: string
+  /** 建块时的源/目标供应商（老数据兼容） */
+  fromResourceId?: string
+  toResourceId?: string
 }
 
 interface CarryoverFile {
@@ -235,4 +241,48 @@ export function consumeCarryover(sessionKey: string): PendingCarryover | undefin
   delete s.sessions[sessionKey]
   save()
   return e
+}
+
+// ── 镜像水位（双引擎共用同一份 mirror：切供应商时记下长度，下次只取水位之后的新增）──
+
+const WATERMARK_FILE = "carryover-watermark.json"
+
+interface WatermarkFile {
+  sessions: Record<string, { len: number; at: number }>
+}
+
+let watermarkCache: WatermarkFile | null = null
+
+function watermarkPath(): string {
+  return path.join(transcriptDir(resolveDataDir()), WATERMARK_FILE)
+}
+
+function loadWatermark(): WatermarkFile {
+  if (watermarkCache) return watermarkCache
+  try {
+    const raw = JSON.parse(fs.readFileSync(watermarkPath(), "utf8")) as WatermarkFile
+    watermarkCache = { sessions: raw.sessions ?? {} }
+  } catch {
+    watermarkCache = { sessions: {} }
+  }
+  return watermarkCache
+}
+
+function saveWatermark(): void {
+  if (!watermarkCache) return
+  const target = watermarkPath()
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const tmp = target + ".tmp"
+  fs.writeFileSync(tmp, JSON.stringify(watermarkCache), "utf8")
+  fs.renameSync(tmp, target)
+}
+
+export function getMirrorWatermark(sessionKey: string): number | undefined {
+  return loadWatermark().sessions[sessionKey]?.len
+}
+
+export function setMirrorWatermark(sessionKey: string, len: number): void {
+  const s = loadWatermark()
+  s.sessions[sessionKey] = { len, at: Date.now() }
+  saveWatermark()
 }

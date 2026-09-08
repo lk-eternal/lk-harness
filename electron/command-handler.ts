@@ -84,12 +84,15 @@ export async function reportCommandResult(
 
 export type ListedModel = { id: string; label: string; current: boolean; params?: string }
 
-async function listModelsForCommands(channel: MessageChannel): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
-  const resource = getAgentResource(channel.agentResourceId)
-  if (!resource) return { ok: false, error: "未配置 Agent 资源" }
+async function listModelsForCommands(channel: MessageChannel, sessionKey?: string): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
+  const effResId = sessionKey
+    ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+    : channel.agentResourceId
+  const resource = getAgentResource(effResId)
+  if (!resource?.id) return { ok: false, error: "未配置 Agent 资源" }
   const r = await getAgentEngine(resource).listModels?.(resource, channel, channel.model, channel.modelParams)
   if (!r?.ok) return { ok: false, error: r?.error || "获取模型列表失败" }
-  const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current }))
+  const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current, params: m.params })) as ListedModel[]
   if (models.length === 0) return { ok: false, error: "暂无可用模型" }
   return { ok: true, models }
 }
@@ -99,11 +102,29 @@ const MODEL_SUBCMD_HELP = [
   "🔹 /m ls — 查看可选模型",
   "🔹 /m info — 查看当前对话在用的模型",
   "🔹 /m effort ls — 切换当前模型的推理等级",
-  "🔹 /m set <序号> — 切换当前对话的模型",
+  "🔹 /m set <序号> — 切换当前对话供应商下的模型",
   "🔹 /m use <序号|id> — 同 set",
   "🔹 /m p ls — 查看供应商列表",
-  "🔹 /m p set <序号|id> [--model <模型>] — 切换当前对话的供应商（只影响当前对话）",
+  "🔹 /m p set <序号|id> — 选供应商后列模型（用 pick，勿用 set）",
+  "🔹 /m p pick <供应商序号> <模型序号|id> — 跨供应商切换",
 ].join("\n")
+
+/** 飞书卡片按钮上限（与 daemon/lark-core 一致） */
+const MODEL_CMD_BTN_LIMIT = 20
+
+/** 推理/variant 展示：label 已含档位信息时不能用 resolveModelLabel（同 id 缓存会盖掉档位名） */
+function effortOptionLabel(o: { id: string; params?: string; label?: string }): string {
+  return o.label?.trim() || resolveModelLabel(o.id, o.params) || o.id
+}
+
+/** 按钮用短档位：LLM 形如 `${modelId} · ${level}` 只取 level，否则 40 字截断会把等级裁掉 */
+function effortShortLabel(o: { id: string; params?: string; label?: string }): string {
+  const full = effortOptionLabel(o)
+  if (full.endsWith("（不推理）")) return "off"
+  const idx = full.lastIndexOf("·")
+  if (idx >= 0) return full.slice(idx + 1).trim() || full
+  return full
+}
 
 function providerTypeLabel(t: string): string {
   if (t === "sdk") return "SDK"
@@ -139,7 +160,8 @@ async function applySessionModelPick(
     await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
     return
   }
-  const resource = resourceOverride ?? getAgentResource(channel.agentResourceId)
+  const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
+  const resource = resourceOverride ?? getAgentResource(effResId)
   const r = resource
     ? await switchAgentSessionModel(resource, sessionKey, picked.id, picked.params ?? "")
     : { ok: false, error: "未配置 Agent 资源" }
@@ -202,7 +224,7 @@ async function effortVariantsForSession(channel: MessageChannel, sessionKey: str
 async function listModelsForResource(resource: Parameters<typeof getAgentResource> extends never ? never : import("../src/shared/channel-types").AgentResource, channel: Parameters<typeof listModelsForCommands>[0]): Promise<{ ok: true; models: ListedModel[] } | { ok: false; error: string }> {
   const r = await getAgentEngine(resource).listModels?.(resource, channel, channel.model, channel.modelParams)
   if (!r?.ok) return { ok: false, error: r?.error || "获取模型列表失败" }
-  const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current })) as ListedModel[]
+  const models = (r.models ?? []).map((m) => ({ id: m.id, label: m.label, current: !!m.current, params: m.params })) as ListedModel[]
   if (models.length === 0) return { ok: false, error: "暂无可用模型" }
   return { ok: true, models }
 }
@@ -225,7 +247,11 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       const sk = await resolveModelSessionKey(port, chatId, channel)
       if (sk) {
         const ev = await effortVariantsForSession(channel, sk)
-        if (ev.ok && ev.options.length > 1) effortBtns.push({ label: "🧠 修改推理等级", cmd: "/m effort ls" })
+        if (ev.ok && ev.options.length > 1) {
+          const cur = ev.options.find((o) => o.current)
+          const curSlug = cur ? effortShortLabel(cur) : ev.modelId
+          effortBtns.push({ label: `🧠 推理档 · ${curSlug}`.slice(0, 40), cmd: "/m effort ls" })
+        }
       }
     } catch { /* 取不到 variants 就不展示入口，菜单照常 */ }
     const subBtns = withNav([
@@ -238,7 +264,20 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
       return { label: `⚡ ${slug}（${favProviderName(m)}）`.slice(0, 40), cmd: `/m use q${i + 1}` }
     })
-    await reportCommandResult(port, messageId, true, MODEL_SUBCMD_HELP, chatId, [...subBtns, ...favBtns], mExtra("菜单"))
+    let titleLine: string | undefined
+    try {
+      const sk2 = await resolveModelSessionKey(port, chatId, channel)
+      if (sk2) {
+        const effId2 = resolveResourceForSession(sk2, channel.agentResourceId) ?? channel.agentResourceId
+        const effRes2 = getAgentResource(effId2)
+        const ov2 = getSessionOverride(sk2)
+        const mid2 = ov2?.model?.trim() || channel.model?.trim() || "auto"
+        const disp2 = resolveModelLabel(mid2, ov2?.modelParams ?? channel.modelParams) || mid2
+        titleLine = `🧠 当前：${effRes2.name || effRes2.id} · ${disp2}`
+      }
+    } catch { /* 取不到则不展示标题行，菜单照常 */ }
+    const menuBody = titleLine ? [titleLine, "", MODEL_SUBCMD_HELP].join("\n") : MODEL_SUBCMD_HELP
+    await reportCommandResult(port, messageId, true, menuBody, chatId, [...subBtns, ...favBtns], mExtra("菜单"))
     return
   }
 
@@ -281,19 +320,27 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (sub === "ls") {
-    const lr = await listModelsForCommands(channel)
+    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const lr = await listModelsForCommands(channel, sessionKey)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
       return
     }
+    const effResId = sessionKey
+      ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+      : channel.agentResourceId
+    const effRes = getAgentResource(effResId)
     const blocks = lr.models.map((m, i) => {
       const n = i + 1
       const tag = m.current ? "  ⭐current" : ""
       const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
       return `#${n}  ${display}${tag}`
     })
-    const body = [`🧠 模型列表（共 ${lr.models.length} 个）`, "", ...blocks, "", "💡 点下方按钮切换，或 /m set <序号>"].join("\n")
-    const btns = withNav(lr.models.slice(0, 6).map((m, i) => {
+    const body = [`🧠 ${effRes.name || effRes.id} 的模型（共 ${lr.models.length} 个）`, "", ...blocks, "",
+      lr.models.length > MODEL_CMD_BTN_LIMIT
+        ? `💡 点下方按钮切换前 ${MODEL_CMD_BTN_LIMIT} 个，或 /m set <序号>（仅本供应商）`
+        : "💡 点下方按钮切换，或 /m set <序号>（仅当前对话供应商）"].join("\n")
+    const btns = withNav(lr.models.slice(0, MODEL_CMD_BTN_LIMIT).map((m, i) => {
       const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
       return { label: `#${i + 1} ${display}`.slice(0, 40), cmd: `/m set ${i + 1}`, section: "切换模型" }
     }), patchMessageId)
@@ -328,7 +375,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       const provToken = parts[3]
       const modelToken = parts[4]
       if (!provToken || !modelToken) {
-        await reportCommandResult(port, messageId, false, "💡 用法：/m p pick <供应商序号|id> <模型id>", chatId, undefined, mExtra())
+        await reportCommandResult(port, messageId, false, "💡 用法：/m p pick <供应商序号|id> <模型序号|id>", chatId, undefined, mExtra())
         return
       }
       const pIdx = parseInt(provToken, 10)
@@ -339,6 +386,26 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         await reportCommandResult(port, messageId, false, `😅 未找到供应商: ${provToken}（先 /m p ls）`, chatId, undefined, mExtra())
         return
       }
+      // 模型支持序号（列表里的 #N）与 id 两种输法：序号越界直接报错，避免把 "35" 存成 modelId
+      let modelId = modelToken
+      let modelParams: string | undefined
+      let modelLabel: string | undefined
+      const lr = await listModelsForResource(target, channel)
+      if (lr.ok) {
+        const mIdx = parseInt(modelToken, 10)
+        if (Number.isInteger(mIdx) && String(mIdx) === modelToken) {
+          const hit = lr.models[mIdx - 1]
+          if (!hit) {
+            await reportCommandResult(port, messageId, false, `😅 模型序号须为 1～${lr.models.length}（先 /m p set ${provToken} 看列表）`, chatId, undefined, mExtra())
+            return
+          }
+          modelId = hit.id; modelParams = hit.params; modelLabel = hit.label
+        } else {
+          const hit = lr.models.find((m) => m.id === modelToken || m.label === modelToken)
+          if (hit) { modelId = hit.id; modelParams = hit.params; modelLabel = hit.label }
+        }
+        if (modelLabel) rememberModelLabel(modelId, modelParams, modelLabel)
+      }
       const sessionKey = await resolveModelSessionKey(port, chatId, channel)
       if (!sessionKey) {
         await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
@@ -346,12 +413,12 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       }
       const current = getAgentResource(resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
       const hadOverride = !!getSessionResourceOverride(sessionKey)
-      const r = await switchAgentSessionProvider(sessionKey, current, target, { model: modelToken })
+      const r = await switchAgentSessionProvider(sessionKey, current, target, { model: modelId, modelParams })
       if (!r.ok) {
         await reportCommandResult(port, messageId, false, `❌ 切换失败: ${r.error}`, chatId, undefined, mExtra("供应商"))
         return
       }
-      const display = `${target.name || target.id}（${providerTypeLabel(target.type)}）+ ${modelToken}`
+      const display = `${target.name || target.id}（${providerTypeLabel(target.type)}）+ ${resolveModelLabel(modelId, modelParams, modelLabel) || modelId}`
       const lines = target.id === current.id && hadOverride
         ? [`🏠 已回到通道默认供应商`, `🔀 ${display}`, "只影响当前对话，历史按下次消息时的账本续上"]
         : r.sameLedger
@@ -394,8 +461,11 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
           const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
           return `#${i + 1}  ${display}`
         })
-        const body = [`🔀 ${target.name || target.id} 的模型（共 ${lr.models.length} 个）`, "", ...blocks, "", "💡 点下方按钮完成切换（供应商+模型整体落子）"].join("\n")
-        const btns = withNav(lr.models.slice(0, 6).map((m) => {
+        const body = [`🔀 ${target.name || target.id} 的模型（共 ${lr.models.length} 个）`, "", ...blocks, "",
+          lr.models.length > MODEL_CMD_BTN_LIMIT
+            ? `💡 点下方按钮或 /m p pick ${provIdx} <序号|模型id>（勿用 /m set，那是当前供应商列表）`
+            : "💡 点下方按钮或 /m p pick 完成切换（勿用 /m set）"].join("\n")
+        const btns = withNav(lr.models.slice(0, MODEL_CMD_BTN_LIMIT).map((m) => {
           const display = resolveModelLabel(m.id, m.params, m.label) || m.label || m.id
           return { label: `${display}`.slice(0, 40), cmd: `/m p pick ${provIdx} ${m.id}`, section: "选模型落子" }
         }), patchMessageId)
@@ -447,13 +517,14 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     }
     if (!action || action === "ls" || action === "list") {
       const blocks = ev.options.map((o, i) => {
-        const display = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
+        const display = effortShortLabel(o)
         return `#${i + 1}  ${display}${o.current ? "  ⭐current" : ""}`
       })
-      const body = [`🧠 ${ev.modelId} 的推理等级（共 ${ev.options.length} 个）`, "", ...blocks, "", "💡 点下方按钮切换（运行中会立即停止，下一条消息生效）"].join("\n")
+      const curOpt = ev.options.find((o) => o.current)
+      const body = [`🧠 ${ev.resource.name || ev.resource.id} · ${ev.modelId} 的推理等级（共 ${ev.options.length} 个）`, curOpt ? `当前：${effortShortLabel(curOpt)}` : undefined, "", ...blocks, "", "💡 点下方按钮切换（运行中会立即停止，下一条消息生效）"].filter((l) => l !== undefined).join("\n")
       // 档位列表必须全列（曾用 slice(0, 6) 把第 7 档 max 裁掉，导致永远切不到）
       const btns = withNav(ev.options.map((o, i) => {
-        const display = resolveModelLabel(o.id, o.params, o.label) || o.label || o.id
+        const display = effortShortLabel(o)
         return { label: `#${i + 1} ${display}`.slice(0, 40), cmd: `/m effort set ${i + 1}`, section: "切换推理等级" }
       }), patchMessageId)
       await reportCommandResult(port, messageId, true, body, chatId, btns, mExtra("推理等级"))
@@ -557,7 +628,8 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       await applySessionModelPick(port, messageId, channel, chatId, picked, `q${qi}`, patchMessageId)
       return
     }
-    const lr = await listModelsForCommands(channel)
+    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const lr = await listModelsForCommands(channel, sessionKey)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
       return
@@ -583,8 +655,11 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
           const slug = resolveModelLabel(m.model, m.modelParams, m.label) || m.model
           return m.model === token || slug === token
         })
+        const effForMatch = sessionKey
+          ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+          : channel.agentResourceId
         const fromQuick = matches.length > 1
-          ? (matches.find((m) => m.resourceId === channel.agentResourceId) ?? matches.find((m) => m.resourceId) ?? matches[0])
+          ? (matches.find((m) => m.resourceId === effForMatch) ?? matches.find((m) => m.resourceId) ?? matches[0])
           : matches[0]
         if (fromQuick) {
           picked = {
@@ -606,8 +681,11 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     } else if (!picked.params) {
       const allQuick2 = listQuickModels(await quickModelsForChannel(channel), 20) as QuickFav[]
       const hits = allQuick2.filter((m) => m.model === picked!.id)
+      const effForHit = sessionKey
+        ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
+        : channel.agentResourceId
       const hit = hits.length > 1
-        ? (hits.find((m) => m.resourceId === channel.agentResourceId) ?? hits.find((m) => m.resourceId) ?? hits[0])
+        ? (hits.find((m) => m.resourceId === effForHit) ?? hits.find((m) => m.resourceId) ?? hits[0])
         : hits[0]
       if (hit?.modelParams) picked = { ...picked, params: hit.modelParams }
     }
