@@ -2584,6 +2584,8 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       const refreshed = await enqueueCardOp(sk, async (): Promise<boolean> => {
         const state = agentStreamCards.get(sk);
         if (!state) return false;
+        // 先排空在途全量刷新再动手：否则它后落地会把已作答闪回未作答；1.5s 封顶防回调超时
+        await Promise.race([state.inflight, new Promise((r) => setTimeout(r, 1500))]);
         const blockId = value.blockId as string | undefined;
         let target: StreamQuestionBlock | undefined;
         for (const b of state.questionBlocks ?? []) {
