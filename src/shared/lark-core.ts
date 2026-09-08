@@ -1837,7 +1837,7 @@ export class LarkSender {
   }
 
   static parseMessageContent(messageId: string, messageType: string, content: string): ParsedMessage {
-    const result: ParsedMessage = { text: "", imageKeys: [] };
+    const result: ParsedMessage = { text: "", imageKeys: [], videoKeys: [] };
     try {
       const parsed = JSON.parse(content);
       switch (messageType) {
@@ -1886,12 +1886,16 @@ export class LarkSender {
         case "file": result.text = `[文件: ${parsed.file_name ?? "未知"}]`; break;
         case "folder": result.text = `[文件夹: ${parsed.folder_name ?? "未知"}]`; break;
         case "audio": result.text = parsed.duration ? `[语音消息 ${Math.ceil(parsed.duration / 1000)}s]` : "[语音消息]"; break;
-        case "video": result.text = parsed.file_name ? `[视频: ${parsed.file_name}]` : "[视频]"; break;
+        case "video":
+          result.text = parsed.file_name ? `[视频: ${parsed.file_name}]` : "[视频]";
+          if (parsed.file_key) result.videoKeys.push({ messageId, fileKey: parsed.file_key, fileName: parsed.file_name });
+          break;
         case "media": {
           const mediaParts = [parsed.file_name ?? "视频"];
           if (parsed.duration) mediaParts.push(`${Math.ceil(parsed.duration / 1000)}s`);
           result.text = `[媒体: ${mediaParts.join(" ")}]`;
           if (parsed.image_key) result.imageKeys.push({ messageId, imageKey: parsed.image_key });
+          if (parsed.file_key) result.videoKeys.push({ messageId, fileKey: parsed.file_key, fileName: parsed.file_name });
           break;
         }
         case "sticker": result.text = "[表情包]"; break;
@@ -1929,23 +1933,41 @@ export class LarkSender {
     return result;
   }
 
+  /** 下载视频/媒体文件（type=file），扩展名跟原文件名，失败返回 null */
+  async downloadMedia(messageId: string, fileKey: string, fileName?: string): Promise<string | null> {
+    try {
+      if (!fs.existsSync(LarkSender.IMAGE_DIR)) fs.mkdirSync(LarkSender.IMAGE_DIR, { recursive: true });
+      const resp: any = await this.client.im.messageResource.get({
+        path: { message_id: messageId, file_key: fileKey }, params: { type: "file" },
+      });
+      const ext = (fileName?.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? ".mp4").toLowerCase();
+      const filePath = path.join(LarkSender.IMAGE_DIR, `${fileKey}${ext}`);
+      if (resp && typeof resp.pipe === "function") {
+        const ws = fs.createWriteStream(filePath);
+        await new Promise<void>((resolve, reject) => { resp.pipe(ws); ws.on("finish", resolve); ws.on("error", reject); });
+        return filePath;
+      }
+      if (resp?.writeFile) { await resp.writeFile(filePath); return filePath; }
+      return null;
+    } catch (e: any) { this.log("ERROR", `下载视频异常: ${e?.message ?? e}`); return null; }
+  }
+
   async processIncomingMessage(messageId: string, messageType: string, content: string): Promise<string> {
     const parsed = LarkSender.parseMessageContent(messageId, messageType, content);
-    const total = parsed.imageKeys.length;
     let text = parsed.text;
-    if (total > 1) {
-      let idx = 0;
-      text = text.replace(/\[图片\]/g, () => `[图片${++idx}]`);
-    }
-    const parts: string[] = [];
-    if (text) parts.push(text);
-    for (let i = 0; i < total; i++) {
-      const img = parsed.imageKeys[i];
+    // 图片就位替换占位；无占位（如媒体封面）则跟在正文后，不再文末另列
+    const pending: string[] = [];
+    for (const img of parsed.imageKeys) {
       const localPath = await this.downloadImage(img.messageId, img.imageKey);
-      const label = total > 1 ? `图片${i + 1}` : "图片";
-      parts.push(localPath ? `[${label}已保存: ${localPath}]` : `[${label}下载失败: ${img.imageKey}]`);
+      const note = localPath ? `[图片已保存: ${localPath}]` : `[图片下载失败: ${img.imageKey}]`;
+      if (text.includes("[图片]")) text = text.replace("[图片]", note);
+      else pending.push(note);
     }
-    return parts.join("\n");
+    for (const v of parsed.videoKeys) {
+      const localPath = await this.downloadMedia(v.messageId, v.fileKey, v.fileName);
+      pending.push(localPath ? `[视频已保存: ${localPath}]` : `[视频下载失败: ${v.fileKey}]`);
+    }
+    return [text, ...pending].filter(Boolean).join("\n");
   }
 
   // ── WebSocket 连接 ────────────────────────────────────
@@ -2098,6 +2120,7 @@ export interface LarkMessageRecalledEvent {
 export interface ParsedMessage {
   text: string;
   imageKeys: { messageId: string; imageKey: string }[];
+  videoKeys: { messageId: string; fileKey: string; fileName?: string }[];
 }
 
 export interface LarkMention {
