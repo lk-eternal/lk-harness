@@ -180,7 +180,7 @@ jobs:
               '    url "https://github.com/lk-eternal/lk-harness/releases/download/v#{version}/LK%20Harness-#{version}.dmg"' \
               '  end' \
               '  on_arm do' \
-              "    sha256 \"$ARM_SHA\""" \
+              "    sha256 \"$ARM_SHA\"" \
               '    url "https://github.com/lk-eternal/lk-harness/releases/download/v#{version}/LK%20Harness-#{version}-arm64.dmg"' \
               '  end' \
               '' \

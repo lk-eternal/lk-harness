@@ -1710,9 +1710,7 @@ function buildCardSegmentsFromPayload(
   const out: CardBodySegment[] = [];
   for (const seg of payload.segments) {
     if (seg.type === "question") {
-      const qText = seg.options?.length
-        ? questionBodyWithOptions(seg.text, seg.options)
-        : seg.text;
+      const qText = questionBodyText(seg.text, seg.options);
       const buttons = !seg.answered && !seg.closedNote
         ? questionOptionButtons(seg.options, sessionKey, seg.blockId)
         : undefined;
@@ -1864,6 +1862,7 @@ function formatTurnElapsed(ms: number): string {
   return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ""}`;
 }
 
+/** 全量刷新流式卡（PUT 整卡）。仅允许在 enqueueCardOp 链内调用：与内部 inflight 链双重串行，直接并发调会撞 sequence。 */
 async function refreshAgentStreamCard(
   sessionKey: string,
   state: AgentStreamCardState,
@@ -2245,9 +2244,14 @@ const cardQuestionMap = new Map<string, CardQuestionEntry>();
 const CARD_QUESTION_MAX = 500;
 const QUESTION_CARD_HINT = "<font color='grey'>请选择上方选项或直接输入</font>";
 
-/** 问题块稳定元素 ID：全量渲染与点选 surgical 更新同源，客户端按 ID 复用不闪 */
+/** 问题块稳定元素 ID：q_ + blockId 短哈希=10 字符（element_id 上限 20），全量渲染与点选 surgical 更新同源 */
 function streamQuestionElementId(blockId: string): string {
-  return `question_${String(blockId).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  return `q_${hashStreamPart(String(blockId)).slice(0, 8)}`;
+}
+
+/** 问题正文：有选项拼选项表，无选项原文；全量渲染与 surgical 共用一份 */
+function questionBodyText(text: string, options: string[]): string {
+  return options?.length ? questionBodyWithOptions(text, options) : text;
 }
 
 const answeredQuestionFooter = (opt: string): string => `✅ 已选择: **${opt}**`;
@@ -2554,6 +2558,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       return { toast: { type: "info", content: "已提交，请稍候" } };
     }
     log("INFO", `[${rt.cfg.name}] 问题卡片选择: ${opt} (msg=${evt.messageId}, session=${sessionKey ?? "-"})`);
+    const cardActionT0 = Date.now();
     if (sessionKey) trackMessageSession(evt.messageId, sessionKey);
     const internalId = `internal_card_${Date.now()}`;
     trackInternalMsgChat(internalId, chatKey);
@@ -2592,7 +2597,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
           return refreshAgentStreamCard(sk, state, ch, { finish: false });
         }
         // 已渲染块只换这一个元素，不整卡重绘（防点选闪一下）；失败回落全量
-        const qText = target.options?.length ? questionBodyWithOptions(target.text, target.options) : target.text;
+        const qText = questionBodyText(target.text, target.options);
         state.sequence += 1;
         const replaced = await ch.rt.sender!.replaceCardElement(
           state.cardId,
@@ -2602,8 +2607,10 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         );
         if (replaced) {
           state.lastHash = payloadFingerprint(buildCardMergedPayload(sk, state), false);
+          log("INFO", `[${rt.cfg.name}] 问题卡片已 surgical 更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
           return true;
         }
+        log("INFO", `[${rt.cfg.name}] 问题卡片 surgical 失败回落全量 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
         return refreshAgentStreamCard(sk, state, ch, { finish: false });
       });
       if (refreshed) {
@@ -2627,7 +2634,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const template = entry?.template;
     return {
       toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` },
-      card: { type: "raw", data: LarkSender.buildCard(body, title, undefined, undefined, template, `✅ 已选择: **${opt}**`) },
+      card: { type: "raw", data: LarkSender.buildCard(body, title, undefined, undefined, template, answeredQuestionFooter(opt)) },
     };
   }
 
