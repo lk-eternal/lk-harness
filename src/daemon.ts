@@ -1374,8 +1374,18 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
     if (messageType === "text") {
       enqueue(cleanText);
     } else {
+      // 非文本先落盘再判指令：图文混排（post）也可能是指令（/f + 图片），不能只看 messageType
       sender.processIncomingMessage(messageId, messageType, rawContent)
-        .then((result) => enqueue(result || cleanText))
+        .then((result) => {
+          const body = resolveMentionTags(result || cleanText, ev.mentions, rt.botOpenId);
+          if (isCommand(body)) {
+            handleCommand(body, messageId, chatKey, chatType, undefined, senderOpenId).catch((e: any) =>
+              log("ERROR", `指令处理失败: ${e?.message ?? e}`),
+            );
+            return;
+          }
+          enqueue(body);
+        })
         .catch(() => enqueue(cleanText));
     }
   }, (cardEvt) => handleCardAction(rt, cardEvt), wsLifecycle, (recall) => {
