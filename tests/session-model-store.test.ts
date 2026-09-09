@@ -8,6 +8,7 @@ import {
   pendingKey,
   setSessionOverride,
   getSessionOverride,
+  clearSessionOverride,
   setPendingOverride,
   consumePendingOverride,
   resolveModelForSession,
@@ -108,5 +109,24 @@ describe("resourceId（供应商+模型整体）", () => {
     setSessionOverride(SESSION, { model: "m", modelParams: "", resourceId: "r1" })
     setSessionOverride(SESSION, { model: "m", modelParams: "" })
     expect(getSessionOverride(SESSION)?.resourceId).toBe("r1")
+  })
+
+  it("新会话回退父chat覆盖：群里/m后项目会话直接生效", () => {
+    const chat = "ch_a|oc_111"
+    const project = `${chat}::project_p1`
+    setSessionOverride(chat, { model: "spark", modelParams: "", resourceId: "r9" })
+    expect(getSessionOverride(project)?.model).toBe("spark")
+    expect(getSessionOverride(project)?.resourceId).toBe("r9")
+    expect(resolveModelForSession(project, { model: "gemini", modelParams: "" }).model).toBe("spark")
+  })
+
+  it("会话级覆盖优先于父chat，清掉后回落", () => {
+    const chat = "ch_a|oc_111"
+    const project = `${chat}::project_p1`
+    setSessionOverride(chat, { model: "spark", modelParams: "" })
+    setSessionOverride(project, { model: "gemini", modelParams: "" })
+    expect(getSessionOverride(project)?.model).toBe("gemini")
+    clearSessionOverride(project)
+    expect(getSessionOverride(project)?.model).toBe("spark")
   })
 })

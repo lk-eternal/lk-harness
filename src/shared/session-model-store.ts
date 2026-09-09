@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { modelSlug } from "./model-utils.js"
+import { chatIdFromSessionKey } from "./channel-types.js"
 import { sessionStateDir } from "./data-paths.js"
 
 export interface ModelRef {
@@ -116,13 +117,22 @@ export function setSessionOverride(sessionKey: string, ref: ModelRef): void {
   save()
 }
 
-export function getSessionOverride(sessionKey: string): ModelRef | undefined {
-  const s = load()
+function readStoredOverride(s: ReturnType<typeof load>, sessionKey: string): ModelRef | undefined {
   const key = findStoredSessionKey(s.sessions, sessionKey)
   if (!key) return undefined
   const e = s.sessions[key]
   if (!e?.model) return undefined
   return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
+}
+
+export function getSessionOverride(sessionKey: string): ModelRef | undefined {
+  const s = load()
+  const direct = readStoredOverride(s, sessionKey)
+  if (direct) return direct
+  // 新会话（project/dir/工作区会话）回退父 chat 覆盖：群里 /m 切完再进项目直接生效
+  const chat = chatIdFromSessionKey(sessionKey)
+  if (chat && chat !== sessionKey) return readStoredOverride(s, chat)
+  return undefined
 }
 
 export function clearSessionOverride(sessionKey: string): void {

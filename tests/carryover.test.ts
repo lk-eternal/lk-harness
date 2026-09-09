@@ -161,4 +161,12 @@ describe("session-resource-store", () => {
     clearSessionResourceOverride("sk")
     expect(resolveResourceForSession("sk", "ch-default")).toBe("ch-default")
   })
+
+  it("新会话供应商回退父chat（q3带供应商不断）", () => {
+    const chat = "ch_a|oc_111"
+    const project = `${chat}::project_p1`
+    setSessionResourceOverride(chat, "res-q3")
+    expect(getSessionResourceOverride(project)).toBe("res-q3")
+    expect(resolveResourceForSession(project, "ch-default")).toBe("res-q3")
+  })
 })

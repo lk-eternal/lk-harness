@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { sessionStateDir } from "./data-paths.js"
+import { chatIdFromSessionKey } from "./channel-types.js"
 
 /** 会话级供应商（Agent 资源）覆盖：只影响当前会话，不碰通道默认 */
 
@@ -72,10 +73,19 @@ export function setSessionResourceOverride(sessionKey: string, resourceId: strin
   save()
 }
 
+function readStoredResourceOverride(s: ReturnType<typeof load>, sessionKey: string): string | undefined {
+  const key = findStoredSessionKey(s.sessions, sessionKey)
+  return key ? (s.sessions[key] as { resourceId?: string } | undefined)?.resourceId : undefined
+}
+
 export function getSessionResourceOverride(sessionKey: string): string | undefined {
   const s = load()
-  const key = findStoredSessionKey(s.sessions, sessionKey)
-  return key ? s.sessions[key]?.resourceId : undefined
+  const direct = readStoredResourceOverride(s, sessionKey)
+  if (direct) return direct
+  // 同模型覆盖：新会话回退父 chat（供应商跟模型一起走，q3 这类带供应商收藏才不断）
+  const chat = chatIdFromSessionKey(sessionKey)
+  if (chat && chat !== sessionKey) return readStoredResourceOverride(s, chat)
+  return undefined
 }
 
 export function clearSessionResourceOverride(sessionKey: string): void {
