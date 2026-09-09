@@ -258,14 +258,19 @@ function skipNote(label: string): string {
 
 export function mergeImportAgentResources(incoming: AgentResource[], warnings: string[]): void {
   const cfg = getConfig()
-  const existing = cfg.agentResources ?? []
-  const rest = [...existing]
-  const byId = new Set(rest.map((r) => r.id))
+  const rest = [...(cfg.agentResources ?? [])]
   for (const r of incoming) {
-    if (byId.has(r.id)) warnings.push(skipNote(`agent/${r.name || r.id}`))
-    else {
+    const existing = rest.find((x) => x.id === r.id)
+    if (!existing) {
       rest.push(r)
-      byId.add(r.id)
+      continue
+    }
+    // 空密钥回填：已迁坏（空 key）的条目重跑可被治愈，不动其他字段
+    if (!existing.apiKey?.trim() && r.apiKey?.trim()) {
+      existing.apiKey = r.apiKey
+      warnings.push(`agent/${r.name || r.id}：密钥已回填`)
+    } else {
+      warnings.push(skipNote(`agent/${r.name || r.id}`))
     }
   }
   saveConfig({ agentResources: rest })
@@ -274,13 +279,17 @@ export function mergeImportAgentResources(incoming: AgentResource[], warnings: s
 export function mergeImportChannels(incoming: MessageChannel[], warnings: string[]): void {
   const cfg = getConfig()
   const current = [...(cfg.channels ?? [])]
-  const byId = new Set(current.map((c) => c.id))
   for (const c of incoming) {
-    if (byId.has(c.id)) warnings.push(skipNote(`通道/${c.name || c.id}`))
-    else {
+    const existing = current.find((x) => x.id === c.id)
+    if (!existing) {
       current.push(c)
-      byId.add(c.id)
+      continue
     }
+    // 空凭据回填（同上）
+    let filled = false
+    if (!existing.larkAppSecret?.trim() && c.larkAppSecret?.trim()) { existing.larkAppSecret = c.larkAppSecret; filled = true }
+    if (!existing.wechatToken?.trim() && c.wechatToken?.trim()) { existing.wechatToken = c.wechatToken; filled = true }
+    warnings.push(filled ? `通道/${c.name || c.id}：凭据已回填` : skipNote(`通道/${c.name || c.id}`))
   }
   saveConfig({ channels: current })
 }
