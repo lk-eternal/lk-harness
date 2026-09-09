@@ -446,12 +446,20 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
   flushLlmLog(session)
   const agg = session.streamAgg
   if (!agg) return
-  if (!agg.finished) {
-    sealAllThinking(agg)
-    sealRunningTools(agg)
-    await flushStreamCard(session, true)
-  }
-  await agg.inflight.catch(() => undefined)
+  // 收尾路径（unregister/finally）必须有界：hang 在此会连带僵死 session 摘除
+  await Promise.race([
+    (async () => {
+      if (!agg.finished) {
+        sealAllThinking(agg)
+        sealRunningTools(agg)
+        await flushStreamCard(session, true)
+      }
+      await agg.inflight.catch(() => undefined)
+    })(),
+    new Promise<void>((_, reject) => setTimeout(() => reject(new Error("sealLlmStream 超时")), 15000)),
+  ]).catch((e: unknown) => {
+    pushUiLog("LLM", "WARN", `[${session.sessionKey}] 收尾超时跳过: ${e instanceof Error ? e.message : String(e)}`)
+  })
 }
 
 export async function executeLlmPiTurn(
@@ -645,6 +653,10 @@ export async function stopLlmSession(sessionKey: string): Promise<void> {
   const { stopLlmWorker, isLlmWorkerActive } = await import("./llm-session-worker.js")
   if (isLlmWorkerActive(sessionKey)) {
     await stopLlmWorker(sessionKey)
+    // 连带摘除 session：否则下次 launch 因 llmSessions 命中而静默 ok:true，worker 却已死（停止键竞态）
+    llmSessions.delete(sessionKey)
+    broadcastLlmSessionStatus()
+    pushUiLog("LLM", "INFO", `[${sessionKey}] 已停止（含残留会话摘除）`)
     return
   }
   const s = llmSessions.get(sessionKey)
@@ -900,6 +912,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
 
     const { startLlmWorkerLoop, isLlmWorkerActive } = await import("./llm-session-worker.js")
     if (isLlmWorkerActive(sessionKey)) {
+      pushUiLog("LLM", "INFO", `[${sessionKey}] worker 仍活跃，复用不重起`)
       await disposeOrphanPi(piSession, session.piUnsubscribe)
       session.piUnsubscribe = null
       return { ok: true }
