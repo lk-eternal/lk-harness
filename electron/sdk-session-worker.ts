@@ -207,6 +207,8 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         if (m.messageId) session.processedMessageIds.add(m.messageId)
       }
 
+      try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+
       if (!state.persistentPoll) {
         pushUiLog("SDK", "INFO", `[${sessionKey}] 按需唤醒模式，回合结束退出 worker`)
         break
