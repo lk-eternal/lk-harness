@@ -473,12 +473,22 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   }
   partial.agentResources = resources
 
-  const agentResourceId = legacySdkId ?? pickDefaultAgentResource(resources)?.id ?? newSdkResourceId()
-  if (!resources.some((r) => r.id === agentResourceId)) {
-    resources.push({ id: agentResourceId, type: "sdk", name: "Cursor SDK", apiKey: cfg.cursorApiKey?.trim() ?? "" })
+  const agentResourceId = legacySdkId ?? pickDefaultAgentResource(resources)?.id ?? ""
+  // 回收历史硬塞的空占位（无 key 的 "Cursor SDK"）：引用它的通道一并置空，走「未配置」兜底
+  const placeholderIds = new Set(
+    resources.filter((r) => r.type === "sdk" && !r.apiKey?.trim() && r.name === "Cursor SDK").map((r) => r.id),
+  )
+  if (placeholderIds.size) {
+    resources = resources.filter((r) => !placeholderIds.has(r.id))
     partial.agentResources = resources
   }
   const channels = [...(cfg.channels ?? [])]
+  if (placeholderIds.size) {
+    for (const c of channels) {
+      if (c.agentResourceId && placeholderIds.has(c.agentResourceId)) c.agentResourceId = ""
+    }
+    partial.channels = channels
+  }
 
   const baseModel = {
     model: cfg.model ?? "auto",
