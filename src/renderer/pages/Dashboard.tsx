@@ -340,12 +340,13 @@ export default function Dashboard({ onSettings, active }: Props) {
       agentReady: hasSdkKey || (prev?.agentReady ?? false),
       channelReady,
     }))
-    const current = cfg.workspaceDir ?? ""
-    let favorites = cfg.favoriteWorkspaces ?? []
-    const same = (a: string, b: string) => a.replace(/[\\/]+$/g, "").toLowerCase() === b.replace(/[\\/]+$/g, "").toLowerCase()
-    if (current.trim() && !favorites.some((f) => same(f, current))) {
-      favorites = [...favorites, current]
-      void window.electronAPI.saveConfig({ favoriteWorkspaces: favorites })
+    const mainChannel = (cfg.channels ?? []).find((c) => c.enabled && c.mainUserEnabled)
+    const current = mainChannel?.workspaceDir?.trim() ?? ""
+    // 通道常用 ∪ 全局常用（去重）：通道有值也不隐藏全局里的目录
+    const sameDir = (a: string, b: string) => a.replace(/[\\/]+$/g, "").toLowerCase() === b.replace(/[\\/]+$/g, "").toLowerCase()
+    const favorites = [...(mainChannel?.favoriteWorkspaces ?? [])]
+    for (const f of cfg.favoriteWorkspaces ?? []) {
+      if (f?.trim() && !favorites.some((x) => sameDir(x, f))) favorites.push(f)
     }
     setWsTabs({ current, favorites })
     await refreshModelTabs()

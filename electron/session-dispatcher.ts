@@ -11,6 +11,7 @@ import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChat
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
+import { resolveEffectiveModel, resolveEffectiveSessionKey } from "./session-key-resolver"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import { setChatNameResolver, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
 import {
@@ -816,16 +817,15 @@ export async function formatCurrentSessionBlock(sessionKey: string, workspaceDir
   const matched = getSessionAgentList().find((s) => s.sessionKey === sessionKey)
   const qMsgs = await getQueueMessages()
   const channel = resolveChannelForSession(sessionKey)
-  const channelModel = resolveChannelModel(channel, "primary")
-  const override = getSessionOverride(sessionKey)
+  const eff = resolveEffectiveModel(sessionKey, channel, "primary", matched)
   return formatSessionStatusBlock({
     sessionKey,
     chatType: matched?.chatType,
     workspaceDir: matched?.workspaceDir || workspaceDir,
     chatName: matched?.chatName,
     pid: matched?.pid,
-    model: matched?.model || override?.model || channelModel.model,
-    modelParams: matched?.modelParams ?? override?.modelParams ?? channelModel.modelParams,
+    model: eff.model,
+    modelParams: eff.modelParams,
     startedAt: matched?.startedAt,
   }, {
     current: true,
@@ -1064,6 +1064,87 @@ export async function switchMainSession(sessionKey: string): Promise<{ ok: boole
 
 // ── /chat 命令处理 ────────────────────────────────────────
 
+async function handleChatWorkspaceSubcommand(
+  tokens: string[],
+  port: number,
+  messageId: string,
+  chatId?: string,
+  patchMessageId?: string,
+): Promise<void> {
+  const reply = (ok: boolean, msg: string, buttons?: { label: string; cmd: string }[]) =>
+    reportCommandResult(port, messageId, ok, msg, chatId, buttons, patchMessageId ? { patchMessageId } : undefined)
+  const wsChannel = chatId ? getChannel(parseChatKey(chatId).channelId) : undefined
+  const wsArgs = tokens.slice(2)
+
+  if (wsArgs.length === 0 || wsArgs[0] === "info" || wsArgs[0] === "ls") {
+    const d = effectiveWorkspaceDir(wsChannel) || "(未配置)"
+    const b = d !== "(未配置)" ? readGitBranch(d) : undefined
+    const info = b ? `📁 当前工作目录: ${d}\n🌿 分支: ${b}` : `📁 当前工作目录: ${d}`
+    const favDirs = getChannelFavoriteWorkspaces(wsChannel)
+    const lastSeg = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p
+    const wsBtns = favDirs.map((dir) => {
+      const parts = dir.split(/[\\/]/).filter(Boolean)
+      const name = parts.pop() ?? dir
+      const dup = favDirs.some((o) => o !== dir && lastSeg(o) === name)
+      const parent = parts.pop()
+      const branch = readGitBranch(dir)
+      const short = branch
+        ? `${name} · ${branch}`
+        : (dup && parent ? `${name}·${parent}` : name)
+      return { label: `📂 ${short}`.slice(0, 40), cmd: `/c w set ${dir}` }
+    })
+    const body = wsBtns.length
+      ? `${info}\n\n💡 /c w set <路径> 切换目录；也可点下方常用目录`
+      : `${info}\n\n💡 /c w — 查看当前 · /c w set <路径> — 切换目录`
+    await reply(true, body, wsBtns.length ? wsBtns : undefined)
+    return
+  }
+
+  let newDir = ""
+  if (wsArgs[0] === "set" && wsArgs.length >= 2) {
+    newDir = wsArgs.slice(1).join(" ").trim()
+  } else if (/[\\/]/.test(wsArgs.join(" "))) {
+    newDir = wsArgs.join(" ").trim()
+  } else {
+    await reply(false, "💡 /c w 工作目录\n🔹 /c w — 查看当前\n🔹 /c w set <路径> — 切换目录")
+    return
+  }
+
+  if (!chatId) {
+    await reply(false, "❌ 无法识别当前通道")
+    return
+  }
+  const w = path.normalize(newDir.trim()).replace(/[\\/]+$/, "")
+  if (!/[\\/]/.test(w) || !fs.existsSync(w) || !fs.statSync(w).isDirectory()) {
+    await reply(false, `❌ 目录不存在或不是有效路径: ${w}`)
+    return
+  }
+  const sessionKey = normalizeSessionKey(`${chatId}::${w}`) || `${chatId}::${w}`
+  const activeKey = await getCurrentActiveSession(port, chatId)
+  const curSk = await resolveEffectiveSessionKey(chatId, "p2p", port)
+  const inProject = !!(curSk && projectIdFromSessionKey(curSk))
+  if (activeKey === sessionKey && !inProject) {
+    await reply(true, `📂 当前已在该目录会话: ${w}`)
+    return
+  }
+  if (inProject) setCurrentProjectId(null)
+  const synced = await syncActiveSession(port, chatId, sessionKey)
+  if (!synced) {
+    await reply(false, "❌ 会话路由绑定失败（请重试 /c w）")
+    return
+  }
+  const running = isSessionAgentRunning(sessionKey)
+  broadcastLog(`[指令 /c w] 已切换到 ${w}${inProject ? "（已退出项目会话）" : ""}`, "INFO")
+  const block = await formatCurrentSessionBlock(sessionKey, w)
+  const hint = running
+    ? "💡 后续消息将路由到此会话（Agent 已在运行）"
+    : "💡 已切换到此目录；下一条消息到达时自动拉起（有历史则恢复上下文）"
+  const head = inProject
+    ? "🔀 已切换目录会话（已退出项目会话）"
+    : "🔀 已切换目录会话"
+  await reply(true, [head, "", block, "", hint].join("\n"))
+}
+
 export async function handleChatCommand(tokens: string[], port: number, messageId: string, chatId?: string, patchMessageId?: string): Promise<void> {
   const reply = (ok: boolean, msg: string, buttons?: { label: string; cmd: string }[]) => reportCommandResult(port, messageId, ok, msg, chatId, buttons, patchMessageId ? { patchMessageId } : undefined)
   const sub = tokens[1]?.toLowerCase()
@@ -1089,7 +1170,7 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
     list.slice(0, 10).forEach((_e, i) => {
       chatBtns.push({ label: `#${i + 1}`, cmd: `/c ${i + 1}` })
     })
-    const usage = "💡 点序号切换 · /c main 回主会话 · /c stop <序号> 停止 · /c del <序号> 删除 · /c new <描述> 新临时会话"
+    const usage = "💡 点序号切换 · /c w 切目录 · /c main 回主会话 · /c stop/del/new …"
     const parts = [`📋 会话列表 (${list.length})`, "", blocks.join("\n\n"), "", usage]
     await reply(true, parts.filter((x, i, a) => !(x === "" && a[i - 1] === "")).join("\n"), chatBtns)
     return
@@ -1125,6 +1206,11 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
       sessionKey: mainKey,
       ...(patchMessageId ? { patchMessageId } : {}),
     })
+    return
+  }
+
+  if (sub === "w" || sub === "workspace") {
+    await handleChatWorkspaceSubcommand(tokens, port, messageId, chatId, patchMessageId)
     return
   }
 
@@ -1221,7 +1307,7 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
     return
   }
 
-  await reply(false, ["💡 /c 子命令（全称 /chat）","🔹 /c ls — 列出会话","🔹 /c <序号> — 切换到指定会话","🔹 /c main — 一键切回主会话","🔹 /c stop <序号> — 停止指定会话","🔹 /c del <序号> — 删除指定会话","🔹 /c new <描述> — 创建新临时会话"].join("\n"))
+  await reply(false, ["💡 /c 子命令（全称 /chat）","🔹 /c ls — 列出会话","🔹 /c w — 工作目录（/c w set <路径>）","🔹 /c <序号> — 切换到指定会话","🔹 /c main — 一键切回主会话","🔹 /c stop <序号> — 停止指定会话","🔹 /c del <序号> — 删除指定会话","🔹 /c new <描述> — 创建新临时会话"].join("\n"))
 }
 
 // ── 僵尸 Agent 检测 ──────────────────────────────────────

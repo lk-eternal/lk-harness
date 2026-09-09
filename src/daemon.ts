@@ -147,6 +147,8 @@ interface ChannelRuntimeFlags {
   mainUserEnabled?: boolean;
   mainUserChatId?: string;
   mainUserOpenId?: string;
+  workspaceDir?: string;
+  favoriteWorkspaces?: string[];
 }
 
 function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
@@ -163,6 +165,8 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
     if (typeof f.mainUserEnabled === "boolean") rt.cfg.mainUserEnabled = f.mainUserEnabled;
     if (typeof f.mainUserChatId === "string") rt.cfg.mainUserChatId = f.mainUserChatId;
     if (typeof f.mainUserOpenId === "string" && f.mainUserOpenId.trim()) rt.cfg.mainUserOpenId = f.mainUserOpenId.trim();
+    if (typeof f.workspaceDir === "string") rt.cfg.workspaceDir = f.workspaceDir;
+    if (Array.isArray(f.favoriteWorkspaces)) rt.cfg.favoriteWorkspaces = f.favoriteWorkspaces;
   }
 }
 
@@ -269,9 +273,11 @@ function channelWorkspaceDir(rt: ChannelRuntime): string {
   return rt.cfg.workspaceDir?.trim() ?? "";
 }
 
-/** 查通道自身配置目录（静态配置可用，早于运行时 map；找不到返回 ""） */
+/** 查通道当前工作目录（运行时优先，启动快照兜底） */
 function channelDirById(channelId?: string): string {
   if (!channelId) return "";
+  const rt = channels.get(channelId);
+  if (rt?.cfg.workspaceDir?.trim()) return rt.cfg.workspaceDir.trim();
   return CHANNEL_CONFIGS.find((c) => c.id === channelId)?.workspaceDir?.trim() ?? "";
 }
 
@@ -591,21 +597,14 @@ function scrubInvalidActiveSessions(): void {
       continue;
     }
     if (!suffix || isSpecialSessionSuffix(suffix)) continue;
-    const ownDir = channelDirById(parseChatKey(chatId).channelId);
+    const channelId = parseChatKey(chatId).channelId;
     if (/[\\/]/.test(suffix)) {
-      // 目录后缀：必须属于本通道，否则是跨通道污染（治愈为本通道目录或裸 chat）
-      if (ownDir && sameWorkspaceDir(suffix, ownDir)) continue;
-      const next = ownDir ? `${chatId}::${ownDir}` : chatId;
-      activeSessionMap.set(chatId, next);
-      sessionToChatMap.delete(sk);
-      if (next !== chatId) sessionToChatMap.set(next, chatId);
-      explicitActiveChats.delete(chatId);
-      n++;
-      log("WARN", `[Routing] 治愈跨通道目录污染: ${sk} → ${next}`);
+      // 任意合法路径可切：会话隔离靠 channelId 前缀，目录同路径不治愈
       continue;
     }
     // 非路径垃圾后缀：回落本通道目录，无则剥成裸 chat
-    const next = ownDir ? `${chatId}::${ownDir}` : chatId;
+    const primaryDir = channelDirById(channelId);
+    const next = primaryDir ? `${chatId}::${primaryDir}` : chatId;
     activeSessionMap.set(chatId, next);
     sessionToChatMap.delete(sk);
     if (next !== chatId) sessionToChatMap.set(next, chatId);
@@ -718,11 +717,6 @@ function setActiveSession(chatId: string, sessionKey: string, explicit = false):
       log("WARN", `[Routing] 拒绝跨会话 active 绑定: chat=${chatId} session=${normalized}`);
       return false;
     }
-    // 后缀目录必须属于该会话自己的通道（通道未配目录则不许带目录后缀），运行期造不出跨通道 key
-    if (!isSessionDirBindingValid(normalized, channelDirById(parseChatKey(sessionChat).channelId))) {
-      log("WARN", `[Routing] 拒绝跨目录 active 绑定: chat=${chatId} session=${normalized}`);
-      return false;
-    }
   }
   activeSessionMap.set(chatId, normalized);
   sessionToChatMap.set(normalized, chatId);
@@ -730,15 +724,6 @@ function setActiveSession(chatId: string, sessionKey: string, explicit = false):
   scheduleRoutingSave();
   log("INFO", `会话路由更新: ${chatId} → ${normalized}${explicit ? " (显式)" : ""}`);
   return true;
-}
-
-/** 目录绑定校验（纯函数）：后缀目录必须属于会话自己的通道；通道未配目录则不许带目录后缀 */
-export function isSessionDirBindingValid(normalizedSessionKey: string, ownDir: string): boolean {
-  if (!normalizedSessionKey.includes("::")) return true;
-  const suffix = normalizedSessionKey.slice(normalizedSessionKey.indexOf("::") + 2);
-  if (!suffix || !/[\\/]/.test(suffix) || isSpecialSessionSuffix(suffix)) return true;
-  if (!ownDir) return false;
-  return sameWorkspaceDir(suffix, ownDir);
 }
 
 function resolveRawChatId(sessionKey?: string): string | undefined {
@@ -1463,9 +1448,7 @@ const COMMANDS: Record<string, string> = {
   "/m": "同 /model",
   "/mcp": "MCP 服务器管理（/mcp ls | info | enable | disable | delete | add）",
   "/mc": "同 /mcp",
-  "/workspace": "切换工作目录（/workspace 查看当前 | /workspace set <路径>）",
-  "/w": "同 /workspace",
-  "/chat": "会话管理（/chat ls | /chat <序号> | /chat stop <序号> | /chat new <描述>）",
+  "/chat": "会话管理（/c ls | /c w 切换目录 | /c <序号> | /c new <描述>）",
   "/c": "同 /chat",
   "/clean": "清空消息队列",
   "/cl": "同 /clean",

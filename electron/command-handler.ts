@@ -21,7 +21,8 @@ import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/sha
 import { resolveModelLabel, rememberModelLabel, selectModelVariants } from "../src/shared/model-utils.js"
 import { listSdkModels } from "./agent-sdk"
 import { McpServerEntry, getMcpServerList, getMcpEnabledMap, toggleMcpServer, deleteMcpServer, saveMcpServer } from "./mcp-manager"
-import { httpPost, getCurrentActiveSession, enqueueToMainSession } from "./daemon-client"
+import { httpPost, enqueueToMainSession } from "./daemon-client"
+import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 
 // ── 共享类型与工具 ─────────────────────────────────────────
 
@@ -133,18 +134,6 @@ function providerTypeLabel(t: string): string {
   return t || "未知"
 }
 
-async function resolveModelSessionKey(port: number, chatId?: string, channel?: MessageChannel): Promise<string | undefined> {
-  if (!chatId) return undefined
-  // 活跃路由优先：用户在项目/目录会话里切模型，必须落在正聊的那个会话上
-  const active = await getCurrentActiveSession(port, chatId)
-  if (active?.trim()) return active
-  const live = findLiveSessionKey(chatId)
-  if (live) return live
-  // 无活跃无运行=全新会话：读方（launchAgent）按裸 chatId 拉起，写方不得猜工作区后缀，否则 override 永远命中不了
-  void channel
-  return chatId
-}
-
 async function applySessionModelPick(
   port: number,
   messageId: string,
@@ -154,8 +143,9 @@ async function applySessionModelPick(
   idxLabel?: string,
   patchMessageId?: string,
   resourceOverride?: ReturnType<typeof getAgentResource>,
+  chatType?: string,
 ): Promise<void> {
-  const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+  const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
   if (!sessionKey) {
     await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, cmdCardExtra(patchMessageId, "模型"))
     return
@@ -229,7 +219,7 @@ async function listModelsForResource(resource: Parameters<typeof getAgentResourc
   return { ok: true, models }
 }
 
-export async function handleFeishuModelCommand(port: number, messageId: string, raw: string, chatId?: string, patchMessageId?: string): Promise<void> {
+export async function handleFeishuModelCommand(port: number, messageId: string, raw: string, chatId?: string, patchMessageId?: string, chatType?: string): Promise<void> {
   const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0)
   const low = (s: string) => s.toLowerCase()
   const mExtra = (subtitle?: string) => cmdCardExtra(patchMessageId, "模型", subtitle)
@@ -244,7 +234,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     const quick = listQuickModels(await quickModelsForChannel(channel), 6) as QuickFav[]
     const effortBtns: CommandButton[] = []
     try {
-      const sk = await resolveModelSessionKey(port, chatId, channel)
+      const sk = await resolveEffectiveSessionKey(chatId, chatType, port)
       if (sk) {
         const ev = await effortVariantsForSession(channel, sk)
         if (ev.ok && ev.options.length > 1) {
@@ -266,13 +256,12 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
     })
     let titleLine: string | undefined
     try {
-      const sk2 = await resolveModelSessionKey(port, chatId, channel)
+      const sk2 = await resolveEffectiveSessionKey(chatId, chatType, port)
       if (sk2) {
         const effId2 = resolveResourceForSession(sk2, channel.agentResourceId) ?? channel.agentResourceId
         const effRes2 = getAgentResource(effId2)
-        const ov2 = getSessionOverride(sk2)
-        const mid2 = ov2?.model?.trim() || channel.model?.trim() || "auto"
-        const disp2 = resolveModelLabel(mid2, ov2?.modelParams ?? channel.modelParams) || mid2
+        const { model: mid2, modelParams: mp2 } = resolveEffectiveModel(sk2, channel, "primary")
+        const disp2 = resolveModelLabel(mid2, mp2) || mid2 || "auto"
         titleLine = `🧠 当前：${effRes2.name || effRes2.id} · ${disp2}`
       }
     } catch { /* 取不到则不展示标题行，菜单照常 */ }
@@ -291,7 +280,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (sub === "info") {
-    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
     const resource = getAgentResource(channel.agentResourceId)
     const cfgDisplay = resolveModelLabel(channel.model, channel.modelParams) || channel.model?.trim() || "auto"
     const ov = sessionKey ? getSessionOverride(sessionKey) : undefined
@@ -320,7 +309,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
   }
 
   if (sub === "ls") {
-    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
     const lr = await listModelsForCommands(channel, sessionKey)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
@@ -356,7 +345,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         await reportCommandResult(port, messageId, false, "❌ 尚未配置供应商（设置 → Agent）", chatId, undefined, mExtra())
         return
       }
-      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+      const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
       const effId = sessionKey
         ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
         : channel.agentResourceId
@@ -406,7 +395,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         }
         if (modelLabel) rememberModelLabel(modelId, modelParams, modelLabel)
       }
-      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+      const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
       if (!sessionKey) {
         await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
         return
@@ -472,7 +461,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         await reportCommandResult(port, messageId, true, body, chatId, btns, mExtra("供应商"))
         return
       }
-      const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+      const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
       if (!sessionKey) {
         await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra("供应商"))
         return
@@ -501,7 +490,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
 
   if (sub === "effort") {
     const action = low(parts[2] ?? "")
-    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
     if (!sessionKey) {
       await reportCommandResult(port, messageId, false, "❌ 无法解析会话（缺少 chatId）", chatId, undefined, mExtra())
       return
@@ -569,7 +558,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         return
       }
       await applySessionModelPick(port, messageId, channel, chatId,
-        { id: hit.id, label: hit.label, current: false, params: hit.params }, `effort ${n}`, patchMessageId, ev.resource)
+        { id: hit.id, label: hit.label, current: false, params: hit.params }, `effort ${n}`, patchMessageId, ev.resource, chatType)
       return
     }
     await reportCommandResult(port, messageId, false, "💡 用法：/m effort ls | /m effort set <序号|等级>", chatId, undefined, mExtra())
@@ -593,7 +582,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
       const fromQuick = quick[qi - 1]
       // 供应商+模型是整体：收藏带供应商且与会话当前不一致 → 原子切换
       if (fromQuick.resourceId) {
-        const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+        const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
         const effId = sessionKey
           ? (resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId)
           : channel.agentResourceId
@@ -625,10 +614,10 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         current: false,
         params: fromQuick.modelParams,
       }
-      await applySessionModelPick(port, messageId, channel, chatId, picked, `q${qi}`, patchMessageId)
+      await applySessionModelPick(port, messageId, channel, chatId, picked, `q${qi}`, patchMessageId, undefined, chatType)
       return
     }
-    const sessionKey = await resolveModelSessionKey(port, chatId, channel)
+    const sessionKey = await resolveEffectiveSessionKey(chatId, chatType, port)
     const lr = await listModelsForCommands(channel, sessionKey)
     if (!lr.ok) {
       await reportCommandResult(port, messageId, false, `❌ ${lr.error}`, chatId, undefined, mExtra())
@@ -689,7 +678,7 @@ export async function handleFeishuModelCommand(port: number, messageId: string, 
         : hits[0]
       if (hit?.modelParams) picked = { ...picked, params: hit.modelParams }
     }
-    await applySessionModelPick(port, messageId, channel, chatId, picked, idxLabel, patchMessageId)
+    await applySessionModelPick(port, messageId, channel, chatId, picked, idxLabel, patchMessageId, undefined, chatType)
     return
   }
 

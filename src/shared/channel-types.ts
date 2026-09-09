@@ -78,6 +78,8 @@ export interface DaemonChannelConfig {
   mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
   /** 通道级工作目录，空 = 跟随全局 WORKSPACE_DIR */
   workspaceDir: string;
+  /** 通道常用目录（/c w 快捷切换） */
+  favoriteWorkspaces?: string[];
   /** 合成开关（keepSession && persistentPoll）：poll 响应随路下发，作为 Agent 收尾方式的权威来源 */
   keepAlive?: boolean;
   /** 是否展示流式进度卡（默认 true） */

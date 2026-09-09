@@ -76,6 +76,13 @@ import {
   dirBaseName,
 } from "../src/shared/session-label.js"
 import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToMainSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
+import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
+import {
+  applyChannelWorkspaceSwitch,
+  buildDaemonChannelConfig,
+  formatWorkspaceSwitchText,
+  pushChannelRuntimeToDaemon,
+} from "./workspace-switch"
 import {
   isSessionAgentRunning, stopSessionAgent, stopAllSessionAgents,
   dispatchSessionAgents, launchSessionAgent, launchIndependentAgent,
@@ -477,27 +484,6 @@ function channelReady(c: MessageChannel): boolean {
   if (!c.enabled) return false
   if (c.type === "feishu") return !!(c.larkAppId?.trim() && c.larkAppSecret?.trim())
   return !!c.wechatToken?.trim()
-}
-
-function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig | null {
-  if (!channelReady(c)) return null
-  return {
-    id: c.id,
-    name: c.name || (c.type === "feishu" ? "飞书" : "微信"),
-    type: c.type,
-    appId: c.larkAppId?.trim(),
-    appSecret: c.larkAppSecret?.trim(),
-    wechatToken: c.wechatToken?.trim(),
-    wechatAccountId: c.wechatAccountId?.trim(),
-    mainUserEnabled: !!c.mainUserEnabled,
-    mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
-    mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
-    workspaceDir: c.workspaceDir?.trim() ?? "",
-    keepAlive: (c.keepSession ?? true) && (c.persistentPoll ?? true),
-    showThinking: c.showThinking ?? true,
-    streamKeepPerKind: c.streamKeepPerKind,
-    hideThinkingOnFinish: c.hideThinkingOnFinish ?? true,
-  }
 }
 
 function buildDaemonChannelConfigs(): DaemonChannelConfig[] {
@@ -1099,21 +1085,6 @@ function stopStatusPolling(): void {
   stopDaemonPowerSaveBlock()
 }
 
-async function resolveCommandSessionKey(chatId?: string, chatType?: string): Promise<string | undefined> {
-  if (!chatId) return undefined
-  const lock = readLockFile()
-  if (lock?.port) {
-    const active = await getCurrentActiveSession(lock.port, chatId)
-    if (active) return active
-  }
-  if (chatType === "p2p" && isMainUser(chatId, chatType)) {
-    const channel = getChannel(parseChatKey(chatId).channelId)
-    const wsDir = effectiveWorkspaceDir(channel)
-    if (wsDir) return `${chatId}::${wsDir}`
-  }
-  return chatId
-}
-
 /** daemon routing 里该 chat 绑定的 project_ 会话（store 未命中时的兜底） */
 async function resolveRoutingProjectSession(port: number, chatId?: string): Promise<string | undefined> {
   if (!chatId) return undefined
@@ -1167,7 +1138,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
     const isAdmin = isMainUser(claimed.chatId, claimed.chatType)
     // 群内主用户本人：daemon 入队时已用私聊映射验过（绑定 oc_ → ou_ 比对），这里只认值
     const isMainUserSender = claimed.senderIsMainUser === true
-    const cmdSessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
+    const cmdSessionKey = await resolveEffectiveSessionKey(claimed.chatId, claimed.chatType, lock.port)
     const findProj = findProjectByGroupChat(claimed.chatId)
     const routingSession = await resolveRoutingProjectSession(lock.port, claimed.chatId)
     // 独立群：群内 /p、/m 不应要求主用户私聊管理员；store / cmdSession / routing 任一命中即放行
@@ -1251,7 +1222,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
 
         case "/s":
         case "/status": {
-          const sessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
+          const sessionKey = await resolveEffectiveSessionKey(claimed.chatId, claimed.chatType, lock.port)
           const sessions = getSessionAgentList()
           const matched = (sessionKey
             ? sessions.find((s) => s.sessionKey === sessionKey)
@@ -1275,13 +1246,8 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           const channel = claimed.chatId
             ? (getChannel(parseChatKey(claimed.chatId).channelId) ?? resolveChannelForSession(sessionKey ?? claimed.chatId))
             : undefined
-          const channelModel = channel
-            ? resolveChannelModel(channel, isAdmin ? "primary" : "others")
-            : { model: "", modelParams: "" }
-          // 未运行会话优先取持久化的会话级模型覆盖，仅通道默认作兜底（否则 /m set 后未启动时显示错）
-          const override = sessionKey ? getSessionOverride(sessionKey) : undefined
-          const effModel = matched?.model || override?.model || channelModel.model
-          const effParams = matched?.modelParams ?? override?.modelParams ?? channelModel.modelParams
+          const scenario = isAdmin ? "primary" as const : "others" as const
+          const { model: effModel, modelParams: effParams } = resolveEffectiveModel(sessionKey, channel, scenario, matched)
           if (channel) {
             const resource = getAgentResource(channel.agentResourceId)
             if (resource) {
@@ -1386,7 +1352,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           // 项目专属群内放行（与 /p 一致）：独立群项目的模型切换入口只在群里
           // 普通群主用户本人放行：/m set 只写当前会话 override，不碰通道默认
           if (!isAdmin && !isProjectGroup && !isMainUserSender) { await denyNonAdmin(); break }
-          await handleFeishuModelCommand(lock.port, claimed.messageId, rawCmd, claimed.chatId, patchTarget)
+          await handleFeishuModelCommand(lock.port, claimed.messageId, rawCmd, claimed.chatId, patchTarget, claimed.chatType)
           break
         }
 
@@ -1428,7 +1394,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
 
         case "/r":
         case "/reset": {
-          const sessionKey = await resolveCommandSessionKey(claimed.chatId, claimed.chatType)
+          const sessionKey = await resolveEffectiveSessionKey(claimed.chatId, claimed.chatType, lock.port)
           if (sessionKey && isSessionAgentRunning(sessionKey)) {
             await stopSessionAgent(sessionKey)
           }
@@ -1445,61 +1411,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/w":
         case "/workspace": {
           if (!isAdmin) { await denyNonAdmin(); break }
-          const wsChannelId = claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined
-          const wsChannel = wsChannelId ? getChannel(wsChannelId) : undefined
-          const wsArgs = cmdTokens.slice(1)
-          if (wsArgs.length === 0 || wsArgs[0] === "info") {
-            const d = effectiveWorkspaceDir(wsChannel) || "(未配置)"
-            const b = d !== "(未配置)" ? readGitBranch(d) : undefined
-            const info = b ? `📁 当前工作目录: ${d}\n🌿 分支: ${b}` : `📁 当前工作目录: ${d}`
-            const favDirs = getChannelFavoriteWorkspaces(wsChannel)
-            const lastSeg = (p: string) => p.split(/[\\/]/).filter(Boolean).pop() ?? p
-            const wsBtns = favDirs.map((dir) => {
-              const parts = dir.split(/[\\/]/).filter(Boolean)
-              const name = parts.pop() ?? dir
-              const dup = favDirs.some((o) => o !== dir && lastSeg(o) === name)
-              const parent = parts.pop()
-              const branch = readGitBranch(dir)
-              // 有分支优先显示分支；同名目录才用父级消歧
-              const short = branch
-                ? `${name} · ${branch}`
-                : (dup && parent ? `${name}·${parent}` : name)
-              return { label: `📂 ${short}`.slice(0, 40), cmd: `/w set ${dir}` }
-            })
-            const body = wsBtns.length
-              ? `${info}\n\n💡 /w set <路径> 可切换目录；也可点下方常用目录`
-              : `${info}\n\n💡 /w — 查看当前 · /w set <路径> — 切换`
-            await reply(true, body, wsBtns.length ? wsBtns : undefined)
-          } else if (wsArgs[0] === "set" && wsArgs.length >= 2) {
-            const newDir = wsArgs.slice(1).join(" ").trim()
-            if (!wsChannelId) {
-              await reply(false, "❌ 无法识别当前通道")
-              break
-            }
-            const curDir = effectiveWorkspaceDir(wsChannel)
-            // 项目会话中切目录 = 退出项目、切到目标目录的普通会话（项目 worktree 不受影响）
-            const curSk = await resolveCommandSessionKey(claimed!.chatId, claimed!.chatType)
-            const inProject = !!(curSk && projectIdFromSessionKey(curSk))
-            if (newDir === curDir && !inProject) {
-              await reply(true, `📂 工作目录未变化: ${newDir}`)
-            } else {
-              const wsResult = newDir === curDir
-                ? { ok: true as const }
-                : await applyChannelWorkspaceSwitch(wsChannelId, newDir, false)
-              if (wsResult.ok) {
-                if (inProject && claimed!.chatId) {
-                  await syncActiveSession(lock.port, claimed!.chatId, `${claimed!.chatId}::${newDir}`)
-                }
-                broadcastLog(`[指令 /workspace] 已切换到 ${newDir}${inProject ? "（已退出项目会话）" : ""}`, "INFO")
-                await reply(true, formatWorkspaceSwitchText(newDir) + (inProject ? "\n\n已退出项目会话，回到该目录的普通会话" : ""))
-              } else {
-                broadcastLog(`[指令 /workspace] 切换失败: ${(wsResult as { error?: string }).error}`, "ERROR")
-                await reply(false, `❌ 切换失败: ${(wsResult as { error?: string }).error}`)
-              }
-            }
-          } else {
-            await reply(false, "💡 /w 工作目录（全称 /workspace）\n🔹 /w — 查看当前目录\n🔹 /w set <路径> — 切换工作目录")
-          }
+          await handleChatCommand(["/c", "w", ...cmdTokens.slice(1)], lock.port, claimed!.messageId, claimed!.chatId, patchTarget)
           break
         }
 
@@ -1518,7 +1430,6 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             { label: "⏹ 停止", cmd: "/x", section: "▶ 当前对话" },
             { label: "🔄 清空上下文", cmd: "/r", section: "▶ 当前对话" },
             { label: "🧠 切换模型", cmd: "/m", section: "▶ 当前对话" },
-            { label: "📁 工作目录", cmd: "/w", section: "▶ 当前对话" },
           ]
           const queue = [
             { label: "📋 查看排队", cmd: "/ls", section: "▶ 排队中" },
@@ -1576,30 +1487,7 @@ export interface ConfigSaveResult {
 /**
  * 切换工作目录：可选地停止旧会话，然后热更新到新目录。
  */
-/** 切换指定通道的主用户工作目录（不写全局 config.workspaceDir） */
-export async function applyChannelWorkspaceSwitch(
-  channelId: string,
-  workspaceDir: string,
-  stopOldSessions = false,
-): Promise<{ ok: boolean; error?: string }> {
-  const w = path.normalize(workspaceDir.trim()).replace(/[\\/]+$/, "")
-  if (!w) return { ok: false, error: "工作目录为空" }
-  if (!/[\\/]/.test(w) || !fs.existsSync(w) || !fs.statSync(w).isDirectory()) {
-    return { ok: false, error: `目录不存在或不是有效路径: ${w}` }
-  }
-  const channel = getChannel(channelId)
-  if (!channel) return { ok: false, error: "通道不存在" }
-  if (channel.workspaceDir?.trim() === w) return { ok: true }
-
-  if (stopOldSessions) await stopAllSessionAgents()
-
-  updateChannel(channelId, { workspaceDir: w })
-  invalidateMcpEnabledCache()
-  clearInjectionCache()
-  cleanupChannelWorkspaces()
-  broadcastStatus(await getDaemonStatus())
-  return { ok: true }
-}
+export { applyChannelWorkspaceSwitch } from "./workspace-switch"
 
 export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions: boolean, skipDaemonSync = false, notifyMain = false): Promise<{ ok: boolean; error?: string }> {
   // path.normalize 压平 D:\\foo（Windows existsSync 对双重反斜杠仍为 true，写入 config/sessionKey 会分裂队列）
@@ -1615,7 +1503,12 @@ export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions
 
   const mainChannel = getChannels().find((c) => c.enabled && c.mainUserEnabled)
   if (mainChannel) {
-    return applyChannelWorkspaceSwitch(mainChannel.id, w, false)
+    const rawChat = mainChannel.mainUserChatId?.trim()
+    const chatId = rawChat ? `${mainChannel.id}|${rawChat}` : undefined
+    const r = await applyChannelWorkspaceSwitch(mainChannel.id, w, chatId)
+    if (r.ok) broadcastStatus(await getDaemonStatus())
+    if (r.ok && notifyMain) void notifyMainUsersWorkspaceSwitched(w)
+    return r
   }
 
   invalidateMcpEnabledCache()
@@ -1640,17 +1533,6 @@ export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions
   broadcastStatus(await getDaemonStatus())
   if (notifyMain) void notifyMainUsersWorkspaceSwitched(w)
   return { ok: true }
-}
-
-function formatWorkspaceSwitchText(dir: string): string {
-  const label = dirBaseName(dir)
-  const branch = readGitBranch(dir)
-  return [
-    `✅ 工作目录已切换`,
-    `📁 \`${dir}\``,
-    branch ? `🌿 分支: ${branch}` : undefined,
-    `📂 ${label} · 会话上下文已切换`,
-  ].filter(Boolean).join("\n")
 }
 
 async function notifyMainUsersWorkspaceSwitched(dir: string): Promise<void> {
@@ -1692,30 +1574,9 @@ function connectionConfigChanged(prev: MessageChannel[], next: MessageChannel[])
   return false
 }
 
-/** 运行时可热更新的通道配置（保存后直推 daemon 内存，不重启、不打断会话） */
-function channelRuntimeFlags(channels: MessageChannel[]) {
-  return channels.filter(channelReady).map((c) => ({
-    id: c.id,
-    keepAlive: (c.keepSession ?? true) && (c.persistentPoll ?? true),
-    showThinking: c.showThinking ?? true,
-    streamKeepPerKind: c.streamKeepPerKind,
-    hideThinkingOnFinish: c.hideThinkingOnFinish ?? true,
-    name: c.name,
-    mainUserEnabled: !!c.mainUserEnabled,
-    mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
-    mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
-  }))
-}
-
 async function pushChannelFlagsToDaemon(channels: MessageChannel[]): Promise<void> {
-  const port = cachedPort ?? readLockFile()?.port
-  if (!port) return
-  try {
-    await httpPost(`http://127.0.0.1:${port}/api/channel-flags`, { channels: channelRuntimeFlags(channels) }, 5000)
-    broadcastLog("[Channels] 保活开关已热更新至 Daemon（无需重启）")
-  } catch (e: unknown) {
-    broadcastLog(`[Channels] 保活开关热更新失败: ${e instanceof Error ? e.message : String(e)}`, "WARN")
-  }
+  await pushChannelRuntimeToDaemon(channels)
+  broadcastLog("[Channels] 运行时配置已热更新至 Daemon（无需重启）")
 }
 
 export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Promise<ConfigSaveResult> {
@@ -2018,7 +1879,9 @@ export function initDaemonManager(): void {
     const ch = getChannel(channelId)
     if (!ch) return { ok: false as const, error: "通道不存在" }
     const dirs = [...getChannelFavoriteWorkspaces(ch), dir]
-    return { ok: true as const, favoriteWorkspaces: setChannelFavoriteWorkspaces(channelId, dirs) }
+    const favoriteWorkspaces = setChannelFavoriteWorkspaces(channelId, dirs)
+    void pushChannelRuntimeToDaemon()
+    return { ok: true as const, favoriteWorkspaces }
   })
   ipcMain.handle("session:switch", (_e, sessionKey: string) => switchMainSession(sessionKey))
   ipcMain.handle("session:delete", async (_e, sessionKey: string) => deleteUserSession(sessionKey))
