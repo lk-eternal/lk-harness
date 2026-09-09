@@ -1,7 +1,8 @@
-import { Agent, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
+import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
 import { resolve, join, dirname } from "node:path"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
 import { sessionStateDir } from "../src/shared/data-paths.js"
@@ -476,6 +477,26 @@ function ensureSdkBinaryPaths(): void {
   pushUiLog("SDK", "WARN", `未找到 ${binaryName}，SDK 可能报错 (searched: ${candidates.join(", ")})`)
 }
 
+/** 按 cwd 缓存；避免 Windows SQLite WAL mid-run commit 失败（Cursor SDK 已知问题） */
+const jsonlAgentStores = new Map<string, JsonlLocalAgentStore>()
+
+function workspaceStoreDirKey(workspaceDir: string): string {
+  const sanitized = resolve(workspaceDir).replace(/[^a-zA-Z0-9_-]/g, "_")
+  if (sanitized.length <= 120) return sanitized
+  return createHash("sha256").update(workspaceDir).digest("hex").slice(0, 16)
+}
+
+function resolveJsonlAgentStore(workspaceDir: string): JsonlLocalAgentStore {
+  const cwd = resolve(workspaceDir)
+  let store = jsonlAgentStores.get(cwd)
+  if (!store) {
+    const rootDir = join(app.getPath("userData"), "sdk-jsonl-stores", workspaceStoreDirKey(cwd))
+    if (!existsSync(rootDir)) mkdirSync(rootDir, { recursive: true })
+    store = new JsonlLocalAgentStore(rootDir)
+    jsonlAgentStores.set(cwd, store)
+  }
+  return store
+}
 
 function broadcastSdkSessionStatus(): void {
   const list = [...sdkSessions.values()].map((s) => ({
@@ -1251,6 +1272,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       cwd: workspaceDir,
       settingSources: [] as ("project" | "user")[],
       sandboxOptions: { enabled: false },
+      store: resolveJsonlAgentStore(workspaceDir),
     }
 
     const sdkPort = resolveDaemonPortForPrompt()
@@ -1285,7 +1307,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const resumed = agent !== undefined
 
     if (!agent) {
-      pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, model=${JSON.stringify(modelSelection)})`)
+      pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, store=jsonl, model=${JSON.stringify(modelSelection)})`)
       agent = await Agent.create(agentBaseOpts)
     }
 
