@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.2.7",
+    "date": "2026-09-09",
+    "changes": [
+      "/c w 改为纯路由切换：存在则切、不存在则建路由，不拉起 Agent，下一条消息再唤醒",
+      "/w 别名归 /c w；/h 去掉独立工作目录入口；sessionKey 解析统一到 session-key-resolver",
+      "Daemon 热同步通道 workspaceDir 与常用目录；路由隔离靠 channelId 前缀，允许多通道同目录",
+      "/m 透传真实 chatType；Dashboard 常用目录取通道∪全局并集",
+      "修复 Windows 安装包图标（移除错误的 signAndEditExecutable: false）"
+    ]
+  },
+  {
     "version": "0.2.6",
     "date": "2026-09-09",
     "changes": [
