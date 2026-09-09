@@ -615,6 +615,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 }}
                 className={inputCls}
               >
+                <option value="">请选择 Agent 资源</option>
                 {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
               </select>
             </div>
