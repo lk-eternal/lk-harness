@@ -221,7 +221,11 @@ function copyClawProjectFiles(userDataPath: string, destDir: string, warnings: s
         if (fs.existsSync(dest)) { skipped++; continue }
         const raw = JSON.parse(fs.readFileSync(path.join(srcDir, f), "utf-8"))
         if (!raw || typeof raw.id !== "string") { skipped++; continue }
-        fs.copyFileSync(path.join(srcDir, f), dest)
+        // 群→项目路由认 groupChatId：claw 文件没有，用 notifyChatId 回填，缺失则不补
+        if (!raw.groupChatId && typeof raw.notifyChatId === "string" && raw.notifyChatId.trim()) {
+          raw.groupChatId = raw.notifyChatId.trim()
+        }
+        fs.writeFileSync(dest, JSON.stringify(raw, null, 2), "utf-8")
         added++
       } catch {
         skipped++
