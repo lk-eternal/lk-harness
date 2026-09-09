@@ -265,7 +265,21 @@ interface ChannelRuntime {
 const channels = new Map<string, ChannelRuntime>();
 
 function channelWorkspaceDir(rt: ChannelRuntime): string {
-  return rt.cfg.workspaceDir?.trim() || WORKSPACE_DIR;
+  // 仅通道级，禁止回退全局：空目录通道的消息路由到裸 chatId，不进别的通道目录（防窜台）
+  return rt.cfg.workspaceDir?.trim() ?? "";
+}
+
+/** 查通道自身配置目录（静态配置可用，早于运行时 map；找不到返回 ""） */
+function channelDirById(channelId?: string): string {
+  if (!channelId) return "";
+  return CHANNEL_CONFIGS.find((c) => c.id === channelId)?.workspaceDir?.trim() ?? "";
+}
+
+/** 目录是否同一（win/mac 文件系统不区分大小写） */
+function sameWorkspaceDir(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (process.platform === "win32" || process.platform === "darwin") return a.toLowerCase() === b.toLowerCase();
+  return false;
 }
 
 function isChannelConnected(rt: ChannelRuntime): boolean {
@@ -562,7 +576,6 @@ function scrubCrossChannelRouting(): void {
 }
 
 function scrubInvalidActiveSessions(): void {
-  if (!WORKSPACE_DIR || !/[\\/]/.test(WORKSPACE_DIR)) return;
   let n = 0;
   for (const [chatId, sk] of [...activeSessionMap.entries()]) {
     const idx = sk.indexOf("::");
@@ -577,11 +590,25 @@ function scrubInvalidActiveSessions(): void {
       log("INFO", `[Routing] 纠正双重转义会话: ${sk} → ${normalized}`);
       continue;
     }
-    if (!suffix || isSpecialSessionSuffix(suffix) || /[\\/]/.test(suffix)) continue;
-    const next = `${chatId}::${WORKSPACE_DIR}`;
+    if (!suffix || isSpecialSessionSuffix(suffix)) continue;
+    const ownDir = channelDirById(parseChatKey(chatId).channelId);
+    if (/[\\/]/.test(suffix)) {
+      // 目录后缀：必须属于本通道，否则是跨通道污染（治愈为本通道目录或裸 chat）
+      if (ownDir && sameWorkspaceDir(suffix, ownDir)) continue;
+      const next = ownDir ? `${chatId}::${ownDir}` : chatId;
+      activeSessionMap.set(chatId, next);
+      sessionToChatMap.delete(sk);
+      if (next !== chatId) sessionToChatMap.set(next, chatId);
+      explicitActiveChats.delete(chatId);
+      n++;
+      log("WARN", `[Routing] 治愈跨通道目录污染: ${sk} → ${next}`);
+      continue;
+    }
+    // 非路径垃圾后缀：回落本通道目录，无则剥成裸 chat
+    const next = ownDir ? `${chatId}::${ownDir}` : chatId;
     activeSessionMap.set(chatId, next);
     sessionToChatMap.delete(sk);
-    sessionToChatMap.set(next, chatId);
+    if (next !== chatId) sessionToChatMap.set(next, chatId);
     explicitActiveChats.delete(chatId);
     n++;
     log("INFO", `[Routing] 纠正非法会话后缀: ${sk} → ${next}`);
@@ -691,6 +718,11 @@ function setActiveSession(chatId: string, sessionKey: string, explicit = false):
       log("WARN", `[Routing] 拒绝跨会话 active 绑定: chat=${chatId} session=${normalized}`);
       return false;
     }
+    // 后缀目录必须属于该会话自己的通道（通道未配目录则不许带目录后缀），运行期造不出跨通道 key
+    if (!isSessionDirBindingValid(normalized, channelDirById(parseChatKey(sessionChat).channelId))) {
+      log("WARN", `[Routing] 拒绝跨目录 active 绑定: chat=${chatId} session=${normalized}`);
+      return false;
+    }
   }
   activeSessionMap.set(chatId, normalized);
   sessionToChatMap.set(normalized, chatId);
@@ -698,6 +730,15 @@ function setActiveSession(chatId: string, sessionKey: string, explicit = false):
   scheduleRoutingSave();
   log("INFO", `会话路由更新: ${chatId} → ${normalized}${explicit ? " (显式)" : ""}`);
   return true;
+}
+
+/** 目录绑定校验（纯函数）：后缀目录必须属于会话自己的通道；通道未配目录则不许带目录后缀 */
+export function isSessionDirBindingValid(normalizedSessionKey: string, ownDir: string): boolean {
+  if (!normalizedSessionKey.includes("::")) return true;
+  const suffix = normalizedSessionKey.slice(normalizedSessionKey.indexOf("::") + 2);
+  if (!suffix || !/[\\/]/.test(suffix) || isSpecialSessionSuffix(suffix)) return true;
+  if (!ownDir) return false;
+  return sameWorkspaceDir(suffix, ownDir);
 }
 
 function resolveRawChatId(sessionKey?: string): string | undefined {
@@ -826,8 +867,8 @@ function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle 
   }
 
   const fromSk = resolveWorkspaceFromSessionKey(sk);
-  const wsDir = (fromSk && fs.existsSync(fromSk) ? fromSk : undefined)
-    || (WORKSPACE_DIR && /[\\/]/.test(WORKSPACE_DIR) && fs.existsSync(WORKSPACE_DIR) ? WORKSPACE_DIR : undefined);
+  // 仅用会话自带目录展示，不回退全局（防 A 目录名出现在 B 的卡片上）
+  const wsDir = (fromSk && fs.existsSync(fromSk) ? fromSk : undefined);
   if (wsDir) {
     const peers = listChatWorkspaceDirs(chatKey);
     return buildSessionCardTitle({
@@ -4834,12 +4875,16 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void
 
   if (rt && target && notifyChatKey) {
     const wsDir = channelWorkspaceDir(rt);
-    const mainSessionKey = normalizeSessionKey(`${notifyChatKey}::${wsDir}`) || `${notifyChatKey}::${wsDir}`;
-    pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, mainSessionKey, false, { chatType: "p2p" });
-    trackMessageSession(internalMsgId, mainSessionKey);
-    rememberSessionKey(mainSessionKey);
-    broadcastQueueEvent(notifyChatKey);
-    log("INFO", `定时任务已直投主会话: ${task.name} → ${mainSessionKey}`);
+    if (!wsDir) {
+      log("WARN", `定时任务「${task.name}」跳过直投: 通道 ${rt.cfg.name} 未配置工作目录`);
+    } else {
+      const mainSessionKey = normalizeSessionKey(`${notifyChatKey}::${wsDir}`) || `${notifyChatKey}::${wsDir}`;
+      pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, mainSessionKey, false, { chatType: "p2p" });
+      trackMessageSession(internalMsgId, mainSessionKey);
+      rememberSessionKey(mainSessionKey);
+      broadcastQueueEvent(notifyChatKey);
+      log("INFO", `定时任务已直投主会话: ${task.name} → ${mainSessionKey}`);
+    }
   } else {
     log("WARN", `定时任务「${task.name}」消息无法入队: 通道无主用户且无私聊记录`);
   }
