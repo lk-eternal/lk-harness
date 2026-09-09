@@ -163,14 +163,29 @@ function sealSecret(value: string | undefined): string | undefined {
   } catch { return value }
 }
 
+/** 解密失败节流日志键（只记前缀，不记密文内容） */
+const loggedSecretFailures = new Set<string>()
+
 function openSecret(value: string | undefined): string | undefined {
   if (!value || !value.startsWith(SECRET_PREFIX)) return value
   try {
     return safeStorage.decryptString(Buffer.from(value.slice(SECRET_PREFIX.length), "base64"))
   } catch {
-    // OS 密钥不可用（换机/换用户）：密文无法还原，视为未配置
+    // OS 密钥不可用（换机/换用户/钥匙串锁定）：密文无法还原，视为未配置
+    const mark = value.slice(0, 16)
+    if (!loggedSecretFailures.has(mark)) {
+      loggedSecretFailures.add(mark)
+      console.warn(`[config] 凭据解密失败（只报一次），相关功能将显示未配置: ${mark}...`)
+    }
     return ""
   }
+}
+
+/** 原始（仍加密）资源行：供安全回收判断（只有从未加密过的空行才能删） */
+export function getRawAgentResources(): AgentResource[] {
+  try {
+    return getStore().store.agentResources ?? []
+  } catch { return [] }
 }
 
 type SecretMapper = (value: string | undefined) => string | undefined
@@ -466,22 +481,29 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
   const partial: Partial<AppConfig> = {}
 
   let resources = [...(cfg.agentResources ?? [])]
+  let resourcesChanged = false
   let legacySdkId = resources.find((r) => r.type === "sdk" && r.apiKey === cfg.cursorApiKey?.trim())?.id
   if (cfg.cursorApiKey?.trim() && !legacySdkId) {
     legacySdkId = newSdkResourceId()
     resources.push({ id: legacySdkId, type: "sdk", name: "SDK Key", apiKey: cfg.cursorApiKey.trim() })
+    resourcesChanged = true
   }
-  partial.agentResources = resources
 
   const agentResourceId = legacySdkId ?? pickDefaultAgentResource(resources)?.id ?? ""
-  // 回收历史硬塞的空占位（无 key 的 "Cursor SDK"）：引用它的通道一并置空，走「未配置」兜底
+  // 回收历史硬塞的空占位：只删原始值就是空串的行（从未加密过，可证明是空）；解不开的密文绝不动
+  const rawEmptyIds = new Set(
+    getRawAgentResources()
+      .filter((r) => r.type === "sdk" && (r.apiKey ?? "") === "" && r.name === "Cursor SDK")
+      .map((r) => r.id),
+  )
   const placeholderIds = new Set(
-    resources.filter((r) => r.type === "sdk" && !r.apiKey?.trim() && r.name === "Cursor SDK").map((r) => r.id),
+    resources.filter((r) => r.type === "sdk" && !r.apiKey?.trim() && r.name === "Cursor SDK" && rawEmptyIds.has(r.id)).map((r) => r.id),
   )
   if (placeholderIds.size) {
     resources = resources.filter((r) => !placeholderIds.has(r.id))
-    partial.agentResources = resources
+    resourcesChanged = true
   }
+  if (resourcesChanged) partial.agentResources = resources
   const channels = [...(cfg.channels ?? [])]
   if (placeholderIds.size) {
     for (const c of channels) {
@@ -489,7 +511,6 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
     }
     partial.channels = channels
   }
-
   const baseModel = {
     model: cfg.model ?? "auto",
     modelParams: cfg.modelParams ?? "",
@@ -559,11 +580,16 @@ export function migrateLegacyConfig(hooks?: LegacyMigrationHooks): void {
     }
   }
 
-  partial.channels = channels.map((c) =>
-    !c.agentResourceId || !resources.some((r) => r.id === c.agentResourceId)
-      ? { ...c, agentResourceId }
-      : c,
-  )
+  // 通道资源重绑：只在确实变化时写回，避免无辜重写把解密失败的空凭据落盘
+  let channelsChanged = false
+  partial.channels = channels.map((c) => {
+    if (!c.agentResourceId || !resources.some((r) => r.id === c.agentResourceId)) {
+      if (c.agentResourceId !== agentResourceId) channelsChanged = true
+      return { ...c, agentResourceId }
+    }
+    return c
+  })
+  if (!channelsChanged && !placeholderIds.size) delete partial.channels
 
   // 定时任务补默认通道与旧任务模型
   if (!cfg.channelsMigrated && channels.length > 0) {
