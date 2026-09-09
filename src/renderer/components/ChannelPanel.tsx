@@ -263,6 +263,16 @@ function isDefaultChannelName(name: string): boolean {
   return !name.trim() || /^飞书( \d+)?$/.test(name.trim()) || /^微信( \d+)?$/.test(name.trim())
 }
 
+/** 模型列表加载失败提示 + 重试（失败不再静默吞掉） */
+function ModelLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="mt-1 flex items-center gap-2 text-xs text-red-400">
+      <span className="min-w-0 flex-1 truncate" title={error}>⚠️ 模型列表加载失败：{error}</span>
+      <button type="button" onClick={onRetry} className="shrink-0 rounded border border-gray-700 px-2 py-0.5 text-gray-300 hover:bg-gray-700">重试</button>
+    </div>
+  )
+}
+
 function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, showAlert, showConfirm }: DetailProps) {
   const draft = channel
   const set = (p: Partial<ChannelConfig>) => onChange({ ...draft, ...p })
@@ -270,6 +280,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const [appInfoState, setAppInfoState] = useState<{ checking: boolean; error?: string }>({ checking: false })
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
+  const [modelError, setModelError] = useState("")
   const [binding, setBinding] = useState(false)
   const [testing, setTesting] = useState(false)
   // 飞书一键创建
@@ -290,36 +301,41 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
     || modelSlug(id, params)
 
   // 随 Agent 资源（及凭据）变化加载对应模型列表；取消过时请求避免错序覆盖
+  const [modelReloadSeq, setModelReloadSeq] = useState(0)
   useEffect(() => {
     if (!resource) {
       setModelOptions([])
+      setModelError("")
       setLoadingModels(false)
       return
     }
     let cancelled = false
     const load = async () => {
       setLoadingModels(true)
+      setModelError("")
       try {
         if (resource.type === "sdk") {
           if (!resource.apiKey?.trim()) {
-            if (!cancelled) setModelOptions([])
+            if (!cancelled) { setModelOptions([]); setModelError("该资源未填 API Key") }
             return
           }
           const r = await window.electronAPI.listSdkModels(resource.apiKey.trim(), draft.model, draft.modelParams)
           if (cancelled) return
           if (r.ok && r.models.length > 0) setModelOptions(r.models)
-          else setModelOptions([])
+          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
         } else if (resource.type === "llm-builtin" || resource.type === "llm-custom") {
           const r = await window.electronAPI.listLlmModels(resource, draft.model, draft.modelParams)
           if (cancelled) return
           if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
-          else setModelOptions([])
+          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
         } else {
           const r = await window.electronAPI.listModels()
           if (cancelled) return
           if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
-          else setModelOptions([])
+          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
         }
+      } catch (e: unknown) {
+        if (!cancelled) { setModelOptions([]); setModelError(e instanceof Error ? e.message : String(e)) }
       } finally {
         if (!cancelled) setLoadingModels(false)
       }
@@ -327,7 +343,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
     setModelOptions([])
     void load()
     return () => { cancelled = true }
-  }, [resource, draft.model, draft.modelParams])
+  }, [resource, draft.model, draft.modelParams, modelReloadSeq])
 
   // 飞书一键创建应用
   useEffect(() => {
@@ -614,7 +630,10 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                       placeholder="选择模型..."
                       fallbackLabel={modelOptLabel(draft.model, draft.modelParams)}
                     />
-                  : <input type="text" value={modelOptLabel(draft.model, draft.modelParams)} onChange={(e) => set({ model: e.target.value, modelParams: "" })} placeholder="auto" className={inputCls} />}
+                  : <>
+                      <input type="text" value={modelOptLabel(draft.model, draft.modelParams)} onChange={(e) => set({ model: e.target.value, modelParams: "" })} placeholder="auto" className={inputCls} />
+                      {modelError && <ModelLoadError error={modelError} onRetry={() => setModelReloadSeq((s) => s + 1)} />}
+                    </>}
             </div>
             <div>
               <label className="mb-1 block text-xs text-gray-500">其他人模型</label>
@@ -628,7 +647,10 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                       placeholder="跟随主模型"
                       fallbackLabel={modelOptLabel(draft.othersModel, draft.othersModelParams)}
                     />
-                  : <input type="text" value={modelOptLabel(draft.othersModel, draft.othersModelParams)} onChange={(e) => set({ othersModel: e.target.value, othersModelParams: "" })} placeholder="留空则跟随主模型" className={inputCls} />}
+                  : <>
+                      <input type="text" value={modelOptLabel(draft.othersModel, draft.othersModelParams)} onChange={(e) => set({ othersModel: e.target.value, othersModelParams: "" })} placeholder="留空则跟随主模型" className={inputCls} />
+                      {modelError && <ModelLoadError error={modelError} onRetry={() => setModelReloadSeq((s) => s + 1)} />}
+                    </>}
             </div>
           </section>
 
