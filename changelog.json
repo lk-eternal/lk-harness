@@ -1,5 +1,12 @@
 [
   {
+    "version": "0.2.5",
+    "date": "2026-09-09",
+    "changes": [
+      "修复按需唤醒（persistentPoll=false）SDK 回合完成后消息未消费、反复 Resume 重投同一用户消息"
+    ]
+  },
+  {
     "version": "0.2.4",
     "date": "2026-09-09",
     "changes": [
