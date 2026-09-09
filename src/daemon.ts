@@ -933,13 +933,21 @@ function resolveChannel(sessionKey?: string, opts?: { allowDefault?: boolean }):
   return { type: "error", message: "无可用消息通道" };
 }
 
+/** remember 写入决策（纯函数）：裸 id（task.id 等无通道前缀）已有真实映射时禁止自映射覆盖；无映射也不写自映射（自映射解析不出通道） */
+export function resolveRememberedChatKey(sessionKey: string, existing: string | undefined): string | undefined {
+  const chatKey = chatIdFromSessionKey(sessionKey);
+  if (!chatKey) return undefined;
+  if (existing === chatKey) return undefined;
+  if (!parseChatKey(chatKey).channelId) return undefined;
+  return chatKey;
+}
+
 /** 将 sessionKey 记入路由表（poll / 启动时调用），供 send 白名单校验 */
 function rememberSessionKey(sessionKey: string): void {
   if (!sessionKey) return;
-  const chatKey = chatIdFromSessionKey(sessionKey);
-  if (!chatKey) return;
-  if (sessionToChatMap.get(sessionKey) === chatKey) return;
-  sessionToChatMap.set(sessionKey, chatKey);
+  const next = resolveRememberedChatKey(sessionKey, sessionToChatMap.get(sessionKey));
+  if (next === undefined) return;
+  sessionToChatMap.set(sessionKey, next);
   scheduleRoutingSave();
 }
 
@@ -4099,7 +4107,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (rejectUnroutedSend(res, "send-text", session_key, message_id)) return true;
 
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
-    if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "error") { log("WARN", `[send-text] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     if (ch.type === "wechat") {
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, text) });
     } else {
@@ -4250,7 +4258,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (rejectUnroutedSend(res, "send-question", session_key, message_id)) return true;
 
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
-    if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "error") { log("WARN", `[send-question] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
 
     if (ch.type === "wechat") {
       // 微信无交互卡片：降级为文本选项列表，用户直接回复字母或内容
@@ -4343,7 +4351,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (!image_path) { json(res, { ok: false, error: "image_path is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-image", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
-    if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "error") { log("WARN", `[send-image] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     let sentOk: boolean;
     if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, image_path);
@@ -4370,7 +4378,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (!file_path) { json(res, { ok: false, error: "file_path is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-file", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
-    if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "error") { log("WARN", `[send-file] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     let sentOk: boolean;
     if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, file_path);
