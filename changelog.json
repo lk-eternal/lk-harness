@@ -1,5 +1,12 @@
 [
   {
+    "version": "0.2.6",
+    "date": "2026-09-09",
+    "changes": [
+      "修复 SDK Agent 在 Windows 上 SQLite WAL mid-run commit 失败：改用 JsonlLocalAgentStore 按工作区落盘"
+    ]
+  },
+  {
     "version": "0.2.5",
     "date": "2026-09-09",
     "changes": [
