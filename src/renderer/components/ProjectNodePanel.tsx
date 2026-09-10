@@ -19,7 +19,7 @@ interface Props {
 }
 
 export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, groupId, onUploadNode }: Props) {
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState<(ProjectNodeItem & { index: number }) | null>(null)
@@ -39,12 +39,20 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
   const isDirty = draft ? JSON.stringify(draft) !== savedSnapshot : false
 
   const selectNode = async (index: number) => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     setSelectedIndex(index)
   }
 
   const openAdd = async () => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，继续新增？", "继续", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并继续" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const d = { id: "", label: "", index: -1 }
     setDraft(d)
     setSavedSnapshot(JSON.stringify(d))
@@ -53,16 +61,16 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
   }
 
   const handleSave = async () => {
-    if (!draft || !draft.id.trim() || !draft.label.trim()) return
+    if (!draft || !draft.id.trim() || !draft.label.trim()) return false
     const reserved = ["help", "menu", "ls", "list", "use", "leave", "info", "new", "del", "delete", "rm", "setup", "sync", "ship"]
     const id = draft.id.trim()
     if (reserved.includes(id) || !/^[a-z][a-z0-9-]*$/.test(id)) {
       void showAlert("节点 id 不可用", `「${id}」需小写字母开头，且不能与保留命令冲突`)
-      return
+      return false
     }
     if (nodes.some((n, j) => n.id === id && j !== draft.index)) {
       void showAlert("无法保存", "节点 id 与组内已有节点重复")
-      return
+      return false
     }
     const raw = (draft.prompt ?? "").trim()
     const promptVal = raw && raw !== (draft.defaultPrompt ?? "").trim() ? raw : undefined
@@ -75,6 +83,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
     const idx = draft.index < 0 ? next.length - 1 : draft.index
     setSelectedIndex(idx)
     setIsNew(false)
+    return true
   }
 
   const handleDelete = async () => {

@@ -11,6 +11,7 @@ function channelReady(c: MessageChannel): boolean {
   return !!c.wechatToken?.trim()
 }
 import { readGitBranch, dirBaseName } from "../src/shared/session-label.js"
+import { resolveChannelSessionFlags } from "../src/shared/channel-types.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { cleanupChannelWorkspaces, clearInjectionCache } from "./workspace-injector"
 import { broadcastLog } from "./ui-logger"
@@ -29,19 +30,31 @@ export function formatWorkspaceSwitchText(dir: string): string {
 }
 
 function channelRuntimePayload(channels: MessageChannel[]) {
-  return channels.filter(channelReady).map((c) => ({
-    id: c.id,
-    keepAlive: (c.keepSession ?? true) && (c.persistentPoll ?? true),
-    showThinking: c.showThinking ?? true,
-    streamKeepPerKind: c.streamKeepPerKind,
-    hideThinkingOnFinish: c.hideThinkingOnFinish ?? true,
+  return channels.filter(channelReady).map((c) => {
+    const main = resolveChannelSessionFlags(c, "main")
+    const others = resolveChannelSessionFlags(c, "others")
+    return {
+      id: c.id,
+      keepAlive: main.keepSession && main.persistentPoll,
+      showThinking: main.showThinking,
+      streamKeepPerKind: main.streamKeepPerKind,
+      hideThinkingOnFinish: main.hideThinkingOnFinish,
+      keepAliveMain: main.keepSession && main.persistentPoll,
+      showThinkingMain: main.showThinking,
+      streamKeepPerKindMain: main.streamKeepPerKind,
+      hideThinkingOnFinishMain: main.hideThinkingOnFinish,
+      keepAliveOthers: others.keepSession && others.persistentPoll,
+      showThinkingOthers: others.showThinking,
+      streamKeepPerKindOthers: others.streamKeepPerKind,
+      hideThinkingOnFinishOthers: others.hideThinkingOnFinish,
     name: c.name,
     mainUserEnabled: !!c.mainUserEnabled,
     mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
     mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
     workspaceDir: c.workspaceDir?.trim() ?? "",
     favoriteWorkspaces: getChannelFavoriteWorkspaces(c),
-  }))
+    }
+  })
 }
 
 export async function pushChannelRuntimeToDaemon(channels?: MessageChannel[]): Promise<void> {
@@ -95,6 +108,8 @@ export async function applyChannelWorkspaceSwitch(
 
 export function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig | null {
   if (!channelReady(c)) return null
+  const main = resolveChannelSessionFlags(c, "main")
+  const others = resolveChannelSessionFlags(c, "others")
   return {
     id: c.id,
     name: c.name || (c.type === "feishu" ? "飞书" : "微信"),
@@ -108,9 +123,17 @@ export function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig
     mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
     workspaceDir: c.workspaceDir?.trim() ?? "",
     favoriteWorkspaces: getChannelFavoriteWorkspaces(c),
-    keepAlive: (c.keepSession ?? true) && (c.persistentPoll ?? true),
-    showThinking: c.showThinking ?? true,
-    streamKeepPerKind: c.streamKeepPerKind,
-    hideThinkingOnFinish: c.hideThinkingOnFinish ?? true,
+    keepAlive: main.keepSession && main.persistentPoll,
+    showThinking: main.showThinking,
+    streamKeepPerKind: main.streamKeepPerKind,
+    hideThinkingOnFinish: main.hideThinkingOnFinish,
+    keepAliveMain: main.keepSession && main.persistentPoll,
+    showThinkingMain: main.showThinking,
+    streamKeepPerKindMain: main.streamKeepPerKind,
+    hideThinkingOnFinishMain: main.hideThinkingOnFinish,
+    keepAliveOthers: others.keepSession && others.persistentPoll,
+    showThinkingOthers: others.showThinking,
+    streamKeepPerKindOthers: others.streamKeepPerKind,
+    hideThinkingOnFinishOthers: others.hideThinkingOnFinish,
   }
 }

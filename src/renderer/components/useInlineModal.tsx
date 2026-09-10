@@ -20,9 +20,13 @@ interface ShowOptions {
   buttons?: (string | ModalBtn)[]
 }
 
+export type UnsavedChoice = "save" | "discard" | "cancel"
+
 export default function useInlineModal(): {
   showAlert: (title: string, message: string) => Promise<void>
   showConfirm: (title: string, message: string, ok?: string, cancel?: string) => Promise<boolean>
+  /** 未保存三选项：保存 / 丢弃(放弃) / 取消(继续编辑) */
+  showUnsavedChoice: (title: string, message: string, labels?: { save?: string; discard?: string; cancel?: string }) => Promise<UnsavedChoice>
   ModalPortal: ReactNode
 } {
   const [state, setState] = useState<{ opts: ShowOptions; resolve: (idx: number) => void } | null>(null)
@@ -47,6 +51,20 @@ export default function useInlineModal(): {
     [show],
   )
 
+  const showUnsavedChoice = useCallback(
+    (title: string, message: string, labels?: { save?: string; discard?: string; cancel?: string }) =>
+      show({
+        title,
+        message,
+        buttons: [
+          { label: labels?.cancel ?? "取消", variant: "ghost" },
+          { label: labels?.discard ?? "丢弃", variant: "danger" },
+          { label: labels?.save ?? "保存并继续", variant: "primary" },
+        ],
+      }).then((i): UnsavedChoice => (i === 2 ? "save" : i === 1 ? "discard" : "cancel")),
+    [show],
+  )
+
   const ModalPortal = state ? (
     <ModalShell
       title={state.opts.title}
@@ -67,5 +85,5 @@ export default function useInlineModal(): {
     </ModalShell>
   ) : null
 
-  return { showAlert, showConfirm, ModalPortal }
+  return { showAlert, showConfirm, showUnsavedChoice, ModalPortal }
 }

@@ -7,21 +7,36 @@ export interface HarnessRule {
   name: string
   content: string
   enabled: boolean
+  /** 生效范围：缺省 = 仅主用户（存量规则迁移默认值）；custom 按通道×人群多选 */
+  scope?: RuleScope
+}
+
+export type RuleAudience = "main" | "others"
+
+export interface RuleTarget {
+  channelId: string
+  audiences: RuleAudience[]
+}
+
+export interface RuleScope {
+  mode: "main" | "custom"
+  targets?: RuleTarget[]
 }
 
 interface Manifest {
   order: string[]
   migrated?: boolean
+  scopes?: Record<string, RuleScope>
 }
 
 export interface HarnessRulesStoreFile {
   order: string[]
-  rules: Record<string, { content: string; enabled?: boolean }>
+  rules: Record<string, { content: string; enabled?: boolean; scope?: RuleScope }>
 }
 
 export interface HarnessRulesBundle {
   order: string[]
-  files: Record<string, { content: string; enabled?: boolean }>
+  files: Record<string, { content: string; enabled?: boolean; scope?: RuleScope }>
 }
 
 const RULE_EXT = /\.(mdc|md)$/i
@@ -73,6 +88,37 @@ function writeManifest(m: Manifest): void {
   writeJsonAtomic(manifestPath(), m)
 }
 
+/** scope 归一化：缺省/非法视为仅主用户（存量与老备份的默认值）；
+ * 显式 custom 即使 targets 为空也保留，表示"哪儿都不生效，仅存放" */
+export function normalizeRuleScope(scope: RuleScope | undefined | null): RuleScope {
+  if (!scope || scope.mode !== "custom") return { mode: "main" }
+  const targets: RuleTarget[] = []
+  for (const t of scope.targets ?? []) {
+    const channelId = t?.channelId?.trim()
+    if (!channelId) continue
+    const audiences = [...new Set((t.audiences ?? []).filter((a) => a === "main" || a === "others"))]
+    if (!audiences.length) continue
+    if (!targets.some((x) => x.channelId === channelId)) targets.push({ channelId, audiences })
+  }
+  return { mode: "custom", targets }
+}
+
+function scopeOf(m: Manifest, id: string): RuleScope {
+  return normalizeRuleScope(m.scopes?.[id])
+}
+
+/** 规则是否对指定通道×人群生效；channelId 缺失时仅 main 模式生效 */
+export function ruleAppliesTo(
+  rule: Pick<HarnessRule, "scope">,
+  channelId: string | undefined,
+  audience: RuleAudience,
+): boolean {
+  const scope = normalizeRuleScope(rule.scope)
+  if (scope.mode !== "custom") return audience === "main"
+  if (!channelId) return false
+  return (scope.targets ?? []).some((t) => t.channelId === channelId && t.audiences.includes(audience))
+}
+
 function slugId(name: string): string {
   const base = path.basename(name.trim()).replace(RULE_EXT, "").trim()
   if (!base) return "rule"
@@ -102,9 +148,9 @@ export function migrateLegacyRulesOnce(): void {
 
 export function listHarnessRules(): HarnessRule[] {
   migrateLegacyRulesOnce()
-  const { order } = readManifest()
+  const m = readManifest()
   const rules: HarnessRule[] = []
-  for (const id of order) {
+  for (const id of m.order) {
     const fp = rulePath(id)
     if (!fs.existsSync(fp)) continue
     let content = ""
@@ -115,6 +161,7 @@ export function listHarnessRules(): HarnessRule[] {
       name: `${id}.mdc`,
       content: disabled ? content.slice("<!-- disabled -->\n".length) : content,
       enabled: !disabled,
+      scope: scopeOf(m, id),
     })
   }
   return rules
@@ -124,7 +171,7 @@ export function listEnabledHarnessRules(): HarnessRule[] {
   return listHarnessRules().filter((r) => r.enabled)
 }
 
-export function saveHarnessRule(id: string | null, name: string, content: string, enabled = true): HarnessRule | null {
+export function saveHarnessRule(id: string | null, name: string, content: string, enabled = true, scope?: RuleScope): HarnessRule | null {
   migrateLegacyRulesOnce()
   const m = readManifest()
   const order = [...m.order]
@@ -152,22 +199,30 @@ export function saveHarnessRule(id: string | null, name: string, content: string
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
   const body = (enabled ? "" : "<!-- disabled -->\n") + content
   writeTextAtomic(rulePath(targetId), body.endsWith("\n") ? body : `${body}\n`)
-  writeManifest({ ...m, order })
-  return { id: targetId, name: `${targetId}.mdc`, content, enabled }
+  const normalized = normalizeRuleScope(scope ?? (oldId ? scopeOf(m, oldId) : undefined))
+  const scopes = { ...(m.scopes ?? {}) }
+  if (oldId && oldId !== targetId) delete scopes[oldId]
+  if (normalized.mode === "custom") scopes[targetId] = normalized
+  else delete scopes[targetId]
+  writeManifest({ ...m, order, scopes })
+  return { id: targetId, name: `${targetId}.mdc`, content, enabled, scope: normalized }
 }
 
 export function deleteHarnessRule(id: string): boolean {
   const m = readManifest()
   const fp = rulePath(id)
   if (fs.existsSync(fp)) fs.unlinkSync(fp)
-  writeManifest({ ...m, order: m.order.filter((x) => x !== id) })
+  const scopes = { ...(m.scopes ?? {}) }
+  delete scopes[id]
+  writeManifest({ ...m, order: m.order.filter((x) => x !== id), scopes })
   return true
 }
 
 export function readHarnessRulesStoreRaw(): HarnessRulesStoreFile | null {
   migrateLegacyRulesOnce()
-  const { order } = readManifest()
-  const rules: Record<string, { content: string; enabled?: boolean }> = {}
+  const m = readManifest()
+  const { order } = m
+  const rules: Record<string, { content: string; enabled?: boolean; scope?: RuleScope }> = {}
   for (const id of order) {
     const fp = rulePath(id)
     if (!fs.existsSync(fp)) continue
@@ -177,6 +232,7 @@ export function readHarnessRulesStoreRaw(): HarnessRulesStoreFile | null {
     rules[id] = {
       content: disabled ? raw.slice("<!-- disabled -->\n".length) : raw,
       enabled: !disabled,
+      scope: scopeOf(m, id),
     }
   }
   if (!order.length && !Object.keys(rules).length) return null
@@ -190,7 +246,12 @@ export function writeHarnessRulesStoreRaw(data: HarnessRulesStoreFile): void {
   for (const f of existing) {
     try { fs.unlinkSync(path.join(dir, f)) } catch { /* ignore */ }
   }
-  writeManifest({ order: data.order, migrated: true })
+  const scopes: Record<string, RuleScope> = {}
+  for (const id of data.order) {
+    const normalized = normalizeRuleScope(data.rules[id]?.scope)
+    if (normalized.mode === "custom") scopes[id] = normalized
+  }
+  writeManifest({ order: data.order, migrated: true, scopes })
   for (const id of data.order) {
     const entry = data.rules[id]
     if (!entry) continue
@@ -213,7 +274,9 @@ export function importHarnessRulesBundle(data: HarnessRulesBundle): void {
 export function mergeImportHarnessRulesBundle(data: HarnessRulesBundle): string[] {
   const notes: string[] = []
   const raw = readHarnessRulesStoreRaw()
+  const m = readManifest()
   const order = [...(raw?.order ?? [])]
+  const scopes = { ...(m.scopes ?? {}) }
   const existing = new Set(order)
   const dir = rulesDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
@@ -227,10 +290,12 @@ export function mergeImportHarnessRulesBundle(data: HarnessRulesBundle): string[
     }
     order.push(id)
     existing.add(id)
+    const normalized = normalizeRuleScope(entry.scope)
+    if (normalized.mode === "custom") scopes[id] = normalized
     const body = (entry.enabled === false ? "<!-- disabled -->\n" : "") + entry.content
     writeTextAtomic(rulePath(id), body.endsWith("\n") ? body : `${body}\n`)
   }
-  writeManifest({ order, migrated: true })
+  writeManifest({ order, migrated: true, scopes })
   return notes
 }
 

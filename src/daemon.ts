@@ -38,6 +38,8 @@ import {
   chatIdFromSessionKey,
   channelIdFromSessionKey,
   normalizeSessionKey,
+  resolveChannelAudience,
+  resolveDaemonSessionFlags,
   type DaemonChannelConfig,
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
@@ -132,17 +134,21 @@ function parseChannelConfigs(): DaemonChannelConfig[] {
 
 const CHANNEL_CONFIGS = parseChannelConfigs();
 
-// ── 通道运行时开关（支持热更新，不重启 daemon）────────────
-const channelKeepAlive = new Map<string, boolean>(
-  CHANNEL_CONFIGS.map((c) => [c.id, c.keepAlive ?? true]),
-);
-
+// ── 通道运行时开关（支持热更新，不重启 daemon；主/其他人按会话人群解析）────
 interface ChannelRuntimeFlags {
   id: string;
   keepAlive?: boolean;
   showThinking?: boolean;
   streamKeepPerKind?: number;
   hideThinkingOnFinish?: boolean;
+  keepAliveMain?: boolean;
+  showThinkingMain?: boolean;
+  streamKeepPerKindMain?: number;
+  hideThinkingOnFinishMain?: boolean;
+  keepAliveOthers?: boolean;
+  showThinkingOthers?: boolean;
+  streamKeepPerKindOthers?: number;
+  hideThinkingOnFinishOthers?: boolean;
   name?: string;
   mainUserEnabled?: boolean;
   mainUserChatId?: string;
@@ -151,13 +157,60 @@ interface ChannelRuntimeFlags {
   favoriteWorkspaces?: string[];
 }
 
+const channelRuntimeFlags = new Map<string, ChannelRuntimeFlags>(
+  CHANNEL_CONFIGS.map((c) => [c.id, { ...c }]),
+);
+
+/** 会话人群：task/project/temp 归主；p2p 主绑定 chat 归主，其余归其他人 */
+function channelAudienceForSession(sessionKey: string, cfg?: DaemonChannelConfig): "main" | "others" {
+  let chatKey = chatIdFromSessionKey(sessionKey);
+  if (!chatKey.includes("|") && !chatKey.startsWith("ch_")) {
+    const mapped = sessionToChatMap.get(sessionKey);
+    if (mapped) chatKey = mapped;
+  }
+  return resolveChannelAudience({
+    mainUserEnabled: cfg?.mainUserEnabled,
+    mainUserChatId: cfg?.mainUserChatId,
+    chatKey,
+    sessionKey,
+  });
+}
+
+/** 按会话人群合并启动快照 + 热更新 flags + 通道 cfg 三层（undefined 逐层回退） */
+function daemonFlagsForSession(sessionKey: string, cfg?: DaemonChannelConfig) {
+  let channelId = channelIdFromSessionKey(sessionKey);
+  if (!channelId) {
+    const chatKey = sessionToChatMap.get(sessionKey);
+    if (chatKey) channelId = parseChatKey(chatKey).channelId;
+  }
+  const live = (channelId ? channels.get(channelId)?.cfg : undefined) ?? cfg;
+  const snap = channelId ? channelRuntimeFlags.get(channelId) : undefined;
+  const audience = channelAudienceForSession(sessionKey, live ?? snap as DaemonChannelConfig | undefined);
+  const merged = { ...(snap ?? {}), ...(live ?? {}) };
+  return resolveDaemonSessionFlags(merged, audience);
+}
+
 function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
   for (const f of flags) {
-    if (typeof f.keepAlive === "boolean") channelKeepAlive.set(f.id, f.keepAlive);
+    const prev = channelRuntimeFlags.get(f.id) ?? { id: f.id };
+    channelRuntimeFlags.set(f.id, { ...prev, ...f });
     const rt = channels.get(f.id);
     if (!rt) continue;
     if (typeof f.name === "string" && f.name) rt.cfg.name = f.name;
+    if (typeof f.keepAlive === "boolean") rt.cfg.keepAlive = f.keepAlive;
     if (typeof f.showThinking === "boolean") rt.cfg.showThinking = f.showThinking;
+    if (typeof f.showThinkingMain === "boolean") rt.cfg.showThinkingMain = f.showThinkingMain;
+    if (typeof f.showThinkingOthers === "boolean") rt.cfg.showThinkingOthers = f.showThinkingOthers;
+    if (typeof f.keepAliveMain === "boolean") rt.cfg.keepAliveMain = f.keepAliveMain;
+    if (typeof f.keepAliveOthers === "boolean") rt.cfg.keepAliveOthers = f.keepAliveOthers;
+    if (typeof f.streamKeepPerKindMain === "number" && Number.isFinite(f.streamKeepPerKindMain)) {
+      rt.cfg.streamKeepPerKindMain = f.streamKeepPerKindMain;
+    }
+    if (typeof f.streamKeepPerKindOthers === "number" && Number.isFinite(f.streamKeepPerKindOthers)) {
+      rt.cfg.streamKeepPerKindOthers = f.streamKeepPerKindOthers;
+    }
+    if (typeof f.hideThinkingOnFinishMain === "boolean") rt.cfg.hideThinkingOnFinishMain = f.hideThinkingOnFinishMain;
+    if (typeof f.hideThinkingOnFinishOthers === "boolean") rt.cfg.hideThinkingOnFinishOthers = f.hideThinkingOnFinishOthers;
     if (typeof f.streamKeepPerKind === "number" && Number.isFinite(f.streamKeepPerKind)) {
       rt.cfg.streamKeepPerKind = f.streamKeepPerKind;
     }
@@ -170,20 +223,25 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
   }
 }
 
-/** 会话收尾模式：poll 响应随路下发（模型以最近一次响应为准，免疫长上下文衰减） */
+/** 会话收尾模式：poll 响应随路下发（模型以最近一次响应为准，免疫长上下文衰减）；
+ * task 会话一律 false（执行完即结束），其余按通道×人群解析 */
 function resolveKeepAlive(sessionKey: string): boolean {
-  if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return false;
+  const tasks = readTasksSafe();
+  if (isIndependentTaskSessionKey(sessionKey, tasks)) return false;
+  if (tasks.some((t) => t.id === sessionKey)) return false;
   let channelId = channelIdFromSessionKey(sessionKey);
   if (!channelId) {
     const chatKey = sessionToChatMap.get(sessionKey);
     if (chatKey) channelId = parseChatKey(chatKey).channelId;
     if (!channelId) {
-      const task = readTasksSafe().find((t) => t.id === sessionKey);
+      const task = tasks.find((t) => t.id === sessionKey);
       if (task?.channelId) channelId = task.channelId;
     }
   }
-  if (channelId) return channelKeepAlive.get(channelId) ?? true;
-  return channelKeepAlive.size === 1 ? [...channelKeepAlive.values()][0] : true;
+  const live = channelId ? channels.get(channelId)?.cfg : undefined;
+  const snap = (channelId ? CHANNEL_CONFIGS.find((c) => c.id === channelId) : undefined)
+    ?? (channelRuntimeFlags.size === 1 ? [...channelRuntimeFlags.values()][0] : undefined);
+  return daemonFlagsForSession(sessionKey, live ?? snap as DaemonChannelConfig | undefined).keepAlive;
 }
 
 stripProxyEnv();
@@ -1298,7 +1356,7 @@ async function stopChannelRuntime(channelId: string): Promise<boolean> {
     await rt.wechat.stop();
   }
   channels.delete(channelId);
-  channelKeepAlive.delete(channelId);
+  channelRuntimeFlags.delete(channelId);
   log("INFO", `[${name}] 通道已停用`);
   return true;
 }
@@ -1307,7 +1365,7 @@ async function startChannelRuntime(cfg: DaemonChannelConfig): Promise<void> {
   if (channels.has(cfg.id)) await stopChannelRuntime(cfg.id);
   const rt: ChannelRuntime = { cfg, lastP2pChatId: null, bindArmed: false };
   channels.set(cfg.id, rt);
-  channelKeepAlive.set(cfg.id, cfg.keepAlive ?? true);
+  channelRuntimeFlags.set(cfg.id, { ...cfg });
   if (cfg.type === "feishu") {
     await startFeishuChannel(rt);
   } else {
@@ -1433,7 +1491,7 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
 // ── 指令系统 ─────────────────────────────────────────────
 
 const COMMANDS: Record<string, string> = {
-  "/stop": "停止当前运行中的 Agent",
+  "/stop": "停止当前运行中的 Agent（/stop -c 顺带清除当前会话排队消息）",
   "/x": "同 /stop",
   "/f": "打断当前对话并带新指示重开（/f <内容>）",
   "/status": "查看 Agent / Daemon 状态",
@@ -1738,8 +1796,8 @@ type CardBodySegment =
   | { type: "todos"; items: Array<{ content: string; status: string }> }
   | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string };
 
-function hideThinkingOnFinishEnabled(cfg: { hideThinkingOnFinish?: boolean }): boolean {
-  return cfg.hideThinkingOnFinish !== false;
+function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfig): boolean {
+  return daemonFlagsForSession(sessionKey, cfg).hideThinkingOnFinish;
 }
 
 function buildCardSegmentsFromPayload(
@@ -1911,8 +1969,9 @@ function buildAgentStreamCardJson(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   finish: boolean,
 ): { cardJson: Record<string, unknown> } {
-  // 每次刷新读 live 开关，避免创建卡后改设置不生效
-  state.showThinking = ch.rt.cfg.showThinking !== false;
+  // 每次刷新读 live 开关，避免创建卡后改设置不生效（按会话人群解析）
+  const liveFlags = daemonFlagsForSession(sessionKey, ch.rt.cfg);
+  state.showThinking = liveFlags.showThinking;
   if (!state.knownPanelIds) state.knownPanelIds = new Set();
   if (!state.expandedPanelIds) state.expandedPanelIds = new Set();
   if (state.panelSeq == null) state.panelSeq = 0;
@@ -1925,7 +1984,7 @@ function buildAgentStreamCardJson(
   const cardSegs = buildCardSegmentsFromPayload(merged, {
     finish: terminal,
     showThinking: state.showThinking,
-    hideThinkingOnFinish: hideThinkingOnFinishEnabled(ch.rt.cfg),
+    hideThinkingOnFinish: hideThinkingOnFinishEnabled(sessionKey, ch.rt.cfg),
     skipThinkingOnlyPlaceholder: hasInlineQuestion,
   }, state, sessionKey);
   const status = terminal ? "completed" as const : "streaming" as const;
@@ -1941,7 +2000,7 @@ function buildAgentStreamCardJson(
   const cardJson = LarkSender.buildStreamingCardJson({
     status,
     showThinking: state.showThinking,
-    keepPerKind: LarkSender.normalizeStreamKeepPerKind(ch.rt.cfg.streamKeepPerKind),
+    keepPerKind: LarkSender.normalizeStreamKeepPerKind(daemonFlagsForSession(sessionKey, ch.rt.cfg).streamKeepPerKind),
     sessionTitle: state.sessionTitle,
     sessionTemplate: state.sessionTemplate,
     segments: cardSegs,
@@ -1995,8 +2054,8 @@ async function refreshAgentStreamCard(
 }
 
 
-function isStreamCardEnabled(ch: Extract<ResolvedChannel, { type: "feishu" }>): boolean {
-  return ch.rt.cfg.showThinking !== false;
+function isStreamCardEnabled(sessionKey: string, ch: Extract<ResolvedChannel, { type: "feishu" }>): boolean {
+  return daemonFlagsForSession(sessionKey, ch.rt.cfg).showThinking;
 }
 
 function isGroupFeishuChat(ch: Extract<ResolvedChannel, { type: "feishu" }>): boolean {
@@ -2037,7 +2096,7 @@ async function ensureStreamCardForMcpMerge(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   firstBody?: string,
 ): Promise<{ state?: AgentStreamCardState; bodyMerged: boolean }> {
-  if (!isStreamCardEnabled(ch)) return { bodyMerged: false };
+  if (!isStreamCardEnabled(sessionKey, ch)) return { bodyMerged: false };
   // 应用无 cardkit 权限：直接走普通消息，不白撞建卡 API
   if (ch.rt.sender?.isCardkitDenied()) return { bodyMerged: false };
   return enqueueCardOp(sessionKey, async () => {
@@ -2082,8 +2141,9 @@ async function ensureAgentStreamCard(
     return { ok: true, cardId: existing.cardId, messageId: existing.messageId, bodyMerged: false };
   }
   const sender = ch.rt.sender!;
-  const showThinking = ch.rt.cfg.showThinking !== false;
-  const keepPerKind = LarkSender.normalizeStreamKeepPerKind(ch.rt.cfg.streamKeepPerKind);
+  const sessionFlags = daemonFlagsForSession(sessionKey, ch.rt.cfg);
+  const showThinking = sessionFlags.showThinking;
+  const keepPerKind = LarkSender.normalizeStreamKeepPerKind(sessionFlags.streamKeepPerKind);
   const chrome = resolveStreamCardChrome(ch, sessionKey);
   if (!ch.chatId) return { ok: false, error: "无法解析发送目标 chatId" };
   // MCP 首段正文随建卡一次渲染到位（reply 通道，绕过 fold 防降级为思考），避免空白卡闪现
@@ -3155,7 +3215,8 @@ function cleanExpiredCommands(): void {
 
 async function handleCommand(text: string, messageId: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string): Promise<void> {
   const trimmed = text.trim();
-  if (chatId && ["/stop", "/restart"].includes(trimmed.toLowerCase())) {
+  const head = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (chatId && (head === "/stop" || head === "/x" || trimmed.toLowerCase() === "/restart")) {
     terminateSessionsByChat(chatId);
   }
   pushCommandToQueue(trimmed, messageId, `daemon-${process.pid}`, chatId, chatType, fromCard, senderOpenId, isMainUserSender(chatId, senderOpenId));
@@ -4249,7 +4310,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, fallback), degraded: true });
     } else {
       const sender = ch.rt.sender!;
-      if (session_key && isStreamCardEnabled(ch)) {
+      if (session_key && isStreamCardEnabled(session_key, ch)) {
         // 建卡/并卡 + 设未决问题 + finish 刷卡整段入全序链，防与 SDK flush / 收口交错
         const qResult = await enqueueCardOp(session_key, async (): Promise<{ messageId?: string } | undefined> => {
           const ensured = await ensureAgentStreamCard(session_key, { segments: [] }, ch);
@@ -4407,7 +4468,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: true, skipped: true });
       return true;
     }
-    if (!isStreamCardEnabled(ch)) {
+    if (!isStreamCardEnabled(sk, ch)) {
       json(res, { ok: true, skipped: true });
       return true;
     }

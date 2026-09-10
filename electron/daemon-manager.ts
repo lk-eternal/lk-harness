@@ -14,7 +14,7 @@ import {
   mainChatScopeKey, setMainChatIdForScope, upsertRepoProfiles, type MessageChannel,
   retireGlobalWorkspaceDir, primaryProbeWorkspace,
 } from "./config-store"
-import { parseChatKey, channelIdFromSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
+import { parseChatKey, channelIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
@@ -87,7 +87,7 @@ import {
   isSessionAgentRunning, stopSessionAgent, stopAllSessionAgents,
   dispatchSessionAgents, launchSessionAgent, launchIndependentAgent,
   notifyChatFallback,
-  getSessionAgentList, handleChatCommand, clearMessageQueue, getQueueMessages, formatSessionStatusBlock,
+  getSessionAgentList, handleChatCommand, clearMessageQueue, getQueueMessages, deleteQueueMessage, formatSessionStatusBlock,
   listMainSessionTabs, listDashboardTree, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
@@ -1160,6 +1160,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
       switch (head) {
         case "/x":
         case "/stop": {
+          const clearQueue = cmdTokens.slice(1).some((t) => t === "-c" || t === "--clear")
           const sessionKey = cmdSessionKey
             ?? (routingSession && projectIdFromSessionKey(routingSession) ? routingSession : undefined)
           const sessions = getSessionAgentList()
@@ -1169,8 +1170,16 @@ async function checkAndExecutePendingCommands(): Promise<void> {
               && (s.sessionKey === claimed.chatId || s.sessionKey.startsWith(`${claimed.chatId}::`))
             )?.sessionKey
           if (matchedKey) {
+            let cleared = 0
+            if (clearQueue) {
+              const target = normalizeSessionKey(matchedKey) || matchedKey
+              const pending = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
+              for (const m of pending) {
+                try { if (await deleteQueueMessage(m.fileId)) cleared++ } catch { /* ignore */ }
+              }
+            }
             await stopSessionAgent(matchedKey)
-            await reply(true, "✅ 已停止当前对话")
+            await reply(true, cleared > 0 ? `✅ 已停止当前对话（已清除 ${cleared} 条排队消息）` : "✅ 已停止当前对话")
           } else if (isAdmin) {
             const wasRunning = activeAgentSessionCount() > 0
             await stopAgent()

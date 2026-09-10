@@ -40,7 +40,7 @@ function normalizeDraft(p: ProjectListItem, groups: NodeGroup[]): ProjectListIte
 }
 
 export default function ProjectListPanel() {
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [projects, setProjects] = useState<ProjectListItem[]>([])
   const [nodeGroups, setNodeGroups] = useState<NodeGroup[]>([])
@@ -63,7 +63,11 @@ export default function ProjectListPanel() {
   const isDirty = draft ? JSON.stringify({ draft, metadataText }) !== savedSnapshot : false
 
   const selectProject = async (p: ProjectListItem) => {
-    if (isDirty && !(await showConfirm("未保存", "当前项目有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前项目有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const d = normalizeDraft(p, nodeGroups)
     setSelectedId(p.id)
     setDraft(d)
@@ -72,7 +76,7 @@ export default function ProjectListPanel() {
   }
 
   const handleSave = async () => {
-    if (!draft || !draft.name.trim()) return
+    if (!draft || !draft.name.trim()) return false
     let metadata: Record<string, string> | undefined
     try {
       const parsed = JSON.parse(metadataText || "{}") as unknown
@@ -85,11 +89,11 @@ export default function ProjectListPanel() {
         if (!Object.keys(metadata).length) metadata = undefined
       } else {
         void showAlert("错误", "metadata 必须是 JSON 对象")
-        return
+        return false
       }
     } catch {
       void showAlert("错误", "metadata JSON 格式无效")
-      return
+      return false
     }
     const r = await window.electronAPI.updateProject({
       id: draft.id,
@@ -102,7 +106,7 @@ export default function ProjectListPanel() {
       groupIds: draft.groupIds ?? [],
       metadata,
     })
-    if (!r.ok) { void showAlert("错误", r.error ?? "保存失败"); return }
+    if (!r.ok) { void showAlert("错误", r.error ?? "保存失败"); return false }
     const list = await window.electronAPI.listProjects().catch(() => [] as ProjectListItem[])
     setProjects(list)
     const updated = list.find((x) => x.id === draft.id)
@@ -114,6 +118,7 @@ export default function ProjectListPanel() {
       setSavedSnapshot(JSON.stringify({ draft: d, metadataText: meta }))
     }
     markSaved()
+    return true
   }
 
   const handleDelete = async () => {
@@ -136,7 +141,11 @@ export default function ProjectListPanel() {
   }
 
   const handleCancel = async () => {
-    if (isDirty && !(await showConfirm("未保存", "放弃未保存的修改？", "放弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前项目有未保存的修改，怎么办？", { save: "保存", discard: "放弃" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     if (selectedId) {
       const p = projects.find((x) => x.id === selectedId)
       if (p) {

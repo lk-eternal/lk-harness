@@ -10,10 +10,16 @@ import {
   exportHarnessRulesBundle as exportBundle,
   importHarnessRulesBundle as importBundle,
   mergeImportHarnessRulesBundle as mergeBundle,
+  normalizeRuleScope,
+  ruleAppliesTo,
   type HarnessRule,
+  type RuleScope,
+  type RuleTarget,
+  type RuleAudience,
 } from "../src/shared/harness-rule-store.js"
 
-export type { HarnessRule }
+export type { HarnessRule, RuleScope, RuleTarget, RuleAudience }
+export { normalizeRuleScope, ruleAppliesTo }
 
 function ensureInit(): void {
   initHarnessRuleStore(app.getPath("userData"))
@@ -34,9 +40,9 @@ export function listEnabledHarnessRules(): HarnessRule[] {
   return listEnabledRules()
 }
 
-export function saveHarnessRule(id: string | null, name: string, content: string, enabled = true): HarnessRule | null {
+export function saveHarnessRule(id: string | null, name: string, content: string, enabled = true, scope?: RuleScope): HarnessRule | null {
   ensureInit()
-  return saveRule(id, name, content, enabled)
+  return saveRule(id, name, content, enabled, scope)
 }
 
 export function deleteHarnessRule(id: string): boolean {

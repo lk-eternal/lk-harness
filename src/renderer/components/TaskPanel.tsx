@@ -21,7 +21,7 @@ function emptyTask(channels: ChannelConfig[]): TaskItem {
 }
 
 export default function TaskPanel() {
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [taskChannels, setTaskChannels] = useState<ChannelConfig[]>([])
@@ -70,7 +70,11 @@ export default function TaskPanel() {
   }
 
   const selectTask = async (t: TaskItem) => {
-    if (isDirty && !(await showConfirm("未保存", "当前任务有未保存的修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前任务有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     openDraft(t, false)
   }
 
@@ -135,10 +139,10 @@ export default function TaskPanel() {
   }, [draft?.cron, draft?.id])
 
   const handleSave = async () => {
-    if (!draft || !draft.name.trim() || !draft.cron.trim()) return
+    if (!draft || !draft.name.trim() || !draft.cron.trim()) return false
     const valid = await window.electronAPI.validateCron(draft.cron.trim())
     setTaskCronValid(valid)
-    if (!valid) return
+    if (!valid) return false
     const exists = tasks.find((t) => t.id === draft.id)
     const updated = exists ? tasks.map((t) => t.id === draft.id ? draft : t) : [...tasks, draft]
     await window.electronAPI.saveScheduledTasks(updated)
@@ -146,10 +150,15 @@ export default function TaskPanel() {
     setSavedSnapshot(JSON.stringify(draft))
     setIsNew(false)
     markSaved()
+    return true
   }
 
   const handleCancel = async () => {
-    if (isDirty && !(await showConfirm("未保存", "放弃未保存的修改？", "放弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前任务有未保存的修改，怎么办？", { save: "保存", discard: "放弃" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     if (isNew) {
       setSelectedId(null)
       setDraft(null)
@@ -184,7 +193,11 @@ export default function TaskPanel() {
   }
 
   const openAdd = async () => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，继续新增？", "继续", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前任务有未保存的修改，怎么办？", { save: "保存并继续" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     openDraft(emptyTask(taskChannels), true)
   }
 

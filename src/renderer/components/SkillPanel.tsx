@@ -13,7 +13,7 @@ type EditMode =
   | { kind: "file"; skillPath: string; relativePath: string; content: string }
 
 export default function SkillPanel() {
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [skillRoots, setSkillRoots] = useState<{ id: string; label: string; path: string; skillCount: number }[]>([])
   const [skillRootId, setSkillRootId] = useState("cursor")
@@ -49,14 +49,22 @@ export default function SkillPanel() {
   }
 
   const selectSkill = async (s: SkillFile) => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const mode: EditMode = { kind: "skill", skillPath: s.skillPath, name: s.skillPath, content: s.content, originalPath: s.skillPath, isNew: false }
     setEdit(mode)
     setSavedSnapshot(JSON.stringify(mode))
   }
 
   const openFile = async (skillPath: string, relativePath: string) => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const res = await window.electronAPI.readSkillFile(skillRootId, skillPath, relativePath)
     if (!res.ok) { void showAlert("读取失败", res.error ?? ""); return }
     const mode: EditMode = { kind: "file", skillPath, relativePath, content: res.content ?? "" }
@@ -65,16 +73,20 @@ export default function SkillPanel() {
   }
 
   const openAdd = async () => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，继续新增？", "继续", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并继续" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const mode: EditMode = { kind: "skill", skillPath: "", name: "", content: "", originalPath: null, isNew: true }
     setEdit(mode)
     setSavedSnapshot(JSON.stringify(mode))
   }
 
   const handleSave = async () => {
-    if (!edit) return
+    if (!edit) return false
     if (edit.kind === "skill") {
-      if (!edit.name.trim()) return
+      if (!edit.name.trim()) return false
       const newPath = edit.name.trim()
       if (edit.originalPath && edit.originalPath !== newPath) {
         await window.electronAPI.renameSkill(skillRootId, edit.originalPath, newPath)
@@ -89,6 +101,7 @@ export default function SkillPanel() {
       setSavedSnapshot(JSON.stringify(edit))
     }
     markSaved()
+    return true
   }
 
   const handleDelete = async () => {

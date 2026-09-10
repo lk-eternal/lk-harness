@@ -7,7 +7,7 @@ import {
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces,
   type MessageChannel, type ModelScenario,
 } from "./config-store"
-import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey } from "../src/shared/channel-types"
+import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
@@ -432,16 +432,18 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   // 项目会话 / 独立群：不算「其他人使用」，不注入数字身份，用主模型
   const projectOwned = chatType === "project" || !!boundProject || (chatType === "group" && !!findProjectByGroupChat(chatRef))
 
+  // 会话人群：主用户私聊 + task/project/temp 系统会话归主，其余归其他人
+  const audience: ChannelAudience = (useMain || chatType === "task" || chatType === "temp" || chatType === "project" || projectOwned) ? "main" : "others"
   // 通道与 Agent 资源解析（temp/task 的 sessionKey 无 ch_ 前缀时，从 meta.chatId 兜底）
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
   // 会话级供应商覆盖（/m p set）优先于通道默认，只影响当前会话
-  let resourceId = channel?.agentResourceId
+  let resourceId = resolveChannelResourceId(channel, audience)
   try {
     const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
     initSessionResourceStore(app.getPath("userData"))
-    resourceId = resolveResourceForSession(sessionKey, channel?.agentResourceId)
+    resourceId = resolveResourceForSession(sessionKey, resourceId) ?? resourceId
   } catch { /* store 未就绪时沿用通道资源 */ }
   const resource = getAgentResource(resourceId)
   if (resourceId && resource.id !== resourceId) {
@@ -498,10 +500,20 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     } catch { /* store 未就绪时沿用通道模型 */ }
   }
 
-  // 会话模式：保留会话（run 结束持久化 agentId，新消息 Resume 续上下文）+ 长连接（无限 poll）
-  const keepSession = channel?.keepSession ?? true
-  let persistentPoll = keepSession && (channel?.persistentPoll ?? true)
-  if (chatType === "task" && scheduledTask && scheduledTask.independent !== false) {
+  // 异源（其他人资源与主不同）且最终模型为空：跟随无意义，直接失败防串供应商
+  // （放模型解析后：显式覆盖/会话 override 可补救通道空模型）
+  if (audience === "others" && channel
+    && resolveChannelResourceId(channel, "others") !== (channel.agentResourceId || "")
+    && !model?.trim()) {
+    return { ok: false, error: `通道「${channel.name}」其他人资源与主用户不同，请先为其他人选择模型` }
+  }
+
+  // 会话模式：按人群取三开关；task 长连接强制关（执行完即结束），仅保留会话跟主用户
+  const { resolveChannelSessionFlags } = await import("../src/shared/channel-types.js")
+  const sessionFlags = resolveChannelSessionFlags(channel, audience)
+  const keepSession = sessionFlags.keepSession
+  let persistentPoll = keepSession && sessionFlags.persistentPoll
+  if (chatType === "task") {
     persistentPoll = false
   }
   // 独立群即使入站 chatType=group，出站/提示词也按 project 语义（禁数字身份）
@@ -535,7 +547,8 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     meta: launchMeta,
     workspaceDir: workDir,
     useMainWorkspace: skipIdentity,
-    digitalIdentityOverride: channel?.digitalIdentity,
+    // 对外身份已由自定义规则替代，此处显式传空（阻断通道旧值与全局遗留值回退）
+    digitalIdentityOverride: "",
     senderOpenId,
     chatName,
     taskMessage,

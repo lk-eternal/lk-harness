@@ -19,6 +19,9 @@ export interface AgentResource {
   modelIds?: string[];
 }
 
+/** 会话人群：主用户私聊（+ task/project/temp 系统会话归主） vs 其他人/群聊 */
+export type ChannelAudience = "main" | "others";
+
 /** 消息通道：一个飞书自建应用或一个微信账号 */
 export interface MessageChannel {
   id: string;            // "ch_<hex>"
@@ -36,6 +39,8 @@ export interface MessageChannel {
   wechatAccountId?: string;
   // Agent 绑定
   agentResourceId: string;        // sdk / llm 资源 id
+  /** 其他人 Agent 资源 id，空 = 跟随主用户 */
+  othersAgentResourceId?: string;
   model: string;                  // 主模型（"" / "auto" = 默认）
   modelParams: string;            // JSON 序列化的 {id,value}[]，仅 SDK
   othersModel: string;            // 其他人/群聊模型，空 = 跟随主模型
@@ -52,16 +57,33 @@ export interface MessageChannel {
   workspaceDir: string;
   /** 该通道的常用目录（可切换会话来源）；undefined = 未迁移，回退全局 favoriteWorkspaces */
   favoriteWorkspaces?: string[];
-  /** 保留会话：run 结束后保留上下文（记录 agentId），新消息 Resume 延续对话（默认 true） */
+  /** 保留会话：run 结束后保留上下文（记录 agentId），新消息 Resume 延续对话（默认 true）
+   * @deprecated 通道级旧字段，仅作主用户值回退；新代码按人群读 resolveChannelSessionFlags */
   keepSession?: boolean;
-  /** 保持长连接：无限 poll 保活（默认 true；false = 回答完收回合按需唤醒） */
+  /** 保持长连接：无限 poll 保活（默认 true；false = 回答完收回合按需唤醒）
+   * @deprecated 同上 */
   persistentPoll?: boolean;
-  /** 是否展示流式进度卡（默认 true；关闭后仅推送最终回复消息） */
+  /** 是否展示流式进度卡（默认 true；关闭后仅推送最终回复消息）
+   * @deprecated 同上 */
   showThinking?: boolean;
-  /** 流式卡思考/工具块各保留最近 N 个（默认 5；仅 showThinking 开启时生效） */
+  /** 流式卡思考/工具块各保留最近 N 个（默认 5；仅 showThinking 开启时生效）
+   * @deprecated 同上 */
   streamKeepPerKind?: number;
-  /** 完整回复后隐藏思考/工具/todos 折叠块，仅保留正文（默认 true） */
+  /** 完整回复后隐藏思考/工具/todos 折叠块，仅保留正文（默认 true）
+   * @deprecated 同上 */
   hideThinkingOnFinish?: boolean;
+  /** 主用户三开关（undefined = 回退旧通道级字段；存量迁移后落盘为显式值） */
+  keepSessionMain?: boolean;
+  persistentPollMain?: boolean;
+  showThinkingMain?: boolean;
+  streamKeepPerKindMain?: number;
+  hideThinkingOnFinishMain?: boolean;
+  /** 其他人三开关（默认值：保留开/长连接关/思考关；不回退旧通道级字段） */
+  keepSessionOthers?: boolean;
+  persistentPollOthers?: boolean;
+  showThinkingOthers?: boolean;
+  streamKeepPerKindOthers?: number;
+  hideThinkingOnFinishOthers?: boolean;
 }
 
 /** 下发给 Daemon 的通道配置（含运行所需的全部字段） */
@@ -80,14 +102,28 @@ export interface DaemonChannelConfig {
   workspaceDir: string;
   /** 通道常用目录（/c w 快捷切换） */
   favoriteWorkspaces?: string[];
-  /** 合成开关（keepSession && persistentPoll）：poll 响应随路下发，作为 Agent 收尾方式的权威来源 */
+  /** 合成开关（keepSession && persistentPoll）：poll 响应随路下发，作为 Agent 收尾方式的权威来源
+   * @deprecated 通道级旧字段；按人群读取 resolveDaemonSessionFlags */
   keepAlive?: boolean;
-  /** 是否展示流式进度卡（默认 true） */
+  /** 是否展示流式进度卡（默认 true）
+   * @deprecated 同上 */
   showThinking?: boolean;
-  /** 流式卡思考/工具块各保留最近 N 个（默认 5） */
+  /** 流式卡思考/工具块各保留最近 N 个（默认 5）
+   * @deprecated 同上 */
   streamKeepPerKind?: number;
-  /** 完整回复后隐藏思考/工具/todos 折叠块（默认 true） */
+  /** 完整回复后隐藏思考/工具/todos 折叠块（默认 true）
+   * @deprecated 同上 */
   hideThinkingOnFinish?: boolean;
+  /** 主用户运行时开关（undefined = 回退旧通道级字段） */
+  keepAliveMain?: boolean;
+  showThinkingMain?: boolean;
+  streamKeepPerKindMain?: number;
+  hideThinkingOnFinishMain?: boolean;
+  /** 其他人运行时开关（默认值：保活关/思考关；不回退旧字段） */
+  keepAliveOthers?: boolean;
+  showThinkingOthers?: boolean;
+  streamKeepPerKindOthers?: number;
+  hideThinkingOnFinishOthers?: boolean;
 }
 
 /** Daemon 上报的通道状态 */
@@ -161,4 +197,109 @@ export function normalizeSessionKey(sessionKey: string | undefined | null): stri
     suffix = suffix.replace(/\\+/g, "\\");
   }
   return prefix + suffix;
+}
+
+// ── 人群判定：主用户 vs 其他人（Electron 与 Daemon 共用）─────
+
+/** 系统会话一律归主：task 定时 / project 项目 / temp 临时（只有主用户能操作） */
+function isSystemSession(sessionKey?: string, chatType?: string): boolean {
+  if (chatType === "task" || chatType === "project" || chatType === "temp") return true;
+  if (!sessionKey) return false;
+  if (sessionKey.startsWith("temp_")) return true;
+  const idx = sessionKey.indexOf("::");
+  const suffix = idx >= 0 ? sessionKey.slice(idx + 2) : "";
+  if (suffix.startsWith("project_")) return true;
+  return sessionKey.includes("::project_");
+}
+
+/**
+ * 解析会话人群。主用户 = p2p 且 rawChatId 等于通道绑定的 mainUserChatId；
+ * chatType 未知时（Daemon 按 sessionKey 解析）仅按 id 相等判定。
+ */
+export function resolveChannelAudience(opts: {
+  mainUserEnabled?: boolean;
+  mainUserChatId?: string;
+  chatKey?: string;
+  chatType?: string;
+  sessionKey?: string;
+}): ChannelAudience {
+  if (isSystemSession(opts.sessionKey, opts.chatType)) return "main";
+  if (!opts.mainUserEnabled) return "others";
+  const bound = opts.mainUserChatId?.trim();
+  if (!bound) return "others";
+  const chatKey = opts.chatKey ?? (opts.sessionKey ? chatIdFromSessionKey(opts.sessionKey) : "");
+  if (!chatKey) return "others";
+  const { chatId: raw } = parseChatKey(chatKey);
+  if (raw !== bound) return "others";
+  if (opts.chatType !== undefined && opts.chatType !== "p2p") return "others";
+  return "main";
+}
+
+/** 按人群解析 Agent 资源 id；其他人空值=跟随主用户 */
+export function resolveChannelResourceId(
+  channel: Pick<MessageChannel, "agentResourceId" | "othersAgentResourceId"> | undefined,
+  audience: ChannelAudience,
+): string {
+  if (audience === "others") return channel?.othersAgentResourceId?.trim() || channel?.agentResourceId || ""
+  return channel?.agentResourceId || ""
+}
+
+/** 按人群读取通道三开关（含流式卡子项）；task 的长连接/思考强制关由调用方处理 */
+export interface ChannelSessionFlags {
+  keepSession: boolean;
+  persistentPoll: boolean;
+  showThinking: boolean;
+  streamKeepPerKind: number;
+  hideThinkingOnFinish: boolean;
+}
+
+export function resolveChannelSessionFlags(
+  channel: Pick<MessageChannel,
+    "keepSession" | "persistentPoll" | "showThinking" | "streamKeepPerKind" | "hideThinkingOnFinish" |
+    "keepSessionMain" | "persistentPollMain" | "showThinkingMain" | "streamKeepPerKindMain" | "hideThinkingOnFinishMain" |
+    "keepSessionOthers" | "persistentPollOthers" | "showThinkingOthers" | "streamKeepPerKindOthers" | "hideThinkingOnFinishOthers"
+  > | undefined,
+  audience: ChannelAudience,
+): ChannelSessionFlags {
+  if (audience === "main") {
+    return {
+      keepSession: channel?.keepSessionMain ?? channel?.keepSession ?? true,
+      persistentPoll: channel?.persistentPollMain ?? channel?.persistentPoll ?? true,
+      showThinking: channel?.showThinkingMain ?? channel?.showThinking ?? true,
+      streamKeepPerKind: channel?.streamKeepPerKindMain ?? channel?.streamKeepPerKind ?? 5,
+      hideThinkingOnFinish: channel?.hideThinkingOnFinishMain ?? channel?.hideThinkingOnFinish ?? true,
+    };
+  }
+  return {
+    keepSession: channel?.keepSessionOthers ?? true,
+    persistentPoll: channel?.persistentPollOthers ?? false,
+    showThinking: channel?.showThinkingOthers ?? false,
+    streamKeepPerKind: channel?.streamKeepPerKindOthers ?? 5,
+    hideThinkingOnFinish: channel?.hideThinkingOnFinishOthers ?? true,
+  };
+}
+
+/** 按人群读取 Daemon 运行时开关；others 不回退旧通道级字段（默认值 保活关/思考关） */
+export function resolveDaemonSessionFlags(
+  cfg: Pick<DaemonChannelConfig,
+    "keepAlive" | "showThinking" | "streamKeepPerKind" | "hideThinkingOnFinish" |
+    "keepAliveMain" | "showThinkingMain" | "streamKeepPerKindMain" | "hideThinkingOnFinishMain" |
+    "keepAliveOthers" | "showThinkingOthers" | "streamKeepPerKindOthers" | "hideThinkingOnFinishOthers"
+  > | undefined,
+  audience: ChannelAudience,
+): { keepAlive: boolean; showThinking: boolean; streamKeepPerKind: number; hideThinkingOnFinish: boolean } {
+  if (audience === "main") {
+    return {
+      keepAlive: cfg?.keepAliveMain ?? cfg?.keepAlive ?? true,
+      showThinking: cfg?.showThinkingMain ?? cfg?.showThinking ?? true,
+      streamKeepPerKind: cfg?.streamKeepPerKindMain ?? cfg?.streamKeepPerKind ?? 5,
+      hideThinkingOnFinish: cfg?.hideThinkingOnFinishMain ?? cfg?.hideThinkingOnFinish ?? true,
+    };
+  }
+  return {
+    keepAlive: cfg?.keepAliveOthers ?? false,
+    showThinking: cfg?.showThinkingOthers ?? false,
+    streamKeepPerKind: cfg?.streamKeepPerKindOthers ?? 5,
+    hideThinkingOnFinish: cfg?.hideThinkingOnFinishOthers ?? true,
+  };
 }

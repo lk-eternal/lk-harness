@@ -233,8 +233,8 @@ declare global {
     getMcpEnabledMap(force?: boolean): Promise<Record<string, boolean>>
     getMcpStatusMap(force?: boolean): Promise<Record<string, string>>
     getMcpTools(name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
-    getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean }[]>
-    saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }>
+    getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } }[]>
+    saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean, scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] }): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } } }>
     deleteHarnessRule(id: string): Promise<{ ok: boolean }>
     getClawRules(): Promise<{ id: string; name: string; content: string; enabled: boolean }[]>
     saveClawRule(id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }>

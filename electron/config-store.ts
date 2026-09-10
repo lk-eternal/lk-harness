@@ -338,11 +338,23 @@ export function newSdkResourceId(): string {
 
 export function getChannels(): MessageChannel[] {
   const cfg = getConfig()
-  // 旧版本迁移出的通道可能缺少通道级字段，用旧全局值兜底
+  // 旧版本迁移出的通道可能缺少通道级字段，用旧全局值兜底；
+  // 主/其他三开关：存量老值归主用户，其他人走独立默认值（保留开/长连接关/思考关）
   return (cfg.channels ?? []).map((c) => ({
     ...c,
     allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
     digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
+    othersAgentResourceId: c.othersAgentResourceId ?? "",
+    keepSessionMain: c.keepSessionMain ?? c.keepSession ?? true,
+    persistentPollMain: c.persistentPollMain ?? c.persistentPoll ?? true,
+    showThinkingMain: c.showThinkingMain ?? c.showThinking ?? true,
+    streamKeepPerKindMain: c.streamKeepPerKindMain ?? c.streamKeepPerKind ?? 5,
+    hideThinkingOnFinishMain: c.hideThinkingOnFinishMain ?? c.hideThinkingOnFinish ?? true,
+    keepSessionOthers: c.keepSessionOthers ?? true,
+    persistentPollOthers: c.persistentPollOthers ?? false,
+    showThinkingOthers: c.showThinkingOthers ?? false,
+    streamKeepPerKindOthers: c.streamKeepPerKindOthers ?? 5,
+    hideThinkingOnFinishOthers: c.hideThinkingOnFinishOthers ?? true,
   }))
 }
 

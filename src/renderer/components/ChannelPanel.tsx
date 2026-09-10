@@ -12,6 +12,8 @@ import { modelSlug } from "../model-utils"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 const sectionCls = "mt-5 space-y-3 border-t border-gray-800 pt-5 pb-5"
+/** tab 内首个分组：去顶部隔线，保留间隙 */
+const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
 
 function newLocalChannelId(): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -25,6 +27,7 @@ function emptyChannel(type: "feishu" | "wechat", defaultName: string): ChannelCo
     enabled: true,
     type,
     agentResourceId: "",
+    othersAgentResourceId: "",
     model: "auto",
     modelParams: "",
     othersModel: "",
@@ -34,9 +37,16 @@ function emptyChannel(type: "feishu" | "wechat", defaultName: string): ChannelCo
     allowOthers: false,
     digitalIdentity: "",
     workspaceDir: "",
-    keepSession: true,
-    persistentPoll: true,
-    showThinking: true,
+    keepSessionMain: true,
+    persistentPollMain: true,
+    showThinkingMain: true,
+    streamKeepPerKindMain: 5,
+    hideThinkingOnFinishMain: true,
+    keepSessionOthers: true,
+    persistentPollOthers: false,
+    showThinkingOthers: false,
+    streamKeepPerKindOthers: 5,
+    hideThinkingOnFinishOthers: true,
   }
 }
 
@@ -52,7 +62,7 @@ export default function ChannelPanel() {
   const [isNewChannel, setIsNewChannel] = useState(false)
   const [showAddMenu, setShowAddMenu] = useState(false)
   const addMenuRef = useRef<HTMLDivElement>(null)
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
 
   const reload = useCallback(async () => {
@@ -104,11 +114,12 @@ export default function ChannelPanel() {
   const isDirty = draft ? JSON.stringify(draft) !== savedSnapshot : false
 
   const selectChannel = async (c: ChannelConfig) => {
-    if (isDirty && !(await showConfirm("未保存", "当前通道有未保存的修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (!(await guardUnsaved("保存并切换"))) return
     openDraft(c, false)
   }
 
-  const openAdd = (type: "feishu" | "wechat") => {
+  const openAdd = async (type: "feishu" | "wechat") => {
+    if (!(await guardUnsaved("保存并继续"))) return
     setShowAddMenu(false)
     const count = channels.filter((c) => c.type === type).length
     const base = type === "feishu" ? "飞书" : "微信"
@@ -116,7 +127,7 @@ export default function ChannelPanel() {
   }
 
   const handleCancel = async () => {
-    if (isDirty && !(await showConfirm("未保存", "放弃未保存的修改？", "放弃", "继续编辑"))) return
+    if (!(await guardUnsaved("保存", "放弃"))) return
     if (isNewChannel) {
       setSelectedId(null)
       setDraft(null)
@@ -138,12 +149,29 @@ export default function ChannelPanel() {
   const handleSave = async (next: ChannelConfig) => {
     if (next.mainUserEnabled && !next.workspaceDir?.trim()) {
       void showAlert("提示", "请设置主用户工作目录")
-      return
+      return false
+    }
+    if (next.allowOthers) {
+      const effOthers = next.othersAgentResourceId?.trim() || next.agentResourceId
+      if (effOthers !== next.agentResourceId && !next.othersModel?.trim()) {
+        void showAlert("提示", "其他人资源与主用户不同，请先为其他人选择模型（不可跟随）")
+        return false
+      }
     }
     await persistDraft(next)
     markSaved()
     openDraft(next, false)
     setIsNewChannel(false)
+    return true
+  }
+
+  /** 未保存守卫：保存并继续 / 丢弃 / 取消 */
+  const guardUnsaved = async (saveLabel: string, discardLabel = "丢弃") => {
+    if (!isDirty || !draft) return true
+    const choice = await showUnsavedChoice("未保存", "当前通道有未保存的修改，怎么办？", { save: saveLabel, discard: discardLabel })
+    if (choice === "cancel") return false
+    if (choice === "save") return handleSave(draft)
+    return true
   }
 
   const handleDeleteCurrent = async () => {
@@ -273,35 +301,18 @@ function ModelLoadError({ error, onRetry }: { error: string; onRetry: () => void
   )
 }
 
-function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, showAlert, showConfirm }: DetailProps) {
-  const draft = channel
-  const set = (p: Partial<ChannelConfig>) => onChange({ ...draft, ...p })
-  const [showSecret, setShowSecret] = useState(false)
-  const [appInfoState, setAppInfoState] = useState<{ checking: boolean; error?: string }>({ checking: false })
+const modelKey = (id: string, params: string) => id + (params ? "\0" + params : "")
+const parseModelKey = (key: string): { id: string; params: string } => {
+  const sep = key.indexOf("\0")
+  return sep >= 0 ? { id: key.slice(0, sep), params: key.slice(sep + 1) } : { id: key, params: "" }
+}
+
+/** 随 Agent 资源变化加载对应模型列表；取消过时请求避免错序覆盖 */
+function useModelOptions(resource: AgentResource | undefined, model: string, modelParams: string) {
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelError, setModelError] = useState("")
-  const [binding, setBinding] = useState(false)
-  const [testing, setTesting] = useState(false)
-  // 飞书一键创建
-  const [feishuQrUrl, setFeishuQrUrl] = useState("")
-  const [feishuQrStatus, setFeishuQrStatus] = useState<"idle" | "loading" | "wait" | "error">("idle")
-  const [feishuQrMsg, setFeishuQrMsg] = useState("")
-  const [registerForm, setRegisterForm] = useState<{ name: string; desc: string } | null>(null)
-  // 微信扫码
-  const [wechatQrUrl, setWechatQrUrl] = useState("")
-  const [wechatQrStatus, setWechatQrStatus] = useState<"idle" | "loading" | "wait" | "scaned" | "error">("idle")
-  const [wechatQrMsg, setWechatQrMsg] = useState("")
-  const wechatQrBusy = useRef(false)
-
-  const resource = resources.find((r) => r.id === draft.agentResourceId)
-
-  const modelOptLabel = (id?: string, params?: string) =>
-    modelOptions.find((o) => o.id === id && o.params === (params ?? ""))?.label
-    || modelSlug(id, params)
-
-  // 随 Agent 资源（及凭据）变化加载对应模型列表；取消过时请求避免错序覆盖
-  const [modelReloadSeq, setModelReloadSeq] = useState(0)
+  const [reloadSeq, setReloadSeq] = useState(0)
   useEffect(() => {
     if (!resource) {
       setModelOptions([])
@@ -319,12 +330,12 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             if (!cancelled) { setModelOptions([]); setModelError("该资源未填 API Key") }
             return
           }
-          const r = await window.electronAPI.listSdkModels(resource.apiKey.trim(), draft.model, draft.modelParams)
+          const r = await window.electronAPI.listSdkModels(resource.apiKey.trim(), model, modelParams)
           if (cancelled) return
           if (r.ok && r.models.length > 0) setModelOptions(r.models)
           else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
         } else if (resource.type === "llm-builtin" || resource.type === "llm-custom") {
-          const r = await window.electronAPI.listLlmModels(resource, draft.model, draft.modelParams)
+          const r = await window.electronAPI.listLlmModels(resource, model, modelParams)
           if (cancelled) return
           if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
           else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
@@ -343,7 +354,90 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
     setModelOptions([])
     void load()
     return () => { cancelled = true }
-  }, [resource, draft.model, draft.modelParams, modelReloadSeq])
+  }, [resource, model, modelParams, reloadSeq])
+  return { modelOptions, loadingModels, modelError, reloadModels: () => setReloadSeq((s) => s + 1) }
+}
+
+function ResourceModelBlock({ resources, resourceId, onResourceChange, followResourceLabel, modelValue, modelParams, onModelChange, followModelLabel, modelPlaceholder, emptyModelPlaceholder, models }: {
+  resources: AgentResource[]
+  resourceId: string
+  onResourceChange: (id: string) => void
+  followResourceLabel?: string
+  modelValue: string
+  modelParams: string
+  onModelChange: (id: string, params: string) => void
+  followModelLabel?: string
+  modelPlaceholder: string
+  emptyModelPlaceholder: string
+  models: { modelOptions: ModelOption[]; loadingModels: boolean; modelError: string; reloadModels: () => void }
+}) {
+  const { modelOptions, loadingModels, modelError, reloadModels } = models
+  const modelOptLabel = (id?: string, params?: string) =>
+    modelOptions.find((o) => o.id === id && o.params === (params ?? ""))?.label
+    || modelSlug(id, params)
+  return (
+    <>
+      <div>
+        <label className="mb-1 block text-xs text-gray-500">Agent 资源</label>
+        <select value={resourceId} onChange={(e) => onResourceChange(e.target.value)} className={inputCls}>
+          {followResourceLabel
+            ? <>
+                <option value="">{followResourceLabel}</option>
+                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
+              </>
+            : <>
+                <option value="">请选择 Agent 资源</option>
+                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
+              </>}
+        </select>
+      </div>
+      <div>
+        <label className="mb-1 block text-xs text-gray-500">模型</label>
+        {loadingModels
+          ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-gray-500"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
+          : modelOptions.length > 0
+            ? <SearchableSelect
+                value={modelValue ? modelKey(modelValue, modelParams) : ""}
+                onChange={(key) => { if (!key) { onModelChange("", ""); return } const { id, params } = parseModelKey(key); onModelChange(id, params) }}
+                options={followModelLabel ? [{ id: "", label: followModelLabel }, ...modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))] : modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))}
+                placeholder={followModelLabel ?? modelPlaceholder}
+                fallbackLabel={modelOptLabel(modelValue, modelParams)}
+              />
+            : <>
+                <input type="text" value={modelOptLabel(modelValue, modelParams)} onChange={(e) => onModelChange(e.target.value, "")} placeholder={emptyModelPlaceholder} className={inputCls} />
+                {modelError && <ModelLoadError error={modelError} onRetry={reloadModels} />}
+              </>}
+      </div>
+    </>
+  )
+}
+
+function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, showAlert, showConfirm }: DetailProps) {
+  const draft = channel
+  const set = (p: Partial<ChannelConfig>) => onChange({ ...draft, ...p })
+  const [showSecret, setShowSecret] = useState(false)
+  const [appInfoState, setAppInfoState] = useState<{ checking: boolean; error?: string }>({ checking: false })
+  const [binding, setBinding] = useState(false)
+  const [testing, setTesting] = useState(false)
+  // 飞书一键创建
+  const [feishuQrUrl, setFeishuQrUrl] = useState("")
+  const [feishuQrStatus, setFeishuQrStatus] = useState<"idle" | "loading" | "wait" | "error">("idle")
+  const [feishuQrMsg, setFeishuQrMsg] = useState("")
+  const [registerForm, setRegisterForm] = useState<{ name: string; desc: string } | null>(null)
+  // 微信扫码
+  const [wechatQrUrl, setWechatQrUrl] = useState("")
+  const [wechatQrStatus, setWechatQrStatus] = useState<"idle" | "loading" | "wait" | "scaned" | "error">("idle")
+  const [wechatQrMsg, setWechatQrMsg] = useState("")
+  const wechatQrBusy = useRef(false)
+
+  const [activeTab, setActiveTab] = useState<"main" | "others">("main")
+  const resourceMain = resources.find((r) => r.id === draft.agentResourceId)
+  const othersResourceId = draft.othersAgentResourceId?.trim() || draft.agentResourceId
+  const resourceOthers = resources.find((r) => r.id === othersResourceId)
+  /** 其他人模型"跟随"仅同源时成立 */
+  const sameResource = othersResourceId === draft.agentResourceId
+  const mainModels = useModelOptions(resourceMain, draft.model, draft.modelParams)
+  const othersModels = useModelOptions(resourceOthers, draft.othersModel, draft.othersModelParams)
 
   // 飞书一键创建应用
   useEffect(() => {
@@ -479,12 +573,8 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   }
 
   const credOk = draft.type === "feishu" ? !!(draft.larkAppId?.trim() && draft.larkAppSecret?.trim()) : !!draft.wechatToken?.trim()
-
-  const modelKey = (id: string, params: string) => id + (params ? "\0" + params : "")
-  const parseModelKey = (key: string): { id: string; params: string } => {
-    const sep = key.indexOf("\0")
-    return sep >= 0 ? { id: key.slice(0, sep), params: key.slice(sep + 1) } : { id: key, params: "" }
-  }
+  /** 已绑定 = 开关开且有 chatId；旧暂停态视为未绑定，点绑定即覆盖自愈 */
+  const bound = draft.mainUserEnabled && !!draft.mainUserChatId
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -601,133 +691,30 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             </section>
           )}
 
-          {/* ── Agent 资源与模型 ── */}
-          <section className={sectionCls}>
-            <h4 className="text-xs font-medium text-gray-400">Agent 资源与模型</h4>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">Agent 资源</label>
-              <select
-                value={draft.agentResourceId}
-                onChange={(e) => {
-                  const agentResourceId = e.target.value
-                  if (agentResourceId === draft.agentResourceId) return
-                  set({ agentResourceId, model: "auto", modelParams: "", othersModel: "", othersModelParams: "" })
-                }}
-                className={inputCls}
-              >
-                <option value="">请选择 Agent 资源</option>
-                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">主模型</label>
-              {loadingModels
-                ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-gray-500"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
-                : modelOptions.length > 0
-                  ? <SearchableSelect
-                      value={modelKey(draft.model, draft.modelParams)}
-                      onChange={(key) => { const { id, params } = parseModelKey(key); set({ model: id, modelParams: params }) }}
-                      options={modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))}
-                      placeholder="选择模型..."
-                      fallbackLabel={modelOptLabel(draft.model, draft.modelParams)}
-                    />
-                  : <>
-                      <input type="text" value={modelOptLabel(draft.model, draft.modelParams)} onChange={(e) => set({ model: e.target.value, modelParams: "" })} placeholder="auto" className={inputCls} />
-                      {modelError && <ModelLoadError error={modelError} onRetry={() => setModelReloadSeq((s) => s + 1)} />}
-                    </>}
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-gray-500">其他人模型</label>
-              {loadingModels
-                ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-gray-500"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
-                : modelOptions.length > 0
-                  ? <SearchableSelect
-                      value={draft.othersModel ? modelKey(draft.othersModel, draft.othersModelParams) : ""}
-                      onChange={(key) => { if (!key) { set({ othersModel: "", othersModelParams: "" }); return } const { id, params } = parseModelKey(key); set({ othersModel: id, othersModelParams: params }) }}
-                      options={[{ id: "", label: "跟随主模型" }, ...modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))]}
-                      placeholder="跟随主模型"
-                      fallbackLabel={modelOptLabel(draft.othersModel, draft.othersModelParams)}
-                    />
-                  : <>
-                      <input type="text" value={modelOptLabel(draft.othersModel, draft.othersModelParams)} onChange={(e) => set({ othersModel: e.target.value, othersModelParams: "" })} placeholder="留空则跟随主模型" className={inputCls} />
-                      {modelError && <ModelLoadError error={modelError} onRetry={() => setModelReloadSeq((s) => s + 1)} />}
-                    </>}
-            </div>
-          </section>
+          {/* ── 人群 Tab：主用户 | 其他用户（同草稿，切换不丢未保存） ── */}
+          <div className="mt-5 flex gap-1 border-b border-gray-800">
+            {(["main", "others"] as const).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setActiveTab(t)}
+                className={`rounded-t-md px-4 py-2 text-xs font-medium transition ${activeTab === t ? "bg-gray-800 text-white" : "text-gray-500 hover:text-gray-300"}`}
+              >{t === "main" ? "主用户" : "其他用户"}</button>
+            ))}
+          </div>
 
-          {/* ── 会话保活模式 ── */}
-          <section className={sectionCls}>
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-gray-400">保留会话</h4>
-              <button onClick={() => set({ keepSession: !(draft.keepSession ?? true) })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSession ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSession ?? true) ? "left-[18px]" : "left-0.5"}`} />
-              </button>
-            </div>
-            {(draft.keepSession ?? true) && (
-              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
-                <p className="text-xs text-gray-400">保持长连接</p>
-                <button onClick={() => set({ persistentPoll: !(draft.persistentPoll ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPoll ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPoll ?? true) ? "left-[18px]" : "left-0.5"}`} />
-                </button>
-              </div>
-            )}
-            {draft.type === "feishu" && (
-              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
-                <p className="text-xs text-gray-400">展示思考过程</p>
-                <button onClick={() => set({ showThinking: !(draft.showThinking ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinking ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinking ?? true) ? "left-[18px]" : "left-0.5"}`} />
-                </button>
-              </div>
-            )}
-            {draft.type === "feishu" && (draft.showThinking ?? true) && (
-              <>
-              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
-                <p className="text-xs text-gray-400">思考/工具块保留数</p>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={draft.streamKeepPerKind ?? 5}
-                  onChange={(e) => {
-                    const n = parseInt(e.target.value, 10)
-                    set({ streamKeepPerKind: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
-                  }}
-                  className="w-16 rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
-                <p className="text-xs text-gray-400">回复后隐藏思考</p>
-                <button onClick={() => set({ hideThinkingOnFinish: !(draft.hideThinkingOnFinish ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinish ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinish ?? true) ? "left-[18px]" : "left-0.5"}`} />
-                </button>
-              </div>
-              </>
-            )}
-          </section>
-
-          {/* ── 主用户 ── */}
-          <section className={sectionCls}>
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-gray-400">主用户</h4>
-              <button onClick={() => set({ mainUserEnabled: !draft.mainUserEnabled })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${draft.mainUserEnabled ? "bg-blue-600" : "bg-gray-600"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${draft.mainUserEnabled ? "left-[18px]" : "left-0.5"}`} />
-              </button>
-            </div>
-            {draft.mainUserEnabled && (
-              <>
-                <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2.5">
+          {/* ── 主用户：绑定与工作目录（依赖前置） ── */}
+          {activeTab === "main" && (
+          <section className={sectionFirstCls}>
+            <h4 className="text-xs font-medium text-gray-400">绑定主用户</h4>
+            <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2.5">
                   {binding
                     ? <>
                         <Loader2 size={14} className="animate-spin text-blue-400" />
                         <span className="flex-1 text-xs text-blue-300">请在{draft.type === "feishu" ? "飞书" : "微信"}私聊中向机器人发一条消息…</span>
                         <button type="button" onClick={() => void cancelBind()} className="text-xs text-gray-500 hover:text-red-400">取消</button>
                       </>
-                    : draft.mainUserChatId
+                    : bound
                       ? <>
                           <CheckCircle2 size={14} className="text-green-400" />
                           <span className="flex-1 truncate text-xs text-gray-300">已绑定</span>
@@ -741,6 +728,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                           <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">绑定</button>
                         </>}
                 </div>
+            {(draft.mainUserEnabled || draft.mainUserChatId) && (
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">工作目录</label>
                   <div className="flex items-center gap-2">
@@ -751,12 +739,87 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                     {draft.workspaceDir && <button onClick={() => set({ workspaceDir: "" })} className="text-xs text-gray-500 hover:text-red-400">清除</button>}
                   </div>
                 </div>
+            )}
+          </section>
+          )}
+
+          {/* ── Agent 资源与模型（主用户） ── */}
+          {activeTab === "main" && (
+          <section className={sectionCls}>
+            <h4 className="text-xs font-medium text-gray-400">Agent 资源与模型</h4>
+            <ResourceModelBlock
+              resources={resources}
+              resourceId={draft.agentResourceId}
+              onResourceChange={(id) => { if (id !== draft.agentResourceId) set({ agentResourceId: id, model: "auto", modelParams: "" }) }}
+              modelValue={draft.model}
+              modelParams={draft.modelParams}
+              onModelChange={(id, params) => set({ model: id, modelParams: params })}
+              modelPlaceholder="选择模型..."
+              emptyModelPlaceholder="auto"
+              models={mainModels}
+            />
+          </section>
+          )}
+
+          {/* ── 会话保活模式（主用户 / 其他人独立配置） ── */}
+          {activeTab === "main" && (
+          <section className={sectionCls}>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400">保留会话</p>
+              <button onClick={() => set({ keepSessionMain: !(draft.keepSessionMain ?? true) })}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionMain ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSessionMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+              </button>
+            </div>
+            {(draft.keepSessionMain ?? true) && (
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
+                <p className="text-xs text-gray-400">保持长连接</p>
+                <button onClick={() => set({ persistentPollMain: !(draft.persistentPollMain ?? true) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollMain ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPollMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
+            )}
+            {draft.type === "feishu" && (
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
+                <p className="text-xs text-gray-400">展示思考过程</p>
+                <button onClick={() => set({ showThinkingMain: !(draft.showThinkingMain ?? true) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingMain ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinkingMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
+            )}
+            {draft.type === "feishu" && (draft.showThinkingMain ?? true) && (
+              <>
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
+                <p className="text-xs text-gray-400">思考/工具块保留数</p>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={draft.streamKeepPerKindMain ?? 5}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10)
+                    set({ streamKeepPerKindMain: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
+                  }}
+                  className="w-16 rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
+                <p className="text-xs text-gray-400">回复后隐藏思考</p>
+                <button onClick={() => set({ hideThinkingOnFinishMain: !(draft.hideThinkingOnFinishMain ?? true) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishMain ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinishMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
               </>
             )}
           </section>
+          )}
 
-          {/* ── 其他人 ── */}
-          <section className={sectionCls}>
+          {/* ── 其他用户：总开关前置 ── */}
+          {activeTab === "others" && (
+          <section className={sectionFirstCls}>
             <div className="flex items-center justify-between">
               <h4 className="text-xs font-medium text-gray-400">允许其他人使用</h4>
               <button onClick={() => set({ allowOthers: !draft.allowOthers })}
@@ -764,14 +827,122 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${draft.allowOthers ? "left-[18px]" : "left-0.5"}`} />
               </button>
             </div>
-            {draft.allowOthers && (
-              <div>
-                <label className="mb-1 block text-xs text-gray-500">对外身份规则</label>
-                <textarea value={draft.digitalIdentity} onChange={(e) => set({ digitalIdentity: e.target.value })} rows={4} placeholder="角色与行为规范…" className="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-blue-500 focus:outline-none" />
-              </div>
+            {!draft.allowOthers && (
+              <p className="text-xs text-gray-600">开启后可配置其他人的资源、模型与会话。</p>
             )}
           </section>
+          )}
+
+          {activeTab === "others" && draft.allowOthers && (
+          <section className={sectionCls}>
+            <h4 className="text-xs font-medium text-gray-400">Agent 资源与模型</h4>
+            <ResourceModelBlock
+              resources={resources}
+              resourceId={draft.othersAgentResourceId ?? ""}
+              onResourceChange={(id) => { if ((id ?? "") !== (draft.othersAgentResourceId ?? "")) set({ othersAgentResourceId: id, othersModel: "", othersModelParams: "" }) }}
+              followResourceLabel="跟随主用户"
+              modelValue={draft.othersModel}
+              modelParams={draft.othersModelParams}
+              onModelChange={(id, params) => set({ othersModel: id, othersModelParams: params })}
+              followModelLabel={sameResource ? "跟随主模型" : undefined}
+              modelPlaceholder="选择模型..."
+              emptyModelPlaceholder={sameResource ? "留空则跟随主模型" : "请选择模型"}
+              models={othersModels}
+            />
+            {!sameResource && !draft.othersModel?.trim() && (
+              <p className="text-xs text-yellow-500">其他人资源与主用户不同，请显式选择模型（不可跟随）。</p>
+            )}
+          </section>
+          )}
+
+          {activeTab === "others" && draft.allowOthers && (
+          <section className={sectionCls}>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-400">保留会话</p>
+              <button onClick={() => set({ keepSessionOthers: !(draft.keepSessionOthers ?? true) })}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionOthers ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSessionOthers ?? true) ? "left-[18px]" : "left-0.5"}`} />
+              </button>
+            </div>
+            {(draft.keepSessionOthers ?? true) && (
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
+                <p className="text-xs text-gray-400">保持长连接</p>
+                <button onClick={() => set({ persistentPollOthers: !(draft.persistentPollOthers ?? false) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollOthers ?? false) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPollOthers ?? false) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
+            )}
+            {draft.type === "feishu" && (
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3">
+                <p className="text-xs text-gray-400">展示思考过程</p>
+                <button onClick={() => set({ showThinkingOthers: !(draft.showThinkingOthers ?? false) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingOthers ?? false) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinkingOthers ?? false) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
+            )}
+            {draft.type === "feishu" && (draft.showThinkingOthers ?? false) && (
+              <>
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
+                <p className="text-xs text-gray-400">思考/工具块保留数</p>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={draft.streamKeepPerKindOthers ?? 5}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10)
+                    set({ streamKeepPerKindOthers: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
+                  }}
+                  className="w-16 rounded-lg border border-gray-700 bg-gray-900 px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
+                <p className="text-xs text-gray-400">回复后隐藏思考</p>
+                <button onClick={() => set({ hideThinkingOnFinishOthers: !(draft.hideThinkingOnFinishOthers ?? true) })}
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "bg-blue-600" : "bg-gray-600"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                </button>
+              </div>
+              </>
+            )}
+          </section>
+          )}
+
+          {activeTab === "main" && <ChannelRulesView channelId={draft.id} audience="main" title="适用规则" />}
+
+          {activeTab === "others" && draft.allowOthers && <ChannelRulesView channelId={draft.id} audience="others" title="适用规则" />}
         </div>
     </div>
+  )
+}
+
+// ── 通道适用规则（只读）：mode 主用户默认全量；custom 按本通道×人群匹配───
+
+function ruleAppliesLocal(
+  scope: { mode?: string; targets?: { channelId: string; audiences?: string[] }[] } | undefined,
+  channelId: string,
+  audience: "main" | "others",
+): boolean {
+  if (!scope || scope.mode !== "custom") return audience === "main"
+  return (scope.targets ?? []).some((t) => t.channelId === channelId && (t.audiences ?? []).includes(audience))
+}
+
+function ChannelRulesView({ channelId, audience, title }: { channelId: string; audience: "main" | "others"; title: string }) {
+  const [rules, setRules] = useState<{ id: string; enabled: boolean; content: string; scope?: { mode?: string; targets?: { channelId: string; audiences?: string[] }[] } }[]>([])
+  useEffect(() => {
+    void window.electronAPI.getHarnessRules().then((rs) => setRules(rs ?? []))
+  }, [channelId])
+  const list = rules.filter((r) => r.enabled && ruleAppliesLocal(r.scope, channelId, audience))
+  return (
+    <section className={sectionCls}>
+      <h4 className="text-xs font-medium text-gray-400">{title}（{list.length}）</h4>
+      {list.length === 0
+        ? <p className="text-xs text-gray-600">无</p>
+        : <div className="flex flex-wrap gap-1.5">{list.map((r) => (
+          <span key={r.id} title={r.content || r.id} className="max-w-full cursor-default truncate rounded-md bg-gray-800/70 px-2 py-1 text-xs text-gray-300">{r.id}</span>
+        ))}</div>}
+    </section>
   )
 }

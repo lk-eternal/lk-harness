@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
-import { getConfig } from "./config-store"
-import { listEnabledHarnessRules } from "./harness-rule-store"
+import { getConfig, getChannel } from "./config-store"
+import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
+import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getLlmHostRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
 import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
@@ -114,8 +115,32 @@ function resolveDigitalIdentity(skipIdentity: boolean, override?: string): strin
   return (override ?? getConfig().digitalIdentity ?? "").trim()
 }
 
-function appendUserHarnessRules(parts: string[]): void {
-  const rules = listEnabledHarnessRules()
+function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; audience: "main" | "others" } {
+  const sessionKey = ctx.sessionKey ?? ""
+  const chatType = ctx.meta?.chatType
+  const chatKey = sessionKey ? chatIdFromSessionKey(sessionKey) : (ctx.meta?.chatId ?? "")
+  let channelId = sessionKey ? channelIdFromSessionKey(sessionKey) : undefined
+  let channel = channelId ? getChannel(channelId) : undefined
+  if (!channel && ctx.meta?.chatId) {
+    const parsed = parseChatKey(ctx.meta.chatId)
+    if (parsed.channelId) {
+      channel = getChannel(parsed.channelId)
+      channelId = parsed.channelId
+    }
+  }
+  const audience = resolveChannelAudience({
+    mainUserEnabled: channel?.mainUserEnabled,
+    mainUserChatId: channel?.mainUserChatId,
+    chatKey,
+    chatType,
+    sessionKey,
+  })
+  return { channelId: channel?.id ?? channelId, audience }
+}
+
+function appendUserHarnessRules(parts: string[], ctx?: Pick<PromptAssemblyContext, "meta" | "sessionKey">): void {
+  const scope = resolvePromptRuleScope(ctx ?? {})
+  const rules = listEnabledHarnessRules().filter((r) => ruleAppliesTo(r, scope.channelId, scope.audience))
   if (!rules.length) return
   parts.push("---")
   parts.push("## 用户 Harness 规则")
@@ -154,10 +179,14 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   h.update(loadLlmHostProtocol(portForAssembly(daemonPort), includeAdmin))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
-  for (const r of listEnabledHarnessRules()) {
+  const scope = resolvePromptRuleScope(ctx)
+  for (const r of listEnabledHarnessRules().filter((x) => ruleAppliesTo(x, scope.channelId, scope.audience))) {
     h.update(r.id)
     h.update(r.content)
+    h.update(JSON.stringify(r.scope ?? { mode: "main" }))
   }
+  h.update(scope.audience)
+  h.update(scope.channelId ?? "")
   return h.digest("hex").slice(0, 16)
 }
 
@@ -172,7 +201,7 @@ export function assembleLlmHostProtocolBlocks(ctx: PromptAssemblyContext, daemon
     parts.push("## 数字身份")
     parts.push(identity)
   }
-  appendUserHarnessRules(parts)
+  appendUserHarnessRules(parts, ctx)
   return parts
 }
 
@@ -188,7 +217,7 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
     parts.push("## 数字身份")
     parts.push(identity)
   }
-  appendUserHarnessRules(parts)
+  appendUserHarnessRules(parts, ctx)
   return parts
 }
 

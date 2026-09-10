@@ -285,8 +285,8 @@ function registerIpcHandlers(): void {
     ok: deleteHarnessRule(String(id)),
   }))
   ipcMain.handle("harness-rules:list", () => listHarnessRules())
-  ipcMain.handle("harness-rules:save", (_, id: string | null, name: string, content: string, enabled?: boolean) => {
-    const rule = saveHarnessRule(id, name, content, enabled ?? true)
+  ipcMain.handle("harness-rules:save", (_, id: string | null, name: string, content: string, enabled?: boolean, scope?: import("../src/shared/harness-rule-store.js").RuleScope) => {
+    const rule = saveHarnessRule(id, name, content, enabled ?? true, scope)
     return { ok: !!rule, rule }
   })
   ipcMain.handle("harness-rules:delete", (_, id: string) => ({

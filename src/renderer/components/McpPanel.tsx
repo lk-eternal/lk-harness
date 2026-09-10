@@ -20,7 +20,7 @@ function mcpToolTip(t: McpTool): string {
 }
 
 export default function McpPanel() {
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [servers, setServers] = useState<McpServerEntry[]>([])
   const [mcpLoading, setMcpLoading] = useState<Record<string, boolean>>({})
@@ -75,14 +75,22 @@ export default function McpPanel() {
   }
 
   const selectServer = async (s: McpServerEntry) => {
-    if (isDirty && !(await showConfirm("未保存", "当前 MCP 有未保存修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前 MCP 有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const inner = s.rawConfig ?? {}
     openDraft(s, { json: JSON.stringify({ [s.name]: inner }, null, 2) }, false)
     loadTools(s)
   }
 
   const openAdd = async () => {
-    if (isDirty && !(await showConfirm("未保存", "有未保存修改，继续新增？", "继续", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前 MCP 有未保存的修改，怎么办？", { save: "保存并继续" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     openDraft(null, { json: MCP_TEMPLATE }, true)
   }
 
@@ -109,21 +117,21 @@ export default function McpPanel() {
   }
 
   const handleSave = async () => {
-    if (!draft) return
+    if (!draft) return false
     const setErr = (msg: string) => setDraft({ ...draft, jsonError: msg })
     let raw = draft.json.trim()
     if (raw.startsWith('"') && !raw.startsWith("{")) raw = `{${raw}}`
     let parsed: Record<string, unknown>
-    try { parsed = JSON.parse(raw) } catch { setErr("JSON 格式无效"); return }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { setErr("JSON 必须是一个对象"); return }
+    try { parsed = JSON.parse(raw) } catch { setErr("JSON 格式无效"); return false }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { setErr("JSON 必须是一个对象"); return false }
     if ("mcpServers" in parsed && typeof parsed.mcpServers === "object" && parsed.mcpServers !== null) {
       parsed = parsed.mcpServers as Record<string, unknown>
     }
     const keys = Object.keys(parsed)
-    if (keys.length !== 1) { setErr("一次只能保存一个 MCP 服务器"); return }
+    if (keys.length !== 1) { setErr("一次只能保存一个 MCP 服务器"); return false }
     const name = keys[0]
     const entry = parsed[name]
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) { setErr(`"${name}" 的值必须是一个对象`); return }
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) { setErr(`"${name}" 的值必须是一个对象`); return false }
     const isNewEntry = !originalName
     if (originalName && originalName !== name) {
       await window.electronAPI.deleteMcpServer(originalName, "claw")
@@ -135,6 +143,7 @@ export default function McpPanel() {
     const saved = { name, type: ("url" in (entry as object) ? "url" : "command") as "url" | "command", source: "claw" as const, rawConfig: entry as Record<string, unknown>, enabled: true, authenticated: false } as McpServerEntry
     openDraft(saved, { json: JSON.stringify({ [name]: entry }, null, 2) }, false)
     loadTools(saved, true)
+    return true
   }
 
   const handleDelete = async () => {
@@ -147,7 +156,11 @@ export default function McpPanel() {
   }
 
   const handleCancel = async () => {
-    if (isDirty && !(await showConfirm("未保存", "放弃未保存的修改？", "放弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前 MCP 有未保存的修改，怎么办？", { save: "保存", discard: "放弃" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     if (isNew) { setSelectedKey(null); setDraft(null) }
     else setDraft(JSON.parse(savedSnapshot) as McpEditForm)
   }

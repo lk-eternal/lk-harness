@@ -148,7 +148,7 @@ export default function AgentPanel() {
   const [verifyResult, setVerifyResult] = useState<{ ok: boolean; email?: string; error?: string } | null>(null)
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0)
   const addMenuRef = useRef<HTMLDivElement>(null)
-  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
 
   const reload = useCallback(async () => {
@@ -185,12 +185,21 @@ export default function AgentPanel() {
 
   const selectItem = async (id: string) => {
     if (id === selectedId && draft?.id === id) return
-    if (isDirty && !(await showConfirm("未保存", "当前有未保存的修改，切换将丢弃。继续？", "丢弃", "取消"))) return
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     const r = resources.find((x) => x.id === id)
     if (r) openDraft(r, false)
   }
 
-  const openAdd = (kind: AddKind, providerId?: string) => {
+  const openAdd = async (kind: AddKind, providerId?: string) => {
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前有未保存的修改，怎么办？", { save: "保存并继续" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
     setShowAddMenu(false)
     const sdkCount = resources.filter((r) => r.type === "sdk").length
     const r = emptyResource(kind, providerId)
@@ -250,9 +259,9 @@ export default function AgentPanel() {
   }
 
   const handleSave = async () => {
-    if (!draft) return
+    if (!draft) return false
     const err = validateDraft()
-    if (err) { void showAlert("无法保存", err); return }
+    if (err) { void showAlert("无法保存", err); return false }
     const normalized: AgentResource = {
       ...draft,
       name: draft.name.trim(),
@@ -265,6 +274,7 @@ export default function AgentPanel() {
     setSavedSnapshot(JSON.stringify(normalized))
     setIsNew(false)
     markSaved()
+    return true
   }
 
   const usedByCount = draft ? channels.filter((c) => c.agentResourceId === draft.id).length : 0
