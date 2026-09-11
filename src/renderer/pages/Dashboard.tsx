@@ -4,7 +4,7 @@ import {
   Play,
   Square,
   Settings,
-  RefreshCw,
+  Download,
   Wifi,
   WifiOff,
   Bot,
@@ -80,7 +80,7 @@ export default function Dashboard({ onSettings, active }: Props) {
     () => new Set(sessionTabs.filter((t) => t.removable).map((t) => t.sessionKey)),
     [sessionTabs],
   )
-  const { showConfirm, ModalPortal } = useInlineModal()
+  const { showAlert, showConfirm, ModalPortal } = useInlineModal()
   /** Agent 卡片下的扁平视图：跨通道拉平所有运行中会话，只用徽标标出来源通道 */
   const activeSessions = useMemo(() => {
     const out: { channelName: string; node: DashboardSessionNode }[] = []
@@ -567,6 +567,8 @@ export default function Dashboard({ onSettings, active }: Props) {
   const [logFilter, setLogFilter] = useState("")
   const [logMatchCursor, setLogMatchCursor] = useState(0)
   const logRef = useRef<HTMLDivElement>(null)
+  const logBufRef = useRef<string[]>([])
+  const logFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { sentinelRef: logSentinelRef, atBottom: logAtBottom, stickRef: logStickRef, scrollToBottom: scrollLogToBottom } =
     useStickToBottom(logRef, [logLines])
 
@@ -595,17 +597,29 @@ export default function Dashboard({ onSettings, active }: Props) {
       setStatus(s)
     })
     const unsubLog = window.electronAPI.onDaemonLog((line) => {
-      setLogLines((prev) => {
-        const next = [...prev, line]
-        if (logStickRef.current && next.length > 300) return next.slice(-300)
-        return next
-      })
+      // 攒批 250ms 再 setState：聊天时 thinking/工具日志逐行刷屏会打爆渲染
+      logBufRef.current.push(line)
+      if (logFlushTimer.current) return
+      logFlushTimer.current = setTimeout(() => {
+        logFlushTimer.current = null
+        const batch = logBufRef.current
+        logBufRef.current = []
+        if (!batch.length) return
+        setLogLines((prev) => {
+          const next = prev.concat(batch)
+          // 置顶浏览历史时也封顶（此前无上限，久聊会堆内存）
+          const cap = logStickRef.current ? 300 : 1000
+          if (next.length > cap) return next.slice(-cap)
+          return next
+        })
+      }, 250)
     })
 
     const unsubSessions = window.electronAPI.onSessionAgents?.((list: typeof sessionList) => { setSessionList(list); void refreshDashboardTree() })
 
     return () => {
       clearInterval(timer)
+      if (logFlushTimer.current) clearTimeout(logFlushTimer.current)
       unsub()
       unsubLog()
       unsubSessions?.()
@@ -666,14 +680,25 @@ export default function Dashboard({ onSettings, active }: Props) {
     setStopping(false)
   }
 
-  const handleRefresh = async () => {
-    const s = await window.electronAPI.getDaemonStatus()
-    setStatus(s)
-    if (s.queueLength && s.queueLength > 0) {
-      const msgs = await window.electronAPI.getQueueMessages()
-      setQueueMessages(msgs)
-    } else {
-      setQueueMessages([])
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+
+  const handleCheckUpdate = async () => {
+    if (checkingUpdate) return
+    setCheckingUpdate(true)
+    try {
+      const r = await window.electronAPI.checkAppUpdate()
+      if (r.status === "available" || r.status === "ready") {
+        const go = await showConfirm("发现新版本", `新版本 v${r.latestVersion}，当前 v${r.currentVersion}。去设置页更新？`, "去设置", "稍后")
+        if (go) onSettings("about")
+      } else if (r.status === "latest") {
+        await showAlert("已是最新", `当前已是最新版本（v${r.currentVersion}）。`)
+      } else {
+        await showAlert("检查更新", r.message || "检查失败，请稍后重试。")
+      }
+    } catch (e: unknown) {
+      await showAlert("检查更新", e instanceof Error ? e.message : "检查失败，请稍后重试。")
+    } finally {
+      setCheckingUpdate(false)
     }
   }
 
@@ -796,11 +821,12 @@ export default function Dashboard({ onSettings, active }: Props) {
           </div>
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
             <button
-              onClick={handleRefresh}
-              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
-              title="刷新状态"
+              onClick={() => void handleCheckUpdate()}
+              disabled={checkingUpdate}
+              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white disabled:opacity-50"
+              title="检查更新"
             >
-              <RefreshCw size={16} />
+              {checkingUpdate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             </button>
             <button
               onClick={() => onSettings()}

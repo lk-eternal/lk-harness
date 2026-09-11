@@ -17,6 +17,7 @@ import {
 import { parseChatKey, channelIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
+import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 import { migrateDataLayout } from "../src/shared/data-paths.js"
@@ -1731,6 +1732,7 @@ export function initDaemonManager(): void {
   // 必须在 legacy 迁移之后：首次运行时通道由上一步创建
   migrateFavoriteWorkspacesToChannels()
   initSessionDispatcher()
+  startMainPerfMonitor()
   ipcMain.handle("config:apply-workspace-switch", (_, workspaceDir: string, stopOldSessions: boolean, notifyMain?: boolean) => applyWorkspaceSwitch(workspaceDir, stopOldSessions, false, !!notifyMain))
   ipcMain.handle("daemon:get-log-buffer", () => getLogBuffer())
   ipcMain.handle("agent:stop", async () => { await stopAgent(); return { ok: true } })
@@ -2420,6 +2422,9 @@ async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?
       "",
       "## Resume 映射",
       JSON.stringify(getAgentResumableSummary(), null, 2),
+      "",
+      "## 主进程性能（10s 采样，loopLagMs 持续>1000 即主循环被闷）",
+      JSON.stringify(getMainPerfStats(), null, 2),
       "",
       "## 消息队列快照",
       JSON.stringify(queueSnapshot, null, 2),

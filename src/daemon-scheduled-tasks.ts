@@ -2,11 +2,14 @@ import { CronExpressionParser } from "cron-parser";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { readScheduledTasksFile, type ScheduledTask } from "./shared/scheduled-task.js";
+import { configDir } from "./shared/data-paths.js";
 
 export type { ScheduledTask };
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR || "";
-const TASKS_FILE = path.join(APP_DATA_DIR, "scheduled-tasks.json");
+// 与 Electron 侧 cron-scheduler / daemon.ts:3731 保持一致：任务文件在 config/ 下
+const TASKS_DIR = configDir(APP_DATA_DIR || ".");
+const TASKS_FILE = path.join(TASKS_DIR, "scheduled-tasks.json");
 /** 轮询间隔：不依赖单次 setTimeout 链，避免锁屏/会话节流导致整点永不触发 */
 const WATCHDOG_MS = 5_000;
 /** 仅接受计划触发时刻距今不超过此时长（短时卡顿/锁屏补救）；睡眠过久唤醒后不补跑过期槽位 */
@@ -182,13 +185,13 @@ function stopFileWatcher(): void {
 function startFileWatcher(cb: SchedulerCallbacks): void {
   stopFileWatcher();
   if (!APP_DATA_DIR) return;
-  if (!fs.existsSync(APP_DATA_DIR)) {
+  if (!fs.existsSync(TASKS_DIR)) {
     try {
-      fs.mkdirSync(APP_DATA_DIR, { recursive: true });
+      fs.mkdirSync(TASKS_DIR, { recursive: true });
     } catch { /* ignore */ }
   }
   try {
-    fileWatcher = fs.watch(APP_DATA_DIR, (_eventType, filename) => {
+    fileWatcher = fs.watch(TASKS_DIR, (_eventType, filename) => {
       if (filename !== "scheduled-tasks.json") {
         return;
       }

@@ -1355,7 +1355,14 @@ let dispatching = false
 
 function enqueueSessionLaunch(sessionKey: string, launches: Promise<void>[], fn: () => Promise<void>): boolean {
   if (!tryReserveLaunch(sessionKey)) return false
-  launches.push(wrapLaunch(sessionKey, fn))
+  // 拉起抛异常必须上报：否则 Promise.allSettled 静默吞掉，只剩"正在启动"刷屏
+  launches.push(wrapLaunch(sessionKey, async () => {
+    try {
+      await fn()
+    } catch (e: unknown) {
+      await reportLaunchOutcome(sessionKey, { ok: false, error: e instanceof Error ? e.message : String(e) })
+    }
+  }))
   return true
 }
 

@@ -174,11 +174,25 @@ export default function ChannelPanel() {
     return true
   }
 
+  /** 删除通道后清理规则生效范围中的死目标（targets 为空即不生效，不回退；失败不阻断删通道） */
+  const pruneRuleTargets = async (channelId: string) => {
+    try {
+      const rs = await window.electronAPI.getHarnessRules()
+      for (const r of rs ?? []) {
+        if (r.scope?.mode !== "custom" || !(r.scope.targets ?? []).some((t) => t.channelId === channelId)) continue
+        const targets = (r.scope.targets ?? []).filter((t) => t.channelId !== channelId)
+        await window.electronAPI.saveHarnessRule(r.id, r.name, r.content, r.enabled, { mode: "custom", targets })
+      }
+    } catch { /* ignore */ }
+  }
+
   const handleDeleteCurrent = async () => {
     if (!draft || isNewChannel) return
     if (!await showConfirm("删除确认", `确定删除通道「${draft.name}」吗？`)) return
-    const next = channels.filter((x) => x.id !== draft.id)
+    const deletedId = draft.id
+    const next = channels.filter((x) => x.id !== deletedId)
     await persistChannels(next)
+    void pruneRuleTargets(deletedId)
     setSelectedId(null)
     setDraft(null)
     setIsNewChannel(false)

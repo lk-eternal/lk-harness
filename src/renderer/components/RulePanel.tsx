@@ -96,7 +96,7 @@ export default function RulePanel() {
 
   const openAdd = async () => {
     if (!(await guardUnsaved("保存并继续"))) return
-    openDraft({ id: null, name: "", content: "", enabled: true, scope: { mode: "main" } }, true)
+    openDraft({ id: null, name: "", content: "", enabled: true, scope: { mode: "custom", targets: [] } }, true)
   }
 
   const scopeHint = (r: HarnessRule) => {
