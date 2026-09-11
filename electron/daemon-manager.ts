@@ -1819,6 +1819,11 @@ export function initDaemonManager(): void {
     const channel = getChannel(channelId)
     if (!channel) return { ok: false, error: "通道不存在" }
 
+    // 分叉点统一清场：上一轮等待（armed-bind 或临时连接）必死，不留孤儿刷错
+    bindWaiter = null
+    stopTempConnection()
+    if (wechatTempMgr) { try { await wechatTempMgr.stop() } catch { /* ignore */ } wechatTempMgr = null }
+
     const st = await getDaemonStatus()
     const lock = readLockFile()
     const viaDaemon = st.running && lock?.port && st.channels?.some((c) => c.id === channelId && c.connected)
