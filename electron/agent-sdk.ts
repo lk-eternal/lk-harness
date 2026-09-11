@@ -1165,11 +1165,33 @@ async function sendSdkPrompt(session: SdkSessionAgent, prompt: string): Promise<
         throw new Error("active run reattached; worker 不应走到此路径")
       }
       pushUiLog("SDK", "WARN", `[${sessionKey}] cancel/挂接均失败，force 恢复重发`)
-      return await withTimeout(
-        agent.send(prompt, { local: { force: true } }),
-        FORCE_SEND_TIMEOUT_MS,
-        "force send",
-      )
+      try {
+        return await withTimeout(
+          agent.send(prompt, { local: { force: true } }),
+          FORCE_SEND_TIMEOUT_MS,
+          "force send",
+        )
+      } catch (forceErr: unknown) {
+        // force 也失败：该 agent 已毒化（残留 active run 标记清不掉）。先把镜像历史搬运，
+        // 再丢 resume——下轮全新会话带最近 10 轮续上；否则下轮原样 resume 再中毒，空转打满 CPU。
+        try {
+          const { initCarryoverStore, readMirrorTurns, takeLastTurns, stashCarryover, buildCarryoverBlock } = await import("./carryover.js")
+          initCarryoverStore(app.getPath("userData"))
+          const history = takeLastTurns(readMirrorTurns(sessionKey))
+          if (history.length > 0) {
+            stashCarryover(sessionKey, {
+              block: buildCarryoverBlock(history, "poisoned-resume", "fresh"),
+              turns: history.length,
+              fromLabel: "poisoned-resume",
+              toLabel: "fresh",
+              history,
+            })
+            pushUiLog("SDK", "INFO", `[${sessionKey}] 已搬运最近 ${history.length} 轮历史并丢弃毒 resume，下轮全新会话续上`)
+          }
+        } catch { /* 搬运失败不阻断丢弃 */ }
+        forgetResumable(sessionKey)
+        throw forceErr
+      }
     }
   }
 }

@@ -16,6 +16,7 @@ import {
   stashCarryover,
   peekCarryover,
   consumeCarryover,
+  pendingHistoryTurns,
 } from "../electron/carryover.js"
 import {
   initSessionResourceStore,
@@ -140,6 +141,29 @@ describe("carryover store", () => {
     expect(peekCarryover("sk")?.block).toBe("b")
     expect(consumeCarryover("sk")?.block).toBe("b")
     expect(consumeCarryover("sk")).toBeUndefined()
+  })
+  it("毒 resume 逃生：镜像 10 轮搬运后消费端可续上", () => {
+    const sk = "poisoned-session"
+    appendMirrorTurns(sk, Array.from({ length: 14 }, (_, i) => ({
+      role: i % 2 === 0 ? ("user" as const) : ("assistant" as const),
+      text: `第${i + 1}轮`,
+    })))
+    // 生产端（force 失败 catch 内同款逻辑）
+    const history = takeLastTurns(readMirrorTurns(sk))
+    expect(history).toHaveLength(10)
+    expect(history[0]).toEqual({ role: "user", text: "第5轮" })
+    stashCarryover(sk, {
+      block: buildCarryoverBlock(history, "poisoned-resume", "fresh"),
+      turns: history.length,
+      fromLabel: "poisoned-resume",
+      toLabel: "fresh",
+      history,
+    })
+    // 消费端（launchAgent 同款逻辑）
+    const pending = peekCarryover(sk)
+    expect(pendingHistoryTurns(pending!)).toHaveLength(10)
+    expect(consumeCarryover(sk)?.turns).toBe(10)
+    expect(consumeCarryover(sk)).toBeUndefined()
   })
 })
 
