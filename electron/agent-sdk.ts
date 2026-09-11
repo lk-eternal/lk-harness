@@ -1,6 +1,6 @@
 import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
-import { resolve, join, dirname } from "node:path"
+import { resolve, join, dirname, delimiter } from "node:path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
@@ -443,25 +443,56 @@ function closeAndRemoveSession(session: SdkSessionAgent): void {
   sdkSessions.delete(session.sessionKey)
 }
 
+/** rg 候选路径（纯函数，便于单测 Rosetta 跨架构场景） */
+export function buildRipgrepCandidates(opts: {
+  platform: string
+  arch: string
+  resolvePkgDir: (pkg: string) => string | null
+  appDir: string
+  cwd: string
+  pathEnv: string
+}): string[] {
+  const binaryName = opts.platform === "win32" ? "rg.exe" : "rg"
+  const candidates: string[] = []
+  const platformPkgs = [`@cursor/sdk-${opts.platform}-${opts.arch}`]
+  // 跨架构兜底：Rosetta 转译下 process.arch 与打包架构不一致
+  if (opts.platform === "darwin") {
+    if (opts.arch === "x64") platformPkgs.push("@cursor/sdk-darwin-arm64")
+    if (opts.arch === "arm64") platformPkgs.push("@cursor/sdk-darwin-x64")
+  }
+  for (const platformPkg of platformPkgs) {
+    const pkgDir = opts.resolvePkgDir(platformPkg)
+    if (pkgDir) candidates.push(join(pkgDir, "bin", binaryName))
+    for (const base of [opts.appDir, opts.cwd]) {
+      candidates.push(join(base, "node_modules", platformPkg, "bin", binaryName))
+      candidates.push(join(base, "resources", "node_modules", platformPkg, "bin", binaryName))
+    }
+  }
+  // 系统 PATH 兜底（brew 等装的 rg）：纯目录扫描，不起 shell
+  for (const d of opts.pathEnv.split(delimiter)) {
+    const trimmed = d.trim().replace(/^"|"$/g, "")
+    if (trimmed) candidates.push(join(trimmed, binaryName))
+  }
+  return candidates
+}
+
 function ensureSdkBinaryPaths(): void {
   if (process.env.CURSOR_RIPGREP_PATH) return
 
-  const platformPkg = `@cursor/sdk-${process.platform}-${process.arch}`
   const binaryName = process.platform === "win32" ? "rg.exe" : "rg"
-
-  const candidates: string[] = []
-  try {
-    const req = createRequire(import.meta.url)
-    const pkgDir = dirname(req.resolve(`${platformPkg}/package.json`))
-    candidates.push(join(pkgDir, "bin", binaryName))
-  } catch { /* package not resolvable */ }
-
-  // fallback: walk up from app dir
-  const appDir = process.env.PORTABLE_EXECUTABLE_DIR || dirname(process.execPath)
-  for (const base of [appDir, resolve(".")]) {
-    candidates.push(join(base, "node_modules", platformPkg, "bin", binaryName))
-    candidates.push(join(base, "resources", "node_modules", platformPkg, "bin", binaryName))
-  }
+  const candidates = buildRipgrepCandidates({
+    platform: process.platform,
+    arch: process.arch,
+    resolvePkgDir: (pkg) => {
+      try {
+        const req = createRequire(import.meta.url)
+        return dirname(req.resolve(`${pkg}/package.json`))
+      } catch { return null }
+    },
+    appDir: process.env.PORTABLE_EXECUTABLE_DIR || dirname(process.execPath),
+    cwd: resolve("."),
+    pathEnv: process.env.PATH || "",
+  })
 
   for (const p of candidates) {
     // asar 内的二进制无法 spawn（existsSync 对 asar 虚拟路径返回 true），需指向解包目录

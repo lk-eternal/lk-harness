@@ -16,7 +16,7 @@ const autoUpdater: AppUpdater = (electronUpdater as { autoUpdater: AppUpdater })
 
 const GITHUB_OWNER = "lk-eternal"
 const GITHUB_REPO = "lk-harness"
-const HOMEBREW_TAP = "lk-eternal/tap"
+const HOMEBREW_TAP = "lk-eternal/homebrew-tap"
 const HOMEBREW_CASK = "lk-harness"
 
 const STARTUP_CHECK_DELAY_MS = 4_000
@@ -576,8 +576,9 @@ const BREW_MANUAL_GUIDE = [
   "手动更新方法（在终端中执行）：",
   `  brew untap ${HOMEBREW_TAP}`,
   `  brew tap ${HOMEBREW_TAP}`,
-  `  brew upgrade --cask ${HOMEBREW_CASK}`,
-  "  xattr -cr /Applications/Cursor\\ Claw.app",
+  `  brew install --cask ${HOMEBREW_CASK}（首次安装；已用 brew 装过改用下一条升级）`,
+  `  brew upgrade --cask ${HOMEBREW_CASK}（已通过 brew 安装的用户）`,
+  "  xattr -cr /Applications/LK\\ Harness.app",
   "",
   `FAQ: https://github.com/${HOMEBREW_TAP}`,
 ].join("\n")
@@ -594,7 +595,17 @@ async function runBrewUpgrade(): Promise<UpdaterApplyResult> {
   try {
     await execFileAsync(brew, ["tap", HOMEBREW_TAP], { timeout: 120_000, env: brewEnv })
     await execFileAsync(brew, ["update"], { timeout: 300_000, env: brewEnv })
-    await execFileAsync(brew, ["upgrade", "--cask", HOMEBREW_CASK], { timeout: 600_000, env: brewEnv })
+    // dmg 直装用户 brew 未登记 cask：先查在册才 upgrade，否则 install
+    let installed = false
+    try {
+      await execFileAsync(brew, ["list", "--cask", HOMEBREW_CASK], { timeout: 60_000, env: brewEnv })
+      installed = true
+    } catch { /* 未安装，走 install */ }
+    if (installed) {
+      await execFileAsync(brew, ["upgrade", "--cask", HOMEBREW_CASK], { timeout: 600_000, env: brewEnv })
+    } else {
+      await execFileAsync(brew, ["install", "--cask", HOMEBREW_CASK], { timeout: 600_000, env: brewEnv })
+    }
     return {
       ok: true,
       message: "更新已完成，请重启应用。",
