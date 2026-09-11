@@ -1,6 +1,6 @@
 import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
-import { resolve, join, dirname, delimiter } from "node:path"
+import { resolve, join, dirname } from "node:path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
@@ -468,8 +468,9 @@ export function buildRipgrepCandidates(opts: {
       candidates.push(join(base, "resources", "node_modules", platformPkg, "bin", binaryName))
     }
   }
-  // 系统 PATH 兜底（brew 等装的 rg）：纯目录扫描，不起 shell
-  for (const d of opts.pathEnv.split(delimiter)) {
+  // 系统 PATH 兜底（brew 等装的 rg）：按目标平台分隔符拆，单测可跨 OS 模拟 darwin/win32
+  const pathSep = opts.platform === "win32" ? ";" : ":"
+  for (const d of opts.pathEnv.split(pathSep)) {
     const trimmed = d.trim().replace(/^"|"$/g, "")
     if (trimmed) candidates.push(join(trimmed, binaryName))
   }

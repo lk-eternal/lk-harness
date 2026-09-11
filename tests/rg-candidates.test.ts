@@ -5,7 +5,7 @@ const base = {
   resolvePkgDir: (_pkg: string) => null,
   appDir: "/Applications/LK Harness.app/Contents/MacOS",
   cwd: "/tmp/xyz",
-  pathEnv: "/opt/homebrew/bin;/usr/bin;/bin",
+  pathEnv: "/opt/homebrew/bin:/usr/bin:/bin",
 }
 
 const norm = (ps: string[]) => ps.map((p) => p.replace(/\\/g, "/"));
