@@ -53,6 +53,7 @@ import {
   endStreamRound,
   flushStreamCard,
   handleStreamPollPhaseEvent,
+  isFeishuChannel,
   isFeishuStreamEnabled,
   isStreamSilenced,
   isToolStreamSilenced,
@@ -428,7 +429,7 @@ function openStreamForTurn(session: LlmSession): void {
   // Worker 用 fetch poll，SSE poll-phase 可能晚于本回合；先本地开门，避免 text_delta 被静默
   session.pollPhase.blocking = false
   session.pollPhase.nonBlocking = false
-  if (isFeishuStreamEnabled(session.sessionKey)) {
+  if (isFeishuChannel(session.sessionKey)) {
     if (!session.streamAgg || session.streamAgg.finished) {
       session.streamAgg = newStreamAgg(true)
     } else {
@@ -891,7 +892,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       daemonPort: currentDaemonPort ?? undefined,
       abort,
       runPromise: Promise.resolve(),
-      streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
+      streamAgg: isFeishuChannel(sessionKey) ? newStreamAgg() : null,
       pollPhase: { blocking: false, nonBlocking: false },
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),
       processedMessageIds: new Set<string>(),

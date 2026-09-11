@@ -2096,7 +2096,7 @@ async function ensureStreamCardForMcpMerge(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   firstBody?: string,
 ): Promise<{ state?: AgentStreamCardState; bodyMerged: boolean }> {
-  if (!isStreamCardEnabled(sessionKey, ch)) return { bodyMerged: false };
+  if (!isStreamCardEnabled(sessionKey, ch) && !firstBody?.trim()) return { bodyMerged: false };
   // 应用无 cardkit 权限：直接走普通消息，不白撞建卡 API
   if (ch.rt.sender?.isCardkitDenied()) return { bodyMerged: false };
   return enqueueCardOp(sessionKey, async () => {
@@ -4469,8 +4469,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       return true;
     }
     if (!isStreamCardEnabled(sk, ch)) {
-      json(res, { ok: true, skipped: true });
-      return true;
+      // 思考关闭只隐藏思考/工具面板：带正文（reply/question）照常建卡展示；纯思考载荷才跳过
+      const hasVisible = Array.isArray(segments) && segments.some((s) => s?.type === "reply" || s?.type === "question")
+      if (!hasVisible) {
+        json(res, { ok: true, skipped: true });
+        return true;
+      }
     }
     const payload = normalizeAgentStreamPayload({ segments });
     try {

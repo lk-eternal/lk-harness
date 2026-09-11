@@ -27,6 +27,7 @@ import {
   enqueueTool,
   enterSilentPollPhase,
   flushStreamCard,
+  isFeishuChannel,
   isFeishuStreamEnabled,
   isMediaSendInvocation,
   isPollMessageTool,
@@ -718,7 +719,7 @@ export function handlePollPhaseEvent(
     }
     if (hasWorkMsgs) {
       session.pollPhase.blocking = false
-      session.streamAgg = isFeishuStreamEnabled(session.sessionKey) ? newStreamAgg(true) : null
+      session.streamAgg = isFeishuChannel(session.sessionKey) ? newStreamAgg(true) : null
       pushUiLog("SDK", "DEBUG",
         `[${session.sessionKey}] 阻塞poll换新队列 bornAt=${session.streamAgg?.bornAt ?? "null"}`)
       if (session.streamAgg) scheduleFlushStreamCard(session, true)
@@ -1394,7 +1395,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       resourceId: opts.resourceId,
       modelLabel: modelSlug(modelId, modelSelection.params ?? []),
       logAgg: { kind: null, buf: "" },
-      streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
+      streamAgg: isFeishuChannel(sessionKey) ? newStreamAgg() : null,
       todoSnapshot: null,
       patchStreamCardId: (cardId, patchOpts) => patchResumableStreamCard(sessionKey, cardId, patchOpts),
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),

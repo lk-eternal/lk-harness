@@ -1,6 +1,11 @@
 import { readLockFile, httpPost } from "./daemon-client"
 import { resolveChannelForSession } from "./config-store"
 import { pushUiLog } from "./ui-logger"
+import {
+  chatIdFromSessionKey,
+  resolveChannelAudience,
+  resolveChannelSessionFlags,
+} from "../src/shared/channel-types.js"
 
 export interface StreamToolEntry {
   callId: string
@@ -92,12 +97,28 @@ export { POLL_DIRECTIVE_END_MARK, POLL_DIRECTIVE_TIMEOUT_MARK }
 
 export function isFeishuStreamEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
-  return !!ch && ch.type === "feishu" && ch.showThinking !== false
+  return !!ch && ch.type === "feishu" && resolveChannelSessionFlags(ch, audienceOf(sessionKey, ch)).showThinking
+}
+
+/** 仅看通道类型（飞书才有卡片）：正文收集与 agg 存活只认它，与思考开关无关 */
+export function isFeishuChannel(sessionKey: string): boolean {
+  const ch = resolveChannelForSession(sessionKey)
+  return !!ch && ch.type === "feishu"
+}
+
+function audienceOf(sessionKey: string, ch?: { mainUserEnabled?: boolean; mainUserChatId?: string }) {
+  return resolveChannelAudience({
+    mainUserEnabled: ch?.mainUserEnabled,
+    mainUserChatId: ch?.mainUserChatId,
+    chatKey: chatIdFromSessionKey(sessionKey),
+    sessionKey,
+  })
 }
 
 function isShowThinkingEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
-  return ch?.showThinking !== false
+  if (!ch) return true
+  return resolveChannelSessionFlags(ch, audienceOf(sessionKey, ch)).showThinking
 }
 
 export { isShowThinkingEnabled }
@@ -561,7 +582,7 @@ export async function postStreamCard(
 function rotateStaleStreamQueue(host: StreamCardHost, agg: StreamAgg): void {
   agg.finished = true
   if (host.streamAgg !== agg) return
-  host.streamAgg = isFeishuStreamEnabled(host.sessionKey) ? newStreamAgg(true) : null
+  host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
 }
 
 export function scheduleFlushStreamCard(host: StreamCardHost, immediate = false): void {
@@ -673,7 +694,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean): Pr
 export function endStreamRound(host: StreamCardHost): void {
   const agg = host.streamAgg
   if (!agg) {
-    host.streamAgg = isFeishuStreamEnabled(host.sessionKey) ? newStreamAgg(true) : null
+    host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
     return
   }
   if (agg.timer) {
@@ -685,7 +706,7 @@ export function endStreamRound(host: StreamCardHost): void {
   agg.finished = true
   sealAllThinking(agg)
   sealRunningTools(agg)
-  host.streamAgg = isFeishuStreamEnabled(host.sessionKey) ? newStreamAgg(true) : null
+  host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
   if (!shouldPost) return
   const payload = buildStreamPayload(agg, host.sessionKey)
   const finishAndClear = async (): Promise<void> => {
@@ -753,7 +774,7 @@ export function handleStreamPollPhaseEvent(
     }
     if (hasWorkMsgs) {
       host.pollPhase.blocking = false
-      host.streamAgg = isFeishuStreamEnabled(host.sessionKey) ? newStreamAgg(true) : null
+      host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
       if (host.streamAgg) scheduleFlushStreamCard(host, true)
       return
     }
