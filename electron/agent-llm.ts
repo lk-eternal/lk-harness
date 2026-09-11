@@ -573,6 +573,8 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   )
   if (!result.ok) return { ...result, error: `${result.error}（${modelRef}）` }
   if (!isFeishuStreamEnabled(session.sessionKey)) {
+    // 卡已建（ensure/update 拿到过 cardId）：正文随卡片走，不再 plain 重发，否则双发
+    if (session.streamAgg?.cardId) return { ok: true }
     const replyText = extractAssistantTextSince(session.piSession, msgBefore)
     if (!replyText.trim()) return { ok: true, empty: true }
     return { ok: true, replyText }

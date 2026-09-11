@@ -2672,7 +2672,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
 
     // 先刷卡片再入队：避免 Agent 收到答案后 SDK 旧队列覆盖「已选择」
     const streamHit = findStreamCardByMessageId(evt.messageId)
-      ?? (sessionKey && agentStreamCards.get(sessionKey)
+      ?? (entry?.isStreamCard && sessionKey && agentStreamCards.get(sessionKey)
         ? { sessionKey, state: agentStreamCards.get(sessionKey)! }
         : undefined);
     if (streamHit) {
@@ -2689,16 +2689,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
           matched = true;
           if (blockId) break;
         }
-        if (!matched) {
-          const qText = entry?.displayBody ?? entry?.text ?? opt;
-          state.questionBlocks.push({
-            blockId: blockId ?? `q${Date.now()}`,
-            insertAt: state.lastSegments.length,
-            text: qText,
-            options: entry?.options ?? [],
-            answered: opt,
-          });
-        }
+        if (!matched) return { ok: false };
         const ch = resolveChannel(sk, { allowDefault: false });
         if (ch.type !== "feishu") return { ok: false };
         // 同通道全量刷新：与 streaming 共用 PUT 通道与序号，到达即顺序，不跨通道乱序
@@ -4310,7 +4301,8 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, fallback), degraded: true });
     } else {
       const sender = ch.rt.sender!;
-      if (session_key && isStreamCardEnabled(session_key, ch)) {
+      // 问题一律进流式卡（思考开关只影响思考/工具面板显隐）；合并失败才降级独立卡
+      if (session_key) {
         // 建卡/并卡 + 设未决问题 + finish 刷卡整段入全序链，防与 SDK flush / 收口交错
         const qResult = await enqueueCardOp(session_key, async (): Promise<{ messageId?: string } | undefined> => {
           const ensured = await ensureAgentStreamCard(session_key, { segments: [] }, ch);

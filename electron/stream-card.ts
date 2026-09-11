@@ -6,6 +6,7 @@ import {
   resolveChannelAudience,
   resolveChannelSessionFlags,
 } from "../src/shared/channel-types.js"
+import { LarkSender } from "../src/shared/lark-core.js"
 
 export interface StreamToolEntry {
   callId: string
@@ -119,6 +120,15 @@ function isShowThinkingEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
   if (!ch) return true
   return resolveChannelSessionFlags(ch, audienceOf(sessionKey, ch)).showThinking
+}
+
+/** 思考关闭且零正文时的收口占位，避免空卡幽灵（与 daemon 侧同文案，共用变量） */
+function ensureFinishPlaceholder(agg: StreamAgg, sessionKey: string): void {
+  if (isShowThinkingEnabled(sessionKey)) return;
+  const hasReply = agg.segments.some((s) => s.type === "reply" && s.text.trim());
+  if (hasReply) return;
+  agg.segments.push({ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER });
+  agg.dirty = true;
 }
 
 export { isShowThinkingEnabled }
@@ -511,6 +521,9 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
       const ms = seg.ms ?? (i === lastIdx && seg.startedAt != null ? Date.now() - seg.startedAt : undefined)
       segments.push({ type: "thinking", text: thinking, ms })
     } else if (seg.type === "tools") {
+      // 思考关闭时工具面板不展示：此处直接丢弃（而非仅渲染时 strip），
+      // 否则两侧正文段被隔开无法合并，strip 后卡片里出现双胞胎正文
+      if (!showThinking) continue
       if (!seg.tools.length) continue
       const tools = seg.tools.length > MAX_STREAM_TOOL_STEPS
         ? seg.tools.slice(-MAX_STREAM_TOOL_STEPS)
@@ -535,6 +548,7 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
         })
       }
     } else if (seg.type === "todos") {
+      if (!showThinking) continue
       if (!seg.items.length) continue
       segments.push({ type: "todos", items: seg.items.map((t) => ({ content: t.content, status: t.status })) })
     } else if (seg.type === "reply") {
@@ -666,6 +680,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean): Pr
 
   const run = async (): Promise<void> => {
     if (finish) {
+      ensureFinishPlaceholder(agg, host.sessionKey);
       while (agg.dirty) {
         if (!await pushFrame({ ignoreGate: true })) break
       }
@@ -708,6 +723,7 @@ export function endStreamRound(host: StreamCardHost): void {
   sealRunningTools(agg)
   host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
   if (!shouldPost) return
+  ensureFinishPlaceholder(agg, host.sessionKey)
   const payload = buildStreamPayload(agg, host.sessionKey)
   const finishAndClear = async (): Promise<void> => {
     await postStreamCard(host.sessionKey, "finish", payload, { cardId: finishCardId, modelLabel: host.modelLabel })
