@@ -94,7 +94,7 @@ const defaults: AppConfig = {
   setupComplete: false,
   httpProxy: "",
   httpsProxy: "",
-  noProxy: "localhost,127.0.0.1,feishu.cn",
+  noProxy: "localhost,127.0.0.1,feishu.cn,weixin.qq.com",
   closeWindowAction: "ask",
   autoUpgradePrompt: true,
   mainChatIds: {},

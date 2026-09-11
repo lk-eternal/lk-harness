@@ -1,4 +1,5 @@
 import { getConfig } from "./config-store"
+import { ensureWechatBypass } from "../src/wechat/proxy.js"
 
 export function quoteArg(a: string): string {
   if (process.platform !== "win32") return a
@@ -26,8 +27,10 @@ export function applyProxyEnv(env: Record<string, string>, config: { httpProxy?:
     env.all_proxy = config.httpsProxy
   }
   if (config.noProxy) {
-    env.NO_PROXY = config.noProxy
-    env.no_proxy = config.noProxy
+    // 默认家族名单缺微信后缀时补上（存量旧默认值即时生效；完全自定义的不碰）
+    const effective = ensureWechatBypass(config.noProxy)
+    env.NO_PROXY = effective
+    env.no_proxy = effective
   }
 }
 

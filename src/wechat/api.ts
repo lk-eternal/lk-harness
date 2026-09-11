@@ -3,6 +3,7 @@ import type {
   GetUpdatesResp, GetUploadUrlResp, GetConfigResp,
   QRCodeResp, QRCodeStatusResp, TypingStatus,
 } from "./types.js";
+import { proxyAwareFetch } from "./proxy.js";
 
 const DEFAULT_API_TIMEOUT = 15_000;
 const DEFAULT_LONG_POLL_TIMEOUT = 35_000;
@@ -53,7 +54,7 @@ export class ILinkApi {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-      const res = await fetch(url.toString(), { method: "POST", headers: this.headers(bodyStr), body: bodyStr, signal: ctrl.signal });
+      const res = await proxyAwareFetch(url.toString(), { method: "POST", headers: this.headers(bodyStr), body: bodyStr, signal: ctrl.signal });
       clearTimeout(timer);
       const raw = await res.text();
       if (!res.ok) throw new Error(`API ${endpoint} ${res.status}: ${raw}`);
@@ -97,7 +98,7 @@ export class ILinkApi {
     const url = new URL(`ilink/bot/get_bot_qrcode?bot_type=${encodeURIComponent(botType)}`, base);
     const headers: Record<string, string> = {};
     if (this.routeTag) headers["SKRouteTag"] = this.routeTag;
-    const res = await fetch(url.toString(), { headers });
+    const res = await proxyAwareFetch(url.toString(), { headers });
     if (!res.ok) throw new Error(`getQRCode ${res.status}: ${await res.text().catch(() => "")}`);
     return (await res.json()) as QRCodeResp;
   }
@@ -110,7 +111,7 @@ export class ILinkApi {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), QR_LONG_POLL_TIMEOUT);
     try {
-      const res = await fetch(url.toString(), { headers, signal: ctrl.signal });
+      const res = await proxyAwareFetch(url.toString(), { headers, signal: ctrl.signal });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`pollQRCodeStatus ${res.status}: ${await res.text().catch(() => "")}`);
       return (await res.json()) as QRCodeStatusResp;

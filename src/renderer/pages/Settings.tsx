@@ -124,7 +124,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   }, [initialTab, onTabConsumed])
 
   const [proxy, setProxy] = useState("")
-  const [noProxy, setNoProxy] = useState("localhost,127.0.0.1,feishu.cn")
+  const [noProxy, setNoProxy] = useState("localhost,127.0.0.1,feishu.cn,weixin.qq.com")
   const [closeWindowAction, setCloseWindowAction] = useState<CloseWindowAction>("ask")
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
@@ -330,7 +330,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   useEffect(() => {
     if (tab === "general" || tab === "setup") window.electronAPI.getConfig().then((config) => {
       setProxy(config.httpProxy || config.httpsProxy || "")
-      setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn")
+      setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn,weixin.qq.com")
       setCloseWindowAction(config.closeWindowAction ?? "ask")
       setAutoLaunch(config.autoStart ?? false)
       setFirstFeishuAppId(config.channels?.find((c) => c.type === "feishu")?.larkAppId ?? config.larkAppId ?? "")
@@ -1158,7 +1158,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
                 <div>
                   <label className="mb-1 block text-xs text-gray-500">NO_PROXY</label>
-                  <input type="text" value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="localhost,127.0.0.1,feishu.cn" className={inputCls} />
+                  <input type="text" value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="localhost,127.0.0.1,feishu.cn,weixin.qq.com" className={inputCls} />
                 </div>
               </section>
             </>)}
