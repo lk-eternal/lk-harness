@@ -1563,25 +1563,49 @@ async function notifyMainUsersWorkspaceSwitched(dir: string): Promise<void> {
 }
 
 function channelConnectionFields(c: MessageChannel): Record<string, string> {
+  // 只含重建连接必需项：工作目录走 channel-flags 热更新，不在此列
   return {
     type: c.type,
     appId: c.larkAppId ?? "",
     appSecret: c.larkAppSecret ?? "",
     token: c.wechatToken ?? "",
     account: c.wechatAccountId ?? "",
-    ws: c.workspaceDir ?? "",
   }
 }
 
-/** 已有通道的凭据/工作目录变更才需重启；启停与增删走 lifecycle 热更新 */
-function connectionConfigChanged(prev: MessageChannel[], next: MessageChannel[]): boolean {
+/** 已有通道的凭据/类型变更才需重建；启停与增删走 lifecycle 热更新 */
+function changedConnectionChannels(prev: MessageChannel[], next: MessageChannel[]): MessageChannel[] {
   const prevById = new Map(prev.map((c) => [c.id, c]))
+  const out: MessageChannel[] = []
   for (const nc of next) {
     const oc = prevById.get(nc.id)
     if (!oc) continue
-    if (JSON.stringify(channelConnectionFields(oc)) !== JSON.stringify(channelConnectionFields(nc))) return true
+    if (JSON.stringify(channelConnectionFields(oc)) !== JSON.stringify(channelConnectionFields(nc))) out.push(nc)
   }
-  return false
+  return out
+}
+
+/** 仅重建受影响的通道（stop + start），不重启整个 Daemon、不碰其他通道会话 */
+async function applyChannelConnectionRestarts(prev: MessageChannel[], next: MessageChannel[]): Promise<void> {
+  const changed = changedConnectionChannels(prev, next).filter((c) => c.enabled)
+  if (changed.length === 0) return
+  const port = cachedPort ?? readLockFile()?.port
+  if (!port) return
+  for (const c of changed) {
+    const cfg = channelReady(c) ? buildDaemonChannelConfig(c) : null
+    try {
+      await httpPost(`http://127.0.0.1:${port}/api/channel-lifecycle`, { action: "stop", id: c.id }, 5000)
+      if (!cfg) {
+        broadcastLog(`[Channels] 通道「${c.name || c.id}」凭据已清空，保持停用`)
+        continue
+      }
+      await httpPost(`http://127.0.0.1:${port}/api/channel-lifecycle`, { action: "start", channel: cfg }, 10000)
+      broadcastLog(`[Channels] 通道「${c.name || c.id}」连接已重建（仅本通道）`)
+    } catch (e: unknown) {
+      broadcastLog(`[Channels] 通道重建失败(${c.name || c.id}): ${e instanceof Error ? e.message : e}`, "WARN")
+    }
+  }
+  broadcastStatus(await getDaemonStatus())
 }
 
 async function pushChannelFlagsToDaemon(channels: MessageChannel[]): Promise<void> {
@@ -1594,8 +1618,6 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
   const oldW = (current.workspaceDir || "").trim()
   const nextW = partial.workspaceDir !== undefined ? partial.workspaceDir.trim() : oldW
   const workspaceChanging = partial.workspaceDir !== undefined && nextW !== oldW && oldW !== ""
-  const channelsChanging = partial.channels !== undefined
-    && connectionConfigChanged(current.channels ?? [], partial.channels)
 
   if (workspaceChanging) {
     const st = await getDaemonStatus()
@@ -1641,24 +1663,12 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
     void import("./updater").then((m) => m.applyAppNetworkProxy()).catch(() => {})
   }
 
-  if (channelsChanging) {
-    // 连接类字段（凭据/启停/工作目录）变化：必须重启 Daemon 重建连接
-    const st = await getDaemonStatus()
-    if (st.running) {
-      broadcastLog("[Channels] 通道连接配置已变更，正在重启 Daemon...")
-      void (async () => {
-        await stopDaemon()
-        await new Promise((r) => setTimeout(r, 800))
-        const result = await startDaemon()
-        if (!result.ok) broadcastLog(`[Channels] Daemon 重启失败: ${result.error}`, "ERROR")
-        broadcastStatus(await getDaemonStatus())
-      })()
-    }
-  } else if (partial.channels !== undefined) {
+  if (partial.channels !== undefined) {
+    // 启停/增删 → lifecycle；凭据变更 → 仅重建当事通道；其余（含工作目录）→ flags 热更新；全程不重启 Daemon
     const prevChannels = current.channels ?? []
-    void applyChannelLifecycleChanges(prevChannels, partial.channels)
-    // 仅运行时配置（保活开关等）变化：热推送到 Daemon，不重启、不打断会话
-    void pushChannelFlagsToDaemon(partial.channels)
+    await applyChannelLifecycleChanges(prevChannels, partial.channels)
+    await applyChannelConnectionRestarts(prevChannels, partial.channels)
+    await pushChannelFlagsToDaemon(partial.channels)
   }
 
   return { ok: true, ...(workspaceDirChanged ? { workspaceDirChanged: true } : {}) }
