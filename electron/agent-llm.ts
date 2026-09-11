@@ -892,7 +892,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       abort,
       runPromise: Promise.resolve(),
       streamAgg: isFeishuStreamEnabled(sessionKey) ? newStreamAgg() : null,
-      pollPhase: { blocking: false, nonBlocking: false, questionPause: false },
+      pollPhase: { blocking: false, nonBlocking: false },
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),
       processedMessageIds: new Set<string>(),
       piUnsubscribe: null,

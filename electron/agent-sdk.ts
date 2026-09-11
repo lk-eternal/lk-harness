@@ -30,7 +30,6 @@ import {
   isFeishuStreamEnabled,
   isMediaSendInvocation,
   isPollMessageTool,
-  isSendQuestionInvocation,
   isShowThinkingEnabled,
   isStreamSilenced,
   isTodoUpdateInvocation,
@@ -106,7 +105,7 @@ export interface SdkSessionAgent extends StreamCardHost {
 }
 
 function newPollPhase(): StreamPollPhaseState {
-  return { blocking: false, nonBlocking: false, questionPause: false }
+  return { blocking: false, nonBlocking: false }
 }
 
 const sdkSessions = new Map<string, SdkSessionAgent>()
@@ -645,7 +644,6 @@ export type { PollPhaseEventPayload } from "./stream-card"
 function openStreamForSdkTurn(session: SdkSessionAgent): void {
   session.pollPhase.blocking = false
   session.pollPhase.nonBlocking = false
-  session.pollPhase.questionPause = false
   if (!isFeishuStreamEnabled(session.sessionKey)) return
   if (!session.streamAgg || session.streamAgg.finished) {
     session.streamAgg = newStreamAgg(true)
@@ -695,10 +693,8 @@ export function handlePollPhaseEvent(
 
   const deliveredIds = (payload.messageIds ?? []).filter((id): id is string => !!id)
   let hasNewUserMsgs = false
-  let hasFreshDelivery = false
   for (const id of deliveredIds) {
     if (!session.seenMessageIds.has(id)) {
-      hasFreshDelivery = true
       if (!id.startsWith("internal_")) hasNewUserMsgs = true
       session.seenMessageIds.add(id)
     }
@@ -712,8 +708,6 @@ export function handlePollPhaseEvent(
   if (isEnd && (wasBlocking || blocking)) {
     void terminateRunAfterPollEnd(session)
   }
-
-  if (hasFreshDelivery) session.pollPhase.questionPause = false
 
   if (wasBlocking || blocking) {
     if (isTimeout || isEnd || isAbort) {
@@ -891,11 +885,7 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
             }
             break
           }
-          if (isSendQuestionInvocation(event.name, detectSummary, event.args) && event.status === "running") {
-            session.pollPhase.questionPause = true
-            pushUiLog("SDK", "DEBUG", `[${session.sessionKey}] send_question 开始，暂停写 segments`)
-          }
-          // poll / send_text 等协议工具：不 gateOpen、不刷首卡，等 poll-phase 结束统一开门
+          // poll / send_text / send_question 等协议工具：不 gateOpen、不刷首卡，等 poll-phase 结束统一开门
           if (event.status === "running" && !isPollMessageTool(event.name, detectSummary, event.args)) {
             stream.gateOpen = true
             sealLastThinking(stream)

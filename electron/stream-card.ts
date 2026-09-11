@@ -51,7 +51,6 @@ export interface StreamCardPayload {
 export interface StreamPollPhaseState {
   blocking: boolean
   nonBlocking: boolean
-  questionPause: boolean
 }
 
 export interface StreamCardHost {
@@ -735,10 +734,8 @@ export function handleStreamPollPhaseEvent(
 
   const deliveredIds = (payload.messageIds ?? []).filter((id): id is string => !!id)
   let hasNewUserMsgs = false
-  let hasFreshDelivery = false
   for (const id of deliveredIds) {
     if (!host.seenMessageIds.has(id)) {
-      hasFreshDelivery = true
       if (!id.startsWith("internal_")) hasNewUserMsgs = true
       host.seenMessageIds.add(id)
     }
@@ -748,8 +745,6 @@ export function handleStreamPollPhaseEvent(
   const isEnd = payload.reason === "end" || directive.includes(POLL_DIRECTIVE_END_MARK)
   const isTimeout = payload.reason === "timeout" || directive.includes(POLL_DIRECTIVE_TIMEOUT_MARK)
   const isAbort = payload.reason === "abort"
-
-  if (hasFreshDelivery) host.pollPhase.questionPause = false
 
   if (wasBlocking || blocking) {
     if (isTimeout || isEnd || isAbort) {
@@ -784,9 +779,9 @@ export function handleStreamPollPhaseEvent(
 }
 
 export function isStreamSilenced(host: StreamCardHost): boolean {
-  return host.pollPhase.blocking || host.pollPhase.questionPause
+  return host.pollPhase.blocking
 }
 
 export function isToolStreamSilenced(host: StreamCardHost): boolean {
-  return host.pollPhase.blocking || host.pollPhase.nonBlocking || host.pollPhase.questionPause
+  return host.pollPhase.blocking || host.pollPhase.nonBlocking
 }
