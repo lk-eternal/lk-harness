@@ -34,7 +34,16 @@ describe("project-worktree (independent checkout)", () => {
   })
 
   afterEach(() => {
-    fs.rmSync(root, { recursive: true, force: true })
+    // Windows 上超时残留的 git 子进程会占住句柄，直接 rm 会 EPERM：带重试兜底
+    try {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 } as fs.RmOptions)
+    } catch {
+      try {
+        // 兜底：给残留进程一点退出时间再删一次，还删不掉就留给 runner 清理，不让清理失败掩盖真实断言
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000)
+        fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 } as fs.RmOptions)
+      } catch { /* ignore: CI 临时目录由 runner 回收 */ }
+    }
   })
 
   it("detects git root and remote refs", async () => {
@@ -132,6 +141,6 @@ describe("project-worktree (independent checkout)", () => {
     expect(note.note).toMatch(/已同步远程 1 个新提交/)
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(before)
     expect(fs.readFileSync(path.join(wt, "a.txt"), "utf-8").replace(/\r\n/g, "\n")).toBe("2\n")
-  })
+  }, 30_000)
 })
 
