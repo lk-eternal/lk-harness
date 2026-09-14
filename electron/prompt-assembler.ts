@@ -4,7 +4,7 @@ import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
 import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
 import { readLockFile } from "./daemon-client"
-import { getRuleTemplatePath, getLlmHostRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
+import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
 import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
 import type { LaunchMeta } from "./agent-session-types"
 
@@ -27,12 +27,10 @@ function stripFrontmatter(raw: string): string {
   return raw.slice(end + 4).trim()
 }
 
-let cachedBuiltin: { port: string; admin: boolean; body: string } | null = null
-let cachedLlmHost: { port: string; admin: boolean; body: string } | null = null
+let cachedProtocol: { port: string; admin: boolean; body: string } | null = null
 
 export function clearProtocolTemplateCache(): void {
-  cachedBuiltin = null
-  cachedLlmHost = null
+  cachedProtocol = null
 }
 
 export interface TurnMessage {
@@ -80,28 +78,17 @@ function substituteAdminSection(raw: string, includeAdmin: boolean): string {
   return raw.replace(/\{\{ADMIN_MCP_SECTION\}\}/g, section)
 }
 
-export function loadBuiltinProtocol(daemonPort?: number | null, includeAdmin = false): string {
+/** 会话协议（无 poll，由 harness Session Worker 代管） */
+export function loadProtocol(daemonPort?: number | null, includeAdmin = false): string {
   const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedBuiltin && cachedBuiltin.port === port && cachedBuiltin.admin === includeAdmin) return cachedBuiltin.body
+  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin) return cachedProtocol.body
   const tplPath = getRuleTemplatePath()
-  let raw = fs.existsSync(tplPath) ? fs.readFileSync(tplPath, "utf-8") : ""
+  if (!fs.existsSync(tplPath)) throw new Error(`协议模板缺失: ${tplPath}`)
+  let raw = fs.readFileSync(tplPath, "utf-8")
   raw = substituteDaemonPort(raw, port)
   raw = substituteAdminSection(raw, includeAdmin)
   const body = stripFrontmatter(raw)
-  cachedBuiltin = { port, admin: includeAdmin, body }
-  return body
-}
-
-/** LLM 宿主模式协议（无 poll，由 harness Session Worker 代管） */
-export function loadLlmHostProtocol(daemonPort?: number | null, includeAdmin = false): string {
-  const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedLlmHost && cachedLlmHost.port === port && cachedLlmHost.admin === includeAdmin) return cachedLlmHost.body
-  const tplPath = getLlmHostRuleTemplatePath()
-  let raw = fs.existsSync(tplPath) ? fs.readFileSync(tplPath, "utf-8") : loadBuiltinProtocol(daemonPort, includeAdmin)
-  raw = substituteDaemonPort(raw, port)
-  raw = substituteAdminSection(raw, includeAdmin)
-  const body = stripFrontmatter(raw)
-  cachedLlmHost = { port, admin: includeAdmin, body }
+  cachedProtocol = { port, admin: includeAdmin, body }
   return body
 }
 
@@ -176,7 +163,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const includeAdmin = ctxIncludeAdmin(ctx)
   const h = createHash("md5")
-  h.update(loadLlmHostProtocol(portForAssembly(daemonPort), includeAdmin))
+  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
   const scope = resolvePromptRuleScope(ctx)
@@ -190,26 +177,10 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   return h.digest("hex").slice(0, 16)
 }
 
-export function assembleLlmHostProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
-  const parts: string[] = []
-  parts.push("---")
-  parts.push(loadLlmHostProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
-  const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
-  const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
-  if (identity) {
-    parts.push("---")
-    parts.push("## 数字身份")
-    parts.push(identity)
-  }
-  appendUserHarnessRules(parts, ctx)
-  return parts
-}
-
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
   const parts: string[] = []
   parts.push("---")
-  parts.push("## LK Harness 协议（必须严格遵守）")
-  parts.push(loadBuiltinProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
+  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) {
@@ -236,47 +207,6 @@ export function assembleColdStartBootstrap(ctx: PromptAssemblyContext, daemonPor
   return parts.join("\n")
 }
 
-export function assembleColdStartPrompt(ctx: PromptAssemblyContext, daemonPort?: number | null): string {
-  const parts = assembleProtocolBlocks(ctx, daemonPort)
-  appendTaskAndMeta(parts, ctx)
-  return parts.join("\n")
-}
-
-export function assembleWakePrompt(
-  ctx: PromptAssemblyContext & { rulesUpdated?: boolean; portChanged?: boolean; taskMessage?: string },
-  daemonPort?: number | null,
-): string {
-  const resolvedPort = portForAssembly(daemonPort)
-  const lines = ctx.taskMessage?.trim()
-    ? [
-      "[SESSION_RESUME / 系统指令] 会话已由后台唤醒（历史上下文完整保留），有新任务待执行。",
-      "---",
-      "任务内容:",
-      ctx.taskMessage.trim(),
-      "---",
-      "直接开始执行上述任务；执行中按 lk-harness 协议同步进度，完成后挂阻塞 poll 收尾。",
-      "禁止向用户发送问候、唤醒说明等任何多余消息。",
-    ]
-    : [
-      "[SESSION_RESUME / 系统指令] 会话已由后台唤醒（历史上下文完整保留），有新消息待处理。",
-      "立即执行：非阻塞检查 poll-message（wait=false），按 lk-harness 协议处理所有消息并逐条回复，完成后挂阻塞 poll 收尾。",
-      "禁止向用户发送问候、唤醒说明等任何多余消息。",
-    ]
-  if (ctx.rulesUpdated) {
-    lines.push("⚠️ 协议模板或 Harness 规则已更新（上下文中的规则是旧版快照）：以下为最新全文，必须严格按此执行。")
-    lines.push(...assembleProtocolBlocks(ctx, daemonPort))
-  } else if (ctx.portChanged && resolvedPort) {
-    lines.push(`⚠️ Daemon 端口已变更：poll/send 必须使用 [daemon_port=${resolvedPort}]，勿用上下文中的旧端口。`)
-  }
-  lines.push("---", "会话元数据:", `[session_key=${ctx.sessionKey ?? ""}]`)
-  if (resolvedPort) lines.push(`[daemon_port=${resolvedPort}]`)
-  if (ctx.notifySessionKey?.trim()) {
-    lines.push(...scheduledTaskNotifyPromptLines(ctx.notifySessionKey.trim()))
-  }
-  if (ctx.meta?.chatType) lines.push(`[chat_type=${ctx.meta.chatType}]`)
-  return lines.join("\n")
-}
-
 /** SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则） */
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
@@ -284,7 +214,7 @@ export function assembleSdkWorkerTurnPrompt(
   opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
 ): string {
   const chunks: string[] = []
-  chunks.push(...assembleLlmHostProtocolBlocks(ctx))
+  chunks.push(...assembleProtocolBlocks(ctx))
   chunks.push("---")
   chunks.push(assembleTurnPrompt(messages, ctx, {
     firstTurn: opts?.firstTurn,

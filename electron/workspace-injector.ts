@@ -29,10 +29,6 @@ export function getRuleTemplatePath(): string {
   return path.join(getTemplateRoot(), "rule", "lk-harness.mdc")
 }
 
-export function getLlmHostRuleTemplatePath(): string {
-  return path.join(getTemplateRoot(), "rule", "lk-harness-llm-host.mdc")
-}
-
 const ADMIN_SKILL_DIR = "lk-harness-admin"
 
 function configuredWorkspaceDirs(): string[] {

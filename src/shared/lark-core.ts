@@ -161,22 +161,9 @@ export class LarkSender {
     return /<at\s+user_id=/.test(stripped);
   }
 
-  /** 从正文中提取 `<at user_id="…">` 标签（跳过代码块/行内代码），供发卡后单独 @ 通知 */
-  static extractAtTags(text: string): string[] {
-    const stripped = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
-    const tags: string[] = [];
-    const re = /<at\s+user_id="[^"]+"[^>]*>[^<]*<\/at>/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(stripped)) !== null) tags.push(m[0]);
-    return tags;
-  }
-
-  /** 流式卡正文展示：`<at>` 转为可读 `@名字`，避免卡内 XML 标签 */
+  /** IM→卡片语法直转：`<at user_id="ou_xxx">名</at>` → `<at id=ou_xxx>名</at>`，卡内即蓝可点又推 @ 角标 */
   static stripAtTagsForCardDisplay(text: string): string {
-    return text.replace(/<at\s+user_id="[^"]+"[^>]*>([^<]*)<\/at>/gi, (_, name: string) => {
-      const n = name.trim();
-      return n ? `@${n}` : "@";
-    });
+    return text.replace(/<at\s+user_id="([^"]+)"[^>]*>([^<]*)<\/at>/gi, "<at id=$1>$2</at>");
   }
 
   private formatForSend(text: string, title?: CardTitle, template?: string, offerDismiss = false): { content: string; msgType: string } {

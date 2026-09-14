@@ -178,16 +178,18 @@ export function shouldIncludeAdminMcp(
   return mainUserSession === true
 }
 
-export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean): Record<string, Record<string, unknown>> {
+export type HarnessMcpEndpoint = "task" | "interactive";
+
+export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive"): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
   if (port) {
     const base = `http://127.0.0.1:${port}`
-    servers[CLAW_MCP_KEY] = { url: `${base}/mcp` }
+    servers[CLAW_MCP_KEY] = { url: `${base}${endpoint === "task" ? "/mcp-task" : "/mcp-interactive"}` }
     if (includeAdmin) servers[ADMIN_MCP_KEY] = { url: `${base}/mcp-admin` }
   }
   return servers
 }
 
-export function buildSdkMcpServers(port: number | null, includeAdmin: boolean): Record<string, Record<string, unknown>> {
-  return { ...buildBuiltinMcpServers(port, includeAdmin), ...listEnabledHarnessMcpConfigs() }
+export function buildSdkMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive"): Record<string, Record<string, unknown>> {
+  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint), ...listEnabledHarnessMcpConfigs() }
 }

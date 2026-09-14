@@ -1586,8 +1586,6 @@ interface AgentStreamCardState {
   /** 流式卡内联问题块（按 insertAt 插入时间线；SDK 刷新不覆盖） */
   questionBlocks: StreamQuestionBlock[];
   createdAt: number;
-  /** 发卡后待补发的 @ 标签（正文已并入流式卡，finish 时单独 reply 触发通知） */
-  pendingAtMentions?: string[];
   /** 串行 CardKit 写操作，避免与 SDK update / MCP merge 撞 sequence */
   inflight: Promise<unknown>;
   /** 思考/工具块稳定 id 与展开态追踪（splice 后 element_id 不复用） */
@@ -2069,31 +2067,6 @@ function isGroupFeishuChat(ch: Extract<ResolvedChannel, { type: "feishu" }>): bo
   return ct === "group";
 }
 
-function mergePendingAtMentions(state: AgentStreamCardState, tags: string[]): void {
-  if (!tags.length) return;
-  const existing = state.pendingAtMentions ?? [];
-  const seen = new Set(existing.map((t) => t.match(/user_id="([^"]+)"/)?.[1] ?? t));
-  for (const tag of tags) {
-    const id = tag.match(/user_id="([^"]+)"/)?.[1] ?? tag;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    existing.push(tag);
-  }
-  state.pendingAtMentions = existing;
-}
-
-async function dispatchPendingAtMentions(
-  state: AgentStreamCardState,
-  ch: Extract<ResolvedChannel, { type: "feishu" }>,
-): Promise<void> {
-  const tags = state.pendingAtMentions;
-  if (!tags?.length || !state.messageId || !isGroupFeishuChat(ch)) return;
-  state.pendingAtMentions = undefined;
-  const sentId = await ch.rt.sender!.sendMessage(tags.join(" "), state.messageId);
-  if (sentId) log("INFO", `[AtMention] 已发卡后 @ 通知 reply=${state.messageId} msg=${sentId}`);
-  else log("WARN", `[AtMention] 发卡后 @ 通知失败 reply=${state.messageId}`);
-}
-
 /** 无活跃流式卡时先建卡，供 send_text/send_question 抢先合并（ACK 早于思考/工具）。整体入全序链。 */
 async function ensureStreamCardForMcpMerge(
   sessionKey: string,
@@ -2306,7 +2279,6 @@ async function finishAgentStreamCard(
     await finishOrphanStreamCardById(state.cardId, ch);
     return { ok: false, cardId: state.cardId, messageId: state.messageId, error: "结束流式卡片失败" };
   }
-  await dispatchPendingAtMentions(state, ch);
   const result = { ok: true, cardId: state.cardId, messageId: state.messageId };
   log("INFO", `[StreamCard] 已结束 session=${sessionKey} card=${result.cardId}`);
   return result;
@@ -2346,8 +2318,6 @@ function sealActiveStreamCardOnDelivery(sessionKey: string): Promise<void> {
     if (!ok) {
       log("WARN", `[StreamCard] 消息送达收口失败 session=${sessionKey} card=${state.cardId}`);
       await finishOrphanStreamCardById(state.cardId, ch);
-    } else {
-      await dispatchPendingAtMentions(state, ch);
     }
   });
 }
@@ -3368,15 +3338,15 @@ function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean })
   registerProjectAgentTools(s);
 }
 
-function createMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通" });
+function createTaskMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-task", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通（含 send_text，仅无卡片的定时任务用）" });
   registerAgentOutboundTools(s, { sendText: true });
   return s;
 }
 
-/** LLM 宿主模式：无 send_text，保留 send_question / 媒体 / 项目工具 */
-function createLlmHostMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-llm-host", version: PKG_VERSION, description: "LLM 宿主出站 – 提问/媒体/项目" });
+/** 交互会话模式：无 send_text，保留 send_question / 媒体 / 项目工具（输出由流式卡片承载） */
+function createInteractiveMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话出站 – 提问/媒体/项目" });
   registerAgentOutboundTools(s, { sendText: false });
   return s;
 }
@@ -3395,15 +3365,15 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp" || pathname === "/mcp-admin" || pathname === "/mcp-llm-host") {
-          const isAgent = pathname === "/mcp";
-          const isLlmHost = pathname === "/mcp-llm-host";
-          const srv = isLlmHost ? createLlmHostMcpServer() : isAgent ? createMcpServer() : createAdminMcpServer();
+        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive") {
+          const isTask = pathname === "/mcp-task";
+          const isInteractive = pathname === "/mcp-interactive";
+          const srv = isInteractive ? createInteractiveMcpServer() : isTask ? createTaskMcpServer() : createAdminMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-          if (isAgent || isLlmHost) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
+          if (isTask || isInteractive) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
           res.on("close", () => {
             transport.close(); srv.close();
-            if (isAgent || isLlmHost) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
+            if (isTask || isInteractive) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
           await transport.handleRequest(req, res);
@@ -4154,14 +4124,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, text) });
     } else {
       const sender = ch.rt.sender!;
-      const atTags = LarkSender.containsAtTag(text) ? LarkSender.extractAtTags(text) : [];
-      const cardBody = atTags.length ? LarkSender.stripAtTagsForCardDisplay(text) : text;
+      // 卡内 <at id=> 自带显示+通知：IM 语法直转后落卡，不再暂存/补发
+      const cardBody = LarkSender.stripAtTagsForCardDisplay(text);
       // 有活跃卡则正文并入；无卡则建卡即带正文（防空白卡闪现）。
-      // 含 @ 时正文仍落卡，@ 标签暂存 pendingAtMentions，finish 后单独 reply 触发通知。
       // bodyMerged 由串行链内保证（SDK 竞态建卡时并入已有卡）——为 false 必须回退独立消息，严禁静默吞正文
       if (session_key) {
         const r = await ensureStreamCardForMcpMerge(session_key, ch, cardBody);
-        if (atTags.length && r.state) mergePendingAtMentions(r.state, atTags);
         if (r.state && r.bodyMerged) {
           touchSessionLastReply(session_key);
           json(res, { ok: true, message_id: r.state.messageId, merged: true });
@@ -4408,8 +4376,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     }
     json(res, sentOk ? { ok: true } : { ok: false, error: "图片发送失败（文件不存在或上传/发送被拒，详见 daemon 日志）" });
     if (sentOk && session_key) {
-      // 媒体是独立消息：封口当前流式卡，避免后续 send_text/question 合并进旧卡
-      void sealActiveStreamCardOnDelivery(session_key);
+      // 媒体是独立消息：不封口流式卡，后续输出继续落旧卡
       touchSessionLastReply(session_key);
     }
     return true;
@@ -4435,8 +4402,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     }
     json(res, sentOk ? { ok: true } : { ok: false, error: "文件发送失败（文件不存在或上传/发送被拒，详见 daemon 日志）" });
     if (sentOk && session_key) {
-      // 媒体是独立消息：封口当前流式卡，避免后续 send_text/question 合并进旧卡
-      void sealActiveStreamCardOnDelivery(session_key);
+      // 媒体是独立消息：不封口流式卡，后续输出继续落旧卡
       touchSessionLastReply(session_key);
     }
     return true;
@@ -5002,7 +4968,7 @@ export async function daemonMain(): Promise<void> {
   daemonPort = await startHttpServer();
   process.env.LARK_DAEMON_PORT = String(daemonPort);
   writeLockFile(daemonPort);
-  log("INFO", "MCP 服务已就绪 (/mcp + /mcp-admin)");
+  log("INFO", "MCP 服务已就绪 (/mcp-task + /mcp-interactive + /mcp-admin)");
 
   setDaemonSchedulerLogger((msg) => { log("INFO", msg); });
   startDaemonScheduledTasks((task, content) => {

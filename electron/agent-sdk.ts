@@ -9,7 +9,7 @@ import { sessionStateDir } from "../src/shared/data-paths.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
-import { assembleWakePrompt, computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource } from "./config-store"
 import { readLockFile, httpPost, notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
@@ -921,7 +921,7 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
             }
             break
           }
-          // poll / send_text / send_question 等协议工具：不 gateOpen、不刷首卡，等 poll-phase 结束统一开门
+          // poll / send_question 等协议工具：不 gateOpen、不刷首卡，等 poll-phase 结束统一开门
           if (event.status === "running" && !isPollMessageTool(event.name, detectSummary, event.args)) {
             stream.gateOpen = true
             sealLastThinking(stream)
@@ -1356,7 +1356,9 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     const sdkPort = resolveDaemonPortForPrompt()
     const includeAdmin = opts.includeAdmin === true
-    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin) as Record<string, McpServerConfig>
+    // 有卡片承载输出的一律走 interactive（无 send_text）；只有无卡片的定时任务走 task（有 send_text）
+    const mcpEndpoint = chatType === "task" ? "task" : "interactive"
+    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint) as Record<string, McpServerConfig>
     const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
 
     // Resume 语义：

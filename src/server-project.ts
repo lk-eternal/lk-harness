@@ -34,7 +34,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     "project_register_artifact",
 
-    "登记项目最近产物（供后续节点注入上下文）。仅写元数据，不发消息、不推菜单；交付用户请用 send_text / send_file",
+    "登记项目最近产物（供后续节点注入上下文）。仅写元数据，不发消息、不推菜单；交付用户请用 send_file",
 
     {
 
@@ -104,7 +104,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
       if (!args.artifact_path) {
 
-        return txt("⚠️ project_action_done 已弃用且无产物可登记；请改用 project_register_artifact，或用 send_text 交付用户")
+        return txt("⚠️ project_action_done 已弃用且无产物可登记；请改用 project_register_artifact，或用 send_file 交付用户")
 
       }
 

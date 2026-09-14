@@ -16,7 +16,7 @@ import type { Model, Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
-import { assembleLlmHostProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { assembleProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { piAdditionalSkillPaths } from "./skill-paths"
 import { countPiPhysicalTurns, turnsFromPiMessages } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
@@ -102,7 +102,7 @@ export function readPiSessionTurns(sessionKey: string): TranscriptTurn[] {
 }
 
 function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
-  const blocks = assembleLlmHostProtocolBlocks({
+  const blocks = assembleProtocolBlocks({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
