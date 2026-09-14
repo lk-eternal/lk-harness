@@ -1,7 +1,7 @@
 import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
 import { resolve, join, dirname } from "node:path"
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs"
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
@@ -103,6 +103,8 @@ export interface SdkSessionAgent extends StreamCardHost {
   pollPhase: StreamPollPhaseState
   /** Session Worker 托管 poll 时为 true（listening 阶段 run 可能为 null） */
   workerActive?: boolean
+  /** 账本超限 rollover：unregister 时不再写 resume */
+  ledgerRollover?: boolean
 }
 
 function newPollPhase(): StreamPollPhaseState {
@@ -509,7 +511,7 @@ function ensureSdkBinaryPaths(): void {
   pushUiLog("SDK", "WARN", `未找到 ${binaryName}，SDK 可能报错 (searched: ${candidates.join(", ")})`)
 }
 
-/** 按 cwd 缓存；避免 Windows SQLite WAL mid-run commit 失败（Cursor SDK 已知问题） */
+/** 按 cwd+sessionKey 缓存；避免 Windows SQLite WAL mid-run commit 失败（Cursor SDK 已知问题） */
 const jsonlAgentStores = new Map<string, JsonlLocalAgentStore>()
 
 function workspaceStoreDirKey(workspaceDir: string): string {
@@ -518,14 +520,46 @@ function workspaceStoreDirKey(workspaceDir: string): string {
   return createHash("sha256").update(workspaceDir).digest("hex").slice(0, 16)
 }
 
-function resolveJsonlAgentStore(workspaceDir: string): JsonlLocalAgentStore {
+function sessionStoreDirKey(sessionKey: string): string {
+  return createHash("sha256").update(sessionKey).digest("hex").slice(0, 16)
+}
+
+function sdkStoreUserDataRoot(): string {
+  return process.env.APP_DATA_DIR?.trim() || app.getPath("userData")
+}
+
+function jsonlStoreCacheKey(workspaceDir: string, sessionKey?: string): string {
   const cwd = resolve(workspaceDir)
-  let store = jsonlAgentStores.get(cwd)
+  return sessionKey?.trim() ? `${cwd}\0${sessionKey}` : cwd
+}
+
+export function sdkJsonlStoreDir(workspaceDir: string, sessionKey?: string): string {
+  const base = join(sdkStoreUserDataRoot(), "sdk-jsonl-stores", workspaceStoreDirKey(resolve(workspaceDir)))
+  if (!sessionKey?.trim()) return base
+  return join(base, sessionStoreDirKey(sessionKey))
+}
+
+export function clearSdkJsonlStore(workspaceDir: string, sessionKey?: string): void {
+  if (!sessionKey?.trim()) {
+    const cwd = resolve(workspaceDir)
+    for (const k of [...jsonlAgentStores.keys()]) {
+      if (k === cwd || k.startsWith(cwd + "\0")) jsonlAgentStores.delete(k)
+    }
+    try { rmSync(sdkJsonlStoreDir(workspaceDir), { recursive: true, force: true }) } catch { /* ignore */ }
+    return
+  }
+  jsonlAgentStores.delete(jsonlStoreCacheKey(workspaceDir, sessionKey))
+  try { rmSync(sdkJsonlStoreDir(workspaceDir, sessionKey), { recursive: true, force: true }) } catch { /* ignore */ }
+}
+
+function resolveJsonlAgentStore(workspaceDir: string, sessionKey: string): JsonlLocalAgentStore {
+  const cacheKey = jsonlStoreCacheKey(workspaceDir, sessionKey)
+  let store = jsonlAgentStores.get(cacheKey)
   if (!store) {
-    const rootDir = join(app.getPath("userData"), "sdk-jsonl-stores", workspaceStoreDirKey(cwd))
+    const rootDir = sdkJsonlStoreDir(workspaceDir, sessionKey)
     if (!existsSync(rootDir)) mkdirSync(rootDir, { recursive: true })
     store = new JsonlLocalAgentStore(rootDir)
-    jsonlAgentStores.set(cwd, store)
+    jsonlAgentStores.set(cacheKey, store)
   }
   return store
 }
@@ -1211,7 +1245,7 @@ export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): 
 export async function unregisterSdkSessionForWorker(session: SdkSessionAgent, aborted: boolean): Promise<void> {
   session.workerActive = false
   void sealStreamCardForStop(session).catch(() => {})
-  if (!aborted && session.keepSession) rememberResumable(session)
+  if (!aborted && session.keepSession && !session.ledgerRollover) rememberResumable(session)
   // 仅当仍是 map 中的活跃实例时才 release——避免旧 worker finally 误删新 launch 登记的 session
   if (sdkSessions.get(session.sessionKey) === session) {
     await releaseSession(session)
@@ -1317,7 +1351,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       cwd: workspaceDir,
       settingSources: [] as ("project" | "user")[],
       sandboxOptions: { enabled: false },
-      store: resolveJsonlAgentStore(workspaceDir),
+      store: resolveJsonlAgentStore(workspaceDir, sessionKey),
     }
 
     const sdkPort = resolveDaemonPortForPrompt()

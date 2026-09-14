@@ -26,9 +26,17 @@ function harnessAgentDir(): string {
   return getAgentDir()
 }
 
+function userDataRoot(): string {
+  return process.env.APP_DATA_DIR?.trim() || app.getPath("userData")
+}
+
 function sessionDirForKey(sessionKey: string): string {
   const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 32)
-  return path.join(app.getPath("userData"), "pi-sessions", hash)
+  return path.join(userDataRoot(), "pi-sessions", hash)
+}
+
+export function piSessionDir(sessionKey: string): string {
+  return sessionDirForKey(sessionKey)
 }
 
 function findExistingSessionFile(sessionDir: string): string | undefined {

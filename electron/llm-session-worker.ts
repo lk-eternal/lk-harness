@@ -305,6 +305,15 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       for (const m of fresh) {
         if (m.messageId) session.processedMessageIds.add(m.messageId)
       }
+
+      try {
+        const { rolloverSessionLedgerIfNeeded } = await import("./session-retention.js")
+        if (await rolloverSessionLedgerIfNeeded({ runtime: "llm", sessionKey })) {
+          session.ledgerRollover = true
+          pushUiLog("LLM", "INFO", `[${sessionKey}] 账本超限，已清 pi 账本并用 mirror 冷启动`)
+          break
+        }
+      } catch { /* ignore */ }
     }
   } catch (e: unknown) {
     if (!abort.signal.aborted) {

@@ -209,6 +209,19 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
       try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
 
+      try {
+        const { rolloverSessionLedgerIfNeeded } = await import("./session-retention.js")
+        if (await rolloverSessionLedgerIfNeeded({
+          runtime: "sdk",
+          sessionKey,
+          workspaceDir: session.workspaceDir,
+        })) {
+          session.ledgerRollover = true
+          pushUiLog("SDK", "INFO", `[${sessionKey}] 账本超限，已清 SDK store 并用 mirror 冷启动`)
+          break
+        }
+      } catch { /* ignore */ }
+
       if (!state.persistentPoll) {
         pushUiLog("SDK", "INFO", `[${sessionKey}] 按需唤醒模式，回合结束退出 worker`)
         break

@@ -5,8 +5,9 @@ import type { TranscriptTurn } from "./agent-engine/types"
 
 /** 搬运块：最近原文轮次，一整块，不做摘要 */
 
-export const CARRYOVER_TURNS = 10
-export const CARRYOVER_CHARS = 8000
+export const CARRYOVER_TURNS = 30
+export const CARRYOVER_CHARS = 128 * 1024
+export const MIRROR_MAX_BYTES = 128 * 1024
 
 interface PiContentBlock {
   type?: string
@@ -95,6 +96,14 @@ const MIRROR_FILE_PREFIX = "transcript-"
 /** 滚动存储：只留最近 N 轮，切了直接整包注入，不用临时提取 */
 const MIRROR_KEEP_TURNS = CARRYOVER_TURNS
 
+function trimMirrorLines(lines: string[], maxTurns: number, maxBytes: number): string[] {
+  let next = lines.slice(-maxTurns)
+  while (next.length > 0 && Buffer.byteLength(`${next.join("\n")}\n`, "utf8") > maxBytes) {
+    next = next.slice(1)
+  }
+  return next
+}
+
 function mirrorPath(sessionKey: string): string {
   const safe = Buffer.from(sessionKey, "utf8").toString("base64url")
   return path.join(transcriptDir(resolveDataDir()), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
@@ -108,7 +117,11 @@ export function appendMirrorTurns(sessionKey: string, turns: TranscriptTurn[]): 
     const p = mirrorPath(sessionKey)
     fs.mkdirSync(path.dirname(p), { recursive: true })
     const prev: string[] = fs.existsSync(p) ? fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()) : []
-    const next = [...prev, ...fresh.map((t) => JSON.stringify(t))].slice(-MIRROR_KEEP_TURNS)
+    const next = trimMirrorLines(
+      [...prev, ...fresh.map((t) => JSON.stringify(t))],
+      MIRROR_KEEP_TURNS,
+      MIRROR_MAX_BYTES,
+    )
     fs.writeFileSync(p, next.join("\n") + "\n", "utf8")
   } catch { /* 镜像失败不影响正事 */ }
 }

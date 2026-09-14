@@ -118,6 +118,8 @@ interface LlmSession extends StreamCardHost {
   piUnsubscribe: (() => void) | null
   /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
+  /** 账本超限 rollover：unregister 时不再写 resume */
+  ledgerRollover?: boolean
 }
 
 export type LlmWorkerSession = LlmSession
@@ -485,7 +487,7 @@ export async function unregisterLlmSession(session: LlmSession, aborted: boolean
   session.piUnsubscribe = null
   await sealLlmStream(session)
 
-  if (!aborted) {
+  if (!aborted && !session.ledgerRollover) {
     rememberPiResumable(
       session.sessionKey,
       session.rulesHash,
