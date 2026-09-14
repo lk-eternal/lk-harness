@@ -97,3 +97,17 @@ export async function hostConfirmClaimed(sessionKey: string): Promise<void> {
     5000,
   )
 }
+
+/** 标记一批消息已处理并认领：内存去重 + 删 daemon 侧 .claimed，二者缺一即可能重做。
+ * 认领失败不抛（best-effort），调用方无需再各自 try/catch。 */
+export async function markMessagesProcessed(
+  session: { processedMessageIds: Set<string> },
+  sessionKey: string,
+  messages: Array<{ messageId?: string }>,
+  confirm: (sessionKey: string) => Promise<void> = hostConfirmClaimed,
+): Promise<void> {
+  for (const m of messages) {
+    if (m.messageId) session.processedMessageIds.add(m.messageId)
+  }
+  try { await confirm(sessionKey) } catch { /* best-effort */ }
+}

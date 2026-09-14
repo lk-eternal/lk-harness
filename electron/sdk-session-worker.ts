@@ -11,6 +11,7 @@ import {
   hostTouchSessionReply,
   isPollEndDirective,
   isPollTimeoutDirective,
+  markMessagesProcessed,
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
@@ -203,11 +204,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         ])
       } catch { /* ignore */ }
 
-      for (const m of fresh) {
-        if (m.messageId) session.processedMessageIds.add(m.messageId)
-      }
-
-      try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+      await markMessagesProcessed(session, sessionKey, fresh)
 
       try {
         const { rolloverSessionLedgerIfNeeded } = await import("./session-retention.js")

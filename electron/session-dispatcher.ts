@@ -39,7 +39,6 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
-import { isFeishuStreamEnabled } from "./stream-card"
 import {
   clearLaunchFailStreak,
   clearAllLaunchFailStreaks,
@@ -47,12 +46,6 @@ import {
   markNotifiedIfDue,
   recordLaunchFailure,
 } from "./launch-fail-tracker"
-
-const STARTUP_NOTIFY_TEXT = "正在启动Agent，请稍等..."
-
-function shouldSendStartupNotify(sessionKey: string, resumable: boolean): boolean {
-  return !resumable && !isFeishuStreamEnabled(sessionKey)
-}
 
 // ── readLockFile 短 TTL 缓存 ─────────────────────────────
 let _lockCache: { value: ReturnType<typeof readLockFile>; ts: number } | null = null
@@ -1492,7 +1485,6 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)
       })) {
         broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
-        if (shouldSendStartupNotify(sessionKey, resumableP)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
       }
       continue
     }
@@ -1521,7 +1513,6 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       if (!result.ok) await reportLaunchOutcome(sessionKey, result)
     })) {
       broadcastLog(`[Agent] ${label} 有新消息，正在启动Agent（${resumable ? "Resume 恢复上下文" : "全新会话"}）${mainUser ? "(主工作目录)" : ""}`)
-      if (shouldSendStartupNotify(sessionKey, resumable)) await notifyChat(sessionKey, STARTUP_NOTIFY_TEXT)
     }
   }
   return launches

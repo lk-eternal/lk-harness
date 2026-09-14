@@ -14,6 +14,7 @@ import {
   hostTouchSessionReply,
   isPollEndDirective,
   isPollTimeoutDirective,
+  markMessagesProcessed,
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
@@ -231,12 +232,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           break
         }
         // 回合已结束（模型/网关报错）：这批消息不能重放，但 worker 也不必陪葬
-        for (const m of fresh) {
-          if (m.messageId) session.processedMessageIds.add(m.messageId)
-        }
-        // 必须确认这一次 claim：否则 daemon 把这批 .claimed 重投，worker 重启后内存里的
+        // 认领与内存标记一体：否则 daemon 把这批 .claimed 重投，worker 重启后内存里的
         // processedMessageIds 没了就会再跑一次同样的失败回合（同一错误在卡片上出现两遍）
-        try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
+        await markMessagesProcessed(session, sessionKey, fresh)
         // 流式卡片已会把 Pi 的 errorMessage 渲染进卡片，再发一条 hostSendText 会被合并进同一张卡导致重影
         if (!isFeishuStreamEnabled(sessionKey)) {
           try {
@@ -264,15 +262,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           pushUiLog("LLM", "ERROR", `[${sessionKey}] 空回复兜底投递失败: ${errorDetail}`)
           break
         }
-      // 镜像：用户原文（兜底文本不记，避免污染）
-      try {
-        appendMirrorTurns(sessionKey, fresh.map((m) => ({ role: "user" as const, text: m.text })))
-      } catch { /* ignore */ }
-      try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
-      try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
-        for (const m of fresh) {
-          if (m.messageId) session.processedMessageIds.add(m.messageId)
-        }
+        // 镜像：用户原文（兜底文本不记，避免污染）
+        try {
+          appendMirrorTurns(sessionKey, fresh.map((m) => ({ role: "user" as const, text: m.text })))
+        } catch { /* ignore */ }
+        try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
+        await markMessagesProcessed(session, sessionKey, fresh)
         continue
       }
 
@@ -302,9 +297,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         ])
       } catch { /* ignore */ }
 
-      for (const m of fresh) {
-        if (m.messageId) session.processedMessageIds.add(m.messageId)
-      }
+      await markMessagesProcessed(session, sessionKey, fresh)
 
       try {
         const { rolloverSessionLedgerIfNeeded } = await import("./session-retention.js")
