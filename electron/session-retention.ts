@@ -2,6 +2,7 @@ import { app } from "electron"
 import * as fs from "node:fs"
 import * as path from "node:path"
 
+/** LLM 轮次口径：物理 Pi 消息数（1 个 prompt = 1 轮，不展开[本轮投递]；≈15 回合，与 SDK 15 runs 对齐） */
 export const LEDGER_MAX_TURNS = 30
 /** SDK 轮次口径：runs.ndjson 有效行数（1 行 = 1 次 run ≈ mirror 2 轮），与 30 条正文轮对齐取 15 */
 export const LEDGER_MAX_SDK_RUNS = 15
@@ -57,9 +58,9 @@ export async function measureLedger(opts: {
   userDataDir: string
 }): Promise<{ turns: number; bytes: number }> {
   if (opts.runtime === "llm") {
-    const { readPiSessionTurns, piSessionDir } = await import("./pi-embedded.js")
+    const { countPiSessionPhysicalTurns, piSessionDir } = await import("./pi-embedded.js")
     return {
-      turns: readPiSessionTurns(opts.sessionKey).length,
+      turns: countPiSessionPhysicalTurns(opts.sessionKey),
       bytes: dirByteSize(piSessionDir(opts.sessionKey)),
     }
   }

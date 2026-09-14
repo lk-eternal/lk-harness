@@ -138,4 +138,26 @@ describe("session-retention", () => {
     expect(rolled).toBe(false)
     expect(fs.existsSync(dir)).toBe(true)
   })
+
+  it("LLM 物理口径：30 轮搬运 + 1 新回合不再触发 rollover", async () => {
+    const sk = "llm-carryover-loop"
+    const { piSessionDir } = await import("../electron/pi-embedded.js")
+    const { readPiSessionTurns } = await import("../electron/pi-embedded.js")
+    const dir = piSessionDir(sk)
+    fs.mkdirSync(dir, { recursive: true })
+    const history = Array.from({ length: 30 }, (_, i) => ({ text: `历史${i + 1}` }))
+    const prompt = `[本轮投递]\n\`\`\`json\n${JSON.stringify({ session: {}, messages: [...history, { text: "新问题" }] })}\n\`\`\``
+    const rows = [
+      JSON.stringify({ type: "message", message: { role: "user", content: prompt } }),
+      JSON.stringify({ type: "message", message: { role: "assistant", content: "新回答" } }),
+    ].join("\n") + "\n"
+    fs.writeFileSync(path.join(dir, "session.jsonl"), rows, "utf-8")
+    // 展开口径仍是 32 轮（回归对照），物理口径只计 2
+    expect(readPiSessionTurns(sk)).toHaveLength(32)
+    const m = await measureLedger({ runtime: "llm", sessionKey: sk, userDataDir: dataDir })
+    expect(m.turns).toBe(2)
+    const rolled = await rolloverSessionLedgerIfNeeded({ runtime: "llm", sessionKey: sk, userDataDir: dataDir })
+    expect(rolled).toBe(false)
+    expect(fs.existsSync(dir)).toBe(true)
+  })
 })

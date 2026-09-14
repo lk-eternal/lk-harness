@@ -44,6 +44,17 @@ function splitUserText(raw: string): string[] {
   return [t]
 }
 
+/** 账本口径：物理 Pi 消息数（1 个 prompt = 1 轮，不展开[本轮投递]；搬运重放不再算负债） */
+export function countPiPhysicalTurns(messages: PiMessage[]): number {
+  let n = 0
+  for (const msg of messages) {
+    if (msg.role !== "user" && msg.role !== "assistant") continue
+    if (!textOfContent(msg.content).trim()) continue
+    n += 1
+  }
+  return n
+}
+
 /** pi 消息（live 或 jsonl 落盘）→ 正文轮次：跳过工具块与报错空回合 */
 export function turnsFromPiMessages(messages: PiMessage[]): TranscriptTurn[] {
   const turns: TranscriptTurn[] = []
