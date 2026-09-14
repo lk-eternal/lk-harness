@@ -141,6 +141,6 @@ describe("project-worktree (independent checkout)", () => {
     expect(note.note).toMatch(/已同步远程 1 个新提交/)
     expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(before)
     expect(fs.readFileSync(path.join(wt, "a.txt"), "utf-8").replace(/\r\n/g, "\n")).toBe("2\n")
-  }, 30_000)
+  })
 })
 
