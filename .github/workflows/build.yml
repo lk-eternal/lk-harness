@@ -36,7 +36,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 与产线 Electron 41 内核（Node 24）对齐：pi SDK 用到 fs.globSync（Node 22+）
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
