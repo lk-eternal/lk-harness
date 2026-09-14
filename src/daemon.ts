@@ -1467,7 +1467,11 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
       enqueue(cleanText);
     } else {
       // 非文本先落盘再判指令：图文混排（post）也可能是指令（/f + 图片），不能只看 messageType
-      sender.processIncomingMessage(messageId, messageType, rawContent)
+      // interactive 事件快照可能是流式占位/降级文本，先用 API 全量重拉，失败再回退事件快照
+      const loadBody = messageType === "interactive"
+        ? sender.fetchMessageContent(messageId).then((full) => full || sender.processIncomingMessage(messageId, messageType, rawContent))
+        : sender.processIncomingMessage(messageId, messageType, rawContent);
+      loadBody
         .then((result) => {
           const body = resolveMentionTags(result || cleanText, ev.mentions, rt.botOpenId);
           if (isCommand(body)) {
@@ -3535,6 +3539,9 @@ function startHttpServer(): Promise<number> {
           const internalMsgId = `internal_enqueue_${Date.now()}`;
           const inboundId = typeof body.messageId === "string" ? body.messageId.trim() : "";
           const effectiveId = inboundId || internalMsgId;
+          const senderOpenId = typeof body.senderOpenId === "string" ? body.senderOpenId.trim() : "";
+          const senderType = typeof body.senderType === "string" ? body.senderType.trim() : "";
+          const senderMeta = { ...(senderOpenId ? { senderOpenId } : {}), ...(senderType ? { senderType } : {}) };
           if (sessionKey) {
             // 直投指定会话（独立定时任务 / 项目节点等）：绕过 p2p 主目录强制路由，队列保障崩溃重投
             const normalized = normalizeSessionKey(sessionKey) || sessionKey;
@@ -3545,15 +3552,15 @@ function startHttpServer(): Promise<number> {
               try { setSessionOverride(normalized, { model, modelParams }); }
               catch (e: unknown) { log("WARN", `enqueue 模型 override 失败: ${e instanceof Error ? e.message : String(e)}`); }
             }
-            pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, { chatType });
+            pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, { chatType, ...senderMeta });
             trackMessageSession(effectiveId, normalized);
             rememberSessionKey(normalized);
             broadcastQueueEvent(chatIdFromSessionKey(normalized) || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined));
             log("INFO", `任务已直投会话队列: session=${normalized} len=${content.length}`);
           } else if (chatId) {
-            pushMessage(content, effectiveId, chatId, chatType);
+            pushMessage(content, effectiveId, chatId, chatType, senderOpenId || undefined, undefined, senderType ? { senderType } : undefined);
           } else {
-            pushMessage(content, effectiveId);
+            pushMessage(content, effectiveId, undefined, undefined, senderOpenId || undefined, undefined, senderType ? { senderType } : undefined);
           }
           json(res, { ok: true, queueLength: getFileQueueLength() });
           return;

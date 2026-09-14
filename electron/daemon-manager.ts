@@ -1216,7 +1216,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           const enqueueChatType = (matchedKey && projectIdFromSessionKey(matchedKey))
             ? "project"
             : (claimed.chatType === "group" ? "group" : "p2p")
-          const enq = await enqueueToSession(lock.port, matchedKey, `[打断] ${content}`, enqueueChatType, { messageId: claimed.messageId })
+          const enq = await enqueueToSession(lock.port, matchedKey, `[打断] ${content}`, enqueueChatType, { messageId: claimed.messageId, senderOpenId: claimed.senderOpenId, senderType: "user" })
           if (!enq.ok) {
             await reply(false, `❌ 入队失败: ${enq.error}`)
             break
