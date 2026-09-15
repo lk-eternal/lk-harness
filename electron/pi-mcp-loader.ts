@@ -89,6 +89,10 @@ async function getJiti(root: string): Promise<JitiImporter> {
   return jitiInstance
 }
 
+// Harness 默认压住 MCP UI 自动弹浏览器：工具返回的 UI 页只记日志地址，需手动打开。
+// adapter 原生支持 MCP_UI_VIEWER=none；用户已显式设置则尊重，不覆盖。
+if (!process.env.MCP_UI_VIEWER?.trim()) process.env.MCP_UI_VIEWER = "none"
+
 /** 运行时经 jiti 加载 pi-mcp-adapter（.ts 源码），避免 Node 原生 import 无法 strip node_modules 内 TS */
 export async function loadMcpExtension(config: PiMcpConfig): Promise<ExtensionFactory | undefined> {
   if (Object.keys(config.mcpServers).length === 0) return undefined
