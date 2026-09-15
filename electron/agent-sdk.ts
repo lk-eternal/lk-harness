@@ -27,7 +27,6 @@ import {
   enterSilentPollPhase,
   flushStreamCard,
   isFeishuChannel,
-  isFeishuStreamEnabled,
   isMediaSendInvocation,
   isPollMessageTool,
   isShowThinkingEnabled,
@@ -679,7 +678,7 @@ export type { PollPhaseEventPayload } from "./stream-card"
 function openStreamForSdkTurn(session: SdkSessionAgent): void {
   session.pollPhase.blocking = false
   session.pollPhase.nonBlocking = false
-  if (!isFeishuStreamEnabled(session.sessionKey)) return
+  if (!isFeishuChannel(session.sessionKey)) return
   if (!session.streamAgg || session.streamAgg.finished) {
     session.streamAgg = newStreamAgg(true)
   } else {
