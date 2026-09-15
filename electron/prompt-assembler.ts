@@ -241,7 +241,7 @@ function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessa
   if (!nodes.length) return undefined
   return {
     nodes,
-    rule: `用户本轮没点按钮、但话里是某个节点的事 → 先调 project_get_node(project_id=${proj.id}, node_id=命中id) 取全文再干，视同按钮任务；意图模糊或沾多个节点 → 先查状态再问，不凭记忆直接干。`,
+    rule: `判断用户消息内容是否对应某节点，如果明确命中→先调 project_get_node(project_id=${proj.id}, node_id=命中id) 获取完整提示词再干；未命中则直接处理用户消息即可`,
   }
 }
 
