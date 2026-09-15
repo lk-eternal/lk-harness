@@ -23,9 +23,9 @@ function normalizeServerEntry(cfg: Record<string, unknown>): PiMcpServerEntry {
   return entry
 }
 
-/** 交互会话用 lk-harness MCP 的 /mcp-interactive（无 send_text，有 send_question/媒体/项目） */
-export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
-  const raw = { ...buildSdkMcpServers(port, includeAdmin, "interactive") }
+/** 交互会话用 lk-harness MCP 的 /mcp-interactive（无 send_text，有 send_question/媒体/Diff）；项目会话另加 /mcp-project */
+export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean, includeProject = false): PiMcpConfig {
+  const raw = { ...buildSdkMcpServers(port, includeAdmin, "interactive", includeProject) }
   const mcpServers: Record<string, PiMcpServerEntry> = {}
   for (const [name, cfg] of Object.entries(raw)) {
     mcpServers[name] = normalizeServerEntry(cfg)
@@ -34,8 +34,8 @@ export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean)
 }
 
 /** 与 Cursor SDK `buildSdkMcpServers` 相同，转为 pi-mcp-adapter config */
-export function buildPiMcpConfig(port: number | null, includeAdmin: boolean): PiMcpConfig {
-  const raw = buildSdkMcpServers(port, includeAdmin)
+export function buildPiMcpConfig(port: number | null, includeAdmin: boolean, includeProject = false): PiMcpConfig {
+  const raw = buildSdkMcpServers(port, includeAdmin, "interactive", includeProject)
   const mcpServers: Record<string, PiMcpServerEntry> = {}
   for (const [name, cfg] of Object.entries(raw)) {
     mcpServers[name] = normalizeServerEntry(cfg)

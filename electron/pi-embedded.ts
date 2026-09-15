@@ -168,7 +168,9 @@ export async function createHarnessPiSession(
 
   const daemonPort = resolveDaemonPortForPrompt()
   const includeAdmin = opts.includeAdmin === true
-  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin)
+  // 项目会话另挂 lk-harness-project（与 agent-sdk 一致；宿主无 chatType，按 sessionKey 启发式，同 shouldIncludeAdminMcp 惯例）
+  const includeProject = opts.sessionKey?.includes("::project_") === true
+  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)
 
   // Always inject Harness protocol into appendSystemPrompt so resumed sessions

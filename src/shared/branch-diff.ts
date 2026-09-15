@@ -55,6 +55,30 @@ export function resolveRepoRoot(repoPath: string): string {
   }
 }
 
+/** 会话工作目录：与 daemon.ts extractWorkspaceDir 同规则（sessionKey 后缀为路径形态才是工作目录） */
+export function scopeDirFromSessionKey(sessionKey?: string): string | undefined {
+  if (!sessionKey) return undefined
+  const idx = sessionKey.indexOf("::")
+  if (idx < 0) return undefined
+  const wsDir = sessionKey.slice(idx + 2)
+  if (!wsDir || !/[\\/]/.test(wsDir)) return undefined
+  return wsDir
+}
+
+/** 越界即抛：有会话工作目录时，仓库根必须在其内部（大小写不敏感） */
+export function resolveScopedRepoRoot(repoPath: string, sessionKey?: string): string {
+  const root = resolveRepoRoot(repoPath)
+  const scope = scopeDirFromSessionKey(sessionKey)
+  if (!scope) return root
+  const norm = (p: string) => p.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  const r = norm(root)
+  const s = norm(scope)
+  if (r !== s && !r.startsWith(s + "\\") && !r.startsWith(s + "/")) {
+    throw new Error(`越界：repo_path 解析到 ${root}，不在当前会话工作目录 ${scope} 内`)
+  }
+  return root
+}
+
 function splitLines(text: string): string[] {
   const parts = text.split("\n")
   if (parts.length > 0 && parts[parts.length - 1] === "") parts.pop()
@@ -113,6 +137,7 @@ export function buildDiffData(opts: {
   paths?: string[]
   title?: string
   headLabel?: string
+  sessionKey?: string
   maxFiles?: number
   maxFileBytes?: number
   maxTotalBytes?: number
@@ -120,7 +145,7 @@ export function buildDiffData(opts: {
   const maxFiles = opts.maxFiles ?? LIMITS.maxFiles
   const maxFileBytes = opts.maxFileBytes ?? LIMITS.maxFileBytes
   const maxTotalBytes = opts.maxTotalBytes ?? LIMITS.maxTotalBytes
-  const root = resolveRepoRoot(opts.repoPath)
+  const root = resolveScopedRepoRoot(opts.repoPath, opts.sessionKey)
   const head = opts.headRef?.trim() ? opts.headRef.trim() : "HEAD"
   if (!revExists(root, opts.baseRef)) throw new Error(`ref 不存在：${opts.baseRef}`)
   if (!revExists(root, head)) throw new Error(`ref 不存在：${head}`)

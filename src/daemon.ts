@@ -3337,7 +3337,6 @@ function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean })
     },
   );
   registerDiffTools(s);
-  registerProjectAgentTools(s);
 }
 
 function createTaskMcpServer(): McpServer {
@@ -3346,10 +3345,17 @@ function createTaskMcpServer(): McpServer {
   return s;
 }
 
-/** 交互会话模式：无 send_text，保留 send_question / 媒体 / 项目工具（输出由流式卡片承载） */
+/** 交互会话模式：无 send_text，保留 send_question / 媒体 / Diff（输出由流式卡片承载） */
 function createInteractiveMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话出站 – 提问/媒体/项目" });
+  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话出站 – 提问/媒体/Diff" });
   registerAgentOutboundTools(s, { sendText: false });
+  return s;
+}
+
+/** 项目会话模式：仅项目工具 */
+function createProjectMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-project", version: PKG_VERSION, description: "项目工具 – 仅项目会话" });
+  registerProjectAgentTools(s);
   return s;
 }
 
@@ -3367,10 +3373,11 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive") {
+        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-project") {
           const isTask = pathname === "/mcp-task";
           const isInteractive = pathname === "/mcp-interactive";
-          const srv = isInteractive ? createInteractiveMcpServer() : isTask ? createTaskMcpServer() : createAdminMcpServer();
+          const isProject = pathname === "/mcp-project";
+          const srv = isInteractive ? createInteractiveMcpServer() : isTask ? createTaskMcpServer() : isProject ? createProjectMcpServer() : createAdminMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           if (isTask || isInteractive) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
           res.on("close", () => {
@@ -4970,7 +4977,7 @@ export async function daemonMain(): Promise<void> {
   daemonPort = await startHttpServer();
   process.env.LARK_DAEMON_PORT = String(daemonPort);
   writeLockFile(daemonPort);
-  log("INFO", "MCP 服务已就绪 (/mcp-task + /mcp-interactive + /mcp-admin)");
+  log("INFO", "MCP 服务已就绪 (/mcp-task + /mcp-interactive + /mcp-admin + /mcp-project)");
 
   setDaemonSchedulerLogger((msg) => { log("INFO", msg); });
   startDaemonScheduledTasks((task, content) => {

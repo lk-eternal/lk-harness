@@ -37,6 +37,7 @@ export function registerDiffTools(mcpServer: McpServer): void {
       base_ref: z.string().describe("Git 基线（commit/branch/tag）"),
       head_ref: z.string().optional().describe("Git 对比端，缺省 HEAD"),
       repo_path: z.string().describe("仓库根或子目录"),
+      session_key: z.string().optional().describe("当前会话 sessionKey；传入后 repo_path 必须在其工作目录内（防越界）"),
       paths: z.array(z.string()).optional().describe("只包含这些路径，缺省 base..head 全部变更"),
       title: z.string().optional().describe("页眉展示用（如分支名、MR 标题）"),
       head_label: z.string().optional().describe("页内对比标签文案，缺省由 head_ref 推导"),
@@ -50,6 +51,7 @@ export function registerDiffTools(mcpServer: McpServer): void {
           paths: args.paths,
           title: args.title,
           headLabel: args.head_label,
+          sessionKey: args.session_key,
         })
         const tpl = fs.readFileSync(resolveDiffTemplatePath(), "utf-8")
         const html = injectDiffData(tpl, data)

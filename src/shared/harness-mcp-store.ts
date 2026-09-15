@@ -15,8 +15,9 @@ export interface StoreFile {
 
 export const CLAW_MCP_KEY = "lk-harness"
 export const ADMIN_MCP_KEY = "lk-harness-admin"
+export const PROJECT_MCP_KEY = "lk-harness-project"
 
-const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY])
+const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY, PROJECT_MCP_KEY])
 
 let userDataRoot = ""
 
@@ -180,16 +181,17 @@ export function shouldIncludeAdminMcp(
 
 export type HarnessMcpEndpoint = "task" | "interactive";
 
-export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive"): Record<string, Record<string, unknown>> {
+export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive", includeProject = false): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
   if (port) {
     const base = `http://127.0.0.1:${port}`
     servers[CLAW_MCP_KEY] = { url: `${base}${endpoint === "task" ? "/mcp-task" : "/mcp-interactive"}` }
     if (includeAdmin) servers[ADMIN_MCP_KEY] = { url: `${base}/mcp-admin` }
+    if (includeProject) servers[PROJECT_MCP_KEY] = { url: `${base}/mcp-project` }
   }
   return servers
 }
 
-export function buildSdkMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive"): Record<string, Record<string, unknown>> {
-  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint), ...listEnabledHarnessMcpConfigs() }
+export function buildSdkMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive", includeProject = false): Record<string, Record<string, unknown>> {
+  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint, includeProject), ...listEnabledHarnessMcpConfigs() }
 }

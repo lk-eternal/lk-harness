@@ -1354,7 +1354,9 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const includeAdmin = opts.includeAdmin === true
     // 有卡片承载输出的一律走 interactive（无 send_text）；只有无卡片的定时任务走 task（有 send_text）
     const mcpEndpoint = chatType === "task" ? "task" : "interactive"
-    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint) as Record<string, McpServerConfig>
+    // 项目工具硬切：仅项目会话额外挂载 lk-harness-project，其余会话无 project_*
+    const includeProject = chatType === "project" || !!projectIdFromSessionKey(sessionKey)
+    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint, includeProject) as Record<string, McpServerConfig>
     const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
 
     // Resume 语义：

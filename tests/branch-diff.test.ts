@@ -3,7 +3,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 import { afterEach, describe, expect, it } from "vitest"
-import { buildDiffData, injectDiffData } from "../src/shared/branch-diff.js"
+import { buildDiffData, injectDiffData, resolveScopedRepoRoot } from "../src/shared/branch-diff.js"
 
 function git(cwd: string, args: string[]) {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8", windowsHide: true })
@@ -78,6 +78,23 @@ describe("buildDiffData", () => {
   it("超限失败并说明（不 silent 截断）", () => {
     const repo = initRepo()
     expect(() => buildDiffData({ repoPath: repo, baseRef: "HEAD~1", maxFiles: 0 })).toThrow(/超限/i)
+  })
+})
+
+describe("resolveScopedRepoRoot", () => {
+  it("会话内路径放行", () => {
+    const repo = initRepo()
+    expect(resolveScopedRepoRoot(repo, `chat::${repo}`)).toBeTruthy()
+  })
+
+  it("越界抛错", () => {
+    const repo = initRepo()
+    expect(() => resolveScopedRepoRoot(repo, "chat::D:/other/dir")).toThrow(/越界/)
+  })
+
+  it("无 session_key 不约束", () => {
+    const repo = initRepo()
+    expect(() => resolveScopedRepoRoot(repo)).not.toThrow()
   })
 })
 

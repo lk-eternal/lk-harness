@@ -5,6 +5,7 @@ import path from "node:path";
 import http from "node:http";
 import { LOCK_FILE_NAME } from "./shared/constants.js";
 import { parseChatKey } from "./shared/channel-types.js";
+import { listProjects, getProject } from "./shared/project-store.js";
 import { concatUtf8 } from "./shared/utf8-stream.js";
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR ?? "";
@@ -120,6 +121,28 @@ export function registerAdminTools(mcpServer: McpServer): void {
       } catch (e: any) {
         return txt(`❌ Daemon 通信失败: ${e?.message ?? e}`);
       }
+    },
+  );
+
+  // ── manage_project ──
+  mcpServer.tool(
+    "manage_project",
+    "管理项目。list=列出所有项目；delete=删除项目（宿主连带移除全部 worktree；不动主仓与远程分支，删除前必须先向用户确认）。",
+    {
+      action: z.enum(["list", "delete"]).describe("操作：list=列出所有项目, delete=删除项目"),
+      project_id: z.string().optional().describe("项目 ID（delete 时必填）"),
+    },
+    async ({ action, project_id }) => {
+      if (action === "list") {
+        const list = listProjects()
+        if (list.length === 0) return txt("📭 暂无项目")
+        const lines = list.map((p, i) => `#${i + 1} ${p.name} (${p.status}) id=${p.id} branch=${p.featureBranch}`)
+        return txt(lines.join("\n"))
+      }
+      const p = getProject(project_id ?? "")
+      if (!p) return txt("❌ 未找到项目")
+      process.stdout.write(`__PROJECT_DELETE__:${JSON.stringify({ projectId: project_id })}\n`)
+      return txt(`✅ 已提交删除「${p.name}」，宿主正在清理 worktree`)
     },
   );
 

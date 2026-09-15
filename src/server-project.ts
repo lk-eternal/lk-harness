@@ -6,8 +6,6 @@ import {
 
   getProject,
 
-  listProjects,
-
   getCurrentProject,
 
   getProjectNodes,
@@ -327,58 +325,6 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
       if (!available.includes(node_id)) return txt(`❌ 项目「${p.name}」无此节点：${node_id}\n可用节点：${available.join("、") || "（暂无）"}`)
 
       return txt(buildNodeActionPrompt(p, node_id, `自然语言命中 id=${node_id} 已取全文`))
-
-    },
-
-  )
-
-
-
-  mcpServer.tool(
-
-    "project_list",
-
-    "列出所有项目",
-
-    {},
-
-    async () => {
-
-      const list = listProjects()
-
-      if (list.length === 0) return txt("📭 暂无项目")
-
-      const lines = list.map((p, i) => `#${i + 1} ${p.name} (${p.status}) id=${p.id} branch=${p.featureBranch}`)
-
-      return txt(lines.join("\n"))
-
-    },
-
-  )
-
-
-
-  mcpServer.tool(
-
-    "project_delete",
-
-    "删除项目（宿主连带移除全部 worktree；不动主仓与远程分支）。删除前必须先向用户确认",
-
-    {
-
-      project_id: z.string().describe("项目 ID"),
-
-    },
-
-    async ({ project_id }) => {
-
-      const p = getProject(project_id)
-
-      if (!p) return txt("❌ 未找到项目")
-
-      process.stdout.write(`__PROJECT_DELETE__:${JSON.stringify({ projectId: project_id })}\n`)
-
-      return txt(`✅ 已提交删除「${p.name}」，宿主正在清理 worktree`)
 
     },
 
