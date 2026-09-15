@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.2.15",
+    "date": "2026-09-15",
+    "changes": [
+      "分支 Diff 通用工具 render_branch_diff：固定模板只换 #diff-data JSON，返回本地 HTML 绝对路径再 send_file 交付，task＋interactive 双端点，超限失败不明截断，越界（出会话工作目录）拒绝",
+      "项目 MCP 硬切拆分 lk-harness-project：仅项目会话挂载（5 工具），通用端点不再注册 project_*；project_list/delete 并入 admin 新工具 manage_project",
+      "MCP 设置页内置只读区：三组工具＋可用范围（Harness 内置 MCP），与用户自定义列表分离；清单与代码注册由测试锁死一致"
+    ]
+  },
+  {
     "version": "0.2.14",
     "date": "2026-09-15",
     "changes": [
