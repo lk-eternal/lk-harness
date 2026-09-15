@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process"
+import * as fs from "node:fs"
 
 export const LIMITS = { maxFiles: 120, maxFileBytes: 512 * 1024, maxTotalBytes: 8 * 1024 * 1024 }
 
@@ -70,7 +71,12 @@ export function resolveScopedRepoRoot(repoPath: string, sessionKey?: string): st
   const root = resolveRepoRoot(repoPath)
   const scope = scopeDirFromSessionKey(sessionKey)
   if (!scope) return root
-  const norm = (p: string) => p.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  const norm = (p: string) => {
+    let c = p
+    // 同一目录多种写法：win 8.3 短名、mac /var→/private 软链、分隔符/大小写差异——先 realpath 归一
+    try { c = fs.realpathSync(c) } catch { /* 路径不存在时用原文比 */ }
+    return c.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  }
   const r = norm(root)
   const s = norm(scope)
   if (r !== s && !r.startsWith(s + "\\") && !r.startsWith(s + "/")) {

@@ -34,7 +34,6 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
       scope: "仅项目会话可用",
       tools: [
         { name: "project_register_artifact", description: "登记项目最近产物（只写元数据）。" },
-        { name: "project_action_done", description: "【已弃用】兼容旧调用，请改用 project_register_artifact。" },
         { name: "project_update", description: "更新项目元数据。" },
         { name: "project_get", description: "查询项目（含节点摘要）。" },
         { name: "project_get_node", description: "取某节点全文（含完整提示词）。" },

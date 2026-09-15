@@ -22,6 +22,9 @@ function mcpToolTip(t: McpTool): string {
 /** MCP 列表 key 单一真相：只按 name，不掺 source（backend 曾由 claw 改名 harness，掺 source 即分叉转圈） */
 const mcpKey = (name: string): string => name
 
+/** 内置区在选中态里的哨兵 key（只占一行，详情走右侧，不进 JSON 编辑） */
+const BUILTIN_KEY = "__builtin__"
+
 export default function McpPanel() {
   const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
@@ -93,6 +96,18 @@ export default function McpPanel() {
     const inner = s.rawConfig ?? {}
     openDraft(s, { json: JSON.stringify({ [s.name]: inner }, null, 2) }, false)
     loadTools(s)
+  }
+
+  const selectBuiltin = async () => {
+    if (isDirty) {
+      const choice = await showUnsavedChoice("未保存", "当前 MCP 有未保存的修改，怎么办？", { save: "保存并切换" })
+      if (choice === "cancel") return
+      if (choice === "save" && !(await handleSave())) return
+    }
+    setSelectedKey(BUILTIN_KEY)
+    setDraft(null)
+    setOriginalName(null)
+    setIsNew(false)
   }
 
   const openAdd = async () => {
@@ -182,25 +197,11 @@ export default function McpPanel() {
     <>
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
-          <div className="mb-2 shrink-0 rounded-md border border-gray-800 bg-gray-900/40 px-1.5 py-1">
-            <p className="px-1 py-0.5 text-[10px] font-medium text-gray-500">Harness 内置 MCP</p>
-            {builtinGroups === null
-              ? <p className="px-1 py-0.5 text-[10px] text-gray-600">加载中…</p>
-              : builtinGroups.map((g) => (
-                <details key={g.key}>
-                  <summary className="cursor-pointer truncate px-1 py-0.5 text-xs text-gray-300 hover:text-white" title={`${g.title}（${g.scope}）`}>
-                    {g.title}<span className="text-gray-600"> · {g.scope}</span>
-                  </summary>
-                  <div className="flex flex-wrap gap-1 px-1 py-1">
-                    {g.tools.map((t) => (
-                      <span key={t.name} title={t.description} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-1.5 py-px text-[10px] text-gray-300">
-                        <Wrench size={10} className="text-gray-500" />{t.name}
-                      </span>
-                    ))}
-                  </div>
-                </details>
-              ))}
-          </div>
+          <button type="button" onClick={() => void selectBuiltin()}
+            className={`mb-1 flex w-full shrink-0 flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === BUILTIN_KEY ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
+            <span className="truncate text-xs font-medium">Harness 内置 MCP</span>
+            <span className="truncate text-[10px] text-gray-600">{builtinGroups ? `只读 · ${builtinGroups.reduce((n, g) => n + g.tools.length, 0)} 个工具` : "只读"}</span>
+          </button>
           <p className="shrink-0 px-1 py-0.5 text-[10px] font-medium text-gray-600">自定义</p>
           <div className={PANEL_LIST}>
             {servers.map((s) => {
@@ -281,6 +282,23 @@ export default function McpPanel() {
                 </div>
               </div>
             </>
+          ) : selectedKey === BUILTIN_KEY ? (
+            <div className={PANEL_SCROLL}>
+              {builtinGroups === null
+                ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
+                : builtinGroups.map((g) => (
+                  <div key={g.key} className="rounded-lg border border-gray-800 bg-gray-900/30 px-3 py-2">
+                    <p className="mb-1.5 text-xs font-medium text-gray-300">{g.title}<span className="ml-2 text-[10px] font-normal text-gray-500">{g.scope}</span></p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {g.tools.map((t) => (
+                        <span key={t.name} title={t.description} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300">
+                          <Wrench size={10} className="text-gray-500" />{t.name}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择 MCP</div>
           )}

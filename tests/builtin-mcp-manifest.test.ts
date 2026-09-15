@@ -31,9 +31,9 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
     )
   })
 
-  it("project 端点 == manifest 项目组（硬切锁死，5 个）", () => {
+  it("project 端点 == manifest 项目组（硬切锁死，4 个）", () => {
     expect(namesOf(registerProjectAgentTools)).toEqual(groupNames("lk-harness-project"))
-    expect(groupNames("lk-harness-project")).toHaveLength(5)
+    expect(groupNames("lk-harness-project")).toHaveLength(4)
   })
 
   it("admin 端点 == manifest 自管理组（含 manage_project）", () => {

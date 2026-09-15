@@ -80,62 +80,6 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
   mcpServer.tool(
 
-    "project_action_done",
-
-    "【已弃用】请改用 project_register_artifact。兼容旧调用：仅登记产物元数据，不再自动发文件/菜单",
-
-    {
-
-      project_id: z.string().describe("项目 ID"),
-
-      action_id: z.string().optional().describe("已忽略（兼容旧参数）"),
-
-      status: z.enum(["awaiting_ack", "accepted", "rejected", "failed"]).optional().describe("已忽略（兼容旧参数）"),
-
-      artifact_path: z.string().optional().describe("artifact 相对或绝对路径"),
-
-      summary: z.string().optional(),
-
-      mr_url: z.string().optional(),
-
-      error: z.string().optional(),
-
-      feishu_doc_url: z.string().optional(),
-
-    },
-
-    async (args) => {
-
-      if (!args.artifact_path) {
-
-        return txt("⚠️ project_action_done 已弃用且无产物可登记；请改用 project_register_artifact，或用 send_file 交付用户")
-
-      }
-
-      const r = registerArtifact(args.project_id, {
-
-        artifactPath: args.artifact_path,
-
-        summary: args.summary,
-
-        mrUrl: args.mr_url,
-
-        feishuDocUrl: args.feishu_doc_url,
-
-      })
-
-      if (!r.ok) return txt(`❌ ${r.error}`)
-
-      return txt(`✅ 已登记产物（兼容 project_action_done；请改用 project_register_artifact）`)
-
-    },
-
-  )
-
-
-
-  mcpServer.tool(
-
     "project_update",
 
     "更新项目元数据。字段红线：baseBranch=生产基线，只作切 feature 起点，禁止默认作为 ship 推送/MR 目标；testBranch=测试环境；developBranch=开发环境。可补齐 repos[].testBranch/developBranch、goal、文档链接、metadata（KV merge，空值删 key）等。",
