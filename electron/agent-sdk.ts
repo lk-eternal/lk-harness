@@ -21,7 +21,6 @@ import {
   type StreamTodoItem,
   applyTodoUpdate,
   buildStreamPayload,
-  endStreamRound,
   enqueueReply,
   enqueueThinking,
   enqueueTool,
@@ -910,15 +909,12 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
         }
         if (shouldOmitFromStreamCard(event.name, detectSummary, event.args)) {
           if (isMediaSendInvocation(event.name, detectSummary, event.args)) {
+            // 媒体走独立消息，与正文正交：running/completed/error 都只封思考态，
+            // 整卡不 finish、不换 bornAt，后续正文续写同一张卡（整轮单卡）。
             stream.gateOpen = true
-            if (event.status === "running") {
-              sealLastThinking(stream)
-              stream.forceNewThinking = true
-              scheduleFlushStreamCard(session, true)
-            } else {
-              // completed/error：与 daemon seal 对齐，换新队列，防复制整卡 / 思考中挂起
-              endStreamRound(session)
-            }
+            sealLastThinking(stream)
+            stream.forceNewThinking = true
+            scheduleFlushStreamCard(session, true)
             break
           }
           // poll / send_question 等协议工具：不 gateOpen、不刷首卡，等 poll-phase 结束统一开门
