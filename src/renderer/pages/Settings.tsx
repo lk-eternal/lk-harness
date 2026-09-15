@@ -64,7 +64,7 @@ type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks"
 type CloseWindowAction = "ask" | "minimize" | "quit"
 
 interface McpEditForm {
-  json: string; source: "claw"; jsonError?: string
+  json: string; source: "claw" | "harness"; jsonError?: string
 }
 interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 interface TaskItem {
