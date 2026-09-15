@@ -87,10 +87,15 @@ describe("resolveScopedRepoRoot", () => {
     expect(resolveScopedRepoRoot(repo, `chat::${repo}`)).toBeTruthy()
   })
 
-  it("同一目录不同写法放行（大小写/分隔符/短名）", () => {
+  it("同一目录点号写法放行（全平台）", () => {
     const repo = initRepo()
-    const alias = repo.toUpperCase().replace(/\//g, "\\")
-    expect(resolveScopedRepoRoot(repo, `chat::${alias}`)).toBeTruthy()
+    expect(resolveScopedRepoRoot(repo, `chat::${path.join(repo, ".")}`)).toBeTruthy()
+  })
+
+  // 大小写不敏感是 Windows 才有的属性，mac 跑它属于考错试
+  it.skipIf(process.platform !== "win32")("同一目录大小写写法放行（仅 Windows）", () => {
+    const repo = initRepo()
+    expect(resolveScopedRepoRoot(repo, `chat::${repo.toUpperCase()}`)).toBeTruthy()
   })
 
   it("仓库根在会话目录内部放行", () => {

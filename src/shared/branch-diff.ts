@@ -94,8 +94,12 @@ export function resolveScopedRepoRoot(repoPath: string, sessionKey?: string): st
     }
     throw new Error(`越界：repo_path 解析到 ${root}，不在当前会话工作目录 ${scope} 内`)
   }
-  // scope 不存在时的兜底：字符串比对（大小写/分隔符不敏感）
-  const norm = (p: string) => p.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  // scope 不存在时的兜底：先 realpath 解软链，再大小写/分隔符归一
+  const norm = (p: string) => {
+    let c = p
+    try { c = fs.realpathSync(c) } catch { /* 路径不存在时用原文比 */ }
+    return c.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  }
   const r = norm(root)
   const s = norm(scope)
   if (r !== s && !r.startsWith(s + "\\") && !r.startsWith(s + "/")) {
