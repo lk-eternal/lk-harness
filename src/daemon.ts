@@ -52,6 +52,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
+import { registerDiffTools } from "./server-diff.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
   initHarnessMcpStore,
@@ -3335,6 +3336,7 @@ function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean })
       }
     },
   );
+  registerDiffTools(s);
   registerProjectAgentTools(s);
 }
 
