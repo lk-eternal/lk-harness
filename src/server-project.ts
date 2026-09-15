@@ -10,6 +10,10 @@ import {
 
   getCurrentProject,
 
+  getProjectNodes,
+
+  projectGroupIds,
+
   registerArtifact,
 
   mergeProjectMetadata,
@@ -17,6 +21,8 @@ import {
 } from "./shared/project-store.js"
 
 import { projectIdFromSessionKey } from "./shared/project-types.js"
+
+import { buildNodeActionPrompt } from "./shared/project-node-guides.js"
 
 
 
@@ -285,6 +291,42 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
       if (!p) return txt("❌ 未找到项目")
 
       return txt(JSON.stringify(p, null, 2))
+
+    },
+
+  )
+
+  mcpServer.tool(
+
+    "project_get_node",
+
+    "查询单节点完整要求（含自定义 prompt 回退，与按钮点击注入同源；自然语言命中节点后必须先调本口再干活）",
+
+    {
+
+      project_id: z.string().optional().describe("项目 ID；缺省当前项目；也可从 session 推断"),
+
+      node_id: z.string().describe("节点 id（会话可用节点索引中的 id，原样使用）"),
+
+      session_key: z.string().optional(),
+
+    },
+
+    async ({ project_id, node_id, session_key }) => {
+
+      let id = project_id
+
+      if (!id && session_key) id = projectIdFromSessionKey(session_key)
+
+      const p = id ? getProject(id) : getCurrentProject()
+
+      if (!p) return txt("❌ 未找到项目")
+
+      const available = projectGroupIds(p).flatMap((gid) => getProjectNodes(gid).map((n) => n.id))
+
+      if (!available.includes(node_id)) return txt(`❌ 项目「${p.name}」无此节点：${node_id}\n可用节点：${available.join("、") || "（暂无）"}`)
+
+      return txt(buildNodeActionPrompt(p, node_id, `自然语言命中 id=${node_id} 已取全文`))
 
     },
 
