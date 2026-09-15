@@ -292,6 +292,7 @@ const api = {
   getMcpEnabledMap: (force?: boolean): Promise<Record<string, boolean>> => ipcRenderer.invoke("mcp:enabled-map", force),
   getMcpStatusMap: (force?: boolean): Promise<Record<string, string>> => ipcRenderer.invoke("mcp:status-map", force),
   getMcpTools: (name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }> => ipcRenderer.invoke("mcp:tools", name, force),
+  getBuiltinMcpManifest: (): Promise<{ key: string; title: string; scope: string; tools: { name: string; description: string }[] }[]> => ipcRenderer.invoke("mcp:builtin-manifest"),
   getHarnessRules: (): Promise<{ id: string; name: string; content: string; enabled: boolean; scope?: import("../src/shared/harness-rule-store.js").RuleScope }[]> => ipcRenderer.invoke("harness-rules:list"),
   saveHarnessRule: (id: string | null, name: string, content: string, enabled?: boolean, scope?: import("../src/shared/harness-rule-store.js").RuleScope): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }> => ipcRenderer.invoke("harness-rules:save", id, name, content, enabled, scope),
   deleteHarnessRule: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("harness-rules:delete", id),

@@ -60,7 +60,7 @@ declare global {
     args?: string[]
     url?: string
     env?: Record<string, string>
-    source: "claw"
+    source: "claw" | "harness"
     authenticated?: boolean
     rawConfig?: Record<string, unknown>
     enabled?: boolean
@@ -226,13 +226,14 @@ declare global {
     getScheduledTaskStatus(): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>>
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void
     getMcpServers(): Promise<McpServerEntry[]>
-    saveMcpServer(name: string, entry: Record<string, unknown>, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }>
-    deleteMcpServer(name: string, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }>
+    saveMcpServer(name: string, entry: Record<string, unknown>, source?: "claw" | "harness" | "global" | "project"): Promise<{ ok: boolean }>
+    deleteMcpServer(name: string, source?: "claw" | "harness" | "global" | "project"): Promise<{ ok: boolean }>
     loginMcp(name: string): Promise<{ ok: boolean; output: string }>
     toggleMcp(name: string, enabled: boolean): Promise<{ ok: boolean; output: string }>
     getMcpEnabledMap(force?: boolean): Promise<Record<string, boolean>>
     getMcpStatusMap(force?: boolean): Promise<Record<string, string>>
     getMcpTools(name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
+    getBuiltinMcpManifest(): Promise<{ key: string; title: string; scope: string; tools: { name: string; description: string }[] }[]>
     getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } }[]>
     saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean, scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] }): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } } }>
     deleteHarnessRule(id: string): Promise<{ ok: boolean }>

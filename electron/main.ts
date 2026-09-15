@@ -6,6 +6,7 @@ import { getConfig, saveConfig, migrateSecretsToSafeStorage, getAgentResource } 
 import type { AppConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
 import type { AgentResource } from "../src/shared/channel-types"
+import { getBuiltinMcpManifest } from "../src/shared/builtin-mcp-manifest.js"
 import {
   startDaemon,
   stopDaemon,
@@ -274,6 +275,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle("mcp:enabled-map", (_, force?: boolean) => getMcpEnabledMap(force ?? false))
   ipcMain.handle("mcp:status-map", (_, force?: boolean) => getMcpStatusMap(force ?? false))
   ipcMain.handle("mcp:tools", (_, name: string, force?: boolean) => getMcpServerTools(name, force ?? false))
+  ipcMain.handle("mcp:builtin-manifest", () => getBuiltinMcpManifest())
 
   migrateLegacyRulesOnce()
   ipcMain.handle("claw-rules:list", () => listHarnessRules())

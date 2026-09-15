@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react"
 import { Plus, Trash2, Loader2, LogIn, Terminal, Wrench } from "lucide-react"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER, mcpEntryKey } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
 const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 const MCP_TEMPLATE = JSON.stringify({ "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] } }, null, 2)
@@ -19,6 +19,9 @@ function mcpToolTip(t: McpTool): string {
   return lines.length ? lines.join("\n") : t.name
 }
 
+/** MCP 列表 key 单一真相：只按 name，不掺 source（backend 曾由 claw 改名 harness，掺 source 即分叉转圈） */
+const mcpKey = (name: string): string => name
+
 export default function McpPanel() {
   const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
@@ -27,6 +30,7 @@ export default function McpPanel() {
   const [mcpStatus, setMcpStatus] = useState<Record<string, string>>({})
   const [mcpTools, setMcpTools] = useState<Record<string, { loading: boolean; tools: McpTool[]; error?: string }>>({})
   const [mcpLoginPending, setMcpLoginPending] = useState<Record<string, boolean>>({})
+  const [builtinGroups, setBuiltinGroups] = useState<{ key: string; title: string; scope: string; tools: { name: string; description: string }[] }[] | null>(null)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [draft, setDraft] = useState<McpEditForm | null>(null)
   const [originalName, setOriginalName] = useState<string | null>(null)
@@ -48,14 +52,20 @@ export default function McpPanel() {
   }, [])
 
   const loadTools = useCallback((s: McpServerEntry, force = false) => {
-    const key = mcpEntryKey(s.source, s.name)
+    const key = mcpKey(s.name)
     setMcpTools((p) => ({ ...p, [key]: { loading: true, tools: p[key]?.tools ?? [] } }))
     window.electronAPI.getMcpTools(s.name, force).then((res) => {
       setMcpTools((p) => ({ ...p, [key]: { loading: false, tools: res.tools, error: res.ok ? undefined : res.error } }))
+    }).catch((e) => {
+      setMcpTools((p) => ({ ...p, [key]: { loading: false, tools: [], error: e?.message ?? "加载失败" } }))
     })
   }, [])
 
   useEffect(() => { void reload() }, [reload])
+
+  useEffect(() => {
+    window.electronAPI.getBuiltinMcpManifest().then(setBuiltinGroups).catch(() => setBuiltinGroups([]))
+  }, [])
 
   useEffect(() => {
     const unsub = window.electronAPI.onMcpLoginComplete(({ serverName, ok }) => {
@@ -67,7 +77,7 @@ export default function McpPanel() {
   const isDirty = draft ? JSON.stringify(draft) !== savedSnapshot : false
 
   const openDraft = (s: McpServerEntry | null, form: McpEditForm, asNew: boolean) => {
-    setSelectedKey(s ? mcpEntryKey("claw", s.name) : null)
+    setSelectedKey(s ? mcpKey(s.name) : null)
     setDraft(form)
     setOriginalName(s?.name ?? null)
     setSavedSnapshot(JSON.stringify(form))
@@ -98,12 +108,12 @@ export default function McpPanel() {
     if (!currentServer) return
     const { name, enabled } = currentServer
     const next = !enabled
-    setServers((prev) => prev.map((s) => mcpEntryKey(s.source, s.name) === selectedKey ? { ...s, enabled: next } : s))
+    setServers((prev) => prev.map((s) => mcpKey(s.name) === selectedKey ? { ...s, enabled: next } : s))
     setMcpLoading((p) => ({ ...p, [selectedKey!]: true }))
     const res = await window.electronAPI.toggleMcp(name, next)
     setMcpLoading((p) => ({ ...p, [selectedKey!]: false }))
     if (!res.ok) {
-      setServers((prev) => prev.map((s) => mcpEntryKey(s.source, s.name) === selectedKey ? { ...s, enabled: !next } : s))
+      setServers((prev) => prev.map((s) => mcpKey(s.name) === selectedKey ? { ...s, enabled: !next } : s))
       void showAlert("错误", res.output || `MCP ${next ? "启用" : "禁用"}失败`)
     }
   }
@@ -140,7 +150,7 @@ export default function McpPanel() {
     if (isNewEntry) await window.electronAPI.toggleMcp(name, true)
     markSaved()
     await reload(true)
-    const saved = { name, type: ("url" in (entry as object) ? "url" : "command") as "url" | "command", source: "claw" as const, rawConfig: entry as Record<string, unknown>, enabled: true, authenticated: false } as McpServerEntry
+    const saved = { name, type: ("url" in (entry as object) ? "url" : "command") as "url" | "command", source: "harness" as const, rawConfig: entry as Record<string, unknown>, enabled: true, authenticated: false } as McpServerEntry
     openDraft(saved, { json: JSON.stringify({ [name]: entry }, null, 2) }, false)
     loadTools(saved, true)
     return true
@@ -165,16 +175,36 @@ export default function McpPanel() {
     else setDraft(JSON.parse(savedSnapshot) as McpEditForm)
   }
 
-  const currentServer = selectedKey ? servers.find((s) => mcpEntryKey("claw", s.name) === selectedKey) : null
+  const currentServer = selectedKey ? servers.find((s) => s.name === selectedKey) : null
   const toolState = selectedKey ? mcpTools[selectedKey] : undefined
 
   return (
     <>
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
+          <div className="mb-2 shrink-0 rounded-md border border-gray-800 bg-gray-900/40 px-1.5 py-1">
+            <p className="px-1 py-0.5 text-[10px] font-medium text-gray-500">Harness 内置 MCP</p>
+            {builtinGroups === null
+              ? <p className="px-1 py-0.5 text-[10px] text-gray-600">加载中…</p>
+              : builtinGroups.map((g) => (
+                <details key={g.key}>
+                  <summary className="cursor-pointer truncate px-1 py-0.5 text-xs text-gray-300 hover:text-white" title={`${g.title}（${g.scope}）`}>
+                    {g.title}<span className="text-gray-600"> · {g.scope}</span>
+                  </summary>
+                  <div className="flex flex-wrap gap-1 px-1 py-1">
+                    {g.tools.map((t) => (
+                      <span key={t.name} title={t.description} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-1.5 py-px text-[10px] text-gray-300">
+                        <Wrench size={10} className="text-gray-500" />{t.name}
+                      </span>
+                    ))}
+                  </div>
+                </details>
+              ))}
+          </div>
+          <p className="shrink-0 px-1 py-0.5 text-[10px] font-medium text-gray-600">自定义</p>
           <div className={PANEL_LIST}>
             {servers.map((s) => {
-              const key = mcpEntryKey("claw", s.name)
+              const key = mcpKey(s.name)
               const rawStatus = mcpStatus[s.name]
               const isReady = rawStatus === "ready" || rawStatus === "enabled"
               const statusText = s.enabled ? (isReady ? "ready" : rawStatus || "—") : "disabled"

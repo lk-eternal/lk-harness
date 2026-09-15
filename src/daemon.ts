@@ -3249,7 +3249,7 @@ function localDaemonUrl(p: string): string {
   return `http://127.0.0.1:${daemonPort}${p}`;
 }
 
-function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean }): void {
+export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean }): void {
   if (opts?.sendText !== false) {
     s.tool(
       "send_text",
