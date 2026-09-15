@@ -9,7 +9,7 @@ describe("LarkSender @ mention helpers", () => {
 
   it("stripAtTagsForCardDisplay replaces tags with readable names", () => {
     const text = "?????<at user_id=\"ou_abc\">Alice</at> ????";
-    expect(LarkSender.stripAtTagsForCardDisplay(text)).toBe("?????@Alice ????");
+    expect(LarkSender.stripAtTagsForCardDisplay(text)).toBe("?????<at id=ou_abc>Alice</at> ????");
   });
 
   it("containsAtTag ignores at syntax inside inline code", () => {

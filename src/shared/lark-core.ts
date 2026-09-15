@@ -154,11 +154,20 @@ export class LarkSender {
     }
   }
 
-  /** 文本中含 `<at user_id="ou_xxx">` 标签时需用 text 消息发送才能产生真实 mention（触发被 @ 机器人的事件推送）。
-   * 代码块/行内代码里的 at 语法只是引用示例，先剥离再判断，否则技术讨论消息会被误降级为纯文本。 */
+  /** 剥离代码块/行内代码：at 语法在引用示例里不算真实 mention（判空与抽取共用，单源）。
+   * 文本中含 `<at user_id="ou_xxx">` 标签时需用 text 消息发送才能产生真实 mention（触发被 @ 机器人的事件推送），否则技术讨论消息会被误降级为纯文本。 */
+  private static stripCodeBlocks(text: string): string {
+    return text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
+  }
+
+  /** 抽取真实 at 标签（跳过代码块/行内代码）；判空用 containsAtTag */
+  static extractAtTags(text: string): string[] {
+    const stripped = LarkSender.stripCodeBlocks(text);
+    return stripped.match(/<at\s+user_id="[^"]+"[^>]*>[^<]*<\/at>/gi) ?? [];
+  }
+
   static containsAtTag(text: string): boolean {
-    const stripped = text.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
-    return /<at\s+user_id=/.test(stripped);
+    return LarkSender.extractAtTags(text).length > 0;
   }
 
   /** IM→卡片语法直转：`<at user_id="ou_xxx">名</at>` → `<at id=ou_xxx>名</at>`，卡内即蓝可点又推 @ 角标 */
