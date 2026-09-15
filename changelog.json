@@ -5,7 +5,7 @@
     "changes": [
       "MCP UI 默认不再自动弹浏览器（MCP_UI_VIEWER=none），翻译插件噪声不再触发 mcp-ui-intent 循环；需交互时按日志地址手动打开",
       "pi 全系升 0.85.1、pi-mcp-adapter 升 2.34.0",
-      "MCP 设置页内置区改右侧详情展示；project_action_done 删除（清单 4 工具对齐）；branch-diff 会话目录越界改 realpath 归一判断"
+      "MCP 设置页内置区改右侧详情展示；project_action_done 删除（清单 4 工具对齐）；branch-diff 会话目录越界改文件身份（dev+ino）比对，修 CI 上 win 8.3 短名误杀"
     ]
   },
   {

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process"
 import * as fs from "node:fs"
+import * as path from "node:path"
 
 export const LIMITS = { maxFiles: 120, maxFileBytes: 512 * 1024, maxTotalBytes: 8 * 1024 * 1024 }
 
@@ -66,17 +67,35 @@ export function scopeDirFromSessionKey(sessionKey?: string): string | undefined 
   return wsDir
 }
 
-/** 越界即抛：有会话工作目录时，仓库根必须在其内部（大小写不敏感） */
+/** 目录身份：dev+ino，同一目录的短名/大小写/分隔符/软链写法收敛到同一身份 */
+function dirId(p: string): string | undefined {
+  try {
+    const s = fs.statSync(p)
+    return `${s.dev}:${s.ino}`
+  } catch {
+    return undefined
+  }
+}
+
+/** 越界即抛：有会话工作目录时，仓库根必须与其同目录或在其内部 */
 export function resolveScopedRepoRoot(repoPath: string, sessionKey?: string): string {
   const root = resolveRepoRoot(repoPath)
   const scope = scopeDirFromSessionKey(sessionKey)
   if (!scope) return root
-  const norm = (p: string) => {
-    let c = p
-    // 同一目录多种写法：win 8.3 短名、mac /var→/private 软链、分隔符/大小写差异——先 realpath 归一
-    try { c = fs.realpathSync(c) } catch { /* 路径不存在时用原文比 */ }
-    return c.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
+  // 身份比对：win 8.3 短名（RUNNER~1）这类写法差异直接免疫
+  const scopeId = dirId(scope)
+  if (scopeId) {
+    let cur = root
+    for (;;) {
+      if (dirId(cur) === scopeId) return root
+      const parent = path.dirname(cur)
+      if (parent === cur) break
+      cur = parent
+    }
+    throw new Error(`越界：repo_path 解析到 ${root}，不在当前会话工作目录 ${scope} 内`)
   }
+  // scope 不存在时的兜底：字符串比对（大小写/分隔符不敏感）
+  const norm = (p: string) => p.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase()
   const r = norm(root)
   const s = norm(scope)
   if (r !== s && !r.startsWith(s + "\\") && !r.startsWith(s + "/")) {

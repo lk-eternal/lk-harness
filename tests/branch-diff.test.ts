@@ -87,6 +87,17 @@ describe("resolveScopedRepoRoot", () => {
     expect(resolveScopedRepoRoot(repo, `chat::${repo}`)).toBeTruthy()
   })
 
+  it("同一目录不同写法放行（大小写/分隔符/短名）", () => {
+    const repo = initRepo()
+    const alias = repo.toUpperCase().replace(/\//g, "\\")
+    expect(resolveScopedRepoRoot(repo, `chat::${alias}`)).toBeTruthy()
+  })
+
+  it("仓库根在会话目录内部放行", () => {
+    const repo = initRepo()
+    expect(resolveScopedRepoRoot(repo, `chat::${path.dirname(repo)}`)).toBeTruthy()
+  })
+
   it("越界抛错", () => {
     const repo = initRepo()
     expect(() => resolveScopedRepoRoot(repo, "chat::D:/other/dir")).toThrow(/越界/)
