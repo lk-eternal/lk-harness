@@ -3,7 +3,7 @@ import type { LlmApiProtocol } from "../src/shared/agent-providers"
 import { getModel, getModels, type Model, type Api } from "@mariozechner/pi-ai/compat"
 import {
   resolveCustomModelApi,
-  normalizeGatewayRoot,
+  normalizeModelBaseUrl,
   fetchGatewayModels,
   listBuiltinModels,
   lookupCatalogModel,
@@ -32,7 +32,8 @@ export function resolveLlmModel(resource: AgentResource, modelId?: string): Mode
     const id = modelId?.trim()
     if (!id || !resource.baseUrl?.trim()) return null
     // 自定义网关以 models.dev 为准（按 baseUrl 找对应提供商）；pi 表只作断网/缺失兜底
-    const api = resolveCustomModelApi(id, resource.baseUrl) as Api
+    const protocol = resolveCustomModelApi(id, resource.baseUrl)
+    const api = protocol as Api
     const meta = lookupCatalogModel(id, resource.baseUrl) ?? lookupCatalogModel(id)
     const pi = lookupPiModel(id)
     return {
@@ -40,7 +41,7 @@ export function resolveLlmModel(resource: AgentResource, modelId?: string): Mode
       name: pi?.name ?? meta?.name ?? id,
       api,
       provider: resource.id,
-      baseUrl: normalizeGatewayRoot(resource.baseUrl),
+      baseUrl: normalizeModelBaseUrl(resource.baseUrl, protocol),
       reasoning: meta?.reasoning ?? pi?.reasoning ?? false,
       input: meta?.input ?? pi?.input ?? ["text"],
       cost: pi?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

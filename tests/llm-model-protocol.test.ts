@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { resolveCustomModelApi, normalizeGatewayRoot } from "../electron/llm-model-catalog"
+import { resolveCustomModelApi, normalizeGatewayRoot, normalizeModelBaseUrl } from "../electron/llm-model-catalog"
 
 /**
  * pi 内置表这条分支在这里测不到：getModel 依赖 pi 运行时的 provider 注册，
@@ -26,5 +26,16 @@ describe("normalizeGatewayRoot", () => {
     expect(normalizeGatewayRoot("https://relay.example.com/openai/v1/chat/completions")).toBe("https://relay.example.com/openai/v1")
     expect(normalizeGatewayRoot("https://opencode.ai/zen/go/v1/responses")).toBe("https://opencode.ai/zen/go/v1")
     expect(normalizeGatewayRoot("https://gw.example.com/v1")).toBe("https://gw.example.com/v1")
+  })
+})
+
+describe("normalizeModelBaseUrl", () => {
+  it("anthropic 面剥尾部 /v1（SDK 自拼 /v1/messages），其余面原样", () => {
+    expect(normalizeModelBaseUrl("https://opencode.ai/zen/v1", "anthropic-messages")).toBe("https://opencode.ai/zen")
+    expect(normalizeModelBaseUrl("https://ai-gW3qIw.zeusl.ink/v1/messages", "anthropic-messages")).toBe("https://ai-gW3qIw.zeusl.ink")
+    expect(normalizeModelBaseUrl("https://gw.example.com/v1", "anthropic-messages")).toBe("https://gw.example.com")
+    expect(normalizeModelBaseUrl("https://opencode.ai/zen", "anthropic-messages")).toBe("https://opencode.ai/zen")
+    expect(normalizeModelBaseUrl("https://opencode.ai/zen/v1", "openai-completions")).toBe("https://opencode.ai/zen/v1")
+    expect(normalizeModelBaseUrl("https://opencode.ai/zen/v1", "openai-responses")).toBe("https://opencode.ai/zen/v1")
   })
 })

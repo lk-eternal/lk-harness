@@ -270,6 +270,17 @@ export function normalizeGatewayRoot(baseUrl: string): string {
   return url
 }
 
+/**
+ * 组 pi 模型用的 baseUrl：通用归一化之后，anthropic 面再剥一层尾部 /v1。
+ * Anthropic SDK 以 baseUrl 为根自己拼 /v1/messages，网关地址带 /v1 会拼出双 /v1（404）。
+ * 缓存 key 与 /models 探测仍走 normalizeGatewayRoot，不经过本函数。
+ */
+export function normalizeModelBaseUrl(baseUrl: string, api: LlmApiProtocol): string {
+  const root = normalizeGatewayRoot(baseUrl)
+  if (api === "anthropic-messages") return root.replace(/\/v1$/i, "")
+  return root
+}
+
 export async function fetchGatewayModels(
   baseUrl: string,
   apiKey: string,
