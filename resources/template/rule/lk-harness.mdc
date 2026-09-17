@@ -11,7 +11,7 @@ alwaysApply: true
 除基础工具外LK Harness额外提供以下工具
 
 **`send_question`** — 点选提问  
-必填：`text`、`options`（1–10 个字符串）、`session_key`  
+必填：`text`（问题题目,问题保持简练,不要在问题中写结论）、`options`（选项,每个选项1–10 个字符串,选项前无需序号,渲染层会自动带上序号）、`session_key`  
 可选：`message_id`
 
 **`send_image`** — 发图片  
