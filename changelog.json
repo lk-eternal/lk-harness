@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.2.18",
+    "date": "2026-09-18",
+    "changes": [
+      "引用消息对象化：quoted_content 改 quoted_message（含 message_id 与发送方身份，机器人不再误判为 user），投递/镜像/搬运全链透传",
+      "卡片表格解析补发卡方真形态：columns 表头 + 对象行 + 数组 cell，旧 header.titles 仍兼容",
+      "搬运只留结构化：删文本 block 兜底，老搬运单无 history 即无单",
+      "修流式卡丢头：预热队列早于投递收口时首个 ensure 被误杀，回合开干前重定未建卡队列 bornAt",
+      "修定时任务孤儿卡：daemon 经 MCP 合并建卡而 Electron 侧无 agg 时，终态补无 cardId finish"
+    ]
+  },
+  {
     "version": "0.2.17",
     "date": "2026-09-15",
     "changes": [
