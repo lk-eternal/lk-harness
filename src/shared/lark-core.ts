@@ -134,6 +134,39 @@ export class LarkSender {
     return false;
   }
 
+  /** 发送方归一（事件与引用抓取共用单源）：app→bot；缺字段时看 sender_id 有 app 标识无 open_id 即 bot */
+  static normalizeSender(senderObj: any): { senderType: "user" | "bot"; senderOpenId?: string } {
+    const raw = senderObj?.sender_type;
+    const sid = senderObj?.sender_id ?? {};
+    const openId: string | undefined = sid.open_id ?? senderObj?.open_bot_id;
+    const appId: string | undefined = sid.app_id ?? senderObj?.app_id;
+    if (raw === "app") return { senderType: "bot", senderOpenId: openId ?? appId };
+    if (raw === "user") return { senderType: "user", senderOpenId: openId };
+    if (!openId && appId) return { senderType: "bot", senderOpenId: appId };
+    return { senderType: "user", senderOpenId: openId };
+  }
+
+  async fetchQuotedMessage(messageId: string): Promise<QuotedMessage | null> {
+    try {
+      const res = await this.client.im.message.get({
+        path: { message_id: messageId },
+        params: { card_msg_content_type: "user_card_content" } as any,
+      });
+      const item = (res as any)?.data?.items?.[0];
+      const content = item?.body?.content;
+      if (!content) return null;
+      const msgType: string = item?.msg_type ?? "text";
+      const result = await this.processIncomingMessage(messageId, msgType, content);
+      const text = result ? result.replace(/@_user_\d+\s?/g, "").trim() || null : null;
+      if (!text) return null;
+      const { senderType, senderOpenId } = LarkSender.normalizeSender(item?.sender);
+      return { message_id: messageId, sender_type: senderType, ...(senderOpenId ? { sender_open_id: senderOpenId } : {}), text };
+    } catch (e: any) {
+      this.log("DEBUG", `拉取引用消息失败 (${messageId}): ${e?.message ?? e}`);
+      return null;
+    }
+  }
+
   async fetchMessageContent(messageId: string): Promise<string | null> {
     try {
       const res = await this.client.im.message.get({
@@ -1755,6 +1788,13 @@ export class LarkSender {
 
   // ── 消息解析 & 处理 ───────────────────────────────────
 
+  private static tableCellText(c: any): string {
+    if (c == null) return "";
+    if (Array.isArray(c)) return c.map((x) => x?.text ?? x?.content ?? "").filter(Boolean).join("");
+    if (typeof c === "object") return c.text ?? c.content ?? "";
+    return String(c);
+  }
+
   private static extractCardText(elements: any[], parts: string[]): void {
     for (const el of elements) {
       if (!el) continue;
@@ -1803,14 +1843,23 @@ export class LarkSender {
             if (noteTexts.length) parts.push(noteTexts.join(" "));
           }
           break;
-        case "table":
-          if (el.header?.titles) parts.push(el.header.titles.map((t: any) => t.content ?? t).join(" | "));
+        case "table": {
+          const cols: any[] = Array.isArray(el.columns) ? el.columns : [];
+          if (cols.length > 0) parts.push(cols.map((c: any) => c?.display_name ?? c?.name ?? "").filter(Boolean).join(" | "));
+          else if (el.header?.titles) parts.push(el.header.titles.map((t: any) => t.content ?? t).join(" | "));
           if (Array.isArray(el.rows)) {
             for (const row of el.rows) {
-              if (Array.isArray(row)) parts.push(row.map((c: any) => c?.content ?? c?.text ?? String(c ?? "")).join(" | "));
+              if (Array.isArray(row)) parts.push(row.map((c: any) => LarkSender.tableCellText(c)).join(" | "));
+              else if (row && typeof row === "object") {
+                const cells = cols.length > 0
+                  ? cols.map((c: any) => LarkSender.tableCellText(row[c?.name ?? c?.display_name]))
+                  : Object.values(row).map((c: any) => LarkSender.tableCellText(c));
+                if (cells.some((x) => x)) parts.push(cells.join(" | "));
+              }
             }
           }
           break;
+        }
         case "img":
         case "img_combination":
           parts.push("[图片]");
@@ -2002,8 +2051,7 @@ export class LarkSender {
           const messageType: string = msg?.message_type ?? "text";
           let text = rawContent;
           try { text = LarkSender.parseMessageContent(messageId, messageType, rawContent).text || rawContent; } catch { /* use raw */ }
-          const senderOpenId = senderObj?.sender_id?.open_id;
-          const senderType: string = senderObj?.sender_type ?? "user";
+          const { senderType, senderOpenId } = LarkSender.normalizeSender(senderObj);
           this.log("DEBUG", `sender raw: ${JSON.stringify(senderObj)}`);
           const parentId: string = msg?.parent_id ?? "";
           const mentions: LarkMention[] = (msg?.mentions ?? []).map((m: any) => ({ key: m.key ?? "", id: m.id?.open_id ?? "", name: m.name ?? "" }));
@@ -2112,6 +2160,13 @@ export interface LarkMessageRecalledEvent {
 }
 
 // ── 类型导出 ──────────────────────────────────────────────
+
+export interface QuotedMessage {
+  message_id: string;
+  sender_type: "user" | "bot";
+  sender_open_id?: string;
+  text: string;
+}
 
 export interface ParsedMessage {
   text: string;

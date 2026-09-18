@@ -111,7 +111,7 @@ export async function switchAgentSessionProvider(
 ): Promise<{ ok: boolean; sameLedger: boolean; turns: number; fromLabel: string; toLabel: string; error?: string }> {
   const { setSessionResourceOverride, clearSessionResourceOverride } = await import("../../src/shared/session-resource-store.js")
   const { setSessionOverride, clearSessionOverride, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
-  const { stashCarryover, buildCarryoverBlock, initCarryoverStore, readMirrorTurns, takeLastTurns, peekCarryover, consumeCarryover } = await import("../carryover.js")
+  const { stashCarryover, initCarryoverStore, readMirrorTurns, takeLastTurns, peekCarryover, consumeCarryover } = await import("../carryover.js")
   initSessionModelStore(app.getPath("userData"))
   initCarryoverStore(app.getPath("userData"))
 
@@ -150,7 +150,7 @@ export async function switchAgentSessionProvider(
       const full = takeLastTurns(readMirrorTurns(sessionKey))
       if (full.length > 0) {
         turns = full.length
-        stashCarryover(sessionKey, { block: buildCarryoverBlock(full, fromLabel, toLabel), history: full, turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
+        stashCarryover(sessionKey, { history: full, turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
       }
     } catch { /* 抄件读不到则按空处理：不清不搬 */ }
     // 真换账本才忘掉旧 resume 映射；视同直续时保留，下次仍可续上

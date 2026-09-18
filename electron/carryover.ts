@@ -85,15 +85,6 @@ export function takeLastTurns(turns: TranscriptTurn[], maxTurns = CARRYOVER_TURN
   return out
 }
 
-export function buildCarryoverBlock(turns: TranscriptTurn[], fromLabel: string, toLabel: string): string {
-  const lines = [
-    `[历史搬运 · 从 ${fromLabel} → ${toLabel} · 共 ${turns.length} 轮]`,
-    ...turns.flatMap((t) => [`[${t.role === "user" ? "用户" : "助手"}] ${t.text}`]),
-    `[搬运结束] 基于以上继续，直接干活，不要复述搬运内容。`,
-  ]
-  return lines.join("\n")
-}
-
 /** 流式段里取正文（搬运镜像用；结构化入参，不依赖 stream-card 运行时） */
 export function replyTexts(segments: { type?: string; text?: string }[]): string[] {
   return (segments ?? [])
@@ -120,9 +111,9 @@ function mirrorPath(sessionKey: string): string {
   return path.join(transcriptDir(resolveDataDir()), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
 }
 
-/** 回合结束记一笔（用户轮 + 助手轮）；失败只记用户轮 */
+/** 回合结束记一笔（用户轮 + 助手轮，含引用）；失败只记用户轮 */
 export function appendMirrorTurns(sessionKey: string, turns: TranscriptTurn[]): void {
-  const fresh = turns.filter((t) => t.text?.trim()).map((t) => ({ role: t.role, text: t.text.trim(), at: Date.now() }))
+  const fresh = turns.filter((t) => t.text?.trim()).map((t) => ({ role: t.role, text: t.text.trim(), ...(t.quoted_message ? { quoted_message: t.quoted_message } : {}), at: Date.now() }))
   if (fresh.length === 0) return
   try {
     const p = mirrorPath(sessionKey)
@@ -145,9 +136,9 @@ export function readMirrorTurns(sessionKey: string): TranscriptTurn[] {
       .filter((l) => l.trim())
       .flatMap((l) => {
         try {
-          const r = JSON.parse(l) as { role?: unknown; text?: unknown }
+          const r = JSON.parse(l) as { role?: unknown; text?: unknown; quoted_message?: TranscriptTurn["quoted_message"] }
           if ((r.role === "user" || r.role === "assistant") && typeof r.text === "string" && r.text.trim()) {
-            return [{ role: r.role, text: r.text.trim() }]
+            return [{ role: r.role, text: r.text.trim(), ...(r.quoted_message ? { quoted_message: r.quoted_message } : {}) }]
           }
         } catch { /* 坏行跳过 */ }
         return []
@@ -162,24 +153,24 @@ export function clearMirror(sessionKey: string): void {
   } catch { /* ignore */ }
 }
 
-/** 老账本回填合并：镜像在先，老账本去重（按 原文精确匹配）后拼前面 */
+/** 老账本回填合并：镜像在先，老账本去重（原文 + 引用 id 精确匹配）后拼前面 */
 export function mergeLegacyTurns(legacy: TranscriptTurn[], mirror: TranscriptTurn[]): TranscriptTurn[] {
   if (mirror.length === 0) return legacy
   if (legacy.length === 0) return mirror
-  const seen = new Set(mirror.map((t) => `${t.role}\0${t.text}`))
-  return [...legacy.filter((t) => !seen.has(`${t.role}\0${t.text}`)), ...mirror]
+  const keyOf = (t: TranscriptTurn) => `${t.role}\0${t.text}\0${t.quoted_message?.message_id ?? ""}`
+  const seen = new Set(mirror.map(keyOf))
+  return [...legacy.filter((t) => !seen.has(keyOf(t))), ...mirror]
 }
 
 // ── 待消费搬运（磁盘交接：切换与下次拉起解耦，单次消费，7 天过期）──
 
 interface PendingCarryover {
-  block: string
   turns: number
   fromLabel: string
   toLabel: string
   at: number
-  /** 结构化历史：首轮拼进 messages，block 仅兼容老数据 */
-  history?: TranscriptTurn[]
+  /** 结构化历史：首轮拼进 messages */
+  history: TranscriptTurn[]
   /** 建块时的源/目标账本：切出零聊天回原时凭此丢弃过期块 */
   fromLedger?: string
   toLedger?: string
@@ -269,18 +260,9 @@ export function consumeCarryover(sessionKey: string): PendingCarryover | undefin
   return e
 }
 
-/** 待搬运历史轮次：新块直接取 history，老块从 block 文本兼容解析 */
+/** 待搬运历史轮次：只认结构化 history，无即无单 */
 export function pendingHistoryTurns(pending: PendingCarryover): TranscriptTurn[] {
-  if (pending.history?.length) return pending.history.filter((t) => t.text?.trim())
-  const out: TranscriptTurn[] = []
-  for (const line of (pending.block ?? "").split("\n")) {
-    const m = line.match(/^\[(用户|助手)\]\s*([\s\S]*)$/)
-    if (!m) continue
-    const text = (m[2] ?? "").trim()
-    if (!text) continue
-    out.push({ role: m[1] === "用户" ? "user" : "assistant", text })
-  }
-  return out
+  return (pending.history ?? []).filter((t) => t.text?.trim())
 }
 
 // ── 镜像水位（双引擎共用同一份 mirror：切供应商时记下长度，下次只取水位之后的新增）──

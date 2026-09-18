@@ -1212,12 +1212,11 @@ async function sendSdkPrompt(session: SdkSessionAgent, prompt: string): Promise<
         // force 也失败：该 agent 已毒化（残留 active run 标记清不掉）。先把镜像历史搬运，
         // 再丢 resume——下轮全新会话带最近 10 轮续上；否则下轮原样 resume 再中毒，空转打满 CPU。
         try {
-          const { initCarryoverStore, readMirrorTurns, takeLastTurns, stashCarryover, buildCarryoverBlock } = await import("./carryover.js")
+          const { initCarryoverStore, readMirrorTurns, takeLastTurns, stashCarryover } = await import("./carryover.js")
           initCarryoverStore(app.getPath("userData"))
           const history = takeLastTurns(readMirrorTurns(sessionKey))
           if (history.length > 0) {
             stashCarryover(sessionKey, {
-              block: buildCarryoverBlock(history, "poisoned-resume", "fresh"),
               turns: history.length,
               fromLabel: "poisoned-resume",
               toLabel: "fresh",

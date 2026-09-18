@@ -5,7 +5,6 @@ import * as os from "node:os"
 import {
   turnsFromPiMessages,
   takeLastTurns,
-  buildCarryoverBlock,
   replyTexts,
   mergeLegacyTurns,
   appendMirrorTurns,
@@ -59,19 +58,6 @@ describe("takeLastTurns", () => {
     expect(out[0].text.startsWith("t10")).toBe(true)
     const big = [{ role: "user" as const, text: "a".repeat(7000) }, { role: "assistant" as const, text: "b".repeat(2000) }]
     expect(takeLastTurns(big, 10, 8000).length).toBe(1)
-  })
-})
-
-describe("buildCarryoverBlock", () => {
-  it("头轮次尾三件套", () => {
-    const block = buildCarryoverBlock(
-      [{ role: "user", text: "看看怎么防" }, { role: "assistant", text: "加幂等键" }],
-      "A网关", "B网关",
-    )
-    expect(block).toContain("[历史搬运 · 从 A网关 → B网关 · 共 2 轮]")
-    expect(block).toContain("[用户] 看看怎么防")
-    expect(block).toContain("[助手] 加幂等键")
-    expect(block).toContain("[搬运结束]")
   })
 })
 
@@ -136,11 +122,15 @@ describe("carryover store", () => {
     fs.rmSync(dataDir, { recursive: true, force: true })
   })
   it("单次消费，peek 不删除", () => {
-    stashCarryover("sk", { block: "b", turns: 2, fromLabel: "A", toLabel: "B" })
-    expect(peekCarryover("sk")?.block).toBe("b")
-    expect(peekCarryover("sk")?.block).toBe("b")
-    expect(consumeCarryover("sk")?.block).toBe("b")
+    stashCarryover("sk", { turns: 2, fromLabel: "A", toLabel: "B", history: [{ role: "user", text: "hi" }] })
+    expect(peekCarryover("sk")?.turns).toBe(2)
+    expect(peekCarryover("sk")?.turns).toBe(2)
+    expect(consumeCarryover("sk")?.turns).toBe(2)
     expect(consumeCarryover("sk")).toBeUndefined()
+  })
+  it("无 history 即无单", () => {
+    stashCarryover("sk2", { turns: 0, fromLabel: "A", toLabel: "B", history: [] })
+    expect(pendingHistoryTurns(peekCarryover("sk2")!)).toEqual([])
   })
   it("毒 resume 逃生：镜像 30 轮搬运后消费端可续上", () => {
     const sk = "poisoned-session"
@@ -153,7 +143,6 @@ describe("carryover store", () => {
     expect(history).toHaveLength(30)
     expect(history[0]).toEqual({ role: "user", text: "第11轮" })
     stashCarryover(sk, {
-      block: buildCarryoverBlock(history, "poisoned-resume", "fresh"),
       turns: history.length,
       fromLabel: "poisoned-resume",
       toLabel: "fresh",

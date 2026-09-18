@@ -262,9 +262,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           pushUiLog("LLM", "ERROR", `[${sessionKey}] 空回复兜底投递失败: ${errorDetail}`)
           break
         }
-        // 镜像：用户原文（兜底文本不记，避免污染）
+        // 镜像：用户原文 + 引用（兜底文本不记，避免污染）
         try {
-          appendMirrorTurns(sessionKey, fresh.map((m) => ({ role: "user" as const, text: m.text })))
+          appendMirrorTurns(sessionKey, fresh.map((m) => ({ role: "user" as const, text: m.text, ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}) })))
         } catch { /* ignore */ }
         try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
         await markMessagesProcessed(session, sessionKey, fresh)
@@ -288,11 +288,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
       }
 
-      // 镜像：用户原文 + 助手正文（搬运统一源；失败不阻断）
+      // 镜像：用户原文 + 引用 + 助手正文（搬运统一源；失败不阻断）
       try {
         const at = (replyText || replyTexts(session.streamAgg?.segments ?? []).join("\n\n")).trim()
         appendMirrorTurns(sessionKey, [
-          ...fresh.map((m) => ({ role: "user" as const, text: m.text })),
+          ...fresh.map((m) => ({ role: "user" as const, text: m.text, ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}) })),
           ...(at ? [{ role: "assistant" as const, text: at }] : []),
         ])
       } catch { /* ignore */ }

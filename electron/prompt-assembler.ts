@@ -35,6 +35,13 @@ export function clearProtocolTemplateCache(): void {
   cachedProtocol = null
 }
 
+export interface QuotedMessagePayload {
+  message_id: string
+  sender_type: string
+  sender_open_id?: string
+  text: string
+}
+
 export interface TurnMessage {
   text: string
   messageId?: string
@@ -42,14 +49,15 @@ export interface TurnMessage {
     chatType?: string
     senderOpenId?: string
     senderType?: string
-    quotedContent?: string
+    quoted_message?: QuotedMessagePayload
   }
 }
 
-/** 跨账本搬运历史：只保留 role + text，无 message_id，不进 poll 去重 */
+/** 跨账本搬运历史：role + text + 可选引用，无 message_id，不进 poll 去重 */
 export interface HistoryTurn {
   role: "user" | "assistant"
   text: string
+  quoted_message?: QuotedMessagePayload
 }
 
 /** Prompt 内嵌协议用的 Daemon 端口：优先 lock 文件（与当前 profile 实例一致） */
@@ -253,6 +261,7 @@ export function assembleTurnPrompt(
 ): string {
   const history = (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map((t) => ({
     sender_type: t.role,
+    ...(t.quoted_message ? { quoted_message: t.quoted_message } : {}),
     text: t.text.trim(),
   }))
   const payload: Record<string, unknown> = {
@@ -267,7 +276,7 @@ export function assembleTurnPrompt(
         ...(m.messageId ? { message_id: m.messageId } : {}),
         ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
         ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
-        ...(m.meta?.quotedContent?.trim() ? { quoted_content: m.meta.quotedContent.trim() } : {}),
+        ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}),
         text: m.text.trim(),
       })),
     ],

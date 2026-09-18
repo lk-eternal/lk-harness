@@ -195,11 +195,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         break
       }
 
-      // 镜像：用户原文 + 助手正文（搬运统一源；失败不阻断）
+      // 镜像：用户原文 + 引用 + 助手正文（搬运统一源；失败不阻断）
       try {
         const at = replyTexts(session.streamAgg?.segments ?? []).join("\n\n").trim()
         appendMirrorTurns(sessionKey, [
-          ...fresh.map((m) => ({ role: "user" as const, text: m.text })),
+          ...fresh.map((m) => ({ role: "user" as const, text: m.text, ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}) })),
           ...(at ? [{ role: "assistant" as const, text: at }] : []),
         ])
       } catch { /* ignore */ }

@@ -522,7 +522,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   }
 
   // 切供应商搬运：历史走 messages 前缀，task 只留真任务；launch 成功后才 consume，失败保留
-  let launchHistoryTurns: { role: "user" | "assistant"; text: string }[] | undefined
+  let launchHistoryTurns: import("./agent-engine/types.js").TranscriptTurn[] | undefined
   let newSession: boolean | undefined
   try {
     const { peekCarryover, pendingHistoryTurns, initCarryoverStore } = await import("./carryover.js")

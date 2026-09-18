@@ -143,7 +143,12 @@ export interface QueueMessageMeta {
   chatType?: string;
   senderOpenId?: string;
   senderType?: string;
-  quotedContent?: string;
+  quoted_message?: {
+    message_id: string;
+    sender_type: string;
+    sender_open_id?: string;
+    text: string;
+  };
 }
 
 export interface QueueMessage {

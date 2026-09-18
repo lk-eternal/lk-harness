@@ -66,6 +66,12 @@ export interface AgentSessionDiagnostics {
 export interface TranscriptTurn {
   role: "user" | "assistant"
   text: string
+  quoted_message?: {
+    message_id: string
+    sender_type: string
+    sender_open_id?: string
+    text: string
+  }
 }
 
 export interface AgentEngine {

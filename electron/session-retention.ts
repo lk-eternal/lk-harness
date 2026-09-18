@@ -81,7 +81,7 @@ export async function rolloverSessionLedgerIfNeeded(opts: {
   userDataDir?: string
 }): Promise<boolean> {
   const userDataDir = opts.userDataDir ?? app.getPath("userData")
-  const { readMirrorTurns, takeLastTurns, stashCarryover, buildCarryoverBlock } = await import("./carryover.js")
+  const { readMirrorTurns, takeLastTurns, stashCarryover } = await import("./carryover.js")
   const { turns, bytes } = await measureLedger({ ...opts, userDataDir })
 
   const exceeded = opts.runtime === "llm"
@@ -92,7 +92,6 @@ export async function rolloverSessionLedgerIfNeeded(opts: {
   const history = takeLastTurns(readMirrorTurns(opts.sessionKey))
   if (history.length > 0) {
     stashCarryover(opts.sessionKey, {
-      block: buildCarryoverBlock(history, "ledger-limit", "fresh"),
       turns: history.length,
       fromLabel: "ledger-limit",
       toLabel: "fresh",
