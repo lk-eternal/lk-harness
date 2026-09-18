@@ -33,6 +33,7 @@ import {
   isStreamSilenced,
   isTodoUpdateInvocation,
   isToolStreamSilenced,
+  needsOrphanCardFinish,
   newStreamAgg,
   POLL_DIRECTIVE_END_MARK,
   POLL_DIRECTIVE_TIMEOUT_MARK,
@@ -856,8 +857,13 @@ async function streamRunEvents(session: SdkSessionAgent, run: Run): Promise<void
         } else {
           await flushStreamCard(session, true)
         }
-      } else if (agg) {
-        agg.finished = true
+      } else {
+        if (agg) agg.finished = true
+        // daemon 侧或经 MCP 合并持有本会话的卡（定时任务 UUID 会话 Electron 侧恒无 agg）：
+        // 常规 finish 发不出去时补一次无 cardId 的 finish，无卡则空操作（daemon 幂等）。
+        if (needsOrphanCardFinish(session.keepSession, agg?.cardId, session.lastStatus?.status)) {
+          await postStreamCard(session.sessionKey, "finish", { segments: [] })
+        }
       }
     } catch { /* best-effort */ }
   }

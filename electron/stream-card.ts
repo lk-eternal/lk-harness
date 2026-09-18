@@ -732,6 +732,21 @@ export function endStreamRound(host: StreamCardHost): void {
   agg.inflight = agg.inflight.then(finishAndClear, finishAndClear)
 }
 
+/**
+ * 终端收口是否需要补一次无 cardId 的 finish。
+ * daemon 侧可能经 MCP 合并（send_text/send_question）持有本会话的卡，而 Electron 侧
+ * 无 agg（定时任务 UUID 会话恒如此）或 agg 从未建卡——常规 finish 发不出去。
+ * 仅终态补发：FINISHED 必补；ERROR/EXPIRED/CANCELLED 仅非 keep 会话补
+ * （keep 会话留卡待 Resume，对齐 agent-sdk.shouldSuspendStreamCard）；已知 cardId 的
+ * 走常规带卡 finish，不重复。daemon 侧无卡时空操作（幂等）。
+ */
+export function needsOrphanCardFinish(keepSession: boolean, aggCardId: string | undefined, lastStatus: string | undefined): boolean {
+  if (aggCardId) return false
+  if (lastStatus === "FINISHED") return true
+  if (!keepSession && (lastStatus === "ERROR" || lastStatus === "EXPIRED" || lastStatus === "CANCELLED")) return true
+  return false
+}
+
 export function enterSilentPollPhase(host: StreamCardHost): void {
   const stream = host.streamAgg
   if (stream && !stream.finished) {
