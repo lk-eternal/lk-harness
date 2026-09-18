@@ -599,6 +599,17 @@ function rotateStaleStreamQueue(host: StreamCardHost, agg: StreamAgg): void {
   host.streamAgg = isFeishuChannel(host.sessionKey) ? newStreamAgg(true) : null
 }
 
+/**
+ * 回合开干前重定出生：队列建在投递收口之前（预热/bootstrap 复用）时 bornAt 老于 sealAt，
+ * 首个 ensure 会被当旧队列误杀致丢头。尚未 ensure（什么都没发过）时把 bornAt 拨到此刻，
+ * 与 blocking 路“新回合 bornAt 晚于 sealAt”同语义；已建卡的一律不动（回合中真到货仍走拒单）。
+ */
+export function rebaseUnensuredQueue(host: StreamCardHost): void {
+  const agg = host.streamAgg
+  if (!agg || agg.finished || agg.ensured || agg.cardId) return
+  agg.bornAt = Date.now()
+}
+
 export function scheduleFlushStreamCard(host: StreamCardHost, immediate = false): void {
   const agg = host.streamAgg
   if (!agg || agg.finished) return

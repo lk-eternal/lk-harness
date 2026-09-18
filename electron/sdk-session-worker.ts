@@ -167,6 +167,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       for (const m of fresh) {
         if (m.messageId) session.seenMessageIds.add(m.messageId)
       }
+      // 出生对齐：预热队列早于投递收口时首 ensure 会被误杀丢头，未发过卡此刻重定无成本
+      try {
+        const { rebaseUnensuredQueue } = await import("./stream-card.js")
+        rebaseUnensuredQueue(session)
+      } catch { /* best-effort */ }
 
       state.phase = "processing"
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
