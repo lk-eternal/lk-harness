@@ -121,6 +121,7 @@ export function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig
     mainUserEnabled: !!c.mainUserEnabled,
     mainUserChatId: c.mainUserEnabled ? (c.mainUserChatId?.trim() ?? "") : "",
     mainUserOpenId: c.mainUserOpenId?.trim() || undefined,
+    agentResourceId: c.agentResourceId?.trim() || undefined,
     workspaceDir: c.workspaceDir?.trim() ?? "",
     favoriteWorkspaces: getChannelFavoriteWorkspaces(c),
     keepAlive: main.keepSession && main.persistentPoll,

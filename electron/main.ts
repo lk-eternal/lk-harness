@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from "electron"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
-import { getConfig, saveConfig, migrateSecretsToSafeStorage, getAgentResource } from "./config-store"
+import { getConfig, saveConfig, migrateSecretsToSafeStorage, scrubUndecryptableSecretsInStore, reportSecretDecryptFailuresIfNeeded, getAgentResource } from "./config-store"
 import type { AppConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
 import type { AgentResource } from "../src/shared/channel-types"
@@ -464,6 +464,9 @@ app.on("before-quit", (e) => {
 
 app.whenReady().then(() => {
   migrateSecretsToSafeStorage()
+  scrubUndecryptableSecretsInStore()
+  getConfig()
+  reportSecretDecryptFailuresIfNeeded()
   registerIpcHandlers()
   applyLoginItemSetting(getConfig().autoStart)
   createWindow()

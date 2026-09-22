@@ -1,7 +1,11 @@
 import { app } from "electron"
-import { join } from "node:path"
-import { readFileSync, writeFileSync } from "node:fs"
-import { sessionStateDir } from "../src/shared/data-paths.js"
+import {
+  initSessionOverridesStore,
+  patchSessionRecord,
+  getSessionRecord,
+  clearSessionRecordFields,
+  RESUME_ENTRY_TTL_MS,
+} from "../src/shared/session-overrides-store.js"
 
 export interface PiResumeEntry {
   rulesHash: string
@@ -11,37 +15,22 @@ export interface PiResumeEntry {
   updatedAt: number
 }
 
-const ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000
-let store: Map<string, PiResumeEntry> | null = null
-
-function storePath(): string {
-  return join(sessionStateDir(app.getPath("userData")), "pi-resume-map.json")
-}
-
-function loadStore(): Map<string, PiResumeEntry> {
-  if (store) return store
-  store = new Map()
-  try {
-    const raw = JSON.parse(readFileSync(storePath(), "utf8")) as Record<string, PiResumeEntry>
-    const now = Date.now()
-    for (const [key, e] of Object.entries(raw)) {
-      if (e?.rulesHash && now - (e.updatedAt ?? 0) < ENTRY_TTL_MS) {
-        store.set(key, e)
-      }
-    }
-  } catch { /* first run or corrupt file */ }
-  return store
-}
-
-function saveStore(): void {
-  if (!store) return
-  try {
-    writeFileSync(storePath(), JSON.stringify(Object.fromEntries(store)), "utf8")
-  } catch { /* best-effort */ }
+function ensureStore(): void {
+  const dir = process.env.APP_DATA_DIR?.trim() || app.getPath("userData")
+  initSessionOverridesStore(dir)
 }
 
 export function getPiResumable(sessionKey: string): PiResumeEntry | undefined {
-  return loadStore().get(sessionKey)
+  ensureStore()
+  const e = getSessionRecord(sessionKey)
+  if (!e?.rulesHash) return undefined
+  if (Date.now() - (e.updatedAt ?? 0) >= RESUME_ENTRY_TTL_MS) return undefined
+  return {
+    rulesHash: e.rulesHash,
+    daemonPort: e.daemonPort,
+    streamCardId: e.streamCardId,
+    updatedAt: e.updatedAt,
+  }
 }
 
 export function rememberPiResumable(
@@ -50,14 +39,13 @@ export function rememberPiResumable(
   daemonPort?: number,
   streamCardId?: string,
 ): void {
-  const prev = loadStore().get(sessionKey)
-  loadStore().set(sessionKey, {
+  ensureStore()
+  const prev = getSessionRecord(sessionKey)
+  patchSessionRecord(sessionKey, {
     rulesHash,
     daemonPort,
     streamCardId: streamCardId ?? prev?.streamCardId,
-    updatedAt: Date.now(),
   })
-  saveStore()
 }
 
 export function patchPiResumableStreamCard(
@@ -65,15 +53,15 @@ export function patchPiResumableStreamCard(
   streamCardId: string | undefined,
   opts?: { onlyIf?: string },
 ): void {
-  const e = loadStore().get(sessionKey)
-  if (!e) return
+  ensureStore()
+  const e = getSessionRecord(sessionKey)
+  if (!e?.rulesHash) return
   if (opts?.onlyIf && e.streamCardId !== opts.onlyIf) return
   if (e.streamCardId === streamCardId) return
-  e.streamCardId = streamCardId
-  e.updatedAt = Date.now()
-  saveStore()
+  patchSessionRecord(sessionKey, { streamCardId })
 }
 
 export function forgetPiResumable(sessionKey: string): void {
-  if (loadStore().delete(sessionKey)) saveStore()
+  ensureStore()
+  clearSessionRecordFields(sessionKey, ["rulesHash", "daemonPort", "streamCardId"])
 }

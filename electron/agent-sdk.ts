@@ -5,7 +5,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
-import { sessionStateDir } from "../src/shared/data-paths.js"
+import { workspaceDirFromSessionKey } from "../src/shared/channel-types.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
@@ -53,8 +53,17 @@ import {
   clearSessionOverride,
   pushRecentModel,
 } from "../src/shared/session-model-store.js"
+import {
+  patchSessionRecord,
+  getSessionRecord,
+  clearSessionRecordFields,
+  readOverridesSnapshot,
+  RESUME_ENTRY_TTL_MS,
+} from "../src/shared/session-overrides-store.js"
 import { modelSlugFromParams, rememberModelLabel } from "../src/shared/model-utils.js"
 import { projectIdFromSessionKey } from "../src/shared/project-types.js"
+import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
+import { ensureSessionEntry, sessionSdkJsonlDir } from "../src/shared/session-entry-paths.js"
 
 export interface SdkSessionAgent extends StreamCardHost {
   agent: SDKAgent
@@ -123,7 +132,6 @@ interface ResumeEntry {
   agentId: string
   workspaceDir: string
   updatedAt: number
-  senderOpenId?: string
   rulesHash?: string
   /** Resume 时记录的 Daemon 端口，用于检测端口漂移 */
   daemonPort?: number
@@ -141,39 +149,27 @@ function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "cha
   }, undefined)
 }
 
-const RESUME_ENTRY_TTL_MS = 14 * 24 * 60 * 60 * 1000
-let resumableAgents: Map<string, ResumeEntry> | null = null
-
-function resumeStorePath(): string {
-  return join(sessionStateDir(app.getPath("userData")), "sdk-resume-map.json")
-}
-
 function ensureModelStore(): void {
   try { initSessionModelStore(app.getPath("userData")) } catch { /* tests / early */ }
 }
 
 function getResumableMap(): Map<string, ResumeEntry> {
-  if (resumableAgents) return resumableAgents
-  resumableAgents = new Map()
-  try {
-    const raw = JSON.parse(readFileSync(resumeStorePath(), "utf8")) as Record<string, ResumeEntry>
-    const now = Date.now()
-    for (const [key, e] of Object.entries(raw)) {
-      if (e?.agentId && e.workspaceDir && now - (e.updatedAt ?? 0) < RESUME_ENTRY_TTL_MS) {
-        resumableAgents.set(key, e)
-      }
-    }
-  } catch { /* 首次运行或文件损坏：从空开始 */ }
-  return resumableAgents
-}
-
-function saveResumableMap(): void {
-  if (!resumableAgents) return
-  try {
-    writeFileSync(resumeStorePath(), JSON.stringify(Object.fromEntries(resumableAgents)), "utf8")
-  } catch (e: unknown) {
-    pushUiLog("SDK", "WARN", `Resume 映射保存失败: ${e instanceof Error ? e.message : String(e)}`)
+  ensureModelStore()
+  const now = Date.now()
+  const map = new Map<string, ResumeEntry>()
+  for (const [key, e] of Object.entries(readOverridesSnapshot().sessions)) {
+    if (!e.agentId || !e.workspaceDir) continue
+    if (now - (e.updatedAt ?? 0) >= RESUME_ENTRY_TTL_MS) continue
+    map.set(key, {
+      agentId: e.agentId,
+      workspaceDir: e.workspaceDir,
+      updatedAt: e.updatedAt,
+      rulesHash: e.rulesHash,
+      daemonPort: e.daemonPort,
+      streamCardId: e.streamCardId,
+    })
   }
+  return map
 }
 
 function isResumeEligible(session: SdkSessionAgent): boolean {
@@ -183,31 +179,30 @@ function isResumeEligible(session: SdkSessionAgent): boolean {
 
 function rememberResumable(session: SdkSessionAgent): void {
   if (!isResumeEligible(session) || !session.workspaceDir) return
-  const prev = getResumableMap().get(session.sessionKey)
-  getResumableMap().set(session.sessionKey, {
-    agentId: session.agentId, workspaceDir: session.workspaceDir, updatedAt: Date.now(),
-    senderOpenId: session.senderOpenId,
+  ensureModelStore()
+  const prev = getSessionRecord(session.sessionKey)
+  patchSessionRecord(session.sessionKey, {
+    agentId: session.agentId,
+    workspaceDir: session.workspaceDir,
     rulesHash: promptHashForSession(session),
     daemonPort: resolveDaemonPortForPrompt() ?? undefined,
     streamCardId: session.streamAgg?.cardId ?? prev?.streamCardId,
   })
-  saveResumableMap()
 }
 
 function patchResumableStreamCard(sessionKey: string, streamCardId: string | undefined, opts?: { onlyIf?: string }): void {
-  const map = getResumableMap()
-  const e = map.get(sessionKey)
-  if (!e) return
+  ensureModelStore()
+  const e = getSessionRecord(sessionKey)
+  if (!e?.agentId) return
   // 清除必须带期望值：延迟 finish 的清理不能抹掉新回合刚记录的新卡
   if (opts?.onlyIf && e.streamCardId !== opts.onlyIf) return
   if (e.streamCardId === streamCardId) return
-  e.streamCardId = streamCardId
-  e.updatedAt = Date.now()
-  saveResumableMap()
+  patchSessionRecord(sessionKey, { streamCardId })
 }
 
 export function forgetResumable(sessionKey: string): void {
-  if (getResumableMap().delete(sessionKey)) saveResumableMap()
+  ensureModelStore()
+  clearSessionRecordFields(sessionKey, ["agentId", "workspaceDir"])
 }
 
 let sdkIdleHandler: ((sessionKey: string) => void) | null = null
@@ -533,9 +528,13 @@ function jsonlStoreCacheKey(workspaceDir: string, sessionKey?: string): string {
 }
 
 export function sdkJsonlStoreDir(workspaceDir: string, sessionKey?: string): string {
-  const base = join(sdkStoreUserDataRoot(), "sdk-jsonl-stores", workspaceStoreDirKey(resolve(workspaceDir)))
-  if (!sessionKey?.trim()) return base
-  return join(base, sessionStoreDirKey(sessionKey))
+  const root = sdkStoreUserDataRoot()
+  if (sessionKey?.trim()) {
+    ensureSessionLayoutMigrated(root)
+    ensureSessionEntry(root, sessionKey)
+    return sessionSdkJsonlDir(root, sessionKey)
+  }
+  return join(root, "sdk-jsonl-stores", workspaceStoreDirKey(resolve(workspaceDir)))
 }
 
 export function clearSdkJsonlStore(workspaceDir: string, sessionKey?: string): void {
@@ -1337,6 +1336,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const resolvedRef = resolveModelForSession(sessionKey, {
       model: fallbackModel,
       modelParams: opts.modelParams ?? "",
+      ...(opts.resourceId?.trim() ? { resourceId: opts.resourceId.trim() } : {}),
     })
     const modelId = resolvedRef.model?.trim() && resolvedRef.model.trim() !== "auto" ? resolvedRef.model.trim() : "composer-2"
     const modelParams = resolvedRef.modelParams ?? ""
@@ -1345,6 +1345,11 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       try {
         modelSelection.params = JSON.parse(modelParams)
       } catch { /* ignore bad JSON */ }
+    }
+
+    if (opts.newSession) {
+      clearSdkJsonlStore(workspaceDir, sessionKey)
+      pushUiLog("SDK", "INFO", `[${sessionKey}] 新家首次拉起（已清 sdk-jsonl）`)
     }
 
     const localOptions = {
@@ -1380,7 +1385,10 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
         const msg = e instanceof Error ? e.message : String(e)
         // 只有服务端确认上下文不存在才允许回退全新会话；网络等瞬时故障直接放弃本次拉起——
         // resume 映射保留、消息还在队列，调度器下轮重试 Resume，上下文绝不因瞬时故障丢失
-        if (!/not found/i.test(msg)) {
+        if (/cannot use this model/i.test(msg)) {
+          forgetResumable(sessionKey)
+          pushUiLog("SDK", "WARN", `[${sessionKey}] Resume 模型与当前供应商不兼容，丢弃 resume 映射: ${msg}`)
+        } else if (!/not found/i.test(msg)) {
           pushUiLog("SDK", "WARN", `[${sessionKey}] Resume 暂不可用（瞬时故障，保留上下文稍后重试）: ${msg}`)
           return { ok: false, error: `Resume 暂不可用: ${msg}` }
         }
@@ -1420,7 +1428,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       lastActivityAt: Date.now(),
       chatType,
       workspaceDir,
-      senderOpenId: senderOpenId ?? resumable?.senderOpenId,
+      senderOpenId,
       chatName,
       notifySessionKey: opts.notifySessionKey?.trim() || undefined,
       useMainWorkspace: opts.useMainWorkspace,
@@ -1625,12 +1633,18 @@ export async function switchSdkSessionModel(
   return { ok: true, deferred: true }
 }
 
-/** 显式重置会话上下文（/reset）：停掉在跑的 run、丢弃 resume 映射，下条消息全新会话 */
+/** 显式重置会话上下文（/reset）：停 run、清 SDK 账本与 resume，下条消息全新会话 */
 export function resetSdkSessionContext(sessionKey: string): void {
   sessionResetGen.set(sessionKey, (sessionResetGen.get(sessionKey) ?? 0) + 1)
   void import("./sdk-session-worker.js").then(({ stopSdkWorker }) => stopSdkWorker(sessionKey))
   const live = findSdkSessionLoose(sessionKey)
+  const workspaceDir =
+    live?.workspaceDir
+    ?? getResumableMap().get(sessionKey)?.workspaceDir
+    ?? getSessionRecord(sessionKey)?.workspaceDir
+    ?? workspaceDirFromSessionKey(sessionKey)
   if (live) void releaseSession(live)
+  if (workspaceDir) clearSdkJsonlStore(workspaceDir, sessionKey)
   forgetResumable(sessionKey)
   void import("./carryover.js").then(({ clearMirror }) => clearMirror(sessionKey)).catch(() => undefined)
 }

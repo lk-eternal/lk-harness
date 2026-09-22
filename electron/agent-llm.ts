@@ -210,13 +210,17 @@ function broadcastLlmSessionStatus(): void {
 }
 
 /** 模型解析唯一入口：会话 override/pending 恒优先于传入的 ref */
-function resolveModelRef(sessionKey: string, ref: { model?: string; modelParams?: string }): { modelId: string; modelParams: string } {
+function resolveModelRef(
+  sessionKey: string,
+  ref: { model?: string; modelParams?: string; resourceId?: string },
+): { modelId: string; modelParams: string } {
   initSessionModelStore(app.getPath("userData"))
   const trimmed = ref.model?.trim() ?? ""
   const usable = trimmed && trimmed !== "auto"
+  const rid = ref.resourceId?.trim()
   const resolved = resolveModelForSession(sessionKey, usable
-    ? { model: trimmed, modelParams: ref.modelParams ?? "" }
-    : { model: "", modelParams: "" })
+    ? { model: trimmed, modelParams: ref.modelParams ?? "", ...(rid ? { resourceId: rid } : {}) }
+    : { model: "", modelParams: "", ...(rid ? { resourceId: rid } : {}) })
   return { modelId: resolved.model, modelParams: resolved.modelParams ?? "" }
 }
 
@@ -248,11 +252,11 @@ export function channelResourceSwitched(channelId: string | undefined, resourceI
 }
 
 function resolveLlmModelRef(opts: LlmLaunchOptions): { modelId: string; modelParams: string } {
-  // opts.model 已由上层按场景（primary/others）+ override 解析，通道模型只作兜底
+  const rid = opts.resource?.id
   const ref = opts.model?.trim() && opts.model.trim() !== "auto"
-    ? { model: opts.model, modelParams: opts.modelParams }
-    : channelModelRef(opts.channelId, opts.resource?.id)
-  return resolveModelRef(opts.sessionKey, ref)
+    ? { model: opts.model, modelParams: opts.modelParams, ...(rid ? { resourceId: rid } : {}) }
+    : channelModelRef(opts.channelId, rid)
+  return resolveModelRef(opts.sessionKey, { ...ref, ...(rid ? { resourceId: rid } : {}) })
 }
 
 async function refreshLlmModel(session: LlmSession): Promise<void> {
@@ -261,8 +265,8 @@ async function refreshLlmModel(session: LlmSession): Promise<void> {
   session.resource = resource
   const live = channelModelRef(session.channelId, resource.id)
   const { modelId } = resolveModelRef(session.sessionKey, live.model
-    ? live
-    : { model: session.channelModel, modelParams: session.channelModelParams })
+    ? { ...live, resourceId: resource.id }
+    : { model: session.channelModel, modelParams: session.channelModelParams, resourceId: resource.id })
   const llmModel = resolveLlmModel(resource, modelId)
   if (!llmModel || llmModel.id === session.model.id) return
   session.model = llmModel
@@ -838,11 +842,11 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     const model = resolveLlmModel(resource, modelId)
     if (!model) return { ok: false, error: "无法解析模型，请检查 Agent 配置或通道模型设置" }
 
-    // 切供应商搬运：清本家文件后全新起（旧家轮次已在切换时导出）
+    // 切供应商搬运：在新家 launch 时清 Pi 账本（LLM↔LLM 同账本不 newSession）
     if (opts.newSession) {
       clearPiSession(sessionKey)
       forgetPiResumable(sessionKey)
-      pushUiLog("LLM", "INFO", `[${sessionKey}] 搬运全新起（已清旧上下文）`)
+      pushUiLog("LLM", "INFO", `[${sessionKey}] 新家首次拉起（已清 Pi 账本）`)
     }
 
     const created = await createHarnessPiSession(opts, model, apiKey)

@@ -1,6 +1,11 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { transcriptDir } from "../src/shared/data-paths.js"
+import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
+import {
+  ensureSessionEntry,
+  sessionCarryoverPath,
+  sessionMirrorPath,
+} from "../src/shared/session-entry-paths.js"
 import type { TranscriptTurn } from "./agent-engine/types"
 
 /** 搬运块：最近原文轮次，一整块，不做摘要 */
@@ -107,8 +112,10 @@ function trimMirrorLines(lines: string[], maxTurns: number, maxBytes: number): s
 }
 
 function mirrorPath(sessionKey: string): string {
-  const safe = Buffer.from(sessionKey, "utf8").toString("base64url")
-  return path.join(transcriptDir(resolveDataDir()), `${MIRROR_FILE_PREFIX}${safe}.jsonl`)
+  const root = resolveDataDir()
+  ensureSessionLayoutMigrated(root)
+  ensureSessionEntry(root, sessionKey)
+  return sessionMirrorPath(root, sessionKey)
 }
 
 /** 回合结束记一笔（用户轮 + 助手轮，含引用）；失败只记用户轮 */
@@ -179,24 +186,23 @@ interface PendingCarryover {
   toResourceId?: string
 }
 
-interface CarryoverFile {
-  sessions: Record<string, PendingCarryover>
+/** 同 sessionKey：跨供应商待搬运 + mirror 行数水位（切供应商后只取水位之后新增） */
+interface SessionCarryoverFile {
+  pending?: PendingCarryover
+  mirrorWatermark?: { len: number; at: number }
 }
 
-const FILE_NAME = "carryover-pending.json"
 const CARRYOVER_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 let dataDir: string | null = null
-let cache: CarryoverFile | null = null
 
 export function initCarryoverStore(dir: string): void {
   dataDir = dir
-  cache = null
+  ensureSessionLayoutMigrated(dir)
 }
 
 export function resetCarryoverStoreForTests(): void {
   dataDir = null
-  cache = null
 }
 
 function resolveDataDir(): string {
@@ -205,59 +211,74 @@ function resolveDataDir(): string {
   throw new Error("carryover-store: data dir not initialized")
 }
 
-function storePath(): string {
-  return path.join(transcriptDir(resolveDataDir()), FILE_NAME)
-}
-
-function load(): CarryoverFile {
-  if (cache) return cache
+function readCarryoverFile(sessionKey: string): SessionCarryoverFile {
+  const root = resolveDataDir()
+  ensureSessionLayoutMigrated(root)
+  const p = sessionCarryoverPath(root, sessionKey)
   try {
-    const raw = JSON.parse(fs.readFileSync(storePath(), "utf8")) as CarryoverFile
-    cache = { sessions: raw.sessions ?? {} }
+    return JSON.parse(fs.readFileSync(p, "utf8")) as SessionCarryoverFile
   } catch {
-    cache = { sessions: {} }
+    return {}
   }
-  // 读时顺手清过期
-  const now = Date.now()
-  let swept = false
-  for (const [k, v] of Object.entries(cache.sessions)) {
-    if (!v || now - (v.at ?? 0) > CARRYOVER_TTL_MS) { delete cache.sessions[k]; swept = true }
-  }
-  if (swept) save()
-  return cache
 }
 
-function save(): void {
-  if (!cache) return
-  const target = storePath()
+function writeCarryoverFile(sessionKey: string, data: SessionCarryoverFile): void {
+  const root = resolveDataDir()
+  ensureSessionEntry(root, sessionKey)
+  const target = sessionCarryoverPath(root, sessionKey)
+  if (!data.pending && !data.mirrorWatermark) {
+    try {
+      fs.unlinkSync(target)
+    } catch { /* ignore */ }
+    return
+  }
   fs.mkdirSync(path.dirname(target), { recursive: true })
   const tmp = target + ".tmp"
-  fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
+  fs.writeFileSync(tmp, JSON.stringify(data), "utf8")
   fs.renameSync(tmp, target)
 }
 
+function sweepExpiredPending(sessionKey: string, file: SessionCarryoverFile): SessionCarryoverFile {
+  const p = file.pending
+  if (!p) return file
+  if (Date.now() - (p.at ?? 0) > CARRYOVER_TTL_MS) {
+    const next = { ...file }
+    delete next.pending
+    writeCarryoverFile(sessionKey, next)
+    return next
+  }
+  return file
+}
+
 export function stashCarryover(sessionKey: string, entry: Omit<PendingCarryover, "at">): void {
-  const s = load()
-  s.sessions[sessionKey] = { ...entry, at: Date.now() }
-  save()
+  const file = readCarryoverFile(sessionKey)
+  file.pending = { ...entry, at: Date.now() }
+  writeCarryoverFile(sessionKey, file)
 }
 
 /** 预览不删除；拉起成功后才 consume，失败保留 */
 export function peekCarryover(sessionKey: string): PendingCarryover | undefined {
-  const s = load()
-  const e = s.sessions[sessionKey]
+  const file = sweepExpiredPending(sessionKey, readCarryoverFile(sessionKey))
+  const e = file.pending
   if (!e) return undefined
   return { ...e }
 }
 
-/** 读取并删除；无则返回 undefined */
+/** 读取并删除 pending；mirrorWatermark 保留 */
 export function consumeCarryover(sessionKey: string): PendingCarryover | undefined {
-  const s = load()
-  const e = s.sessions[sessionKey]
+  const file = readCarryoverFile(sessionKey)
+  const e = file.pending
   if (!e) return undefined
-  delete s.sessions[sessionKey]
-  save()
+  const next = { ...file }
+  delete next.pending
+  writeCarryoverFile(sessionKey, next)
   return e
+}
+
+export function clearSessionCarryover(sessionKey: string): void {
+  try {
+    fs.unlinkSync(sessionCarryoverPath(resolveDataDir(), sessionKey))
+  } catch { /* ignore */ }
 }
 
 /** 待搬运历史轮次：只认结构化 history，无即无单 */
@@ -265,46 +286,12 @@ export function pendingHistoryTurns(pending: PendingCarryover): TranscriptTurn[]
   return (pending.history ?? []).filter((t) => t.text?.trim())
 }
 
-// ── 镜像水位（双引擎共用同一份 mirror：切供应商时记下长度，下次只取水位之后的新增）──
-
-const WATERMARK_FILE = "carryover-watermark.json"
-
-interface WatermarkFile {
-  sessions: Record<string, { len: number; at: number }>
-}
-
-let watermarkCache: WatermarkFile | null = null
-
-function watermarkPath(): string {
-  return path.join(transcriptDir(resolveDataDir()), WATERMARK_FILE)
-}
-
-function loadWatermark(): WatermarkFile {
-  if (watermarkCache) return watermarkCache
-  try {
-    const raw = JSON.parse(fs.readFileSync(watermarkPath(), "utf8")) as WatermarkFile
-    watermarkCache = { sessions: raw.sessions ?? {} }
-  } catch {
-    watermarkCache = { sessions: {} }
-  }
-  return watermarkCache
-}
-
-function saveWatermark(): void {
-  if (!watermarkCache) return
-  const target = watermarkPath()
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  const tmp = target + ".tmp"
-  fs.writeFileSync(tmp, JSON.stringify(watermarkCache), "utf8")
-  fs.renameSync(tmp, target)
-}
-
 export function getMirrorWatermark(sessionKey: string): number | undefined {
-  return loadWatermark().sessions[sessionKey]?.len
+  return readCarryoverFile(sessionKey).mirrorWatermark?.len
 }
 
 export function setMirrorWatermark(sessionKey: string, len: number): void {
-  const s = loadWatermark()
-  s.sessions[sessionKey] = { len, at: Date.now() }
-  saveWatermark()
+  const file = readCarryoverFile(sessionKey)
+  file.mirrorWatermark = { len, at: Date.now() }
+  writeCarryoverFile(sessionKey, file)
 }

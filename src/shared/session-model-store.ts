@@ -1,8 +1,14 @@
-import * as fs from "node:fs"
-import * as path from "node:path"
 import { modelSlug } from "./model-utils.js"
 import { chatIdFromSessionKey } from "./channel-types.js"
-import { sessionStateDir } from "./data-paths.js"
+import {
+  initSessionOverridesStore,
+  resetSessionOverridesStoreForTests,
+  patchSessionRecord,
+  getSessionRecord,
+  getRecentModelsFromStore,
+  setRecentModelsInStore,
+  readOverridesSnapshot,
+} from "./session-overrides-store.js"
 
 export interface ModelRef {
   model: string
@@ -16,64 +22,23 @@ export interface ModelEntry extends ModelRef {
   usedAt?: number
 }
 
-interface OverrideFile {
-  sessions: Record<string, ModelRef & { updatedAt: number }>
-  pending: Record<string, ModelRef & { updatedAt: number }>
-  recent: (ModelRef & { usedAt: number })[]
-}
-
-const FILE_NAME = "session-model-overrides.json"
 const DEFAULT_RECENT_CAP = 8
 
-let dataDir: string | null = null
-let cache: OverrideFile | null = null
-
 export function initSessionModelStore(dir: string): void {
-  dataDir = dir
-  cache = null
+  initSessionOverridesStore(dir)
 }
 
 export function resetSessionModelStoreForTests(): void {
-  dataDir = null
-  cache = null
+  resetSessionOverridesStoreForTests()
 }
 
-function resolveDataDir(): string {
-  if (dataDir) return dataDir
-  if (process.env.APP_DATA_DIR) return process.env.APP_DATA_DIR
-  throw new Error("session-model-store: data dir not initialized")
-}
-
-function storePath(): string {
-  return path.join(sessionStateDir(resolveDataDir()), FILE_NAME)
-}
-
-function emptyStore(): OverrideFile {
-  return { sessions: {}, pending: {}, recent: [] }
-}
-
-function load(): OverrideFile {
-  if (cache) return cache
-  try {
-    const raw = JSON.parse(fs.readFileSync(storePath(), "utf8")) as OverrideFile
-    cache = {
-      sessions: raw.sessions ?? {},
-      pending: raw.pending ?? {},
-      recent: Array.isArray(raw.recent) ? raw.recent : [],
-    }
-  } catch {
-    cache = emptyStore()
-  }
-  return cache
-}
-
-function save(): void {
-  if (!cache) return
-  const target = storePath()
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  const tmp = target + ".tmp"
-  fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
-  fs.renameSync(tmp, target)
+/** 已知当前会话供应商时：无 resourceId 或与当前不一致的 override 不得生效（防 LLM 模型串到 SDK） */
+export function overrideMatchesResource(ov: ModelRef, resourceId: string | undefined): boolean {
+  const cur = resourceId?.trim()
+  if (!cur) return true
+  const bound = ov.resourceId?.trim()
+  if (!bound) return false
+  return bound === cur
 }
 
 export function modelEntryKey(e: ModelRef): string {
@@ -84,122 +49,83 @@ export function pendingKey(chatKey: string, workspaceDir: string): string {
   return `${chatKey}::${workspaceDir}`
 }
 
-/** sessionKey 形如 chatKey::workspace；无 :: 时整段当�?chatKey */
+/** sessionKey 形如 chatKey::workspace；无 :: 时整段当作 chatKey */
 export function pendingKeyFromSession(sessionKey: string): string {
   const idx = sessionKey.indexOf("::")
   if (idx < 0) return sessionKey
   return sessionKey
 }
 
-/** Windows 路径大小写不一致时，用已有 key 对齐，避�?override 写了读不�?*/
-function findStoredSessionKey(sessions: Record<string, unknown>, sessionKey: string): string | undefined {
-  if (sessionKey in sessions) return sessionKey
-  if (process.platform !== "win32") return undefined
-  const lower = sessionKey.toLowerCase()
-  for (const k of Object.keys(sessions)) {
-    if (k.toLowerCase() === lower) return k
+function readStoredOverride(sessionKey: string): ModelRef | undefined {
+  const e = getSessionRecord(sessionKey)
+  if (!e?.model) return undefined
+  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
+}
+
+function pickSessionOverride(sessionKey: string, resourceId: string | undefined): ModelRef | undefined {
+  const direct = readStoredOverride(sessionKey)
+  if (direct && overrideMatchesResource(direct, resourceId)) return direct
+  const chat = chatIdFromSessionKey(sessionKey)
+  if (chat && chat !== sessionKey) {
+    const parent = readStoredOverride(chat)
+    if (parent && overrideMatchesResource(parent, resourceId)) return parent
   }
   return undefined
 }
 
 export function setSessionOverride(sessionKey: string, ref: ModelRef): void {
-  const s = load()
-  const prev = findStoredSessionKey(s.sessions, sessionKey)
-  if (prev && prev !== sessionKey) delete s.sessions[prev]
-  const old = s.sessions[sessionKey]
-  const rid = ref.resourceId ?? (old as ModelRef | undefined)?.resourceId
-  s.sessions[sessionKey] = {
+  const old = getSessionRecord(sessionKey)
+  const rid = ref.resourceId ?? old?.resourceId
+  patchSessionRecord(sessionKey, {
     model: ref.model,
     modelParams: ref.modelParams ?? "",
     ...(rid ? { resourceId: rid } : {}),
-    updatedAt: Date.now(),
-  }
-  save()
+  })
 }
 
-function readStoredOverride(s: ReturnType<typeof load>, sessionKey: string): ModelRef | undefined {
-  const key = findStoredSessionKey(s.sessions, sessionKey)
-  if (!key) return undefined
-  const e = s.sessions[key]
-  if (!e?.model) return undefined
-  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
-}
-
-export function getSessionOverride(sessionKey: string): ModelRef | undefined {
-  const s = load()
-  const direct = readStoredOverride(s, sessionKey)
-  if (direct) return direct
-  // 新会话（project/dir/工作区会话）回退父 chat 覆盖：群里 /m 切完再进项目直接生效
-  const chat = chatIdFromSessionKey(sessionKey)
-  if (chat && chat !== sessionKey) return readStoredOverride(s, chat)
-  return undefined
+export function getSessionOverride(sessionKey: string, resourceId?: string): ModelRef | undefined {
+  return pickSessionOverride(sessionKey, resourceId)
 }
 
 export function clearSessionOverride(sessionKey: string): void {
-  const s = load()
-  const key = findStoredSessionKey(s.sessions, sessionKey)
-  if (!key) return
-  delete s.sessions[key]
-  save()
+  patchSessionRecord(sessionKey, { model: undefined, modelParams: undefined })
 }
 
-/** 通道保存新模型时清掉该通道下所有会�?override，避免仍用旧 /m 或历史模�?*/
-export function clearSessionOverridesForChannel(channelId: string): number {
-  const s = load()
+/** 切供应商时一次落盘：resource + model（或清模型覆盖） */
+export function applySessionProviderSwitch(
+  sessionKey: string,
+  opts: { resourceId: string | null; model?: ModelRef | null },
+): void {
+  const patch: Parameters<typeof patchSessionRecord>[1] = {}
+  if (opts.resourceId === null) patch.resourceId = undefined
+  else patch.resourceId = opts.resourceId
+  if (opts.model === null) {
+    patch.model = undefined
+    patch.modelParams = undefined
+  } else if (opts.model) {
+    patch.model = opts.model.model
+    patch.modelParams = opts.model.modelParams ?? ""
+    patch.resourceId = opts.model.resourceId ?? opts.resourceId ?? undefined
+  }
+  patchSessionRecord(sessionKey, patch)
+}
+
+/** 通道保存新模型时清掉该通道下所有会话 override，避免仍用旧 /m 或历史模型 */
+export function clearSessionOverridesForChannel(channelId: string): void {
+  const s = readOverridesSnapshot()
   const prefix = `${channelId}|`
-  let n = 0
   for (const key of Object.keys(s.sessions)) {
-    if (key.startsWith(prefix)) {
-      delete s.sessions[key]
-      n++
+    if (key.startsWith(prefix) && s.sessions[key]?.model) {
+      patchSessionRecord(key, { model: undefined, modelParams: undefined })
     }
   }
-  if (n) save()
-  return n
 }
 
-export function setPendingOverride(key: string, ref: ModelRef): void {
-  const s = load()
-  const old = s.pending[key]
-  const rid = ref.resourceId ?? (old as ModelRef | undefined)?.resourceId
-  s.pending[key] = {
-    model: ref.model,
-    modelParams: ref.modelParams ?? "",
-    ...(rid ? { resourceId: rid } : {}),
-    updatedAt: Date.now(),
-  }
-  save()
-}
-
-export function getPendingOverride(key: string): ModelRef | undefined {
-  const e = load().pending[key]
-  if (!e?.model) return undefined
-  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
-}
-
-/** 读取并删�?pending；不存在返回 undefined */
-export function consumePendingOverride(key: string): ModelRef | undefined {
-  const s = load()
-  const e = s.pending[key]
-  if (!e?.model) return undefined
-  delete s.pending[key]
-  save()
-  return { model: e.model, modelParams: e.modelParams ?? "", ...(e.resourceId ? { resourceId: e.resourceId } : {}) }
-}
-
-/**
- * 解析会话有效模型：session override > pending(消费并写�?override) > fallback
- * pending key �?sessionKey 同形（chatKey::workspace�?
- */
+/** 解析会话有效模型：session override > fallback */
 export function resolveModelForSession(sessionKey: string, fallback: ModelRef): ModelRef {
-  const ov = getSessionOverride(sessionKey)
+  const resourceId = fallback.resourceId
+  const ov = pickSessionOverride(sessionKey, resourceId)
   if (ov) return ov
-
-  const pending = consumePendingOverride(pendingKeyFromSession(sessionKey))
-  if (pending) {
-    setSessionOverride(sessionKey, pending)
-    return pending
-  }
 
   return {
     model: fallback.model,
@@ -209,47 +135,37 @@ export function resolveModelForSession(sessionKey: string, fallback: ModelRef): 
 }
 
 export function getRecentModels(): ModelEntry[] {
-  return load().recent.map((r) => ({
-    model: r.model,
-    modelParams: r.modelParams ?? "",
-    ...(r.resourceId ? { resourceId: r.resourceId } : {}),
-    usedAt: r.usedAt,
-  }))
+  return getRecentModelsFromStore()
 }
 
 export function pushRecentModel(ref: ModelRef, cap = DEFAULT_RECENT_CAP): void {
-  const s = load()
+  const recent = getRecentModelsFromStore()
   const key = modelEntryKey(ref)
-  const next = s.recent.filter((r) => modelEntryKey(r) !== key)
+  const next = recent.filter((r) => modelEntryKey(r) !== key)
   next.unshift({
     model: ref.model,
     modelParams: ref.modelParams ?? "",
     ...(ref.resourceId ? { resourceId: ref.resourceId } : {}),
     usedAt: Date.now(),
   })
-  // 同模型无绑定老条目被有绑定新条目替代：避免未绑定条目与绑定条目重复
   const cleaned = ref.resourceId
     ? next.filter((r, i) => i === 0 || !(r.model === ref.model && (r.modelParams ?? "") === (ref.modelParams ?? "") && !r.resourceId))
     : next
-  s.recent = cleaned.slice(0, Math.max(1, cap))
-  save()
+  setRecentModelsInStore(cleaned.slice(0, Math.max(1, cap)))
 }
 
-/** 从「最近使用」去掉一条（常用栏移除时需同步，否则仍会被 listQuickModels 补回来） */
 export function removeRecentModel(ref: ModelRef): void {
-  const s = load()
+  const recent = getRecentModelsFromStore()
   const key = modelEntryKey(ref)
-  const next = s.recent.filter((r) => modelEntryKey(r) !== key)
-  if (next.length === s.recent.length) return
-  s.recent = next
-  save()
+  const next = recent.filter((r) => modelEntryKey(r) !== key)
+  if (next.length === recent.length) return
+  setRecentModelsInStore(next)
 }
 
 /** 收藏置顶 + 最近补充，按 model+params+resourceId 去重，最多 limit 条 */
 export function listQuickModels(favorites: ModelEntry[], limit = 6): ModelEntry[] {
   const out: ModelEntry[] = []
   const seen = new Set<string>()
-  // 同模型有绑定条目时，未绑定老条目不再补位
   const boundModels = new Set<string>()
   for (const f of favorites) {
     if (f.model && (f as ModelRef).resourceId) boundModels.add(`${f.model}\0${f.modelParams ?? ""}`)

@@ -163,22 +163,108 @@ function sealSecret(value: string | undefined): string | undefined {
   } catch { return value }
 }
 
-/** 解密失败节流日志键（只记前缀，不记密文内容） */
+/** 解密失败去重（按密文前缀，不记明文） */
 const loggedSecretFailures = new Set<string>()
+let secretDecryptFailureReported = false
 
 function openSecret(value: string | undefined): string | undefined {
   if (!value || !value.startsWith(SECRET_PREFIX)) return value
   try {
     return safeStorage.decryptString(Buffer.from(value.slice(SECRET_PREFIX.length), "base64"))
   } catch {
-    // OS 密钥不可用（换机/换用户/钥匙串锁定）：密文无法还原，视为未配置
-    const mark = value.slice(0, 16)
-    if (!loggedSecretFailures.has(mark)) {
-      loggedSecretFailures.add(mark)
-      console.warn(`[config] 凭据解密失败（只报一次），相关功能将显示未配置: ${mark}...`)
-    }
+    // OS 密钥不可用（换机/换用户/换 profile 目录）：密文无法还原，视为未配置
+    loggedSecretFailures.add(value.slice(0, 20))
     return ""
   }
+}
+
+function isUndecryptableEnc(value: string | undefined): boolean {
+  if (!value?.startsWith(SECRET_PREFIX)) return false
+  if (!canUseSafeStorage()) return true
+  try {
+    safeStorage.decryptString(Buffer.from(value.slice(SECRET_PREFIX.length), "base64"))
+    return false
+  } catch {
+    return true
+  }
+}
+
+function scrubEncField(value: string | undefined): string | undefined {
+  return isUndecryptableEnc(value) ? "" : value
+}
+
+/** 配置包导入：明文保留；本机 enc 解成明文供 save 重封；外机 enc 置空 */
+export function normalizeImportedSecret(value: string | undefined): string | undefined {
+  if (!value?.trim()) return value
+  if (!value.startsWith(SECRET_PREFIX)) return value
+  if (isUndecryptableEnc(value)) return ""
+  return openSecret(value)
+}
+
+/** 落盘清掉本机无法解密的 enc:v1（僵尸密文）；返回清除条数 */
+export function scrubUndecryptableSecretsInStore(): number {
+  const raw = getStore().store
+  let scrubbed = 0
+  const bump = (before: string | undefined, after: string | undefined) => {
+    if (before !== after && before?.startsWith(SECRET_PREFIX)) scrubbed++
+  }
+
+  const patch: Partial<AppConfig> = {}
+  for (const key of ["gitlabToken", "flowHubToken", "larkAppSecret", "wechatToken", "cursorApiKey"] as const) {
+    const before = raw[key]
+    const after = scrubEncField(before)
+    bump(before, after)
+    if (before !== after) patch[key] = after ?? ""
+  }
+
+  let channels = raw.channels
+  if (channels?.length) {
+    let changed = false
+    channels = channels.map((c) => {
+      const larkAppSecret = scrubEncField(c.larkAppSecret)
+      const wechatToken = scrubEncField(c.wechatToken)
+      bump(c.larkAppSecret, larkAppSecret)
+      bump(c.wechatToken, wechatToken)
+      if (larkAppSecret !== c.larkAppSecret || wechatToken !== c.wechatToken) {
+        changed = true
+        return { ...c, larkAppSecret, wechatToken }
+      }
+      return c
+    })
+    if (changed) patch.channels = channels
+  }
+
+  let agentResources = raw.agentResources
+  if (agentResources?.length) {
+    let changed = false
+    agentResources = agentResources.map((r) => {
+      const apiKey = scrubEncField(r.apiKey)
+      bump(r.apiKey, apiKey)
+      if (apiKey !== r.apiKey) {
+        changed = true
+        return { ...r, apiKey }
+      }
+      return r
+    })
+    if (changed) patch.agentResources = agentResources
+  }
+
+  if (Object.keys(patch).length > 0) {
+    getStore().set(patch as unknown as AppConfig)
+  }
+  loggedSecretFailures.clear()
+  return scrubbed
+}
+
+/** 启动后调用一次：汇总 DPAPI 解密失败（scrub 之后 getConfig 仍解不开的） */
+export function reportSecretDecryptFailuresIfNeeded(): void {
+  if (secretDecryptFailureReported || loggedSecretFailures.size === 0) return
+  secretDecryptFailureReported = true
+  const n = loggedSecretFailures.size
+  console.warn(
+    `[config] ${n} encrypted credential(s) could not be decrypted (DPAPI/keyring); UI shows unset. `
+    + "Re-enter in Settings. Dev profile uses lk-harness-dev - secrets are not shared with production.",
+  )
 }
 
 /** 原始（仍加密）资源行：供安全回收判断（只有从未加密过的空行才能删） */
@@ -223,6 +309,16 @@ function sealPartialSecrets(partial: Partial<AppConfig>): Partial<AppConfig> {
   if (out.wechatToken !== undefined) out.wechatToken = sealSecret(out.wechatToken) ?? ""
   if (out.cursorApiKey !== undefined) out.cursorApiKey = sealSecret(out.cursorApiKey) ?? ""
   return out
+}
+
+/** 进程最早期读代理：不解密凭据，避免 bootstrap 污染 decrypt 失败计数 */
+export function readProxyFieldsFromStore(): Pick<AppConfig, "httpProxy" | "httpsProxy" | "noProxy"> {
+  try {
+    const s = getStore().store
+    return { httpProxy: s.httpProxy ?? "", httpsProxy: s.httpsProxy ?? "", noProxy: s.noProxy ?? "" }
+  } catch {
+    return { httpProxy: "", httpsProxy: "", noProxy: "" }
+  }
 }
 
 /** 启动时一次性把存量明文凭据加密落盘（app ready 后调用；不可用则跳过） */

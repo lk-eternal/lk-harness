@@ -8,6 +8,8 @@ import {
   getConfig,
   saveConfig,
   type AppConfig,
+  normalizeImportedSecret,
+  scrubUndecryptableSecretsInStore,
 } from "./config-store"
 import { exportHarnessRulesBundle, mergeImportHarnessRulesBundle } from "./harness-rule-store"
 import { listHarnessRules } from "./harness-rule-store"
@@ -260,17 +262,22 @@ export function mergeImportAgentResources(incoming: AgentResource[], warnings: s
   const cfg = getConfig()
   const rest = [...(cfg.agentResources ?? [])]
   for (const r of incoming) {
-    const existing = rest.find((x) => x.id === r.id)
+    const apiKey = normalizeImportedSecret(r.apiKey)
+    if (r.apiKey?.startsWith("enc:v1:") && !apiKey?.trim()) {
+      warnings.push(`agent/${r.name || r.id}：外机密文无法在本机解密，已跳过密钥`)
+    }
+    const row = apiKey !== r.apiKey ? { ...r, apiKey: apiKey ?? "" } : r
+    const existing = rest.find((x) => x.id === row.id)
     if (!existing) {
-      rest.push(r)
+      rest.push(row)
       continue
     }
     // 空密钥回填：已迁坏（空 key）的条目重跑可被治愈，不动其他字段
-    if (!existing.apiKey?.trim() && r.apiKey?.trim()) {
-      existing.apiKey = r.apiKey
-      warnings.push(`agent/${r.name || r.id}：密钥已回填`)
+    if (!existing.apiKey?.trim() && row.apiKey?.trim()) {
+      existing.apiKey = row.apiKey
+      warnings.push(`agent/${row.name || row.id}：密钥已回填`)
     } else {
-      warnings.push(skipNote(`agent/${r.name || r.id}`))
+      warnings.push(skipNote(`agent/${row.name || row.id}`))
     }
   }
   saveConfig({ agentResources: rest })
@@ -280,16 +287,29 @@ export function mergeImportChannels(incoming: MessageChannel[], warnings: string
   const cfg = getConfig()
   const current = [...(cfg.channels ?? [])]
   for (const c of incoming) {
-    const existing = current.find((x) => x.id === c.id)
+    const larkAppSecret = normalizeImportedSecret(c.larkAppSecret)
+    const wechatToken = normalizeImportedSecret(c.wechatToken)
+    if (c.larkAppSecret?.startsWith("enc:v1:") && !larkAppSecret?.trim()) {
+      warnings.push(`通道/${c.name || c.id}：飞书 Secret 外机密文无法解密，已跳过`)
+    }
+    if (c.wechatToken?.startsWith("enc:v1:") && !wechatToken?.trim()) {
+      warnings.push(`通道/${c.name || c.id}：微信 Token 外机密文无法解密，已跳过`)
+    }
+    const row = {
+      ...c,
+      larkAppSecret: larkAppSecret ?? "",
+      wechatToken: wechatToken ?? "",
+    }
+    const existing = current.find((x) => x.id === row.id)
     if (!existing) {
-      current.push(c)
+      current.push(row)
       continue
     }
     // 空凭据回填（同上）
     let filled = false
-    if (!existing.larkAppSecret?.trim() && c.larkAppSecret?.trim()) { existing.larkAppSecret = c.larkAppSecret; filled = true }
-    if (!existing.wechatToken?.trim() && c.wechatToken?.trim()) { existing.wechatToken = c.wechatToken; filled = true }
-    warnings.push(filled ? `通道/${c.name || c.id}：凭据已回填` : skipNote(`通道/${c.name || c.id}`))
+    if (!existing.larkAppSecret?.trim() && row.larkAppSecret?.trim()) { existing.larkAppSecret = row.larkAppSecret; filled = true }
+    if (!existing.wechatToken?.trim() && row.wechatToken?.trim()) { existing.wechatToken = row.wechatToken; filled = true }
+    warnings.push(filled ? `通道/${row.name || row.id}：凭据已回填` : skipNote(`通道/${row.name || row.id}`))
   }
   saveConfig({ channels: current })
 }
@@ -561,14 +581,16 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
 
     if (selected.has("projects") && manifest.projects) {
       const repoProfiles = mergeImportRepoProfiles(manifest.projects.repoProfiles, warnings)
+      const gitlabToken = normalizeImportedSecret(manifest.projects.gitlabToken) ?? ""
+      const flowHubToken = normalizeImportedSecret(manifest.projects.flowHubToken) ?? ""
       saveConfig({
-        gitlabToken: manifest.projects.gitlabToken || getConfig().gitlabToken,
+        gitlabToken: gitlabToken || getConfig().gitlabToken,
         gitlabHost: manifest.projects.gitlabHost || getConfig().gitlabHost,
         repoProfiles,
         repoRoots: repoProfiles.map((p) => p.path),
         worktreeRoot: manifest.projects.worktreeRoot || getConfig().worktreeRoot,
         flowHubUrl: manifest.projects.flowHubUrl || getConfig().flowHubUrl,
-        flowHubToken: manifest.projects.flowHubToken || getConfig().flowHubToken,
+        flowHubToken: flowHubToken || getConfig().flowHubToken,
         flowHubAuthor: manifest.projects.flowHubAuthor || getConfig().flowHubAuthor,
       })
       if (manifest.projects.nodeGroups?.length) mergeImportNodeGroups(manifest.projects.nodeGroups, warnings)
@@ -612,6 +634,7 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
       }
     }
 
+    scrubUndecryptableSecretsInStore()
     return { ok: true, warnings: warnings.length ? warnings : undefined }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

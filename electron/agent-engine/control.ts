@@ -100,8 +100,8 @@ export async function switchAgentSessionReasoning(
 }
 
 /**
- * 会话级切供应商：同账本（llm↔llm）直续；跨账本导出现在家轮次并暂存搬运。
- * 只停旧进程不清旧本子；空导出不暂存（下次按目标原生起）。
+ * 会话级切供应商：同账本直续；跨账本（含 SDK↔SDK 不同账号）导出 mirror 搬运，
+ * 目标家账本在下次 launch 时清空（见 session-dispatcher newSession）；旧家账本保留。
  */
 export async function switchAgentSessionProvider(
   sessionKey: string,
@@ -109,8 +109,7 @@ export async function switchAgentSessionProvider(
   targetResource: AgentResource,
   opts?: { model?: string; modelParams?: string },
 ): Promise<{ ok: boolean; sameLedger: boolean; turns: number; fromLabel: string; toLabel: string; error?: string }> {
-  const { setSessionResourceOverride, clearSessionResourceOverride } = await import("../../src/shared/session-resource-store.js")
-  const { setSessionOverride, clearSessionOverride, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
+  const { applySessionProviderSwitch, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
   const { stashCarryover, initCarryoverStore, readMirrorTurns, takeLastTurns, peekCarryover, consumeCarryover } = await import("../carryover.js")
   initSessionModelStore(app.getPath("userData"))
   initCarryoverStore(app.getPath("userData"))
@@ -122,14 +121,19 @@ export async function switchAgentSessionProvider(
   let sameLedger = fromLedger === toLedger
 
   if (targetResource.id === currentResource.id) {
-    clearSessionResourceOverride(sessionKey)
+    applySessionProviderSwitch(sessionKey, {
+      resourceId: null,
+      model: opts?.model?.trim()
+        ? { model: opts.model.trim(), modelParams: opts.modelParams ?? "", resourceId: targetResource.id }
+        : null,
+    })
   } else {
-    setSessionResourceOverride(sessionKey, targetResource.id)
-  }
-  if (opts?.model?.trim()) {
-    setSessionOverride(sessionKey, { model: opts.model.trim(), modelParams: opts.modelParams ?? "", resourceId: targetResource.id })
-  } else {
-    clearSessionOverride(sessionKey)
+    applySessionProviderSwitch(sessionKey, {
+      resourceId: targetResource.id,
+      model: opts?.model?.trim()
+        ? { model: opts.model.trim(), modelParams: opts.modelParams ?? "", resourceId: targetResource.id }
+        : null,
+    })
   }
 
   let turns = 0
@@ -145,14 +149,21 @@ export async function switchAgentSessionProvider(
     } catch { /* 无待搬运则正常搬 */ }
   }
   if (!sameLedger) {
-    // 跨账本=新家全新起：逐回合抄件全量搬过去（近 10 轮封顶），下次拉起时注入
+    // 跨账本：写待搬运（可无 history），下次在新家 launch 时 newSession + 清目标账本
     try {
       const full = takeLastTurns(readMirrorTurns(sessionKey))
-      if (full.length > 0) {
-        turns = full.length
-        stashCarryover(sessionKey, { history: full, turns, fromLabel, toLabel, fromLedger, toLedger, fromResourceId: currentResource.id, toResourceId: targetResource.id })
-      }
-    } catch { /* 抄件读不到则按空处理：不清不搬 */ }
+      turns = full.length
+      stashCarryover(sessionKey, {
+        history: full,
+        turns: full.length,
+        fromLabel,
+        toLabel,
+        fromLedger,
+        toLedger,
+        fromResourceId: currentResource.id,
+        toResourceId: targetResource.id,
+      })
+    } catch { /* 抄件读不到则仍尝试空块 */ }
     // 真换账本才忘掉旧 resume 映射；视同直续时保留，下次仍可续上
     if (!sameLedger) {
       try {

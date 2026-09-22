@@ -2,6 +2,13 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { normalizeSessionKey } from "./shared/channel-types.js";
+import { ensureSessionLayoutMigrated } from "./shared/session-layout-migrate.js";
+import {
+  ensureSessionEntry,
+  legacyQueueDirId,
+  listSessionQueueDirs,
+  sessionQueueDir,
+} from "./shared/session-entry-paths.js";
 
 const POLL_INTERVAL_MS = 400;
 const STALE_TMP_MS = 5 * 60 * 1000;
@@ -11,6 +18,7 @@ let queueDir = "";
 export function initFileQueue(): string {
   const appDataDir = process.env.APP_DATA_DIR;
   if (!appDataDir) throw new Error("APP_DATA_DIR 环境变量未设置");
+  ensureSessionLayoutMigrated(appDataDir);
   queueDir = path.join(appDataDir, "file-queue");
   if (!fs.existsSync(queueDir)) fs.mkdirSync(queueDir, { recursive: true });
   migrateDoubledPathSessions();
@@ -21,16 +29,19 @@ export function getQueueDir(): string {
   return queueDir;
 }
 
-function sanitizeSessionDir(sessionKey: string): string {
-  return crypto.createHash("md5").update(sessionKey).digest("hex").slice(0, 16);
-}
-
 function getSessionDir(sessionKey?: string): string {
-  if (!sessionKey) return queueDir;
+  if (!sessionKey || !process.env.APP_DATA_DIR) return queueDir;
+  const appDataDir = process.env.APP_DATA_DIR;
   const normalized = normalizeSessionKey(sessionKey) || sessionKey;
-  const sub = path.join(queueDir, sanitizeSessionDir(normalized));
+  ensureSessionEntry(appDataDir, normalized);
+  const sub = sessionQueueDir(appDataDir, normalized);
   if (!fs.existsSync(sub)) fs.mkdirSync(sub, { recursive: true });
   return sub;
+}
+
+function legacyQueueSubdir(sessionKey: string): string {
+  const normalized = normalizeSessionKey(sessionKey) || sessionKey;
+  return path.join(queueDir, legacyQueueDirId(normalized));
 }
 
 /** 把盘符路径被双重转义的会话目录合并到规范 key 目录，避免消息永久 pending */
@@ -81,21 +92,29 @@ function migrateDoubledPathSessions(): void {
 
 /** 会话是否有过队列目录（探测不创建）：send 校验用——收过消息的会话必有目录 */
 export function hasSessionQueueDir(sessionKey: string): boolean {
-  if (!queueDir || !sessionKey) return false;
+  if (!sessionKey || !process.env.APP_DATA_DIR) return false;
   const normalized = normalizeSessionKey(sessionKey) || sessionKey;
-  return fs.existsSync(path.join(queueDir, sanitizeSessionDir(normalized)));
+  const appDataDir = process.env.APP_DATA_DIR;
+  if (fs.existsSync(sessionQueueDir(appDataDir, normalized))) return true;
+  if (!queueDir) return false;
+  return fs.existsSync(legacyQueueSubdir(normalized));
 }
 
 function listSessionDirs(): string[] {
-  if (!queueDir) return [];
+  const dirs: string[] = [];
+  if (process.env.APP_DATA_DIR) {
+    dirs.push(...listSessionQueueDirs(process.env.APP_DATA_DIR));
+  }
+  if (!queueDir) return dirs;
   try {
-    return fs.readdirSync(queueDir)
-      .filter((d) => {
-        const full = path.join(queueDir, d);
-        return fs.statSync(full).isDirectory();
-      })
-      .map((d) => path.join(queueDir, d));
-  } catch { return []; }
+    for (const d of fs.readdirSync(queueDir)) {
+      const full = path.join(queueDir, d);
+      try {
+        if (fs.statSync(full).isDirectory()) dirs.push(full);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return dirs;
 }
 
 /** 入队时间戳单调递增：同毫秒内连续入队（如 skipDedup 重投同 messageId）文件名不冲突、不被覆盖 */

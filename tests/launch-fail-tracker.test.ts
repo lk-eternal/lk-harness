@@ -24,6 +24,12 @@ describe("launch-fail-tracker", () => {
     expect(launchFailCooldownRemaining("sk1")).toBe(0)
   })
 
+  it("Cannot use this model 视为永久错误，有退避", () => {
+    expect(isTransientLaunchError("Resume 暂不可用: Cannot use this model: muse-spark")).toBe(false)
+    recordLaunchFailure("sk1", "Resume 暂不可用: Cannot use this model: muse-spark")
+    expect(launchFailCooldownRemaining("sk1")).toBeGreaterThan(0)
+  })
+
   it("配置类错误阶梯退避", () => {
     recordLaunchFailure("sk1", "通道未启用其他人使用")
     expect(launchFailCooldownRemaining("sk1")).toBeGreaterThan(0)

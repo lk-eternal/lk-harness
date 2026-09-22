@@ -14,6 +14,8 @@ import { withLlmProxyOptions, llmProxyConfigured } from "./llm-proxy"
 import { pushUiLog } from "./ui-logger"
 import type { Model, Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
+import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
+import { sessionPiDir } from "../src/shared/session-entry-paths.js"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
 import { assembleProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
@@ -31,8 +33,9 @@ function userDataRoot(): string {
 }
 
 function sessionDirForKey(sessionKey: string): string {
-  const hash = createHash("sha256").update(sessionKey).digest("hex").slice(0, 32)
-  return path.join(userDataRoot(), "pi-sessions", hash)
+  const root = userDataRoot()
+  ensureSessionLayoutMigrated(root)
+  return sessionPiDir(root, sessionKey)
 }
 
 export function piSessionDir(sessionKey: string): string {

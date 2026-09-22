@@ -437,7 +437,7 @@ export default function Dashboard({ onSettings, active }: Props) {
     if (modelSwitching || !sk) return
     setModelSwitching(key)
     try {
-      const r = await window.electronAPI.setSessionModel(sk, m.model, m.modelParams)
+      const r = await window.electronAPI.setSessionModel(sk, m.model, m.modelParams, m.resourceId)
       if (!r.ok) {
         setActionError(r.error ?? "切换模型失败")
         return

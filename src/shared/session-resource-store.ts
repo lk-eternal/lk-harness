@@ -1,99 +1,39 @@
-import * as fs from "node:fs"
-import * as path from "node:path"
-import { sessionStateDir } from "./data-paths.js"
 import { chatIdFromSessionKey } from "./channel-types.js"
+import {
+  initSessionOverridesStore,
+  resetSessionOverridesStoreForTests,
+  patchSessionRecord,
+  getSessionRecord,
+} from "./session-overrides-store.js"
 
 /** 会话级供应商（Agent 资源）覆盖：只影响当前会话，不碰通道默认 */
 
-interface OverrideFile {
-  sessions: Record<string, { resourceId: string; updatedAt: number }>
-}
-
-const FILE_NAME = "session-resource-overrides.json"
-
-let dataDir: string | null = null
-let cache: OverrideFile | null = null
-
 export function initSessionResourceStore(dir: string): void {
-  dataDir = dir
-  cache = null
+  initSessionOverridesStore(dir)
 }
 
 export function resetSessionResourceStoreForTests(): void {
-  dataDir = null
-  cache = null
+  resetSessionOverridesStoreForTests()
 }
 
-function resolveDataDir(): string {
-  if (dataDir) return dataDir
-  if (process.env.APP_DATA_DIR) return process.env.APP_DATA_DIR
-  throw new Error("session-resource-store: data dir not initialized")
-}
-
-function storePath(): string {
-  return path.join(sessionStateDir(resolveDataDir()), FILE_NAME)
-}
-
-function load(): OverrideFile {
-  if (cache) return cache
-  try {
-    const raw = JSON.parse(fs.readFileSync(storePath(), "utf8")) as OverrideFile
-    cache = { sessions: raw.sessions ?? {} }
-  } catch {
-    cache = { sessions: {} }
-  }
-  return cache
-}
-
-function save(): void {
-  if (!cache) return
-  const target = storePath()
-  fs.mkdirSync(path.dirname(target), { recursive: true })
-  const tmp = target + ".tmp"
-  fs.writeFileSync(tmp, JSON.stringify(cache), "utf8")
-  fs.renameSync(tmp, target)
-}
-
-/** Windows 路径大小写不一致时，用已有 key 对齐 */
-function findStoredSessionKey(sessions: Record<string, unknown>, sessionKey: string): string | undefined {
-  if (sessionKey in sessions) return sessionKey
-  if (process.platform !== "win32") return undefined
-  const lower = sessionKey.toLowerCase()
-  for (const k of Object.keys(sessions)) {
-    if (k.toLowerCase() === lower) return k
-  }
-  return undefined
+function readStoredResourceOverride(sessionKey: string): string | undefined {
+  return getSessionRecord(sessionKey)?.resourceId
 }
 
 export function setSessionResourceOverride(sessionKey: string, resourceId: string): void {
-  const s = load()
-  const prev = findStoredSessionKey(s.sessions, sessionKey)
-  if (prev && prev !== sessionKey) delete s.sessions[prev]
-  s.sessions[sessionKey] = { resourceId, updatedAt: Date.now() }
-  save()
-}
-
-function readStoredResourceOverride(s: ReturnType<typeof load>, sessionKey: string): string | undefined {
-  const key = findStoredSessionKey(s.sessions, sessionKey)
-  return key ? (s.sessions[key] as { resourceId?: string } | undefined)?.resourceId : undefined
+  patchSessionRecord(sessionKey, { resourceId })
 }
 
 export function getSessionResourceOverride(sessionKey: string): string | undefined {
-  const s = load()
-  const direct = readStoredResourceOverride(s, sessionKey)
+  const direct = readStoredResourceOverride(sessionKey)
   if (direct) return direct
-  // 同模型覆盖：新会话回退父 chat（供应商跟模型一起走，q3 这类带供应商收藏才不断）
   const chat = chatIdFromSessionKey(sessionKey)
-  if (chat && chat !== sessionKey) return readStoredResourceOverride(s, chat)
+  if (chat && chat !== sessionKey) return readStoredResourceOverride(chat)
   return undefined
 }
 
 export function clearSessionResourceOverride(sessionKey: string): void {
-  const s = load()
-  const key = findStoredSessionKey(s.sessions, sessionKey)
-  if (!key) return
-  delete s.sessions[key]
-  save()
+  patchSessionRecord(sessionKey, { resourceId: undefined })
 }
 
 /** 会话有效资源：override > 通道默认 */

@@ -28,8 +28,10 @@ export function catalogDir(root: string): string {
 /** [根下旧文件名, 目标子目录]：只搬、不删，目标已存在则跳过 */
 const MOVES: [string, keyof typeof DATA_SUBDIRS][] = [
   ["scheduled-tasks.json", "config"],
+  ["session-overrides.json", "sessions"],
   ["session-model-overrides.json", "sessions"],
   ["session-resource-overrides.json", "sessions"],
+  ["session-thinking.json", "sessions"],
   ["session-routing.json", "sessions"],
   ["sdk-resume-map.json", "sessions"],
   ["pi-resume-map.json", "sessions"],

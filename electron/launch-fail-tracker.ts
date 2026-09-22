@@ -12,6 +12,7 @@ const launchFailStreak = new Map<string, LaunchFailState>()
 
 /** 瞬时故障立即重试；配置/权限类错误阶梯退避 */
 export function isTransientLaunchError(error: string): boolean {
+  if (/cannot use this model/i.test(error)) return false
   return /resume\s*暂不可用|暂不可用|network|timeout|fetch failed|econnreset|会话已重置/i.test(error)
 }
 

@@ -168,8 +168,8 @@ const api = {
   exportDiagnostics: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("diagnostics:export"),
   stopSessionAgent: (sessionKey: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey),
-  setSessionModel: (sessionKey: string, model: string, modelParams?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
-    ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams),
+  setSessionModel: (sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
+    ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams, resourceId),
   listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }> =>
     ipcRenderer.invoke("session:list-tabs"),
   listDashboardTree: (): Promise<{

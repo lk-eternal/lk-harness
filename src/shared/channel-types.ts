@@ -98,6 +98,8 @@ export interface DaemonChannelConfig {
   mainUserEnabled: boolean;
   mainUserChatId: string;
   mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
+  /** 通道默认 Agent 资源 id（主用户；Daemon 写 session override 时用） */
+  agentResourceId?: string;
   /** 通道级工作目录，空 = 跟随全局 WORKSPACE_DIR */
   workspaceDir: string;
   /** 通道常用目录（/c w 快捷切换） */

@@ -33,6 +33,7 @@ import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
+import { purgeSessionEntry } from "../src/shared/session-entry-paths.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
@@ -487,7 +488,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     try {
       const { resolveModelForSession, initSessionModelStore } = await import("../src/shared/session-model-store.js")
       initSessionModelStore(app.getPath("userData"))
-      const eff = resolveModelForSession(sessionKey, { model, modelParams })
+      const eff = resolveModelForSession(sessionKey, { model, modelParams, resourceId: resource.id })
       model = eff.model
       modelParams = eff.modelParams ?? ""
     } catch { /* store 未就绪时沿用通道模型 */ }
@@ -867,6 +868,7 @@ export async function deleteUserSession(
 
   if (isSessionAgentRunning(key)) await stopSessionAgent(key)
   resetAllSessionContext(key)
+  purgeSessionEntry(app.getPath("userData"), key)
   clearAgentFailStreaks(key)
   previousActiveSessionMap.delete(key)
 

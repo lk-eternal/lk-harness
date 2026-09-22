@@ -1,4 +1,4 @@
-import { getConfig } from "./config-store"
+import { readProxyFieldsFromStore } from "./config-store"
 import { ensureWechatBypass } from "../src/wechat/proxy.js"
 
 export function quoteArg(a: string): string {
@@ -46,6 +46,6 @@ export function syncMainProcessProxyEnv(config: { httpProxy?: string; httpsProxy
 /** 进程启动最早期注入代理；读配置失败时静默跳过 */
 export function bootstrapProxyEnv(): void {
   try {
-    syncMainProcessProxyEnv(getConfig())
+    syncMainProcessProxyEnv(readProxyFieldsFromStore())
   } catch { /* initDaemonManager 会再同步 */ }
 }

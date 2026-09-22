@@ -46,6 +46,8 @@ import {
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { readScheduledTasksFile, writeScheduledTasksFile, buildNotifySessionKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
 import { configDir, sessionStateDir, migrateDataLayout } from "./shared/data-paths.js";
+import { ensureSessionLayoutMigrated } from "./shared/session-layout-migrate.js";
+import { ensureGlobalCommandsDir, globalCardQuestionsPath, globalRoutingPath } from "./shared/session-entry-paths.js";
 import { initSessionModelStore, setSessionOverride } from "./shared/session-model-store.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -601,7 +603,15 @@ function shouldReplyToMessage(ch: { type: "feishu"; rt: ChannelRuntime; chatId?:
 }
 
 // ── 路由映射持久化：daemon 重启后回复历史消息仍能路由到原会话 ──
-const ROUTING_FILE = path.join(sessionStateDir(APP_DATA_DIR), "session-routing.json");
+function routingFilePath(): string {
+  if (!APP_DATA_DIR) return path.join(sessionStateDir("."), "session-routing.json");
+  ensureSessionLayoutMigrated(APP_DATA_DIR);
+  const global = globalRoutingPath(APP_DATA_DIR);
+  const legacy = path.join(sessionStateDir(APP_DATA_DIR), "session-routing.json");
+  if (fs.existsSync(global)) return global;
+  if (fs.existsSync(legacy)) return legacy;
+  return global;
+}
 let routingSaveTimer: NodeJS.Timeout | null = null;
 
 /** 群指令发送人是否为通道主用户：绑定时刻直记的 openId，群/私聊同值 */
@@ -676,8 +686,9 @@ function scrubInvalidActiveSessions(): void {
 
 function loadRoutingMaps(): void {
   try {
-    if (!APP_DATA_DIR || !fs.existsSync(ROUTING_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(ROUTING_FILE, "utf-8")) as {
+    const routingFile = routingFilePath();
+    if (!APP_DATA_DIR || !fs.existsSync(routingFile)) return;
+    const raw = JSON.parse(fs.readFileSync(routingFile, "utf-8")) as {
       messageSession?: Record<string, string>; activeSession?: Record<string, string>; sessionToChat?: Record<string, string>; chatType?: Record<string, string>; explicitActive?: string[];
     };
     for (const [k, v] of Object.entries(raw.messageSession ?? {})) messageSessionMap.set(k, v);
@@ -705,9 +716,10 @@ function scheduleRoutingSave(): void {
         chatType: Object.fromEntries(chatTypeByChatKey),
         explicitActive: [...explicitActiveChats],
       };
-      fs.mkdirSync(path.dirname(ROUTING_FILE), { recursive: true });
-      fs.writeFileSync(ROUTING_FILE + ".tmp", JSON.stringify(data));
-      fs.renameSync(ROUTING_FILE + ".tmp", ROUTING_FILE);
+      const routingFile = routingFilePath();
+      fs.mkdirSync(path.dirname(routingFile), { recursive: true });
+      fs.writeFileSync(routingFile + ".tmp", JSON.stringify(data));
+      fs.renameSync(routingFile + ".tmp", routingFile);
     } catch { /* ignore */ }
   }, 1000);
   routingSaveTimer.unref?.();
@@ -2345,13 +2357,22 @@ function questionBodyText(text: string, options: string[]): string {
 }
 
 const answeredQuestionFooter = (opt: string): string => `✅ 已选择: **${opt}**`;
-const CARD_QUESTION_FILE = path.join(sessionStateDir(APP_DATA_DIR), "card-questions.json");
+function cardQuestionFilePath(): string {
+  if (!APP_DATA_DIR) return path.join(sessionStateDir("."), "card-questions.json");
+  ensureSessionLayoutMigrated(APP_DATA_DIR);
+  const global = globalCardQuestionsPath(APP_DATA_DIR);
+  const legacy = path.join(sessionStateDir(APP_DATA_DIR), "card-questions.json");
+  if (fs.existsSync(global)) return global;
+  if (fs.existsSync(legacy)) return legacy;
+  return global;
+}
 let cardQuestionSaveTimer: NodeJS.Timeout | null = null;
 
 function loadCardQuestions(): void {
   try {
-    if (!APP_DATA_DIR || !fs.existsSync(CARD_QUESTION_FILE)) return;
-    const raw = JSON.parse(fs.readFileSync(CARD_QUESTION_FILE, "utf-8")) as Record<string, CardQuestionEntry>;
+    const cardFile = cardQuestionFilePath();
+    if (!APP_DATA_DIR || !fs.existsSync(cardFile)) return;
+    const raw = JSON.parse(fs.readFileSync(cardFile, "utf-8")) as Record<string, CardQuestionEntry>;
     const now = Date.now();
     let n = 0;
     for (const [id, entry] of Object.entries(raw)) {
@@ -2373,9 +2394,10 @@ function scheduleCardQuestionSave(): void {
     cardQuestionSaveTimer = null;
     try {
       const data = Object.fromEntries(cardQuestionMap);
-      fs.mkdirSync(path.dirname(CARD_QUESTION_FILE), { recursive: true });
-      fs.writeFileSync(CARD_QUESTION_FILE + ".tmp", JSON.stringify(data));
-      fs.renameSync(CARD_QUESTION_FILE + ".tmp", CARD_QUESTION_FILE);
+      const cardFile = cardQuestionFilePath();
+      fs.mkdirSync(path.dirname(cardFile), { recursive: true });
+      fs.writeFileSync(cardFile + ".tmp", JSON.stringify(data));
+      fs.renameSync(cardFile + ".tmp", cardFile);
     } catch { /* ignore */ }
   }, 500);
   cardQuestionSaveTimer.unref?.();
@@ -3099,8 +3121,14 @@ async function replyToMessage(
 
 // ── 共享指令文件队列（.fcmd）──────────────────────────────
 
+function commandQueueDir(): string | null {
+  if (!APP_DATA_DIR) return null;
+  ensureSessionLayoutMigrated(APP_DATA_DIR);
+  return ensureGlobalCommandsDir(APP_DATA_DIR);
+}
+
 function pushCommandToQueue(command: string, messageId: string, source: string, chatId?: string, chatType?: string, fromCard?: boolean, senderOpenId?: string, senderIsMainUser?: boolean): boolean {
-  const queueDir = getQueueDir();
+  const queueDir = commandQueueDir();
   if (!queueDir) return false;
   const ts = Date.now();
   const safeId = messageId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -3127,7 +3155,7 @@ function pushCommandToQueue(command: string, messageId: string, source: string, 
 interface CmdEntry { id: string; command: string; messageId: string; chatId?: string; chatType?: string; fromCard?: boolean; senderOpenId?: string; senderIsMainUser?: boolean }
 
 function getPendingCommands(): CmdEntry[] {
-  const queueDir = getQueueDir();
+  const queueDir = commandQueueDir();
   if (!queueDir) return [];
   try {
     const files = fs.readdirSync(queueDir).filter((f) => f.endsWith(".fcmd")).sort();
@@ -3142,7 +3170,7 @@ function getPendingCommands(): CmdEntry[] {
 }
 
 function claimCommand(fileId: string): Omit<CmdEntry, "id"> | null {
-  const queueDir = getQueueDir();
+  const queueDir = commandQueueDir();
   if (!queueDir) return null;
   const basename = path.basename(fileId);
   if (basename !== fileId || !fileId.endsWith(".fcmd")) return null;
@@ -3158,7 +3186,7 @@ function claimCommand(fileId: string): Omit<CmdEntry, "id"> | null {
 }
 
 function cleanExpiredCommands(): void {
-  const queueDir = getQueueDir();
+  const queueDir = commandQueueDir();
   if (!queueDir) return;
   const now = Date.now();
   try {
@@ -3528,7 +3556,14 @@ function startHttpServer(): Promise<number> {
             const target = rt ? channelDefaultChatId(rt) : null;
             if (rt && target) sessionToChatMap.set(normalized, makeChatKey(rt.cfg.id, target));
             if (model) {
-              try { setSessionOverride(normalized, { model, modelParams }); }
+              try {
+                const rid = rt?.cfg.agentResourceId?.trim()
+                setSessionOverride(normalized, {
+                  model,
+                  modelParams,
+                  ...(rid ? { resourceId: rid } : {}),
+                })
+              }
               catch (e: unknown) { log("WARN", `enqueue 模型 override 失败: ${e instanceof Error ? e.message : String(e)}`); }
             }
             pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, { chatType, ...senderMeta });
@@ -4890,7 +4925,12 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void
     if (notifyChatKey) sessionToChatMap.set(task.id, notifyChatKey);
     if (task.model?.trim()) {
       try {
-        setSessionOverride(task.id, { model: task.model.trim(), modelParams: task.modelParams ?? "" });
+        const rid = rt?.cfg.agentResourceId?.trim()
+        setSessionOverride(task.id, {
+          model: task.model.trim(),
+          modelParams: task.modelParams ?? "",
+          ...(rid ? { resourceId: rid } : {}),
+        })
       } catch (e: unknown) {
         log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
       }
@@ -4954,6 +4994,7 @@ export async function daemonMain(): Promise<void> {
     try {
       const moved = migrateDataLayout(APP_DATA_DIR);
       if (moved.length > 0) log("INFO", `[DataLayout] 已整理 ${moved.length} 个文件: ${moved.join(", ")}`);
+      ensureSessionLayoutMigrated(APP_DATA_DIR);
     } catch { /* 迁移失败不阻断启动 */ }
   }
   loadRoutingMaps();

@@ -21,6 +21,7 @@ import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
 import { migrateDataLayout } from "../src/shared/data-paths.js"
+import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
 import {
   getAgentEngine,
   activeAgentSessionCount,
@@ -28,6 +29,7 @@ import {
   resetAllSessionContext,
   clearAgentFailStreaks,
   switchAgentSessionModel,
+  switchAgentSessionProvider,
   getAgentSessionDiagnostics,
   getAgentResumableSummary,
   listAllAgentSessions,
@@ -1731,14 +1733,18 @@ export function initDaemonManager(): void {
   initHarnessRuleStore(app.getPath("userData"))
   // SDK 跑在主进程：启动时就把代理灌进 process.env
   syncMainProcessProxyEnv(getConfig())
-  initSessionModelStore(app.getPath("userData"))
   initProjectStore(app.getPath("userData"))
   runLegacyConfigMigration()
   // 数据目录整理：根下散文件迁入 config/sessions/transcripts/catalogs（幂等）
   try {
-    const moved = migrateDataLayout(app.getPath("userData"))
+    const ud = app.getPath("userData")
+    const moved = migrateDataLayout(ud)
     if (moved.length > 0) broadcastLog(`[DataLayout] 已整理 ${moved.length} 个文件: ${moved.join(", ")}`)
-  } catch { /* 迁移失败不阻断启动 */ }
+    ensureSessionLayoutMigrated(ud)
+    initSessionModelStore(ud)
+  } catch {
+    initSessionModelStore(app.getPath("userData"))
+  }
   // 必须在 legacy 迁移之后：首次运行时通道由上一步创建
   migrateFavoriteWorkspacesToChannels()
   initSessionDispatcher()
@@ -1893,11 +1899,21 @@ export function initDaemonManager(): void {
     await stopSessionAgent(sessionKey)
     return { ok: true }
   })
-  ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string) => {
+  ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string, resourceId?: string) => {
     const channel = resolveChannelForSession(sessionKey)
-    const resource = channel ? getAgentResource(channel.agentResourceId) : undefined
-    if (!resource) return { ok: false, error: "未配置 Agent 资源" }
-    return switchAgentSessionModel(resource, sessionKey, model, modelParams)
+    if (!channel) return { ok: false, error: "未配置通道" }
+    const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
+    initSessionResourceStore(app.getPath("userData"))
+    const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
+    const current = getAgentResource(effResId)
+    if (!current.id?.trim()) return { ok: false, error: "未配置 Agent 资源" }
+    const targetId = resourceId?.trim() || effResId
+    const target = getAgentResource(targetId)
+    if (!target.id?.trim()) return { ok: false, error: "Agent 资源未找到" }
+    if (target.id !== current.id) {
+      return switchAgentSessionProvider(sessionKey, current, target, { model, modelParams })
+    }
+    return switchAgentSessionModel(current, sessionKey, model, modelParams)
   })
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())
   ipcMain.handle("session:dashboard-tree", () => listDashboardTree())
