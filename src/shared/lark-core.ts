@@ -1882,7 +1882,7 @@ export class LarkSender {
   }
 
   static parseMessageContent(messageId: string, messageType: string, content: string): ParsedMessage {
-    const result: ParsedMessage = { text: "", imageKeys: [], videoKeys: [] };
+    const result: ParsedMessage = { text: "", imageKeys: [], videoKeys: [], fileKeys: [] };
     try {
       const parsed = JSON.parse(content);
       switch (messageType) {
@@ -1928,7 +1928,10 @@ export class LarkSender {
           if (Array.isArray(elements)) this.extractCardText(elements, parts);
           result.text = parts.join("\n") || "[卡片消息]"; break;
         }
-        case "file": result.text = `[文件: ${parsed.file_name ?? "未知"}]`; break;
+        case "file":
+          result.text = `[文件: ${parsed.file_name ?? "未知"}]`;
+          if (parsed.file_key) result.fileKeys.push({ messageId, fileKey: parsed.file_key, fileName: parsed.file_name });
+          break;
         case "folder": result.text = `[文件夹: ${parsed.folder_name ?? "未知"}]`; break;
         case "audio": result.text = parsed.duration ? `[语音消息 ${Math.ceil(parsed.duration / 1000)}s]` : "[语音消息]"; break;
         case "video":
@@ -1978,14 +1981,14 @@ export class LarkSender {
     return result;
   }
 
-  /** 下载视频/媒体文件（type=file），扩展名跟原文件名，失败返回 null */
-  async downloadMedia(messageId: string, fileKey: string, fileName?: string): Promise<string | null> {
+  /** 下载通用文件（type=file），扩展名跟原文件名，失败返回 null；视频走默认 .mp4，普通文件走 .bin */
+  async downloadFile(messageId: string, fileKey: string, fileName?: string, fallbackExt = ".bin"): Promise<string | null> {
     try {
       if (!fs.existsSync(LarkSender.IMAGE_DIR)) fs.mkdirSync(LarkSender.IMAGE_DIR, { recursive: true });
       const resp: any = await this.client.im.messageResource.get({
         path: { message_id: messageId, file_key: fileKey }, params: { type: "file" },
       });
-      const ext = (fileName?.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? ".mp4").toLowerCase();
+      const ext = (fileName?.match(/\.[A-Za-z0-9]{1,5}$/)?.[0] ?? fallbackExt).toLowerCase();
       const filePath = path.join(LarkSender.IMAGE_DIR, `${fileKey}${ext}`);
       if (resp && typeof resp.pipe === "function") {
         const ws = fs.createWriteStream(filePath);
@@ -1994,7 +1997,12 @@ export class LarkSender {
       }
       if (resp?.writeFile) { await resp.writeFile(filePath); return filePath; }
       return null;
-    } catch (e: any) { this.log("ERROR", `下载视频异常: ${e?.message ?? e}`); return null; }
+    } catch (e: any) { this.log("ERROR", `下载文件异常: ${e?.message ?? e}`); return null; }
+  }
+
+  /** 下载视频/媒体文件（type=file），默认扩展名 .mp4，失败返回 null */
+  async downloadMedia(messageId: string, fileKey: string, fileName?: string): Promise<string | null> {
+    return this.downloadFile(messageId, fileKey, fileName, ".mp4");
   }
 
   async processIncomingMessage(messageId: string, messageType: string, content: string): Promise<string> {
@@ -2011,6 +2019,10 @@ export class LarkSender {
     for (const v of parsed.videoKeys) {
       const localPath = await this.downloadMedia(v.messageId, v.fileKey, v.fileName);
       pending.push(localPath ? `[视频已保存: ${localPath}]` : `[视频下载失败: ${v.fileKey}]`);
+    }
+    for (const f of parsed.fileKeys) {
+      const localPath = await this.downloadFile(f.messageId, f.fileKey, f.fileName);
+      pending.push(localPath ? `[文件已保存: ${localPath}]` : `[文件下载失败: ${f.fileKey}]`);
     }
     return [text, ...pending].filter(Boolean).join("\n");
   }
@@ -2172,6 +2184,7 @@ export interface ParsedMessage {
   text: string;
   imageKeys: { messageId: string; imageKey: string }[];
   videoKeys: { messageId: string; fileKey: string; fileName?: string }[];
+  fileKeys: { messageId: string; fileKey: string; fileName?: string }[];
 }
 
 export interface LarkMention {
