@@ -625,7 +625,7 @@ function isMainUserSender(chatKey: string | undefined, senderOpenId: string | un
 }
 
 
-/** 清掉误写入的展示标签后缀（无路径分隔符且非 wf_/project_），回写为真实 WORKSPACE_DIR；并压平双重反斜杠 */
+/** 清掉误写入的展示标签后缀（无路径分隔符且非 project_），回写为真实 WORKSPACE_DIR；并压平双重反斜杠 */
 
 /** 删除 activeSession / sessionToChat 中 chat 与 session 通道不一致的脏数据 */
 function scrubCrossChannelRouting(): void {
@@ -845,7 +845,7 @@ function extractWorkspaceDir(sessionKey?: string): string | undefined {
   const idx = sessionKey.indexOf("::");
   if (idx < 0) return undefined;
   const wsDir = sessionKey.slice(idx + 2);
-  // 仅路径形态的后缀才是工作目录（排除 wf_xxx 等非路径会话后缀）
+  // 仅路径形态的后缀才是工作目录（排除 project_ 等非路径会话后缀）
   if (!wsDir || !/[\\/]/.test(wsDir)) return undefined;
   return wsDir;
 }
@@ -960,10 +960,9 @@ function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle 
       sessionKey: sk,
       workspaceDir: wsDir,
       peers: peers.length ? peers : [wsDir],
-    }) || { title: `📂 ${wsDir.split(/[\\/]/).filter(Boolean).pop() || wsDir}` };
+    }) || { title: wsDir.split(/[\\/]/).filter(Boolean).pop() || wsDir };
   }
-  // 工作目录暂不可解析时仍给最小标题，保证 header 配色条出现
-  return { title: "💬 会话" };
+  return { title: "会话" };
 }
 
 type ResolvedChannel =
@@ -1044,13 +1043,12 @@ function isKnownSessionKey(sessionKey: string): boolean {
   for (const v of messageSessionMap.values()) { if (v === sessionKey) return true; }
   if (activePollConnections.has(sessionKey)) return true;
   if (hasSessionQueueDir(sessionKey)) return true;
-  // 合法 chatKey（通道已注册）：工作流通知用裸 chatKey；工作流节点会话用 chatKey::wf_*
   const chatKey = chatIdFromSessionKey(sessionKey);
   const { channelId } = parseChatKey(chatKey);
   if (channelId && channels.has(channelId)) {
     if (sessionKey === chatKey) return true;
     const suffix = sessionKey.slice(chatKey.length + 2); // after "::"
-    if (suffix.startsWith("wf_") || suffix.startsWith("project_")) return true;
+    if (suffix.startsWith("project_")) return true;
   }
   return false;
 }
@@ -1240,7 +1238,7 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
   const resolved = resolveRoutingKey(chatId, replyMessageId);
   let routedId = resolved.sessionKey;
   // 非回复消息的 p2p 路由规则:一律投递到当前主工作目录会话(引用回复才跟随原会话)。
-  // 显式切换(/c 等)或特殊会话(裸 temp_/task_，或 ::wf_ / ::project_)时尊重 active 指针。
+  // 显式切换(/c 等)或特殊会话(裸 temp_/task_，或 ::project_)时尊重 active 指针。
   // 注意：展示标签误写入的非路径后缀(如 cp-scheduling·workspace)必须纠正，不能当特殊会话。
   if (!resolved.viaReply && chatId && chatType === "p2p") {
     const idx = routedId ? routedId.indexOf("::") : -1;

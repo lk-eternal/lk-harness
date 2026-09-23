@@ -94,7 +94,9 @@ import {
   listMainSessionTabs, listDashboardTree, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
+  formatCurrentSessionBlock,
 } from "./session-dispatcher"
+import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 
 export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
 export { getLogBuffer } from "./ui-logger"
@@ -1106,11 +1108,15 @@ async function resolveRoutingProjectSession(port: number, chatId?: string): Prom
 
 function resolveResetWorkspaceDir(sessionKey?: string, chatId?: string, chatType?: string): string | undefined {
   if (!sessionKey) return undefined
-  if (chatType === "p2p" && isMainUser(chatId, chatType)) {
-    const channel = getChannel(parseChatKey(chatId!).channelId)
-    return effectiveWorkspaceDir(channel)
-  }
-  return path.join(app.getPath("userData"), "workspaces", sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_"))
+  const channel = chatId ? getChannel(parseChatKey(chatId).channelId) : undefined
+  const mainWs = chatType === "p2p" && isMainUser(chatId, chatType)
+    ? effectiveWorkspaceDir(channel)
+    : undefined
+  return resolveSessionWorkspaceDir({
+    userDataDir: app.getPath("userData"),
+    sessionKey,
+    mainWorkspaceDir: mainWs,
+  })
 }
 
 async function checkAndExecutePendingCommands(): Promise<void> {
@@ -1243,17 +1249,6 @@ async function checkAndExecutePendingCommands(): Promise<void> {
               ? sessions.find((s) => s.sessionKey === claimed.chatId || s.sessionKey.startsWith(`${claimed.chatId}::`))
               : undefined)
           const status = await getDaemonStatus()
-          const qMsgs = await getQueueMessages()
-
-          const pid = sessionKey ? projectIdFromSessionKey(sessionKey) : undefined
-          const project = pid ? getProject(pid) : undefined
-          const wsDir = project?.worktreePath
-            || resolveWorkspaceFromSessionKey(sessionKey)
-            || (claimed.chatId
-              ? effectiveWorkspaceDir(getChannel(parseChatKey(claimed.chatId).channelId) ?? undefined)
-              : undefined)
-            || getConfig().workspaceDir
-            || undefined
 
           const channel = claimed.chatId
             ? (getChannel(parseChatKey(claimed.chatId).channelId) ?? resolveChannelForSession(sessionKey ?? claimed.chatId))
@@ -1267,24 +1262,12 @@ async function checkAndExecutePendingCommands(): Promise<void> {
             }
           }
 
-          const sessionBlock = formatSessionStatusBlock({
-            sessionKey: sessionKey || claimed.chatId || "unknown",
-            chatType: claimed.chatType || matched?.chatType,
-            workspaceDir: matched?.workspaceDir || wsDir,
-            chatName: matched?.chatName,
-            pid: matched?.pid,
-            model: effModel,
-            modelParams: effParams,
-            startedAt: matched?.startedAt,
-          }, {
-            current: true,
-            queueMessages: sessionKey
-              ? qMsgs.filter((m) => m.sessionKey === sessionKey)
-              : qMsgs,
-            agentRunning: !!matched,
-            showType: false,
-            hideWorkspace: !isAdmin,
-          })
+          const statusSk = sessionKey || claimed.chatId
+          if (!statusSk) {
+            await reply(false, "❌ 无法识别当前会话")
+            break
+          }
+          const sessionBlock = await formatCurrentSessionBlock(statusSk, undefined, { hideWorkspace: !isAdmin })
 
           if (!isAdmin) {
             await reply(true, sessionBlock)

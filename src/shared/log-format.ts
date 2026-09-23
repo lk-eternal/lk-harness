@@ -5,7 +5,7 @@
 
 /** sessionKey 在日志行中的形态（须 ch_ 开头，避免误匹配路径内 oc_） */
 const SESSION_KEY_IN_LOG_RE =
-  /ch_[a-zA-Z0-9]+\|[^|\s]+(?:::(?:project_[a-f0-9]+|temp_[^\s\]]+|wf_[^\s\]]+|[A-Za-z]:[^\s\]]*))?/g
+  /ch_[a-zA-Z0-9]+\|[^|\s]+(?:::(?:project_[a-f0-9]+|temp_[^\s\]]+|[A-Za-z]:[^\s\]]*))?/g
 
 /** 从完整 sessionKey 生成 UI 短标签（无项目名/页签信息时的兜底） */
 export function shortenSessionKeyForUi(sessionKey: string): string {
@@ -21,7 +21,6 @@ export function shortenSessionKeyForUi(sessionKey: string): string {
       return `📂 ${base}`
     }
     if (suffix.startsWith("temp_")) return `⏳ temp:${suffix.slice(5, 13)}`
-    if (suffix.startsWith("wf_")) return `⏳ wf:${suffix.slice(3, 11)}`
   }
 
   const chatPart = sk.includes("|") ? sk.slice(sk.indexOf("|") + 1) : sk

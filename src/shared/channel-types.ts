@@ -169,7 +169,7 @@ export function channelIdFromSessionKey(sessionKey: string): string | undefined 
   return parseChatKey(chatIdFromSessionKey(sessionKey)).channelId;
 }
 
-/** 从 sessionKey 提取 `::` 后缀的工作目录；仅路径形态有效（排除 wf_xxx 等非路径后缀） */
+/** 从 sessionKey 提取 `::` 后缀的工作目录；仅路径形态有效（排除 project_ 等非路径后缀） */
 export function workspaceDirFromSessionKey(sessionKey: string): string | undefined {
   const idx = sessionKey.indexOf("::");
   if (idx < 0) return undefined;
@@ -179,7 +179,7 @@ export function workspaceDirFromSessionKey(sessionKey: string): string | undefin
 
 /**
  * 规范化会话 key：盘符路径上的重复反斜杠压成单个（防 JSON/环境变量双重转义导致队列目录分裂）。
- * 特殊后缀（wf_/project_/裸 temp_ 等）不动。
+ * 特殊后缀（project_/裸 temp_ 等）不动。
  */
 export function normalizeSessionKey(sessionKey: string | undefined | null): string {
   if (!sessionKey) return "";
@@ -188,7 +188,7 @@ export function normalizeSessionKey(sessionKey: string | undefined | null): stri
   const prefix = sessionKey.slice(0, idx + 2);
   let suffix = sessionKey.slice(idx + 2);
   if (!suffix) return sessionKey;
-  if (suffix.startsWith("wf_") || suffix.startsWith("project_")) return sessionKey;
+  if (suffix.startsWith("project_")) return sessionKey;
   if (!/[\\/]/.test(suffix) && !/^[A-Za-z]:/.test(suffix)) return sessionKey;
   // Windows 盘符路径：D:\\foo → D:\foo；保留开头的 UNC \\server 为两个反斜杠
   if (/^[A-Za-z]:/.test(suffix)) {

@@ -34,9 +34,11 @@ import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
 import { globalRoutingPath, purgeSessionEntry } from "../src/shared/session-entry-paths.js"
+import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
+import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
@@ -458,16 +460,14 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   } else if (boundProject?.worktreePath) {
     workDir = boundProject.worktreePath
     if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
-  } else if (useMain || isOwnTask) {
-    // sessionKey 自带工作目录后缀时优先（如切换 workspace 后旧会话被重新拉起，
-    // 必须回到原目录，否则 UI 目录显示错误且 Resume 目录匹配失败丢上下文）
-    const skDir = workspaceDirFromSessionKey(sessionKey)
-    workDir = skDir && fs.existsSync(skDir) ? skDir : effectiveWorkspaceDir(channel)
   } else {
-    // 临时目录名含 chatKey 的通道前缀（ch_xxx_...），不同通道天然隔离
-    const safeChatId = sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_")
-    workDir = path.join(app.getPath("userData"), "workspaces", safeChatId)
-    if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
+    const mainWs = (useMain || isOwnTask) ? effectiveWorkspaceDir(channel) : undefined
+    workDir = resolveSessionWorkspaceDir({
+      userDataDir: app.getPath("userData"),
+      sessionKey,
+      mainWorkspaceDir: mainWs,
+    }) ?? ""
+    if (workDir && !fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
   }
   if (!workDir) return { ok: false, error: "工作目录未配置" }
 
@@ -848,15 +848,30 @@ export async function leaveProjectSession(
 }
 
 /** 生成某会话的完整状态块（同 /s 当前对话段），供 /p leave 等场景复用 */
-export async function formatCurrentSessionBlock(sessionKey: string, workspaceDir?: string): Promise<string> {
+export async function formatCurrentSessionBlock(
+  sessionKey: string,
+  workspaceDir?: string,
+  blockOpts?: { hideWorkspace?: boolean },
+): Promise<string> {
   const matched = getSessionAgentList().find((s) => s.sessionKey === sessionKey)
   const qMsgs = await getQueueMessages()
   const channel = resolveChannelForSession(sessionKey)
   const eff = resolveEffectiveModel(sessionKey, channel, "primary", matched)
+  const rec = getSessionRecord(sessionKey)
+  const ws = matched?.workspaceDir
+    || workspaceDir
+    || rec?.workspaceDir
+    || resolveSessionWorkspaceDir({
+      userDataDir: app.getPath("userData"),
+      sessionKey,
+      mainWorkspaceDir: effectiveWorkspaceDir(channel),
+    })
+  const chatType = matched?.chatType
+    ?? (sessionKey.startsWith("temp_") ? "temp" : scheduledTaskForSessionKey(sessionKey) ? "task" : undefined)
   return formatSessionStatusBlock({
     sessionKey,
-    chatType: matched?.chatType,
-    workspaceDir: matched?.workspaceDir || workspaceDir,
+    chatType,
+    workspaceDir: ws,
     chatName: matched?.chatName,
     pid: matched?.pid,
     model: eff.model,
@@ -867,6 +882,7 @@ export async function formatCurrentSessionBlock(sessionKey: string, workspaceDir
     queueMessages: qMsgs.filter((m) => m.sessionKey === sessionKey),
     agentRunning: !!matched,
     showType: false,
+    hideWorkspace: blockOpts?.hideWorkspace,
   })
 }
 
@@ -1248,29 +1264,49 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
   if (sub === "new") {
     const taskMsg = tokens.slice(2).join(" ").trim()
     if (!taskMsg) { await reply(false, "💡 用法：/c new <任务描述>\n例如：/c new 帮我检查一下服务器状态"); return }
-    const taskId = `temp_${Date.now()}`
-    const channelId = chatId ? parseChatKey(chatId).channelId : undefined
-    const result = await launchIndependentAgent(taskId, "临时会话", taskMsg, "temp", chatId, channelId)
-    if (result.ok && chatId) {
-      const currentActive = await getCurrentActiveSession(port, chatId)
-      if (currentActive && currentActive !== taskId) previousActiveSessionMap.set(taskId, currentActive)
-      await syncActiveSession(port, chatId, taskId)
+    if (!chatId) {
+      await reply(false, "❌ 无法识别当前通道")
+      return
     }
-    if (result.ok) {
-      const newSession = getSessionAgentList().find((s) => s.sessionKey === taskId)
-      const lines = [
-        `🚀 新会话已创建:`,
-        `  SessionKey: ${taskId}`,
-        `  类型: 临时`,
-        `  工作目录: ${newSession?.workspaceDir ? path.basename(newSession.workspaceDir) : "-"}`,
-        `  PID: ${newSession?.pid || "-"}`,
-        `  启动时间: ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}`,
-        `\n🔀 已切换到此会话，临时会话结束后将自动回退`,
-      ]
-      await reply(true, lines.join("\n"))
-    } else {
-      await reply(false, `❌ 启动失败: ${result.error ?? "未知错误"}`)
+    const lock = cachedLock()
+    if (!lock?.port) {
+      await reply(false, "❌ 服务未运行")
+      return
     }
+    const curSk = await resolveEffectiveSessionKey(chatId, "p2p", port)
+    const inProject = !!(curSk && projectIdFromSessionKey(curSk))
+    if (inProject) setCurrentProjectId(null)
+
+    const folderName = `temp_${Date.now()}`
+    const w = path.join(app.getPath("userData"), "workspaces", folderName)
+    fs.mkdirSync(w, { recursive: true })
+    const sessionKey = normalizeSessionKey(`${chatId}::${w}`) || `${chatId}::${w}`
+
+    const synced = await syncActiveSession(port, chatId, sessionKey)
+    if (!synced) {
+      await reply(false, "❌ 会话路由绑定失败（请重试 /c new）")
+      return
+    }
+
+    const channelId = parseChatKey(chatId).channelId
+    const enq = await enqueueToSession(lock.port, sessionKey, taskMsg, "p2p", { channelId, chatId })
+    if (!enq.ok) {
+      await reply(false, `❌ 入队失败: ${enq.error ?? "未知错误"}`)
+      return
+    }
+    await dispatchSessionAgents()
+
+    const running = isSessionAgentRunning(sessionKey)
+    const block = await formatCurrentSessionBlock(sessionKey, w)
+    const head = inProject ? "🔀 已切换目录会话（已退出项目会话）" : "🔀 已切换目录会话"
+    const hint = running
+      ? "💡 后续消息将路由到此会话（Agent 已在运行）"
+      : "💡 已切换到此目录；下一条消息到达时自动拉起（有历史则恢复上下文）"
+    await reportCommandResult(port, messageId, true, [head, "", block, "", hint].join("\n"), chatId, undefined, {
+      sessionKey,
+      cardTitle: buildSessionCardTitle({ sessionKey, workspaceDir: w }),
+      ...(patchMessageId ? { patchMessageId } : {}),
+    })
     return
   }
 
@@ -1435,12 +1471,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     const chatId = extractChatId(sessionKey)
     const mainUser = isMainUser(chatId, chatType)
 
-    // 工作流节点会话由工作流引擎调度，dispatch 不代拉（缺节点上下文，会杂交成 p2p）
-    if (sessionKey.includes("::wf_")) {
-      broadcastLog(`[Agent] 工作流会话 ${sessionKey} 有残留消息，等待引擎调度，跳过`, "WARN")
-      continue
-    }
-    // 裸 id 会话（临时/定时任务）：按队列 chatType 拉起；续聊走主工作目录 + Resume
+    // 裸 id 会话（临时/定时任务）：按队列 chatType 拉起；cwd 在 AppData/workspaces/
     if (!sessionKey.includes("|") && !sessionKey.includes("::")) {
       const launchType: ChatType = chatType === "task" ? "task" : "temp"
       const resumableT = hasResumableAgentSession(sessionKey)
