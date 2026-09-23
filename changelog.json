@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.2.19",
+    "date": "2026-09-23",
+    "changes": [
+      "会话工作目录统一：temp/独立定时任务与群聊同走 AppData/workspaces；/c new 等价 chat::workspaces 目录会话",
+      "删除会话清理全局/通道常用目录与 daemon 路由；/s 与 /c 共用 formatCurrentSessionBlock",
+      "流式卡多题同卡齐套再投递；修复飞书 question_md 重复 element_id",
+      "会话数据收敛至 sessions/{id}；飞书文件消息自动下载落盘"
+    ]
+  },
+  {
     "version": "0.2.18",
     "date": "2026-09-18",
     "changes": [
