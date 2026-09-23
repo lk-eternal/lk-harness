@@ -14,6 +14,8 @@ import { sessionStateDir } from "./data-paths.js"
 
 /** 单会话扁平记录：模型/供应商/推理 + SDK·Pi 续聊元数据（不含 senderOpenId） */
 export interface SessionOverrideRecord {
+  /** 裸 temp_/task_ 等会话绑定的 chatKey（ch_xxx|oc_…） */
+  chatId?: string
   model?: string
   modelParams?: string
   resourceId?: string
@@ -158,7 +160,8 @@ function mergeRecord(
 
 function isRecordEmpty(r: SessionOverrideRecord): boolean {
   return (
-    !r.model
+    !r.chatId
+    && !r.model
     && !r.modelParams
     && !r.resourceId
     && !r.thinkingLevel

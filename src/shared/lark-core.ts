@@ -1009,8 +1009,10 @@ export class LarkSender {
     expanded?: boolean;
     headerTitle?: string;
   }): Record<string, unknown> {
+    const panelId = opts.elementId ?? "question_block";
+    const innerMdId = `${panelId}_md`.slice(0, 20);
     const inner: Record<string, unknown>[] = [
-      { tag: "markdown", content: opts.questionText, element_id: LarkSender.STREAM_QUESTION_ID },
+      { tag: "markdown", content: opts.questionText, element_id: innerMdId },
     ];
     if (opts.buttons?.length) {
       LarkSender.appendButtonRows(inner, opts.buttons, { singleCol: !!opts.input });
@@ -1039,7 +1041,7 @@ export class LarkSender {
           : "❓ 待选择");
     return {
       tag: "collapsible_panel",
-      element_id: opts.elementId ?? "question_block",
+      element_id: panelId,
       expanded: opts.expanded ?? true,
       header: {
         title: {

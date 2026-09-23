@@ -5,6 +5,7 @@ import * as path from "node:path"
 import * as os from "node:os"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
+import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { preserveChannelBindings } from "../src/shared/channel-binding.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 
@@ -466,7 +467,13 @@ export function getChannel(id?: string): MessageChannel | undefined {
 /** 解析会话所属通道；解析不到时返回 undefined（禁止静默回退到「第一个启用通道」，防微信会话读到飞书配置） */
 export function resolveChannelForSession(sessionKey: string): MessageChannel | undefined {
   const id = channelIdFromSessionKey(sessionKey)
-  return id ? getChannel(id) : undefined
+  if (id) return getChannel(id)
+  const rec = getSessionRecord(sessionKey)
+  if (rec?.chatId) {
+    const owner = channelIdFromSessionKey(rec.chatId)
+    if (owner) return getChannel(owner)
+  }
+  return undefined
 }
 
 export function getAgentResource(id?: string): AgentResource {
@@ -510,6 +517,29 @@ export function setChannelFavoriteWorkspaces(channelId: string, dirs: string[]):
   const next = dedupeFavoriteWorkspaces(dirs)
   updateChannel(channelId, { favoriteWorkspaces: next })
   return next
+}
+
+function sameDirPath(a: string, b: string): boolean {
+  return a.replace(/[\\/]+$/g, "").toLowerCase() === b.replace(/[\\/]+$/g, "").toLowerCase()
+}
+
+/** 删目录会话时从全局与各通道常用列表移除，避免 Tab 刷新后再次出现 */
+export function removeWorkspaceFromAllFavoriteLists(workspaceDir: string): void {
+  const ws = workspaceDir.trim()
+  if (!ws) return
+  const cfg = getConfig()
+  const globalNext = dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces).filter((d) => !sameDirPath(d, ws))
+  let channelsChanged = false
+  const channels = (cfg.channels ?? []).map((c) => {
+    const favs = getChannelFavoriteWorkspaces(c)
+    const next = favs.filter((d) => !sameDirPath(d, ws))
+    if (next.length === favs.length) return c
+    channelsChanged = true
+    return { ...c, favoriteWorkspaces: next }
+  })
+  const globalChanged = globalNext.length !== dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces).length
+  if (!globalChanged && !channelsChanged) return
+  saveConfig({ favoriteWorkspaces: globalNext, channels })
 }
 
 /** 全局常用目录一次性复制到各通道，此后两边独立演进 */

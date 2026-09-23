@@ -77,6 +77,12 @@ export async function syncActiveSession(port: number, chatId: string, sessionKey
   }
 }
 
+export async function purgeSessionRouting(port: number, sessionKey: string): Promise<void> {
+  try {
+    await httpPost(`http://127.0.0.1:${port}/api/purge-session-routing`, { sessionKey }, 5000)
+  } catch { /* best-effort */ }
+}
+
 export async function getCurrentActiveSession(port: number, chatId: string): Promise<string | undefined> {
   try {
     const res = (await httpGet(`http://127.0.0.1:${port}/api/active-sessions`)) as { sessions?: Record<string, string> }
@@ -117,12 +123,13 @@ export async function enqueueToSession(
   sessionKey: string,
   content: string,
   chatType = "project",
-  opts?: { channelId?: string; model?: string; modelParams?: string; messageId?: string; senderOpenId?: string; senderType?: string },
+  opts?: { channelId?: string; chatId?: string; model?: string; modelParams?: string; messageId?: string; senderOpenId?: string; senderType?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await httpPost(`http://127.0.0.1:${port}/enqueue`, {
       content, sessionKey, chatType,
       channelId: opts?.channelId,
+      chatId: opts?.chatId,
       model: opts?.model,
       modelParams: opts?.modelParams,
       messageId: opts?.messageId,

@@ -725,6 +725,35 @@ function scheduleRoutingSave(): void {
   routingSaveTimer.unref?.();
 }
 
+function routingKeyMatches(sessionKey: string, stored: string): boolean {
+  const norm = normalizeSessionKey(sessionKey) || sessionKey;
+  const sn = normalizeSessionKey(stored) || stored;
+  return stored === sessionKey || sn === norm;
+}
+
+/** UI 删会话后清路由残留，避免旧 messageId→session 再次 touch 队列目录 */
+function purgeSessionFromRouting(sessionKey: string): void {
+  const norm = normalizeSessionKey(sessionKey) || sessionKey;
+  if (!norm) return;
+  let changed = false;
+  for (const [mid, sk] of [...messageSessionMap.entries()]) {
+    if (routingKeyMatches(norm, sk)) {
+      messageSessionMap.delete(mid);
+      changed = true;
+    }
+  }
+  if (sessionToChatMap.delete(norm)) changed = true;
+  if (norm !== sessionKey && sessionToChatMap.delete(sessionKey)) changed = true;
+  for (const [chatId, sk] of [...activeSessionMap.entries()]) {
+    if (routingKeyMatches(norm, sk)) {
+      activeSessionMap.delete(chatId);
+      explicitActiveChats.delete(chatId);
+      changed = true;
+    }
+  }
+  if (changed) scheduleRoutingSave();
+}
+
 // ── 完成确认 ────────────────────────────────────────────
 // Agent 挂阻塞 poll = 声明手头活全部干完：确认删除全部 .claimed 并打 DONE。文件即状态，daemon 重启不丢。
 // （模型违规「没回复就挂 poll」时会误确认一次——代价是漏答可追问，远优于守卫机制带来的复杂度与吞消息风险）
@@ -1681,6 +1710,17 @@ function hasOpenQuestionBlock(state: AgentStreamCardState): boolean {
   return state.questionBlocks.some((b) => !b.answered && !b.closedNote);
 }
 
+function formatStreamQuestionBatchSummary(blocks: StreamQuestionBlock[]): string {
+  const lines: string[] = [];
+  let n = 0;
+  for (const b of blocks) {
+    if (!b.answered) continue;
+    n++;
+    lines.push(`${n}. ${questionDisplayBody(b.text)} → ${b.answered}`);
+  }
+  return lines.length ? `【点选汇总】\n${lines.join("\n")}` : "";
+}
+
 function resolveStreamCardChrome(ch: Extract<ResolvedChannel, { type: "feishu" }>, sessionKey: string): {
   sessionTitle?: CardTitle; sessionTemplate?: string;
 } {
@@ -2569,15 +2609,19 @@ async function expireOpenCardQuestionsForSession(sessionKey: string | undefined,
 const answeredCardQuestions = new Set<string>();
 const ANSWERED_CARD_MAX = 500;
 
-function markCardQuestionAnswered(messageId: string): boolean {
-  if (!messageId) return true;
-  if (answeredCardQuestions.has(messageId)) return false;
-  answeredCardQuestions.add(messageId);
+function markCardQuestionAnswerAttempt(dedupeKey: string): boolean {
+  if (!dedupeKey) return true;
+  if (answeredCardQuestions.has(dedupeKey)) return false;
+  answeredCardQuestions.add(dedupeKey);
   if (answeredCardQuestions.size > ANSWERED_CARD_MAX) {
     const oldest = answeredCardQuestions.values().next().value;
     if (oldest) answeredCardQuestions.delete(oldest);
   }
   return true;
+}
+
+function releaseCardQuestionAnswerAttempt(dedupeKey: string): void {
+  if (dedupeKey) answeredCardQuestions.delete(dedupeKey);
 }
 
 /** internal 消息（卡片点击/输入框提交）→ 来源聊天 chatKey；回复 internal 消息时按此路由回原聊天，防止 chat 直发窜台 */
@@ -2651,16 +2695,25 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const entry = cardQuestionMap.get(evt.messageId);
     // 优先 map；map 缺失时用按钮内嵌的 session_key（防 reply 未回 message_id 导致未登记）
     const sessionKey = entry?.sessionKey || value.sk || undefined;
+    const blockId = value.blockId as string | undefined;
+    const streamHit = findStreamCardByMessageId(evt.messageId)
+      ?? (entry?.isStreamCard && sessionKey && agentStreamCards.get(sessionKey)
+        ? { sessionKey, state: agentStreamCards.get(sessionKey)! }
+        : undefined);
+    const streamQuestion = !!streamHit && (streamHit.state.questionBlocks?.length ?? 0) > 0;
     // 只回 toast：返回 raw card 会把整张流式卡（思考/工具/正文）冲成一行提示
     if (!opt || (!entry && !sessionKey)) {
       return { toast: { type: "warning", content: "该问题已过期，请直接发消息告知选择" } };
     }
-    // 连点/重复提交：只回 toast，不重复入队也不动卡片
-    if (!markCardQuestionAnswered(evt.messageId)) {
-      log("INFO", `[${rt.cfg.name}] 问题卡片重复点击已忽略 (msg=${evt.messageId})`);
+    if (streamQuestion && !blockId) {
+      return { toast: { type: "warning", content: "该问题已过期，请直接发消息告知选择" } };
+    }
+    const dedupeKey = streamQuestion && blockId ? `${evt.messageId}:${blockId}` : evt.messageId;
+    if (!markCardQuestionAnswerAttempt(dedupeKey)) {
+      log("INFO", `[${rt.cfg.name}] 问题卡片重复点击已忽略 (msg=${evt.messageId}, block=${blockId ?? "-"})`);
       return { toast: { type: "info", content: "已提交，请稍候" } };
     }
-    log("INFO", `[${rt.cfg.name}] 问题卡片选择: ${opt} (msg=${evt.messageId}, session=${sessionKey ?? "-"})`);
+    log("INFO", `[${rt.cfg.name}] 问题卡片选择: ${opt} (msg=${evt.messageId}, session=${sessionKey ?? "-"}, block=${blockId ?? "-"})`);
     const cardActionT0 = Date.now();
     if (sessionKey) trackMessageSession(evt.messageId, sessionKey);
     const internalId = `internal_card_${Date.now()}`;
@@ -2668,16 +2721,16 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const chatType = resolveCardActionChatType(rt, chatKey, evt.chatId);
 
     // 先刷卡片再入队：避免 Agent 收到答案后 SDK 旧队列覆盖「已选择」
-    const streamHit = findStreamCardByMessageId(evt.messageId)
-      ?? (entry?.isStreamCard && sessionKey && agentStreamCards.get(sessionKey)
-        ? { sessionKey, state: agentStreamCards.get(sessionKey)! }
-        : undefined);
     if (streamHit) {
       const sk = streamHit.sessionKey;
-      const opResult = await enqueueCardOp(sk, async (): Promise<{ ok: boolean; cardJson?: Record<string, unknown> }> => {
+      const opResult = await enqueueCardOp(sk, async (): Promise<{
+        ok: boolean;
+        cardJson?: Record<string, unknown>;
+        allAnswered?: boolean;
+        summary?: string;
+      }> => {
         const state = agentStreamCards.get(sk);
         if (!state) return { ok: false };
-        const blockId = value.blockId as string | undefined;
         let matched = false;
         for (const b of state.questionBlocks ?? []) {
           if (blockId && b.blockId !== blockId) continue;
@@ -2689,26 +2742,33 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         if (!matched) return { ok: false };
         const ch = resolveChannel(sk, { allowDefault: false });
         if (ch.type !== "feishu") return { ok: false };
-        // 同通道全量刷新：与 streaming 共用 PUT 通道与序号，到达即顺序，不跨通道乱序
         const ok = await refreshAgentStreamCard(sk, state, ch, { finish: false });
         if (ok) {
           log("INFO", `[${rt.cfg.name}] 问题卡片已全量更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
           const { cardJson } = buildAgentStreamCardJson(sk, state, ch, false);
-          return { ok: true, cardJson };
+          const allAnswered = !hasOpenQuestionBlock(state);
+          const summary = allAnswered ? formatStreamQuestionBatchSummary(state.questionBlocks) : undefined;
+          return { ok: true, cardJson, allAnswered, summary };
         }
         return { ok: false };
       });
       if (opResult.ok) {
-        if (entry) {
-          cardQuestionMap.delete(evt.messageId);
-          scheduleCardQuestionSave();
+        const toastText = opResult.allAnswered
+          ? "已全部选择，正在通知 Agent"
+          : `已选择: ${opt.slice(0, 30)}`;
+        if (opResult.allAnswered && opResult.summary) {
+          if (entry) {
+            cardQuestionMap.delete(evt.messageId);
+            scheduleCardQuestionSave();
+          }
+          pushMessage(opResult.summary, internalId, chatKey, chatType, evt.operatorOpenId, evt.messageId, { senderType: "user" });
         }
-        pushMessage(opt, internalId, chatKey, chatType, evt.operatorOpenId, evt.messageId, { senderType: "user" });
-        // 回调同步回整卡：与 toast 同一时刻落定，客户端不再用缓存补闪；流式后续 PUT 照常
-        const resp: Record<string, unknown> = { toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` } };
+        const resp: Record<string, unknown> = { toast: { type: "success", content: toastText } };
         if (opResult.cardJson) resp.card = { type: "raw", data: opResult.cardJson };
         return resp;
       }
+      releaseCardQuestionAnswerAttempt(dedupeKey);
+      return { toast: { type: "warning", content: "更新失败，请重试" } };
     }
 
     if (entry) {
@@ -3554,7 +3614,8 @@ function startHttpServer(): Promise<number> {
             const normalized = normalizeSessionKey(sessionKey) || sessionKey;
             const rt = pickChannel(channelId || undefined);
             const target = rt ? channelDefaultChatId(rt) : null;
-            if (rt && target) sessionToChatMap.set(normalized, makeChatKey(rt.cfg.id, target));
+            const boundChat = chatId || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined);
+            if (boundChat) sessionToChatMap.set(normalized, boundChat);
             if (model) {
               try {
                 const rid = rt?.cfg.agentResourceId?.trim()
@@ -3566,7 +3627,12 @@ function startHttpServer(): Promise<number> {
               }
               catch (e: unknown) { log("WARN", `enqueue 模型 override 失败: ${e instanceof Error ? e.message : String(e)}`); }
             }
-            pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, { chatType, ...senderMeta });
+            const queueMeta = {
+              chatType,
+              ...(boundChat ? { chatId: boundChat } : {}),
+              ...senderMeta,
+            };
+            pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, queueMeta);
             trackMessageSession(effectiveId, normalized);
             rememberSessionKey(normalized);
             broadcastQueueEvent(chatIdFromSessionKey(normalized) || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined));
@@ -4329,16 +4395,22 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           const stream = agentStreamCards.get(session_key);
           if (!stream) return undefined;
           const displayBody = questionDisplayBody(text);
-          const blockId = `q${Date.now()}`;
+          const blockId = `q${Date.now()}_${hashStreamPart(String(Math.random())).slice(0, 4)}`;
+          // 回合已 finish 但仍有未决题时，后续 send_question 须续写同卡而非降级独立卡
+          if (stream.finished) stream.finished = false;
           stream.questionBlocks.push({
             blockId,
             insertAt: stream.lastSegments.length,
             text: displayBody,
             options: opts,
           });
-          const mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
+          let mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
+          if (!mergedOk) {
+            mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
+          }
           if (!mergedOk) {
             stream.questionBlocks = stream.questionBlocks.filter((b) => b.blockId !== blockId);
+            log("WARN", `[send-question] 流式卡刷新失败 session=${session_key} blocks=${stream.questionBlocks.length}`);
             return undefined;
           }
           if (stream.messageId) {
@@ -4358,6 +4430,11 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         if (qResult) {
           touchSessionLastReply(session_key);
           json(res, { ok: true, message_id: qResult.messageId, merged: true });
+          return true;
+        }
+        if (agentStreamCards.has(session_key)) {
+          log("WARN", `[send-question] 已有流式卡，拒绝降级独立题卡 session=${session_key}`);
+          json(res, { ok: false, error: "流式卡合并失败，未发送独立题卡" }, 500);
           return true;
         }
       }
@@ -4632,6 +4709,18 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const qs = new URL(req.url ?? "", "http://localhost").searchParams;
     const chatId = qs.get("chatId");
     if (chatId) { activeSessionMap.delete(chatId); explicitActiveChats.delete(chatId); scheduleRoutingSave(); }
+    json(res, { ok: true });
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/purge-session-routing") {
+    const body = JSON.parse(await readBody(req));
+    const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey.trim() : "";
+    if (!sessionKey) {
+      json(res, { ok: false, error: "sessionKey required" }, 400);
+      return true;
+    }
+    purgeSessionFromRouting(sessionKey);
     json(res, { ok: true });
     return true;
   }

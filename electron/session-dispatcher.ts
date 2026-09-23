@@ -4,12 +4,12 @@ import { app } from "electron"
 import {
   getConfig, getChannel, getChannels, getAgentResource, resolveChannelForSession,
   resolveChannelModel, effectiveWorkspaceDir, saveConfig,
-  getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces,
+  getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromAllFavoriteLists,
   type MessageChannel, type ModelScenario,
 } from "./config-store"
 import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
 import { broadcastLog } from "./ui-logger"
-import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession } from "./daemon-client"
+import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession, purgeSessionRouting } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import { resolveEffectiveModel, resolveEffectiveSessionKey } from "./session-key-resolver"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
@@ -33,7 +33,7 @@ import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
-import { purgeSessionEntry } from "../src/shared/session-entry-paths.js"
+import { globalRoutingPath, purgeSessionEntry } from "../src/shared/session-entry-paths.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
@@ -522,6 +522,22 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     return { ok: false, error: "Cursor SDK API Key 未配置" }
   }
 
+  const ownerChatId = meta?.chatId?.trim()
+  if ((chatType === "temp" || chatType === "task") && ownerChatId?.includes("|")) {
+    try {
+      const { initSessionOverridesStore, patchSessionRecord } = await import("../src/shared/session-overrides-store.js")
+      initSessionOverridesStore(app.getPath("userData"))
+      patchSessionRecord(sessionKey, {
+        chatId: ownerChatId,
+        workspaceDir: workDir,
+        model,
+        modelParams,
+        resourceId: resource.id,
+        updatedAt: Date.now(),
+      })
+    } catch { /* 落盘失败不阻断拉起 */ }
+  }
+
   // 切供应商搬运：历史走 messages 前缀，task 只留真任务；launch 成功后才 consume，失败保留
   let launchHistoryTurns: import("./agent-engine/types.js").TranscriptTurn[] | undefined
   let newSession: boolean | undefined
@@ -583,7 +599,7 @@ export async function launchIndependentAgent(
 ): Promise<{ ok: boolean; error?: string }> {
   const lock = cachedLock()
   if (!lock?.port) return { ok: false, error: "daemon 未就绪" }
-  const r = await enqueueToSession(lock.port, taskId, message, type, { channelId, model, modelParams })
+  const r = await enqueueToSession(lock.port, taskId, message, type, { channelId, chatId: _chatId, model, modelParams })
   if (!r.ok) return r
   await dispatchSessionAgents()
   return { ok: true }
@@ -731,6 +747,18 @@ function sameDirPath(a: string, b: string): boolean {
   return a.replace(/[\\/]+$/g, "").toLowerCase() === b.replace(/[\\/]+$/g, "").toLowerCase()
 }
 
+function boundChatIdForSession(sessionKey: string): string | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(globalRoutingPath(app.getPath("userData")), "utf8")) as {
+      sessionToChat?: Record<string, string>
+    }
+    const norm = normalizeSessionKey(sessionKey) || sessionKey
+    return raw.sessionToChat?.[sessionKey] ?? raw.sessionToChat?.[norm]
+  } catch {
+    return undefined
+  }
+}
+
 function sessionBelongsToChat(sessionKey: string, chatId: string): boolean {
   const sk = normalizeSessionKey(sessionKey) || sessionKey
   const ck = normalizeSessionKey(chatId) || chatId
@@ -873,13 +901,7 @@ export async function deleteUserSession(
   previousActiveSessionMap.delete(key)
 
   const ws = workspaceDirFromSessionKey(key)
-  const owner = resolveChannelForSession(key)
-  if (ws && owner) {
-    // 只从该会话所属通道摘掉目录，别的通道的同名目录不受影响
-    const favs = getChannelFavoriteWorkspaces(owner)
-    const next = favs.filter((d) => !sameDirPath(d, ws))
-    if (next.length !== favs.length) setChannelFavoriteWorkspaces(owner.id, next)
-  }
+  if (ws) removeWorkspaceFromAllFavoriteLists(ws)
 
   const activeKey = await getCurrentActiveSession(lock.port, resolvedChatId)
   if (activeKey === key) {
@@ -889,6 +911,7 @@ export async function deleteUserSession(
       setCurrentProjectId(null)
     }
   }
+  await purgeSessionRouting(lock.port, key)
 
   return { ok: true, label }
 }
@@ -1425,11 +1448,12 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       const task = readTasksFromFile().find((t) => t.id === sessionKey)
       const channelId = task?.channelId
         || getChannels().find((c) => c.enabled)?.id
+      const ownerChat = boundChatIdForSession(sessionKey)
       if (enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({
           sessionKey,
           chatType: launchType,
-          meta: { chatId: sessionKey, chatType: launchType },
+          meta: { chatId: ownerChat?.includes("|") ? ownerChat : sessionKey, chatType: launchType },
           channelId,
           modelOverride: task?.model,
           modelParamsOverride: task?.modelParams,
