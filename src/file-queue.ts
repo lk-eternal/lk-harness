@@ -100,21 +100,10 @@ export function hasSessionQueueDir(sessionKey: string): boolean {
   return fs.existsSync(legacyQueueSubdir(normalized));
 }
 
-function listSessionDirs(): string[] {
-  const dirs: string[] = [];
-  if (process.env.APP_DATA_DIR) {
-    dirs.push(...listSessionQueueDirs(process.env.APP_DATA_DIR));
-  }
-  if (!queueDir) return dirs;
-  try {
-    for (const d of fs.readdirSync(queueDir)) {
-      const full = path.join(queueDir, d);
-      try {
-        if (fs.statSync(full).isDirectory()) dirs.push(full);
-      } catch { /* ignore */ }
-    }
-  } catch { /* ignore */ }
-  return dirs;
+/** v2：仅 sessions/{entryId}/queue/，不扫 legacy file-queue 子目录 */
+function queueMessageDirs(): string[] {
+  if (!process.env.APP_DATA_DIR) return [];
+  return listSessionQueueDirs(process.env.APP_DATA_DIR);
 }
 
 /** 入队时间戳单调递增：同毫秒内连续入队（如 skipDedup 重投同 messageId）文件名不冲突、不被覆盖 */
@@ -344,8 +333,8 @@ export function confirmClaimedMessages(
   // 指定会话目录优先（快路径）；未命中时全局兜底——messageId 全局唯一，
   // 防止调用方 session_key 形态偏差（转义/大小写）导致标记静默失败、消息反复重投
   const dirs = [...new Set(filterSessionKey
-    ? [getSessionDir(filterSessionKey), queueDir, ...listSessionDirs()]
-    : [queueDir, ...listSessionDirs()])];
+    ? [getSessionDir(filterSessionKey), ...queueMessageDirs()]
+    : queueMessageDirs())];
 
   const removeClaimed = (dir: string, files: string[], cutoff: number): string[] => {
     const done: string[] = [];
@@ -419,10 +408,9 @@ export function getQueueLength(filterSessionKey?: string): number {
   }
   try {
     let total = 0;
-    for (const sub of listSessionDirs()) {
+    for (const sub of queueMessageDirs()) {
       try { total += fs.readdirSync(sub).filter(isPending).length; } catch { /* ignore */ }
     }
-    total += fs.readdirSync(queueDir).filter(isPending).length;
     return total;
   } catch { return 0; }
 }
@@ -439,8 +427,7 @@ export function getQueueCounts(): { pending: number; processing: number } {
       }
     } catch { /* ignore */ }
   };
-  for (const sub of listSessionDirs()) tally(sub);
-  tally(queueDir);
+  for (const sub of queueMessageDirs()) tally(sub);
   return counts;
 }
 
@@ -459,7 +446,7 @@ export interface QueueMessageView {
 
 export function getQueueMessages(filterSessionKey?: string): QueueMessageView[] {
   if (!queueDir) return [];
-  const dirs = filterSessionKey ? [getSessionDir(filterSessionKey)] : [queueDir, ...listSessionDirs()];
+  const dirs = filterSessionKey ? [getSessionDir(filterSessionKey)] : queueMessageDirs();
   const result: QueueMessageView[] = [];
   for (const dir of dirs) {
     try {
@@ -495,7 +482,7 @@ export function deleteQueueMessage(fileId: string, filterSessionKey?: string): b
   if (!queueDir || !fileId) return false;
   const basename = path.basename(fileId);
   if (basename !== fileId || !(fileId.endsWith(".qmsg") || fileId.endsWith(".claimed"))) return false;
-  const dirs = filterSessionKey ? [getSessionDir(filterSessionKey)] : [queueDir, ...listSessionDirs()];
+  const dirs = filterSessionKey ? [getSessionDir(filterSessionKey)] : queueMessageDirs();
   for (const dir of dirs) {
     try {
       const filePath = path.join(dir, basename);
@@ -511,7 +498,7 @@ export function deleteQueueMessagesByMessageId(messageId: string): { removed: nu
   const safeId = messageId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const sessionKeys = new Set<string>();
   let removed = 0;
-  for (const dir of [queueDir, ...listSessionDirs()]) {
+  for (const dir of queueMessageDirs()) {
     try {
       for (const f of fs.readdirSync(dir)) {
         if (!f.endsWith(".qmsg") && !f.endsWith(".claimed")) continue;
@@ -553,8 +540,7 @@ function inferChatType(sessionKey: string): string {
 export function getDistinctSessions(): QueueSessionInfo[] {
   if (!queueDir) return [];
   const map = new Map<string, { chatType: string; senderOpenId?: string; hasPending?: boolean }>();
-  const dirs = [queueDir, ...listSessionDirs()];
-  for (const dir of dirs) {
+  for (const dir of queueMessageDirs()) {
     try {
       const files = fs.readdirSync(dir).filter((f) => f.endsWith(".qmsg") || f.endsWith(".claimed"));
       for (const f of files) {
@@ -585,8 +571,7 @@ const STALE_CLAIMED_MS = 72 * 60 * 60 * 1000;
 export function cleanupStaleMessages(): void {
   if (!queueDir) return;
   const now = Date.now();
-  const dirs = [queueDir, ...listSessionDirs()];
-  for (const dir of dirs) {
+  for (const dir of queueMessageDirs()) {
     try {
       for (const f of fs.readdirSync(dir)) {
         const isTmp = f.endsWith(".tmp");
@@ -602,4 +587,24 @@ export function cleanupStaleMessages(): void {
       }
     } catch { /* ignore */ }
   }
+}
+
+const QUEUE_FILE_SUFFIXES = [".qmsg", ".claimed", ".done", ".tmp"] as const;
+
+/** 删除全部会话 queue 目录下的排队/处理中消息文件 */
+export function clearAllQueueMessages(): number {
+  if (!queueDir) return 0;
+  let count = 0;
+  for (const dir of queueMessageDirs()) {
+    try {
+      for (const f of fs.readdirSync(dir)) {
+        if (!QUEUE_FILE_SUFFIXES.some((ext) => f.endsWith(ext))) continue;
+        try {
+          fs.unlinkSync(path.join(dir, f));
+          count++;
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+  return count;
 }

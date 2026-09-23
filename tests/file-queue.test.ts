@@ -15,6 +15,7 @@ import {
   getDistinctSessions,
   deleteQueueMessage,
   deleteQueueMessagesByMessageId,
+  clearAllQueueMessages,
 } from "../src/file-queue.js"
 
 const SESSION_A = "ch_a|oc_111::D:\\ws\\a"
@@ -295,5 +296,14 @@ describe("查询与删除", () => {
     expect(removed).toBe(1)
     expect(sessionKeys).toEqual([SESSION_A])
     expect(getQueueLength(SESSION_A)).toBe(0)
+  })
+
+  it("clearAllQueueMessages 清空各会话 queue 目录", () => {
+    pushToFileQueue("a", "m1", "test", SESSION_A)
+    pushToFileQueue("b", "m2", "test", SESSION_B)
+    claimSessionMessages(SESSION_A)
+    expect(getQueueLength()).toBe(2)
+    expect(clearAllQueueMessages()).toBe(2)
+    expect(getQueueLength()).toBe(0)
   })
 })

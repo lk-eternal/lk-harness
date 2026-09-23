@@ -28,6 +28,7 @@ import {
   getDistinctSessions,
   hasSessionQueueDir,
   cleanupStaleMessages,
+  clearAllQueueMessages,
   type QueueMessage,
   type QueueMessageMeta,
 } from "./file-queue.js";
@@ -1303,23 +1304,7 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
 }
 
 function clearFileQueue(): number {
-  const queueDir = getQueueDir();
-  if (!queueDir) return 0;
-  let count = 0;
-  const exts = [".qmsg", ".claimed", ".done", ".tmp"];
-  const clearDir = (dir: string) => {
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        const full = path.join(dir, f);
-        if (fs.statSync(full).isDirectory()) {
-          clearDir(full);
-        } else if (exts.some((ext) => f.endsWith(ext))) {
-          try { fs.unlinkSync(full); count++; } catch { /* ignore */ }
-        }
-      }
-    } catch { /* ignore */ }
-  };
-  clearDir(queueDir);
+  const count = clearAllQueueMessages();
   log("INFO", `队列已清空: ${count} 条消息`);
   return count;
 }
