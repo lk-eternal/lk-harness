@@ -30,6 +30,25 @@ export interface DiffData {
   commit_count: number
 }
 
+/** diff2html 渲染：每文件 unified diff 文本（-U0 / 全文） */
+export interface HybridDiffFileEntry {
+  path: string
+  add: number
+  del: number
+  diffCompact: string
+  diffFull: string
+}
+export interface HybridDiffData {
+  title?: string
+  baseLabel: string
+  headLabel: string
+  stat: string
+  commits: string[]
+  files: HybridDiffFileEntry[]
+  file_count: number
+  commit_count: number
+}
+
 function runGit(cwd: string, args: string[]): string {
   try {
     return execFileSync("git", args, { cwd, encoding: "utf-8", maxBuffer: 32 * 1024 * 1024 })
@@ -224,6 +243,72 @@ export function buildDiffData(opts: {
     baseLabel: opts.baseRef,
     headLabel: opts.headLabel?.trim() ? opts.headLabel.trim() : head,
     baseRef: opts.baseRef,
+    stat,
+    commits,
+    files,
+    file_count: files.length,
+    commit_count: commits.length,
+  }
+}
+
+function gitFileDiff(root: string, range: string, unified: "compact" | "full", filePath: string): string {
+  const u = unified === "full" ? "999999" : "0"
+  return runGit(root, ["diff", "-U" + u, "--no-color", "--no-ext-diff", range, "--", filePath])
+}
+
+export function buildHybridDiffData(opts: {
+  repoPath: string
+  baseRef: string
+  headRef?: string
+  paths?: string[]
+  title?: string
+  headLabel?: string
+  sessionKey?: string
+  maxFiles?: number
+  maxFileBytes?: number
+  maxTotalBytes?: number
+}): HybridDiffData {
+  const maxFiles = opts.maxFiles ?? LIMITS.maxFiles
+  const maxFileBytes = opts.maxFileBytes ?? LIMITS.maxFileBytes
+  const maxTotalBytes = opts.maxTotalBytes ?? LIMITS.maxTotalBytes
+  const root = resolveScopedRepoRoot(opts.repoPath, opts.sessionKey)
+  const head = opts.headRef?.trim() ? opts.headRef.trim() : "HEAD"
+  if (!revExists(root, opts.baseRef)) throw new Error(`ref 不存在：${opts.baseRef}`)
+  if (!revExists(root, head)) throw new Error(`ref 不存在：${head}`)
+  const range = `${opts.baseRef}..${head}`
+  const pathArgs = opts.paths?.length ? ["--", ...opts.paths] : []
+
+  const stat = runGit(root, ["diff", "--stat", range, ...pathArgs])
+  const rawNames = runGit(root, ["diff", "--name-only", "-z", range, ...pathArgs])
+  const names = rawNames.split("\0").map((s) => s.trim()).filter(Boolean)
+  if (names.length === 0) throw new Error("无变更：base..head 为空")
+  if (names.length > maxFiles) throw new Error(`超限：文件数 ${names.length} 超过上限 ${maxFiles}`)
+
+  const numstat = new Map<string, { add: number; del: number }>()
+  for (const entry of runGit(root, ["diff", "--numstat", "-z", range, ...pathArgs]).split("\0")) {
+    const m = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(entry.trim())
+    if (!m) continue
+    numstat.set(m[3], { add: m[1] === "-" ? 0 : Number(m[1]), del: m[2] === "-" ? 0 : Number(m[2]) })
+  }
+
+  const files: HybridDiffFileEntry[] = []
+  let totalBytes = 0
+  for (const name of names) {
+    const ns = numstat.get(name) ?? { add: 0, del: 0 }
+    const diffCompact = gitFileDiff(root, range, "compact", name)
+    const diffFull = gitFileDiff(root, range, "full", name)
+    const bytes = diffCompact.length + diffFull.length
+    if (bytes > maxFileBytes) throw new Error(`超限：${name} diff 约 ${bytes} 字节，超过单文件上限 ${maxFileBytes}`)
+    totalBytes += bytes
+    if (totalBytes > maxTotalBytes) throw new Error(`超限：diff 总量约 ${totalBytes} 字节，超过上限 ${maxTotalBytes}`)
+    files.push({ path: name, add: ns.add, del: ns.del, diffCompact, diffFull })
+  }
+
+  const commits = splitLines(runGit(root, ["log", "--format=%h %s", range]))
+  return {
+    title: opts.title,
+    baseLabel: opts.baseRef,
+    headLabel: opts.headLabel?.trim() ? opts.headLabel.trim() : head,
     stat,
     commits,
     files,

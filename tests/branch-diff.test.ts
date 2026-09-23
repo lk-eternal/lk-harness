@@ -3,7 +3,9 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 import { afterEach, describe, expect, it } from "vitest"
-import { buildDiffData, injectDiffData, resolveScopedRepoRoot } from "../src/shared/branch-diff.js"
+import { buildDiffData, buildHybridDiffData, injectDiffData, resolveScopedRepoRoot } from "../src/shared/branch-diff.js"
+import { assembleHybridDiffHtml } from "../src/shared/diff-hybrid-html.js"
+import { resolveDiffTemplatePath } from "../src/shared/diff-template-path.js"
 
 function git(cwd: string, args: string[]) {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8", windowsHide: true })
@@ -111,6 +113,28 @@ describe("resolveScopedRepoRoot", () => {
   it("无 session_key 不约束", () => {
     const repo = initRepo()
     expect(() => resolveScopedRepoRoot(repo)).not.toThrow()
+  })
+})
+
+describe("buildHybridDiffData", () => {
+  it("产出 diffCompact / diffFull", () => {
+    const repo = initRepo()
+    const d = buildHybridDiffData({ repoPath: repo, baseRef: "HEAD~1" })
+    expect(d.files[0].diffCompact).toMatch(/^diff --git/m)
+    expect(d.files[0].diffFull).toMatch(/^diff --git/m)
+    expect(d.files[0].diffFull).toContain("@@")
+  })
+})
+
+describe("assembleHybridDiffHtml", () => {
+  it("注入 diff2html 与 hybrid runtime", () => {
+    const repo = initRepo()
+    const d = buildHybridDiffData({ repoPath: repo, baseRef: "HEAD~1" })
+    const tpl = fs.readFileSync(resolveDiffTemplatePath(), "utf-8")
+    const out = assembleHybridDiffHtml(tpl, d)
+    expect(out).toContain("Diff2HtmlUI")
+    expect(out).toContain("function diffTextFor")
+    expect(out).not.toContain("var CONTEXT = 2")
   })
 })
 

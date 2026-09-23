@@ -1,0 +1,29 @@
+/* hybrid: diff2html in LK shell */
+.d2h-mount .d2h-file-header{display:none}
+.d2h-mount .d2h-wrapper{margin:0}
+.d2h-diff-table tr.row-change-focus{outline:1px solid var(--accent);outline-offset:-1px}
+.d2h-file-view .diff-file-header{position:sticky;top:0;z-index:2}
+.d2h-mount .d2h-file-side-diff{overflow-x:hidden;scrollbar-width:none;-ms-overflow-style:none}
+.d2h-mount .d2h-file-side-diff::-webkit-scrollbar{display:none;height:0}
+.d2h-mount .d2h-diff-table{width:max-content;min-width:100%}
+.d2h-mount td.d2h-code-side-linenumber{position:static;display:table-cell;vertical-align:top;white-space:nowrap}
+.d2h-mount .d2h-code-side-line{padding:0 4px;width:auto;max-width:none}
+.diff-hscroll-rail{position:absolute;left:0;right:0;bottom:0;height:14px;overflow-x:auto;overflow-y:hidden;z-index:4;background:var(--panel);border-top:1px solid var(--border);-webkit-overflow-scrolling:touch}
+.diff-hscroll-inner{height:1px}
+.diff-pane.diff-hscroll-active .diff-scroll{bottom:14px}
+@media (min-width:769px){
+  .file-list,.diff-scroll,.diff-hscroll-rail,.stat{scrollbar-width:thin;scrollbar-color:var(--panel-2) var(--panel)}
+  .file-list::-webkit-scrollbar,.diff-scroll::-webkit-scrollbar,.stat::-webkit-scrollbar{width:10px;height:10px}
+  .diff-hscroll-rail::-webkit-scrollbar{height:10px}
+  .file-list::-webkit-scrollbar-track,.diff-scroll::-webkit-scrollbar-track,.diff-hscroll-rail::-webkit-scrollbar-track,.stat::-webkit-scrollbar-track{background:var(--panel)}
+  .file-list::-webkit-scrollbar-thumb,.diff-scroll::-webkit-scrollbar-thumb,.diff-hscroll-rail::-webkit-scrollbar-thumb,.stat::-webkit-scrollbar-thumb{background:var(--panel-2);border:2px solid var(--panel);border-radius:999px}
+  .file-list::-webkit-scrollbar-thumb:hover,.diff-scroll::-webkit-scrollbar-thumb:hover,.diff-hscroll-rail::-webkit-scrollbar-thumb:hover,.stat::-webkit-scrollbar-thumb:hover{background:var(--muted)}
+}
+@media (max-width:768px){
+  #diff-scroll{overflow-x:hidden}
+  .d2h-mount .d2h-file-diff{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .d2h-mount td.d2h-code-linenumber{position:static;display:table-cell;vertical-align:top;width:4.8em;padding:0 2px;white-space:nowrap}
+  .d2h-mount .line-num1,.d2h-mount .line-num2{float:none;display:inline-block;vertical-align:top;width:2.2em;padding:0 1px;font-size:11px}
+  .d2h-mount .d2h-code-line{padding:0 4px;width:auto;max-width:none}
+  .diff-pane.diff-hscroll-active .diff-scroll{bottom:0}
+}
