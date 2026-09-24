@@ -1,5 +1,4 @@
 import { isPlainProject, projectRootDir, type Project, type ProjectActionType, type ProjectRepo } from "../src/shared/project-types.js"
-import { getProjectNodes, projectGroupIds } from "../src/shared/project-store.js"
 import { buildNodeActionPrompt } from "../src/shared/project-node-guides.js"
 
 // 设置页/同步服务仍从此处取默认模板（真值在 shared/project-node-guides.ts，两侧同源）
@@ -16,7 +15,7 @@ function repoBranchLines(r: ProjectRepo, multi: boolean, index: number): string[
   return [
     head,
     `  AI 工作目录: ${r.worktreePath}`,
-    `  生产基线: ${r.baseBranch}（只作 feature 起点，禁止默认推送/MR 目标）`,
+    `  生产基线: ${r.baseBranch}（切 feature 起点；允许 merge/rebase 与生产基线同步）`,
     `  测试分支: ${r.testBranch?.trim() || unconfigured}`,
     `  开发分支: ${r.developBranch?.trim() || unconfigured}`,
   ]
@@ -58,13 +57,16 @@ function contextBlock(p: Project): string[] {
     "",
     "仓库与分支（git 操作必须使用下列确切全名，禁止缩写、猜测或自建分支）：",
     ...repos.flatMap((r, i) => repoBranchLines(r, repos.length > 1, i)),
-    "分支纯净红线：严禁把开发/测试/基线分支 merge 或 rebase 进 feature 分支（会灌入他人未上线内容，污染后续提测与上线）；与目标分支冲突时一律从目标分支拉临时合流分支、把 feature 合进去解决，feature 本身保持只含本需求提交",
+    "分支红线：",
+    "- 开发/测试：禁止 merge 或 rebase 进 feature；与开发/测试冲突时从对应分支拉临时合流分支，合入 feature 后推送开发/测试，再切回 feature。",
+    "- 向开发/测试推送或开 MR 时，目标分支必须为上文列出的开发分支、测试分支全名。",
+    "- 生产基线：允许 merge 生产基线进 feature，或 rebase feature 到生产基线以同步线上。",
+    "- 生产基线：禁止在本地将 feature merge 或 push 到生产基线，仅允许在用户要求下创建 feature 到生产基线的 MR。",
   ].filter(Boolean)
 }
 
-/** 首次进入项目会话的提示词：角色 + 工作方式 + 节点索引（仅 id+label，不编触发词） */
+/** 首次进入项目会话的提示词：角色 + 工作方式（节点索引/发现协议见每轮 [本轮投递] node_protocol） */
 export function buildProjectSessionPrompt(p: Project): string {
-  const nodeIndex = projectGroupIds(p).flatMap((gid) => getProjectNodes(gid).map((n) => `- ${n.id}（${n.label}）`))
   const plain = isPlainProject(p)
   return [
     `[PROJECT_SESSION] 项目「${p.name}」专属会话`,
@@ -76,25 +78,13 @@ export function buildProjectSessionPrompt(p: Project): string {
     "工作方式:",
     "1. 普通对话：用户直接发消息、问答讨论、小修小改 → 直接回。",
     "2. 按钮任务：用户点击按钮会收到 [PROJECT_ACTION] 任务 → 按任务要求执行（信息齐备直接执行，缺关键输入先问清再干）。",
-    "3. 自然语言：按节点发现协议判断后再处理.",
-    "",
-    "可用节点（id 为唯一标识，label 仅展示用）：",
-    ...(nodeIndex.length ? nodeIndex : ["（暂无节点）"]),
-    "",
-    "节点发现协议:",
-    `- 判断用户消息内容是否对应某节点，如果明确命中→先调 project_get_node(project_id=${p.id}, node_id=命中id) 获取完整提示词再干；未命中则直接处理用户消息即可`,
+    "3. 自然语言：按每轮 [本轮投递] 内 node_protocol 判断是否拉取节点提示词。",
     "",
     "查数与写数（全会话唯一指引）:",
     `- 查：project_get(project_id=${p.id}) 查分支/metadata/文档链接/最近产物；project_get_node 查单节点全文。内部 ID/路径/分支不向用户复述。`,
     "- 写：补分支/metadata 用 project_update（metadata 为 KV merge，空值删 key）；需跨节点保留产物上下文时用 project_register_artifact(project_id="
       + `${p.id}, artifact_path, summary?, mr_url?, feishu_doc_url?)。`,
     "- 产物文件写 AI 工作目录下的 .lk-harness/artifacts/（多仓项目写主仓对应目录），用 send_file 交付文件。",
-    "",
-    "边界:",
-    ...(plain ? [] : [
-      "- 禁止向生产基线推送或开 MR",
-      "- git 推送/MR 的开发、测试目标必须严格使用上文列出的开发分支、测试分支全名",
-    ]),
   ].join("\n")
 }
 

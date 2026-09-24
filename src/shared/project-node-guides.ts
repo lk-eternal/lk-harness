@@ -196,7 +196,7 @@ export function buildNodeActionPrompt(
     `来源：${origin}。信息齐备直接执行，缺关键输入（如文档链接、环境信息、MR地址）先问清再干，不硬猜。`,
     "",
     `项目: ${p.name}（project_id=${p.id}）`,
-    "分支与红线：git 操作只用会话上下文中的确切全名；严禁把开发/测试/基线分支 merge 或 rebase 进 feature 分支，冲突一律从目标分支拉临时合流分支解决（详见会话上下文分支纯净红线）。",
+    "分支与红线：git 操作只用会话上下文中的确切全名；严禁把开发/测试分支 merge 或 rebase 进 feature 分支，冲突一律从目标分支拉临时合流分支解决（生产基线规则见会话上下文分支红线）。",
     `分支/metadata/文档链接/最近产物以 project_get(project_id=${p.id}) 为准。`,
     "",
     "本节点要求:",

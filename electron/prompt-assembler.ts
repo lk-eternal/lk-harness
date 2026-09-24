@@ -266,7 +266,7 @@ export function assembleTurnPrompt(
     messages: [
       ...history,
       ...messages.map((m) => ({
-        ...(m.messageId ? { message_id: m.messageId } : {}),
+        ...(m.messageId && !m.messageId.startsWith("internal_") ? { message_id: m.messageId } : {}),
         ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
         ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
         ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}),

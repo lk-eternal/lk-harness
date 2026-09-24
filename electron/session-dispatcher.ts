@@ -1193,7 +1193,14 @@ async function handleChatWorkspaceSubcommand(
   await reply(true, [head, "", block, "", hint].join("\n"))
 }
 
-export async function handleChatCommand(tokens: string[], port: number, messageId: string, chatId?: string, patchMessageId?: string): Promise<void> {
+export async function handleChatCommand(
+  tokens: string[],
+  port: number,
+  messageId: string,
+  chatId?: string,
+  patchMessageId?: string,
+  senderOpenId?: string,
+): Promise<void> {
   const reply = (ok: boolean, msg: string, buttons?: { label: string; cmd: string }[]) => reportCommandResult(port, messageId, ok, msg, chatId, buttons, patchMessageId ? { patchMessageId } : undefined)
   const sub = tokens[1]?.toLowerCase()
 
@@ -1287,7 +1294,13 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
     }
 
     const channelId = parseChatKey(chatId).channelId
-    const enq = await enqueueToSession(lock.port, sessionKey, taskMsg, "p2p", { channelId, chatId })
+    const enq = await enqueueToSession(lock.port, sessionKey, taskMsg, "p2p", {
+      channelId,
+      chatId,
+      messageId,
+      senderOpenId,
+      senderType: "user",
+    })
     if (!enq.ok) {
       await reply(false, `❌ 入队失败: ${enq.error ?? "未知错误"}`)
       return

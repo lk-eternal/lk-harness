@@ -88,6 +88,16 @@ describe("投递与镜像带引用", () => {
     fs.rmSync(dataDir, { recursive: true, force: true })
   })
 
+  it("internal_ 队列 id 不写入本轮投递 message_id", () => {
+    const out = assembleTurnPrompt(
+      [{ text: "任务正文", messageId: "internal_enqueue_1", meta: { senderType: "user", senderOpenId: "ou_u" } }],
+      { meta: { chatType: "p2p" } },
+    )
+    const payload = JSON.parse(out.match(/```json\s*([\s\S]*?)```/)![1])
+    expect(payload.messages[0]).toEqual({ sender_type: "user", sender_open_id: "ou_u", text: "任务正文" })
+    expect(payload.messages[0]).not.toHaveProperty("message_id")
+  })
+
   it("本轮投递装 quoted_message 对象", () => {
     const out = assembleTurnPrompt(
       [{

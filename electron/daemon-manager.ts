@@ -1408,14 +1408,14 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/w":
         case "/workspace": {
           if (!isAdmin) { await denyNonAdmin(); break }
-          await handleChatCommand(["/c", "w", ...cmdTokens.slice(1)], lock.port, claimed!.messageId, claimed!.chatId, patchTarget)
+          await handleChatCommand(["/c", "w", ...cmdTokens.slice(1)], lock.port, claimed!.messageId, claimed!.chatId, patchTarget, claimed!.senderOpenId)
           break
         }
 
         case "/c":
         case "/chat": {
           if (!isAdmin) { await denyNonAdmin(); break }
-          await handleChatCommand(cmdTokens, lock.port, claimed!.messageId, claimed!.chatId, patchTarget)
+          await handleChatCommand(cmdTokens, lock.port, claimed!.messageId, claimed!.chatId, patchTarget, claimed!.senderOpenId)
           break
         }
 

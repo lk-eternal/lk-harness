@@ -4189,9 +4189,12 @@ async function handleAgentAdmin(_method: string, req: http.IncomingMessage, res:
     }
     const internalMsgId = `internal_temp_${Date.now()}`;
     sessionToChatMap.set(sessionKey, chatId);
+    const launchSenderOpenId = rt.cfg.mainUserOpenId?.trim();
     pushToFileQueue(message.trim(), internalMsgId, `daemon-${process.pid}`, sessionKey, false, {
       chatType: "p2p",
       chatId,
+      senderType: "user",
+      ...(launchSenderOpenId ? { senderOpenId: launchSenderOpenId } : {}),
     });
     trackMessageSession(internalMsgId, sessionKey);
     rememberSessionKey(sessionKey);

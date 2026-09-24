@@ -82,7 +82,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     "project_update",
 
-    "更新项目元数据。字段红线：baseBranch=生产基线，只作切 feature 起点，禁止默认作为 ship 推送/MR 目标；testBranch=测试环境；developBranch=开发环境。可补齐 repos[].testBranch/developBranch、goal、文档链接、metadata（KV merge，空值删 key）等。",
+    "更新项目元数据。字段：baseBranch=生产基线（切 feature 起点，可与 feature 同步，禁止本地将 feature 合入/推送到生产基线）；testBranch=测试环境；developBranch=开发环境。可补齐 repos[].testBranch/developBranch、goal、文档链接、metadata（KV merge，空值删 key）等。",
 
     {
 
@@ -100,7 +100,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
       feature_branch: z.string().optional(),
 
-      base_branch: z.string().optional().describe("生产基线（谨慎修改）"),
+      base_branch: z.string().optional().describe("生产基线（谨慎修改；可与 feature 同步）"),
 
       test_branch: z.string().optional().describe("主仓测试分支"),
 
