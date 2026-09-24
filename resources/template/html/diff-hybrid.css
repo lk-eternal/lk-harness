@@ -1,4 +1,14 @@
 /* hybrid: diff2html in LK shell */
+body[data-side-pane="only-left"] .d2h-mount .d2h-file-side-diff:last-of-type{display:none!important}
+body[data-side-pane="only-left"] .d2h-mount .d2h-file-side-diff:first-of-type{flex:1 1 100%!important;max-width:100%!important;width:100%!important}
+body[data-side-pane="only-right"] .d2h-mount .d2h-file-side-diff:first-of-type{display:none!important}
+body[data-side-pane="only-right"] .d2h-mount .d2h-file-side-diff:last-of-type{flex:1 1 100%!important;max-width:100%!important;width:100%!important}
+body[data-side-pane="only-left"] .d2h-mount tr.d2h-ins,
+body[data-side-pane="only-left"] .d2h-mount tr:has(> td.d2h-ins){display:none!important}
+body[data-side-pane="only-right"] .d2h-mount tr.d2h-del,
+body[data-side-pane="only-right"] .d2h-mount tr:has(> td.d2h-del){display:none!important}
+.d2h-mount tr.lk-search-hit td{background-image:linear-gradient(rgba(210,153,34,.18),rgba(210,153,34,.18))}
+.d2h-mount tr.lk-search-hit-current{outline:2px solid #d29922;outline-offset:-2px}
 .d2h-mount .d2h-file-header{display:none}
 .d2h-mount .d2h-wrapper{margin:0}
 .d2h-diff-table tr.row-change-focus{outline:1px solid var(--accent);outline-offset:-1px}
