@@ -690,7 +690,26 @@ type SessionListEntry = {
   current: boolean
 }
 
-/** /c ls 与首页 Tab 共用的扁平会话列表：当前 + 运行中 + 可切换，去重 */
+/** Daemon routing.json 中登记过、属于该 chat 的 sessionKey（/c w set、/c new、launch 等） */
+function listRoutedSessionKeysForChat(chatId: string): string[] {
+  const ck = normalizeSessionKey(chatId) || chatId
+  const keys = new Set<string>()
+  try {
+    const raw = JSON.parse(fs.readFileSync(globalRoutingPath(app.getPath("userData")), "utf8")) as {
+      sessionToChat?: Record<string, string>
+    }
+    for (const [sk, bound] of Object.entries(raw.sessionToChat ?? {})) {
+      const norm = normalizeSessionKey(sk) || sk
+      const boundNorm = bound ? (normalizeSessionKey(bound) || bound) : ""
+      if (boundNorm === ck || bound === chatId || sessionBelongsToChat(norm, chatId)) {
+        keys.add(norm)
+      }
+    }
+  } catch { /* 无路由文件 */ }
+  return [...keys].sort((a, b) => a.localeCompare(b))
+}
+
+/** /c ls 与首页 Tab 共用的扁平会话列表：当前 + 运行中 + 可切换 + 路由登记，去重 */
 function buildSessionListForChat(
   chatId: string | undefined,
   activeKey?: string,
@@ -704,17 +723,21 @@ function buildSessionListForChat(
   const seen = new Set<string>()
   const out: SessionListEntry[] = []
   const push = (sessionKey: string) => {
-    if (!sessionKey || seen.has(sessionKey)) return
-    seen.add(sessionKey)
+    const norm = normalizeSessionKey(sessionKey) || sessionKey
+    if (!norm || seen.has(norm)) return
+    seen.add(norm)
     out.push({
-      sessionKey,
-      running: runningByKey.get(sessionKey),
-      current: !!activeKey && sessionKey === activeKey,
+      sessionKey: norm,
+      running: runningByKey.get(norm) ?? runningByKey.get(sessionKey),
+      current: !!activeKey && (norm === activeKey || sessionKey === activeKey),
     })
   }
   if (activeKey) push(activeKey)
   for (const s of running.sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))) push(s.sessionKey)
   for (const sw of switchable) push(sw.sessionKey)
+  if (chatId) {
+    for (const sk of listRoutedSessionKeysForChat(chatId)) push(sk)
+  }
   return out
 }
 
