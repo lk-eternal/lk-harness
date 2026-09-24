@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.2.22",
+    "date": "2026-09-24",
+    "changes": [
+      "/p new：meegle 拉取 wk-dm 进行中产品/技术需求，选品预填项目名/链接/文档；失败或无结果则直进手填表单",
+      "分支 Diff 查看器：页内搜索、三行工具栏、只看修改前/后（JS+CSS 兼容移动端 WebView）",
+      "Windows 下 meegle 子进程改用 node 执行 meegle.js，避免 Electron 黑框；创建项目 HTTP 等待 15s"
+    ]
+  },
+  {
     "version": "0.2.21",
     "date": "2026-09-24",
     "changes": [
