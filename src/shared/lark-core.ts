@@ -426,6 +426,47 @@ export class LarkSender {
     return card;
   }
 
+  /** 创建项目 · 从飞书项目选择需求 */
+  static buildProjectNewFeishuPickCard(opts: {
+    items: Array<{ pickId: string; label: string }>
+    worktreeRoot?: string
+  }): any {
+    const wt = opts.worktreeRoot || ""
+    const elements: any[] = [
+      {
+        tag: "markdown",
+        content: `已拉取 **${opts.items.length}** 条进行中的飞书需求，请选择一项预填表单，或手动填写。`,
+      },
+    ]
+    const buttons: CardButton[] = opts.items.slice(0, 45).map((item) => ({
+      label: item.label,
+      value: { kind: "project_new_feishu_pick", pickId: item.pickId, worktreeRoot: wt },
+      type: "default" as const,
+    }))
+    buttons.push({
+      label: "以上都不是，手动填写",
+      value: { kind: "project_new_feishu_manual", worktreeRoot: wt },
+      type: "primary" as const,
+    })
+    LarkSender.appendButtonRows(
+      elements,
+      LarkSender.appendDismissButton([
+        ...buttons,
+        { label: "← 返回菜单", value: { kind: "cmd", cmd: "/p menu --back" }, type: "default" },
+      ]),
+      { singleCol: true },
+    )
+    return {
+      schema: "2.0",
+      config: { update_multi: true, width_mode: "fill" },
+      header: {
+        title: { tag: "plain_text", content: "创建项目 · 选择飞书需求" },
+        template: "orange",
+      },
+      body: { horizontal_align: "left", elements },
+    }
+  }
+
   /** 项目创建大表单（一次提交；主仓/流程组可空） */
   static buildProjectNewFormCard(opts: {
     title?: string

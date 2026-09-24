@@ -4,6 +4,7 @@ import { randomBytes, randomUUID } from "node:crypto"
 import { DEFAULT_NODE_GROUPS, DEFAULT_NODE_GROUP_ID, projectGroupChatMatches, type Project, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
 import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
+import type { FeishuProjectPickItem } from "./meegle-project-picker.js"
 
 let baseDir = ""
 
@@ -465,6 +466,7 @@ export function resolveProjectRef(token: string | undefined, projects?: Project[
 
 /** /p new 交互向导草稿（按 chatKey） */
 export type ProjectNewStep =
+  | "feishu_pick"
   | "form"
   | "setup_worktree"
   | "setup_add_path"
@@ -490,6 +492,7 @@ export interface ProjectNewDraft {
   formRepoProfiles?: { path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
   formExtraRepos?: { path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
   formCache?: Record<string, string>
+  formFeishuPickItems?: FeishuProjectPickItem[]
   /** 仅 /p setup，完成后不进入创建 */
   setupOnly?: boolean
   /** setup 子流程结束后回到 setup 总览 */

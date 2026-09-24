@@ -76,6 +76,12 @@ import {
 } from "./shared/harness-rule-store.js";
 import { projectIdFromSessionKey, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
 import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey, sessionHeaderTemplate } from "./shared/session-label.js";
+import {
+  listFeishuProjectsForPicker,
+  resolveFeishuProjectFormDefaults,
+  findFeishuPickItem,
+  feishuPickOptionLabels,
+} from "./shared/meegle-project-picker.js";
 
 const _require = createRequire(import.meta.url);
 const PKG_VERSION: string = (_require("../package.json") as { version: string }).version;
@@ -126,6 +132,20 @@ function mergeRepoProfiles(base: RepoProfile[], extra: RepoProfile[]): RepoProfi
 function combinedFormRepoProfiles(draft: ReturnType<typeof getProjectNewDraft>): RepoProfile[] {
   if (!draft) return [];
   return mergeRepoProfiles(draft.formRepoProfiles || [], draft.formExtraRepos || []);
+}
+
+function buildProjectNewFormCardData(
+  draft: ReturnType<typeof getProjectNewDraft>,
+  worktreeRoot?: string,
+  defaults?: Record<string, string>,
+) {
+  const wt = defaults?.worktreeRoot || draft?.formCache?.worktreeRoot || worktreeRoot || "";
+  return LarkSender.buildProjectNewFormCard({
+    repoProfiles: combinedFormRepoProfiles(draft),
+    worktreeRoot: wt,
+    nodeGroups: getNodeGroups().map((g) => ({ id: g.id, name: g.name })),
+    defaults: defaults ?? draft?.formCache,
+  });
 }
 
 function parseChannelConfigs(): DaemonChannelConfig[] {
@@ -2830,6 +2850,49 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     return { toast: { type: "info", content: `已执行 ${cmd}` } };
   }
 
+  if (value?.kind === "project_new_feishu_pick") {
+    const cbv = value as { pickId?: string; worktreeRoot?: string };
+    const draft = getProjectNewDraft(chatKey);
+    const item = findFeishuPickItem(draft?.formFeishuPickItems, cbv.pickId || "");
+    if (!item) {
+      return { toast: { type: "error", content: "选项已过期，请重新 /p new" } };
+    }
+    const filled = await resolveFeishuProjectFormDefaults(item);
+    if (draft) {
+      draft.step = "form";
+      draft.formFeishuPickItems = undefined;
+      const wt = draft.formCache?.worktreeRoot || cbv.worktreeRoot || "";
+      draft.formCache = {
+        ...(draft.formCache || {}),
+        worktreeRoot: wt,
+        ...(filled
+          ? { name: filled.name, storyUrl: filled.storyUrl, relatedDocs: filled.relatedDocs }
+          : {}),
+      };
+      saveProjectNewDraft(draft);
+    }
+    return {
+      toast: {
+        type: filled ? "success" : "warning",
+        content: filled ? "已预填飞书项目信息" : "未能拉取详情，请手填",
+      },
+      card: { type: "raw", data: buildProjectNewFormCardData(draft, cbv.worktreeRoot, draft?.formCache) },
+    };
+  }
+
+  if (value?.kind === "project_new_feishu_manual") {
+    const cbv = value as { worktreeRoot?: string };
+    const draft = getProjectNewDraft(chatKey);
+    if (draft) {
+      draft.step = "form";
+      draft.formFeishuPickItems = undefined;
+      saveProjectNewDraft(draft);
+    }
+    return {
+      card: { type: "raw", data: buildProjectNewFormCardData(draft, cbv.worktreeRoot) },
+    };
+  }
+
   if (value?.kind === "project_new_open_add_repo") {
     const cbv = value as { worktreeRoot?: string };
     const f = evt.formValue || {};
@@ -2866,12 +2929,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     return {
       card: {
         type: "raw",
-        data: LarkSender.buildProjectNewFormCard({
-          repoProfiles: profiles,
-          worktreeRoot: wt,
-          nodeGroups: getNodeGroups().map((g) => ({ id: g.id, name: g.name })),
-          defaults: draft?.formCache,
-        }),
+        data: buildProjectNewFormCardData(draft, wt, draft?.formCache),
       },
     };
   }
@@ -2909,12 +2967,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       toast: { type: "success", content: "主仓已添加" },
       card: {
         type: "raw",
-        data: LarkSender.buildProjectNewFormCard({
-          repoProfiles: profiles,
-          worktreeRoot: wt,
-          nodeGroups: getNodeGroups().map((g) => ({ id: g.id, name: g.name })),
-          defaults: draft.formCache,
-        }),
+        data: buildProjectNewFormCardData(draft, wt, draft.formCache),
       },
     };
   }
@@ -4336,19 +4389,41 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (chatKey) {
       saveProjectNewDraft({
         chatKey,
-        step: "form",
+        step: "feishu_pick",
         formMode: "main",
         formRepoProfiles: repo_profiles || [],
         formExtraRepos: [],
         updatedAt: Date.now(),
       });
     }
-    const card = LarkSender.buildProjectNewFormCard({
-      repoProfiles: repo_profiles || [],
-      repoRoots: repo_roots || [],
-      worktreeRoot: worktree_root,
-      nodeGroups: getNodeGroups().map((g) => ({ id: g.id, name: g.name })),
-    });
+    const draft = chatKey ? getProjectNewDraft(chatKey) : undefined;
+    const items = chatKey ? await listFeishuProjectsForPicker(chatKey) : null;
+    if (draft) {
+      if (items?.length) {
+        draft.step = "feishu_pick";
+        draft.formFeishuPickItems = items;
+      } else {
+        draft.step = "form";
+        draft.formFeishuPickItems = undefined;
+      }
+      saveProjectNewDraft(draft);
+    }
+    const card = items?.length
+      ? LarkSender.buildProjectNewFeishuPickCard({
+          items: feishuPickOptionLabels(items),
+          worktreeRoot: worktree_root,
+        })
+      : buildProjectNewFormCardData(
+          draft ?? {
+            chatKey: chatKey || "",
+            step: "form",
+            formMode: "main",
+            formRepoProfiles: repo_profiles || [],
+            formExtraRepos: [],
+            updatedAt: Date.now(),
+          },
+          worktree_root,
+        );
     let sent = message_id && !message_id.startsWith("internal_")
       ? await sender.sendInteractiveCard(card, message_id, undefined)
       : undefined;

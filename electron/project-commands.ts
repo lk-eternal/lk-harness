@@ -1141,7 +1141,7 @@ async function handleNewCommand(
       repo_profiles: getRepoProfiles(cfg),
       repo_roots: cfg.repoRoots || [],
       worktree_root: cfg.worktreeRoot || "",
-    }) as { ok?: boolean; error?: string }
+    }, 15_000) as { ok?: boolean; error?: string }
     if (!r?.ok) {
       await reportCommandResult(port, messageId, false, `❌ 创建表单发送失败（飞书卡片被拒）。可先 /p setup 检查配置，或用一行命令：\n/p new <名> <主仓路径> <基线> <feature> <目标…>`, chatId)
     }
