@@ -19,7 +19,7 @@ export interface ScheduledTask {
   /** 任务模型，空 = 跟随通道主模型 */
   model?: string;
   modelParams?: string;
-  /** 结果通知群 chat_id（裸 oc_xxx）；与 channelId 拼成 notify_session_key */
+  /** MCP 投递目标会话 ID（裸 oc_xxx 或完整 chatKey）；与 channelId 拼 outbound key，空则主用户私聊 */
   notifyChatId?: string;
 }
 
@@ -85,7 +85,7 @@ export function formatScheduledTaskLabel(name: string): string {
   return `⏰ ${name}`;
 }
 
-/** 由任务配置拼出 outbound 投递用的 notify_session_key */
+/** 由任务配置拼出 outbound 投递用的 notify_session_key（仅显式 notifyChatId） */
 export function buildNotifySessionKey(task: Pick<ScheduledTask, "notifyChatId" | "channelId">): string | undefined {
   const raw = task.notifyChatId?.trim();
   if (!raw) return undefined;
@@ -95,11 +95,16 @@ export function buildNotifySessionKey(task: Pick<ScheduledTask, "notifyChatId" |
   return makeChatKey(channelId, raw);
 }
 
-/** 注入 Prompt 元数据：说明 notify_session_key 是 outbound 主通信 key */
-export function scheduledTaskNotifyPromptLines(notifySessionKey: string): string[] {
-  return [
-    `[notify_session_key=${notifySessionKey}]`,
-    "【投递规则】send_text / send_image / send_file / send_question 等所有 outbound 消息，必须且只能使用 notify_session_key 作为 session_key（这是本任务的主要通信 key）。",
-    "当前 session_key 仅用于 poll-message 拉取与保活，禁止用于 outbound 投递；禁止向主用户私聊发送任务通知。",
-  ];
+/** 独立任务 MCP / 路由用 outbound chatKey：notifyChatId 优先，否则通道主用户私聊 */
+export function resolveTaskOutboundChatKey(
+  task: Pick<ScheduledTask, "notifyChatId" | "channelId">,
+  mainUserChatId?: string | null,
+): string | undefined {
+  const explicit = buildNotifySessionKey(task);
+  if (explicit) return explicit;
+  const channelId = task.channelId?.trim();
+  const main = mainUserChatId?.trim();
+  if (!channelId || !main) return undefined;
+  return makeChatKey(channelId, main);
 }
+

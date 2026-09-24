@@ -107,6 +107,12 @@ export function isFeishuChannel(sessionKey: string): boolean {
   return !!ch && ch.type === "feishu"
 }
 
+/** 独立定时任务（chatType=task）不走流式卡，仅 MCP 投递 */
+export function shouldUseFeishuStreamAgg(sessionKey: string, chatType?: string): boolean {
+  if (chatType === "task") return false
+  return isFeishuChannel(sessionKey)
+}
+
 function audienceOf(sessionKey: string, ch?: { mainUserEnabled?: boolean; mainUserChatId?: string }) {
   return resolveChannelAudience({
     mainUserEnabled: ch?.mainUserEnabled,

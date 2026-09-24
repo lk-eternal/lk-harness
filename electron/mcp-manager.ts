@@ -102,13 +102,13 @@ export function getMcpServerList(): McpServerEntry[] {
   return listHarnessMcpServers().map((s) => buildEntry(s.name, s.config))
 }
 
-export function saveMcpServer(name: string, config: Record<string, unknown>, _scope: "global" | "project" = "global"): { ok: boolean; error?: string } {
+export function saveMcpServer(name: string, config: Record<string, unknown>): { ok: boolean; error?: string } {
   const ok = saveHarnessMcpServer(name, config)
   if (ok) invalidateMcpEnabledCache()
   return ok ? { ok: true } : { ok: false, error: "写入失败或为保留名称" }
 }
 
-export function deleteMcpServer(name: string, _scope: "global" | "project" = "global"): { ok: boolean; error?: string } {
+export function deleteMcpServer(name: string): { ok: boolean; error?: string } {
   const ok = deleteHarnessMcpServer(name)
   if (ok) invalidateMcpEnabledCache()
   return ok ? { ok: true } : { ok: false, error: `${name} 不存在` }

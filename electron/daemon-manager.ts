@@ -70,7 +70,7 @@ import {
 } from "./flow-hub-service"
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { discoverCursorClawInstalls, migrateFromCursorClaw, inspectCursorClawSections } from "./cursor-claw-migrate"
-import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId } from "../src/shared/project-store.js"
+import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, DEFAULT_NODE_GROUP_ID, canEnterProjectFromChat } from "../src/shared/project-types.js"
 import {
   readGitBranch,
@@ -955,6 +955,8 @@ function connectSseQueueEvents(): void {
             sseDispatchDebounce = setTimeout(() => dispatchSessionAgents().catch(() => {}), 300)
           } else if (ev.type === "command-update") {
             void checkAndExecutePendingCommands().catch(() => {})
+          } else if (ev.type === "temp-chat-active" && ev.invokerSessionKey) {
+            if (projectIdFromSessionKey(ev.invokerSessionKey)) setCurrentProjectId(null)
           } else if (ev.type === "poll-phase" && ev.sessionKey && ev.phase) {
             handleAgentPollPhase(ev.sessionKey, ev.phase, ev)
           }

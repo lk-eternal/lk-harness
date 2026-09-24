@@ -181,17 +181,36 @@ export function shouldIncludeAdminMcp(
 
 export type HarnessMcpEndpoint = "task" | "interactive";
 
-export function buildBuiltinMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive", includeProject = false): Record<string, Record<string, unknown>> {
+export function buildBuiltinMcpServers(
+  port: number | null,
+  includeAdmin: boolean,
+  endpoint: HarnessMcpEndpoint = "interactive",
+  includeProject = false,
+  invokerSessionKey?: string,
+): Record<string, Record<string, unknown>> {
   const servers: Record<string, Record<string, unknown>> = {}
   if (port) {
     const base = `http://127.0.0.1:${port}`
-    servers[CLAW_MCP_KEY] = { url: `${base}${endpoint === "task" ? "/mcp-task" : "/mcp-interactive"}` }
-    if (includeAdmin) servers[ADMIN_MCP_KEY] = { url: `${base}/mcp-admin` }
+    const sk = invokerSessionKey?.trim()
+    const invokerHeaders = sk ? { headers: { "X-Harness-Session-Key": sk } } : {}
+    servers[CLAW_MCP_KEY] = { url: `${base}${endpoint === "task" ? "/mcp-task" : "/mcp-interactive"}`, ...invokerHeaders }
+    if (includeAdmin) {
+      servers[ADMIN_MCP_KEY] = {
+        url: `${base}/mcp-admin`,
+        ...invokerHeaders,
+      }
+    }
     if (includeProject) servers[PROJECT_MCP_KEY] = { url: `${base}/mcp-project` }
   }
   return servers
 }
 
-export function buildSdkMcpServers(port: number | null, includeAdmin: boolean, endpoint: HarnessMcpEndpoint = "interactive", includeProject = false): Record<string, Record<string, unknown>> {
-  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint, includeProject), ...listEnabledHarnessMcpConfigs() }
+export function buildSdkMcpServers(
+  port: number | null,
+  includeAdmin: boolean,
+  endpoint: HarnessMcpEndpoint = "interactive",
+  includeProject = false,
+  invokerSessionKey?: string,
+): Record<string, Record<string, unknown>> {
+  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey), ...listEnabledHarnessMcpConfigs() }
 }

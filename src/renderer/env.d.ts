@@ -60,7 +60,7 @@ declare global {
     args?: string[]
     url?: string
     env?: Record<string, string>
-    source: "claw" | "harness"
+    source: "harness"
     authenticated?: boolean
     rawConfig?: Record<string, unknown>
     enabled?: boolean
@@ -226,8 +226,8 @@ declare global {
     getScheduledTaskStatus(): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>>
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void
     getMcpServers(): Promise<McpServerEntry[]>
-    saveMcpServer(name: string, entry: Record<string, unknown>, source?: "claw" | "harness" | "global" | "project"): Promise<{ ok: boolean }>
-    deleteMcpServer(name: string, source?: "claw" | "harness" | "global" | "project"): Promise<{ ok: boolean }>
+    saveMcpServer(name: string, entry: Record<string, unknown>): Promise<{ ok: boolean }>
+    deleteMcpServer(name: string): Promise<{ ok: boolean }>
     loginMcp(name: string): Promise<{ ok: boolean; output: string }>
     toggleMcp(name: string, enabled: boolean): Promise<{ ok: boolean; output: string }>
     getMcpEnabledMap(force?: boolean): Promise<Record<string, boolean>>

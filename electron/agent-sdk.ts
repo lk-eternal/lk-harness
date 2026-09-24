@@ -27,6 +27,7 @@ import {
   enterSilentPollPhase,
   flushStreamCard,
   isFeishuChannel,
+  shouldUseFeishuStreamAgg,
   isMediaSendInvocation,
   isPollMessageTool,
   isShowThinkingEnabled,
@@ -678,7 +679,7 @@ export type { PollPhaseEventPayload } from "./stream-card"
 function openStreamForSdkTurn(session: SdkSessionAgent): void {
   session.pollPhase.blocking = false
   session.pollPhase.nonBlocking = false
-  if (!isFeishuChannel(session.sessionKey)) return
+  if (!shouldUseFeishuStreamAgg(session.sessionKey, session.chatType)) return
   if (!session.streamAgg || session.streamAgg.finished) {
     session.streamAgg = newStreamAgg(true)
   } else {
@@ -752,7 +753,7 @@ export function handlePollPhaseEvent(
     }
     if (hasWorkMsgs) {
       session.pollPhase.blocking = false
-      session.streamAgg = isFeishuChannel(session.sessionKey) ? newStreamAgg(true) : null
+      session.streamAgg = shouldUseFeishuStreamAgg(session.sessionKey, session.chatType) ? newStreamAgg(true) : null
       pushUiLog("SDK", "DEBUG",
         `[${session.sessionKey}] 阻塞poll换新队列 bornAt=${session.streamAgg?.bornAt ?? "null"}`)
       if (session.streamAgg) scheduleFlushStreamCard(session, true)
@@ -1365,7 +1366,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const mcpEndpoint = chatType === "task" ? "task" : "interactive"
     // 项目工具硬切：仅项目会话额外挂载 lk-harness-project，其余会话无 project_*
     const includeProject = chatType === "project" || !!projectIdFromSessionKey(sessionKey)
-    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint, includeProject) as Record<string, McpServerConfig>
+    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint, includeProject, sessionKey) as Record<string, McpServerConfig>
     const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
 
     // Resume 语义：
@@ -1442,7 +1443,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       resourceId: opts.resourceId,
       modelLabel: modelSlug(modelId, modelSelection.params ?? []),
       logAgg: { kind: null, buf: "" },
-      streamAgg: isFeishuChannel(sessionKey) ? newStreamAgg() : null,
+      streamAgg: shouldUseFeishuStreamAgg(sessionKey, chatType) ? newStreamAgg() : null,
       todoSnapshot: null,
       patchStreamCardId: (cardId, patchOpts) => patchResumableStreamCard(sessionKey, cardId, patchOpts),
       seenMessageIds: new Set((opts.pendingMessageIds ?? []).filter(Boolean)),

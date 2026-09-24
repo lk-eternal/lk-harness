@@ -7,7 +7,6 @@ import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, getProjectNodes, projectGroupIds } from "../src/shared/project-store.js"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
-import { scheduledTaskNotifyPromptLines } from "../src/shared/scheduled-task"
 import type { LaunchMeta } from "./agent-session-types"
 
 export interface PromptAssemblyContext {
@@ -158,10 +157,6 @@ function appendTaskAndMeta(
   }
   parts.push("---")
   parts.push("会话元数据:")
-  if (ctx.sessionKey) parts.push(`[session_key=${ctx.sessionKey}]`)
-  if (ctx.notifySessionKey?.trim()) {
-    parts.push(...scheduledTaskNotifyPromptLines(ctx.notifySessionKey.trim()))
-  }
   if (ctx.meta?.chatType) parts.push(`[chat_type=${ctx.meta.chatType}]`)
 }
 
@@ -264,12 +259,10 @@ export function assembleTurnPrompt(
     ...(t.quoted_message ? { quoted_message: t.quoted_message } : {}),
     text: t.text.trim(),
   }))
+  const sessionMeta: Record<string, string> = {}
+  if (ctx.meta?.chatType) sessionMeta.chat_type = ctx.meta.chatType
   const payload: Record<string, unknown> = {
-    session: {
-      session_key: ctx.sessionKey ?? "",
-      ...(ctx.meta?.chatType ? { chat_type: ctx.meta.chatType } : {}),
-      ...(ctx.notifySessionKey?.trim() ? { notify_session_key: ctx.notifySessionKey.trim() } : {}),
-    },
+    ...(Object.keys(sessionMeta).length ? { session: sessionMeta } : {}),
     messages: [
       ...history,
       ...messages.map((m) => ({

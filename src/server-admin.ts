@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { LOCK_FILE_NAME } from "./shared/constants.js";
-import { parseChatKey } from "./shared/channel-types.js";
+import { parseChatKey, chatIdFromSessionKey } from "./shared/channel-types.js";
+import { getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { listProjects, getProject } from "./shared/project-store.js";
 import { concatUtf8 } from "./shared/utf8-stream.js";
 
@@ -61,11 +62,10 @@ export function registerAdminTools(mcpServer: McpServer): void {
     "manage_agent",
     "管理应用自身。支持查询状态、停止Agent、重启应用、重置会话、清空队列、启动临时会话。",
     {
-      action: z.enum(["status", "stop", "restart", "reset", "clean", "launch"]).describe("操作：status=查询状态, stop=停止Agent, restart=重启, reset=重置会话, clean=清空队列, launch=启动临时Agent会话"),
-      message: z.string().optional().describe("任务描述/指令（仅 launch 时使用）"),
-      session_key: z.string().optional().describe("当前会话的session_key，用于路由消息（仅 launch 时使用）"),
+      action: z.enum(["status", "stop", "restart", "reset", "clean", "launch"]).describe("status=查询状态; stop=停止Agent; restart=重启应用; reset=重置会话; clean=清空队列; launch=新建临时工作目录会话并入队首条消息"),
+      message: z.string().optional().describe("launch 时必填：首轮交给 Agent 的任务说明"),
     },
-    async ({ action, message, session_key }) => {
+    async ({ action, message }) => {
       try {
         if (action === "status") {
           const data = await daemonGet("/api/status");
@@ -82,10 +82,17 @@ export function registerAdminTools(mcpServer: McpServer): void {
         }
         if (action === "launch") {
           if (!message?.trim()) return txt("❌ launch 操作需要提供 message 参数");
-          const chatId = session_key?.includes("::") ? session_key.split("::")[0] : session_key;
-          const channelId = chatId ? parseChatKey(chatId).channelId : undefined;
-          const res = await daemonPost("/api/agent", { action: "launch", message, chatId, channelId });
-          return txt(res.ok ? `✅ 临时 Agent 已启动` : `❌ ${res.error ?? "启动失败"}`);
+          const invokerSessionKey = getMcpInvokerSessionKey();
+          const chatId = invokerSessionKey ? chatIdFromSessionKey(invokerSessionKey) : undefined;
+          if (!chatId?.includes("|")) {
+            return txt("❌ launch 须在飞书/微信聊天 Agent 上下文中调用");
+          }
+          const channelId = parseChatKey(chatId).channelId;
+          const res = await daemonPost("/api/agent", {
+            action: "launch", message, chatId, channelId, invokerSessionKey,
+          });
+          if (!res.ok) return txt(`❌ ${res.error ?? "启动失败"}`);
+          return txt(`✅ 已切换临时目录会话\n📂 ${res.workspaceDir ?? ""}\n🔑 ${res.sessionKey ?? ""}`);
         }
         const res = await daemonPost("/api/agent", { action });
         return txt(res.ok ? `✅ /${action} 已执行` : `❌ ${res.error ?? "操作失败"}`);
@@ -99,24 +106,23 @@ export function registerAdminTools(mcpServer: McpServer): void {
 
   mcpServer.tool(
     "manage_mcp",
-    "管理 Cursor MCP 服务器配置。支持列出、添加、删除 MCP 服务器。",
+    "管理 LK Harness Agent 挂载的 MCP 服务器。",
     {
-      action: z.enum(["list", "add", "delete"]).describe("操作：list=列出所有, add=添加/更新, delete=删除"),
-      name: z.string().optional().describe("MCP 服务器名称（add/delete 时必填）"),
-      config: z.string().optional().describe("MCP 服务器配置 JSON（add 时必填），如 {\"command\":\"npx\",\"args\":[\"-y\",\"@some/server\"]}"),
-      scope: z.enum(["global", "project"]).optional().describe("配置范围：global=全局, project=项目级。默认 global"),
+      action: z.enum(["list", "add", "delete"]).describe("list=列出; add=添加或更新; delete=删除"),
+      name: z.string().optional().describe("MCP 名称（add/delete 必填；内置 lk-harness* 不可覆盖）"),
+      config: z.string().optional().describe("add 必填：MCP 配置 JSON，如 command/args 或 url"),
     },
-    async ({ action, name, config, scope }) => {
+    async ({ action, name, config }) => {
       try {
         if (action === "list") {
           const data = await daemonGet("/api/mcp");
           const servers = data.servers ?? {};
           if (Object.keys(servers).length === 0) return txt("当前没有配置任何 MCP 服务器。");
-          const lines = Object.entries(servers).map(([k, v]: [string, any]) => `- **${k}** [${v.scope}]: ${JSON.stringify(v.config)}`);
+          const lines = Object.entries(servers).map(([k, v]: [string, any]) => `- **${k}**: ${JSON.stringify(v.config)}`);
           return txt(lines.join("\n"));
         }
         if (!name) return txt("错误：name 参数必填");
-        const res = await daemonPost("/api/mcp", { action, name, config, scope: scope ?? "global" });
+        const res = await daemonPost("/api/mcp", { action, name, config });
         return txt(res.ok ? `✅ ${res.message}` : `❌ ${res.error ?? "操作失败"}`);
       } catch (e: any) {
         return txt(`❌ Daemon 通信失败: ${e?.message ?? e}`);
@@ -150,10 +156,10 @@ export function registerAdminTools(mcpServer: McpServer): void {
 
   mcpServer.tool(
     "manage_rules",
-    "管理 Cursor Rules 文件。支持列出、读取、添加/更新、删除规则。",
+    "管理 Harness 规则。",
     {
-      action: z.enum(["list", "read", "save", "delete"]).describe("操作：list=列出所有, read=读取内容, save=创建或更新, delete=删除"),
-      name: z.string().optional().describe("规则文件名（如 my-rule.mdc）。read/save/delete 时必填"),
+      action: z.enum(["list", "read", "save", "delete"]).describe("list=列出; read=读取; save=创建或更新; delete=删除"),
+      name: z.string().optional().describe("规则 id 或文件名（如 my-rule.mdc）；read/save/delete 必填"),
       content: z.string().optional().describe("规则内容（save 时必填）"),
     },
     async ({ action, name, content }) => {
@@ -181,10 +187,10 @@ export function registerAdminTools(mcpServer: McpServer): void {
 
   mcpServer.tool(
     "manage_skills",
-    "管理 Cursor Agent Skills。支持列出、读取、添加/更新、删除技能。",
+    "管理 Harness Agent Skills。",
     {
-      action: z.enum(["list", "read", "save", "delete"]).describe("操作：list=列出所有, read=读取内容, save=创建或更新, delete=删除"),
-      name: z.string().optional().describe("技能名称（文件夹名）。read/save/delete 时必填"),
+      action: z.enum(["list", "read", "save", "delete"]).describe("list=列出; read=读取 SKILL.md; save=创建或更新; delete=删除"),
+      name: z.string().optional().describe("技能目录名；read/save/delete 必填"),
       content: z.string().optional().describe("SKILL.md 内容（save 时必填）"),
     },
     async ({ action, name, content }) => {

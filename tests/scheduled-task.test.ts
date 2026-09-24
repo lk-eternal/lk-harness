@@ -9,8 +9,8 @@ import {
   findScheduledTaskBySessionKey,
   formatScheduledTaskLabel,
   buildNotifySessionKey,
+  resolveTaskOutboundChatKey,
   isIndependentTaskSessionKey,
-  scheduledTaskNotifyPromptLines,
   type ScheduledTask,
 } from "../src/shared/scheduled-task.js"
 
@@ -115,6 +115,24 @@ describe("buildNotifySessionKey", () => {
   })
 })
 
+describe("resolveTaskOutboundChatKey", () => {
+  it("prefers notifyChatId over main user", () => {
+    expect(resolveTaskOutboundChatKey(
+      { channelId: "ch_a", notifyChatId: "oc_group1" },
+      "oc_main",
+    )).toBe("ch_a|oc_group1")
+  })
+
+  it("falls back to main user private chat", () => {
+    expect(resolveTaskOutboundChatKey({ channelId: "ch_a" }, "oc_main")).toBe("ch_a|oc_main")
+  })
+
+  it("returns undefined when no notify and no main user", () => {
+    expect(resolveTaskOutboundChatKey({ channelId: "ch_a" })).toBeUndefined()
+    expect(resolveTaskOutboundChatKey({ notifyChatId: "oc_x" })).toBeUndefined()
+  })
+})
+
 describe("isIndependentTaskSessionKey", () => {
   const tasks = [
     makeTask({ id: "indep-1", independent: true }),
@@ -134,10 +152,3 @@ describe("isIndependentTaskSessionKey", () => {
   })
 })
 
-describe("scheduledTaskNotifyPromptLines", () => {
-  it("includes notify_session_key and delivery rules", () => {
-    const lines = scheduledTaskNotifyPromptLines("ch_a|oc_g")
-    expect(lines[0]).toBe("[notify_session_key=ch_a|oc_g]")
-    expect(lines.some((l) => l.includes("notify_session_key"))).toBe(true)
-  })
-})

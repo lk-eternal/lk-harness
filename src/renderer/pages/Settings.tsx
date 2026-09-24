@@ -64,7 +64,7 @@ type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks"
 type CloseWindowAction = "ask" | "minimize" | "quit"
 
 interface McpEditForm {
-  json: string; source: "claw" | "harness"; jsonError?: string
+  json: string; jsonError?: string
 }
 interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 interface TaskItem {
@@ -94,7 +94,7 @@ const PROJECT_STATUS_LABEL: Record<string, string> = { active: "进行中", paus
 const MCP_TEMPLATE = JSON.stringify({
   "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] },
 }, null, 2)
-const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE, source: "claw" }
+const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE }
 
 const MASTER_DETAIL_TABS: Tab[] = ["agent", "channel", "rules", "skills", "mcp", "projects", "tasks"]
 
@@ -599,7 +599,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const openMcpEdit = (s: McpServerEntry) => {
     setMcpEditOriginalName(s.name)
     const inner = s.rawConfig ?? {}
-    setMcpEditing({ json: JSON.stringify({ [s.name]: inner }, null, 2), source: s.source })
+    setMcpEditing({ json: JSON.stringify({ [s.name]: inner }, null, 2) })
   }
   const handleMcpDelete = async (name: string) => {
     await window.electronAPI.deleteMcpServer(name)
@@ -635,12 +635,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       setErr(`"${name}" 的值必须是一个对象`); return
     }
     if (mcpEditOriginalName && mcpEditOriginalName !== name) await window.electronAPI.deleteMcpServer(mcpEditOriginalName)
-    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>, mcpEditing.source)
+    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>)
     const isNew = !mcpEditOriginalName
     if (isNew) window.electronAPI.toggleMcp(name, true)
     const isUrl = "url" in (entry as Record<string, unknown>) && !("command" in (entry as Record<string, unknown>))
     const saved: McpServerEntry = {
-      name, type: isUrl ? "url" : "command", source: mcpEditing.source,
+      name, type: isUrl ? "url" : "command", source: "harness",
       ...(isUrl ? { url: (entry as Record<string, string>).url } : { command: (entry as Record<string, string>).command, args: (entry as Record<string, string[]>).args }),
       rawConfig: entry as Record<string, unknown>,
       enabled: isNew ? true : undefined,
@@ -1267,7 +1267,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                           {t.channelId && <span className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] text-blue-400">{taskChannels.find((c) => c.id === t.channelId)?.name ?? "通道已删除"}</span>}
                           {t.model && <span className="shrink-0 rounded bg-purple-900/40 px-1.5 py-0.5 text-[10px] text-purple-400">{modelSlug(t.model, t.modelParams)}</span>}
                           {t.independent !== false && <span className="shrink-0 rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] text-indigo-400">独立</span>}
-                          {t.notifyChatId && <span className="shrink-0 rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-400/90" title={t.notifyChatId}>通知群</span>}
+                          {t.notifyChatId && <span className="shrink-0 rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-400/90" title={t.notifyChatId}>会话</span>}
                           {isRunning && <span className="inline-flex items-center gap-1 shrink-0 rounded bg-green-900/40 px-1.5 py-0.5 text-[10px] text-green-400"><span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />运行中</span>}
                         </div>
                         <p className="truncate text-xs text-gray-500">{t.content.slice(0, 80)}{t.content.length > 80 ? "..." : ""}</p>
@@ -1922,15 +1922,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs text-gray-500">结果通知群（可选）</label>
+                <div className="mb-1 flex items-center gap-2 text-xs text-gray-500">
+                  <span>会话 ID（可选）</span>
+                  <span
+                    className="cursor-help text-blue-400/90 underline decoration-dotted underline-offset-2"
+                    title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
+                  >
+                    如何获取?
+                  </span>
+                </div>
                 <input
                   type="text"
                   value={taskEditing.notifyChatId ?? ""}
                   onChange={(e) => setTaskEditing({ ...taskEditing, notifyChatId: e.target.value.trim() || undefined })}
                   className={inputCls + " font-mono text-xs"}
-                  placeholder="群 chat_id，如 oc_xxx"
+                  placeholder="不填则默认通知到主用户私聊会话"
                 />
-                <p className="mt-1 text-[10px] text-gray-600">填了的话，任务跑完后 Agent 会把结果发到这个群；不填则不在群里通知。</p>
+                <p className="mt-1 text-[10px] text-gray-600">独立任务仅通过 MCP 投递到该会话；不填时使用通道主用户私聊。</p>
               </div>
               <div className="flex items-center gap-4">
                 <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={taskEditing.enabled} onChange={(e) => setTaskEditing({ ...taskEditing, enabled: e.target.checked })} className="rounded border-gray-600" />启用</label>

@@ -285,8 +285,8 @@ const api = {
     return () => ipcRenderer.removeListener("scheduled-tasks:status", handler)
   },
   getMcpServers: (): Promise<McpServerEntry[]> => ipcRenderer.invoke("mcp:list-all"),
-  saveMcpServer: (name: string, entry: Record<string, unknown>, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:save", name, entry, source),
-  deleteMcpServer: (name: string, source?: "claw" | "global" | "project"): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:delete", name, source),
+  saveMcpServer: (name: string, entry: Record<string, unknown>): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:save", name, entry),
+  deleteMcpServer: (name: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcp:delete", name),
   loginMcp: (name: string): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("mcp:login", name),
   toggleMcp: (name: string, enabled: boolean): Promise<{ ok: boolean; output: string }> => ipcRenderer.invoke("mcp:toggle", name, enabled),
   getMcpEnabledMap: (force?: boolean): Promise<Record<string, boolean>> => ipcRenderer.invoke("mcp:enabled-map", force),

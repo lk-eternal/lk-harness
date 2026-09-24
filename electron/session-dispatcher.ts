@@ -8,6 +8,7 @@ import {
   type MessageChannel, type ModelScenario,
 } from "./config-store"
 import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
+import { createTempChatSession } from "../src/shared/temp-chat-session.js"
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession, purgeSessionRouting } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
@@ -41,7 +42,7 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
-import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, buildNotifySessionKey } from "../src/shared/scheduled-task"
+import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, resolveTaskOutboundChatKey } from "../src/shared/scheduled-task"
 import {
   clearLaunchFailStreak,
   clearAllLaunchFailStreaks,
@@ -420,8 +421,6 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const { sessionKey, chatType, meta, senderOpenId, taskMessage } = p
   const scheduledTask = chatType === "task" ? scheduledTaskForSessionKey(sessionKey) : undefined
   const chatName = p.chatName || scheduledTask?.name
-  const notifySessionKey = p.notifySessionKey?.trim()
-    || (scheduledTask ? buildNotifySessionKey(scheduledTask) : undefined)
   const useMain = p.useMainWorkspace ?? (chatType === "p2p")
   const chatRef = meta?.chatId || extractChatId(sessionKey)
   const boundProject = findBoundProject(sessionKey, chatRef)
@@ -434,6 +433,8 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
+  const notifySessionKey = p.notifySessionKey?.trim()
+    || (scheduledTask ? resolveTaskOutboundChatKey(scheduledTask, channel?.mainUserChatId) : undefined)
   // 会话级供应商覆盖（/m p set）优先于通道默认，只影响当前会话
   let resourceId = resolveChannelResourceId(channel, audience)
   try {
@@ -1277,10 +1278,7 @@ export async function handleChatCommand(tokens: string[], port: number, messageI
     const inProject = !!(curSk && projectIdFromSessionKey(curSk))
     if (inProject) setCurrentProjectId(null)
 
-    const folderName = `temp_${Date.now()}`
-    const w = path.join(app.getPath("userData"), "workspaces", folderName)
-    fs.mkdirSync(w, { recursive: true })
-    const sessionKey = normalizeSessionKey(`${chatId}::${w}`) || `${chatId}::${w}`
+    const { sessionKey, workspaceDir: w } = createTempChatSession(app.getPath("userData"), chatId)
 
     const synced = await syncActiveSession(port, chatId, sessionKey)
     if (!synced) {

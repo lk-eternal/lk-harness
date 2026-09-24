@@ -288,8 +288,22 @@ export default function TaskPanel() {
                   </div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">结果通知群（可选）</label>
-                  <input type="text" value={draft.notifyChatId ?? ""} onChange={(e) => setDraft({ ...draft, notifyChatId: e.target.value.trim() || undefined })} className={inputCls + " font-mono text-xs"} placeholder="群 chat_id" />
+                  <div className="mb-1 flex items-center gap-2 text-xs text-gray-500">
+                    <span>会话 ID（可选）</span>
+                    <span
+                      className="cursor-help text-blue-400/90 underline decoration-dotted underline-offset-2"
+                      title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
+                    >
+                      如何获取?
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={draft.notifyChatId ?? ""}
+                    onChange={(e) => setDraft({ ...draft, notifyChatId: e.target.value.trim() || undefined })}
+                    className={inputCls + " font-mono text-xs"}
+                    placeholder="不填则默认通知到主用户私聊会话"
+                  />
                 </div>
                 <div className="flex items-center gap-4">
                   <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} className="rounded border-gray-600" />启用</label>

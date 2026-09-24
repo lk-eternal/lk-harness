@@ -1064,7 +1064,7 @@ export async function handleFeishuMcpCommand(port: number, messageId: string, ra
       const name = parsed.name as string
       if (!name) { await reportCommandResult(port, messageId, false, "❌ 缺少 name 字段", chatId, undefined, mcExtra()); return }
       const { name: _, ...entry } = parsed
-      saveMcpServer(name, entry, "project")
+      saveMcpServer(name, entry)
       await reportCommandResult(port, messageId, true, `✅ ${name} 已添加`, chatId, undefined, mcExtra())
     } catch (e: unknown) {
       await reportCommandResult(port, messageId, false, `❌ JSON 解析失败: ${e instanceof Error ? e.message : e}`, chatId, undefined, mcExtra())

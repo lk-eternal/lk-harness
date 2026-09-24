@@ -16,13 +16,13 @@
 | launch | 启动临时 Agent 会话（需传 message 参数） |
 
 ### manage_mcp
-管理 MCP 服务器配置（list / add / delete）。
+管理 Agent 挂载的 MCP（list / add / delete）。
 
 ### manage_rules
-管理 Cursor Rules 文件（list / read / save / delete）。
+管理 Harness 规则（list / read / save / delete）。
 
 ### manage_skills
-管理 Agent Skills（list / read / save / delete）。
+管理 Harness Agent Skills（list / read / save / delete）。
 
 ### manage_tasks
 管理定时任务（list / add / update / delete / toggle）。

@@ -45,7 +45,10 @@ import {
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, buildNotifySessionKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
+import { createTempChatSession } from "./shared/temp-chat-session.js";
+import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
+import { resolveMcpSendSessionKey } from "./shared/mcp-outbound-session-key.js";
 import { configDir, sessionStateDir, migrateDataLayout } from "./shared/data-paths.js";
 import { ensureSessionLayoutMigrated } from "./shared/session-layout-migrate.js";
 import { ensureGlobalCommandsDir, globalCardQuestionsPath, globalRoutingPath } from "./shared/session-entry-paths.js";
@@ -514,6 +517,13 @@ const sseClients = new Set<http.ServerResponse>();
 
 function broadcastQueueEvent(chatId?: string): void {
   const data = JSON.stringify({ type: "queue-update", chatId: chatId ?? null, ts: Date.now() });
+  for (const res of sseClients) {
+    try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
+  }
+}
+
+function broadcastTempChatActiveEvent(payload: { chatId: string; sessionKey: string; invokerSessionKey?: string }): void {
+  const data = JSON.stringify({ type: "temp-chat-active", ...payload, ts: Date.now() });
   for (const res of sseClients) {
     try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
   }
@@ -1055,8 +1065,8 @@ function isKnownSessionKey(sessionKey: string): boolean {
 }
 
 const SEND_REJECT_HINT =
-  "session_key 必须从 poll-message 返回值或会话元数据 [session_key=...] 原样复制，禁止凭空捏造；" +
-  "若你在 Cursor IDE 人工会话中（Prompt 无 [session_key=...]），严禁调用 lk-harness 发送工具——本规则对 IDE 会话整篇失效。";
+  "发送须由 Harness Agent 经 MCP 调用（系统注入路由），或提供已登记的路由键 / 可反查的 message_id；" +
+  "Cursor IDE 直连 Daemon 时禁止调用 lk-harness 发送类 API。";
 
 /**
  * 发送前校验：拒绝 IDE 误调 / 捏造 session_key。
@@ -2093,6 +2103,7 @@ async function refreshAgentStreamCard(
 
 
 function isStreamCardEnabled(sessionKey: string, ch: Extract<ResolvedChannel, { type: "feishu" }>): boolean {
+  if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return false;
   return daemonFlagsForSession(sessionKey, ch.rt.cfg).showThinking;
 }
 
@@ -2109,6 +2120,7 @@ async function ensureStreamCardForMcpMerge(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   firstBody?: string,
 ): Promise<{ state?: AgentStreamCardState; bodyMerged: boolean }> {
+  if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return { bodyMerged: false };
   if (!isStreamCardEnabled(sessionKey, ch) && !firstBody?.trim()) return { bodyMerged: false };
   // 应用无 cardkit 权限：直接走普通消息，不白撞建卡 API
   if (ch.rt.sender?.isCardkitDenied()) return { bodyMerged: false };
@@ -3320,6 +3332,19 @@ function localDaemonUrl(p: string): string {
   return `http://127.0.0.1:${daemonPort}${p}`;
 }
 
+const MCP_SEND_NO_ROUTE = "[send_failed] 须在 Harness 调度的 Agent 会话中调用";
+
+function resolveSendSessionKeyForMcp(): string | undefined {
+  return resolveMcpSendSessionKey(
+    getMcpInvokerSessionKey(),
+    readTasksSafe(),
+    (task) => {
+      const rt = pickChannel(task.channelId);
+      return rt ? channelDefaultChatId(rt) : null;
+    },
+  );
+}
+
 export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean }): void {
   if (opts?.sendText !== false) {
     s.tool(
@@ -3328,11 +3353,12 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
       {
         text: z.string().describe("要发送的消息内容"),
         message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
-        session_key: z.string().optional().describe("目标会话的 sessionKey，用于精确投递"),
       },
-      async ({ text, message_id, session_key }) => {
+      async ({ text, message_id }) => {
         try {
-          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key });
+          const routeKey = resolveSendSessionKeyForMcp();
+          if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
+          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key: routeKey });
           if (!r?.ok) {
             const detail = r?.error?.trim() || "消息发送失败";
             log("WARN", `send_text 发送失败: message_id=${message_id} error=${detail.slice(0, 160)}`);
@@ -3353,11 +3379,12 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
     {
       image_path: z.string().describe("图片绝对路径"),
       message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
-      session_key: z.string().optional().describe("目标会话的 sessionKey，用于精确投递"),
     },
-    async ({ image_path, message_id, session_key }) => {
+    async ({ image_path, message_id }) => {
       try {
-        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-image"), { image_path, message_id, session_key });
+        const routeKey = resolveSendSessionKeyForMcp();
+        if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
+        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-image"), { image_path, message_id, session_key: routeKey });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${r?.error?.trim() || "图片发送失败"}` }] };
         return { content: [{ type: "text" as const, text: "图片已发送" }] };
       } catch (e: any) {
@@ -3373,11 +3400,12 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
     {
       file_path: z.string().describe("文件绝对路径"),
       message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
-      session_key: z.string().optional().describe("目标会话的 sessionKey，用于精确投递"),
     },
-    async ({ file_path, message_id, session_key }) => {
+    async ({ file_path, message_id }) => {
       try {
-        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-file"), { file_path, message_id, session_key });
+        const routeKey = resolveSendSessionKeyForMcp();
+        if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
+        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-file"), { file_path, message_id, session_key: routeKey });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${r?.error?.trim() || "文件发送失败"}` }] };
         return { content: [{ type: "text" as const, text: "文件已发送" }] };
       } catch (e: any) {
@@ -3394,11 +3422,12 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
       text: z.string().describe("问题内容（支持 markdown）"),
       options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）"),
       message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
-      session_key: z.string().describe("目标会话 sessionKey，不可省略"),
     },
-    async ({ text, options, message_id, session_key }) => {
+    async ({ text, options, message_id }) => {
       try {
-        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, message_id, session_key });
+        const routeKey = resolveSendSessionKeyForMcp();
+        if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
+        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, message_id, session_key: routeKey });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${(r as any)?.error?.trim() || "问题发送失败"}` }] };
         return { content: [{ type: "text" as const, text: r.degraded ? "问题已发送（微信文本降级）" : "问题已发送" }] };
       } catch (e: any) {
@@ -3411,14 +3440,14 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
 }
 
 function createTaskMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-task", version: PKG_VERSION, description: "消息桥接 – 通过飞书/微信与用户沟通（含 send_text，仅无卡片的定时任务用）" });
+  const s = new McpServer({ name: "lk-harness-task", version: PKG_VERSION, description: "定时任务等无流式卡会话 – 含 send_text / 媒体 / 提问" });
   registerAgentOutboundTools(s, { sendText: true });
   return s;
 }
 
 /** 交互会话模式：无 send_text，保留 send_question / 媒体 / Diff（输出由流式卡片承载） */
 function createInteractiveMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话出站 – 提问/媒体/Diff" });
+  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话 – 提问/媒体/Diff（无 send_text）" });
   registerAgentOutboundTools(s, { sendText: false });
   return s;
 }
@@ -3456,7 +3485,10 @@ function startHttpServer(): Promise<number> {
             if (isTask || isInteractive) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
-          await transport.handleRequest(req, res);
+          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-task")
+            ? (req.headers["x-harness-session-key"] as string | undefined)
+            : undefined;
+          await runWithMcpInvokerSessionKey(invokerSk, async () => { await transport.handleRequest(req, res); });
           return;
         }
 
@@ -3829,16 +3861,16 @@ function writeTasks(tasks: ScheduledTask[]): void {
 
 async function handleMcpAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    const servers: Record<string, { config: unknown; scope: string }> = {};
+    const servers: Record<string, { config: unknown }> = {};
     for (const s of listHarnessMcpServers()) {
-      servers[s.name] = { config: s.config, scope: "harness" };
+      servers[s.name] = { config: s.config };
     }
     json(res, { ok: true, servers });
     return true;
   }
   if (method === "POST") {
     const body = JSON.parse(await readBody(req));
-    const { action, name, config } = body as { action: string; name?: string; config?: string; scope?: string };
+    const { action, name, config } = body as { action: string; name?: string; config?: string };
 
     if (action === "add") {
       if (!name || !config) { json(res, { ok: false, error: "name and config required" }, 400); return true; }
@@ -4131,23 +4163,42 @@ async function handleAgentAdmin(_method: string, req: http.IncomingMessage, res:
   const supportedActions = ["stop", "restart", "reset", "clean", "launch"];
 
   if (action === "launch") {
-    const { message, chatId, channelId: bodyChannelId } = body as {
-      message?: string; chatId?: string; channelId?: string;
+    const { message, chatId: bodyChatId, channelId: bodyChannelId, invokerSessionKey } = body as {
+      message?: string; chatId?: string; channelId?: string; invokerSessionKey?: string;
     };
     if (!message?.trim()) { json(res, { ok: false, error: "message is required" }, 400); return true; }
-    const taskId = `temp-${Date.now()}`;
-    const channelId = bodyChannelId || (chatId ? parseChatKey(chatId).channelId : undefined);
+    const chatId = bodyChatId?.trim();
+    if (!chatId || !chatId.includes("|")) {
+      json(res, { ok: false, error: "launch 须在聊天会话中调用（无法解析当前 chat）" }, 400);
+      return true;
+    }
+    const channelId = bodyChannelId || parseChatKey(chatId).channelId;
     const rt = pickChannel(channelId || undefined);
-    const target = rt ? channelDefaultChatId(rt) : null;
-    const notifyChatKey = rt && target ? makeChatKey(rt.cfg.id, target) : undefined;
-    const internalMsgId = `internal_${taskId}_${Date.now()}`;
-    if (notifyChatKey) sessionToChatMap.set(taskId, notifyChatKey);
-    pushToFileQueue(message.trim(), internalMsgId, `daemon-${process.pid}`, taskId, false, { chatType: "temp" });
-    trackMessageSession(internalMsgId, taskId);
-    rememberSessionKey(taskId);
-    broadcastQueueEvent(notifyChatKey);
-    log("INFO", `临时任务已入队: session=${taskId} len=${message.trim().length}`);
-    json(res, { ok: true, taskId, message: "临时任务已入队" });
+    if (!rt) {
+      json(res, { ok: false, error: "无法解析消息通道" }, 400);
+      return true;
+    }
+    if (!APP_DATA_DIR) {
+      json(res, { ok: false, error: "APP_DATA_DIR 未配置" }, 500);
+      return true;
+    }
+    const { sessionKey, workspaceDir } = createTempChatSession(APP_DATA_DIR, chatId);
+    if (!setActiveSession(chatId, sessionKey, true)) {
+      json(res, { ok: false, error: "会话路由绑定失败" }, 409);
+      return true;
+    }
+    const internalMsgId = `internal_temp_${Date.now()}`;
+    sessionToChatMap.set(sessionKey, chatId);
+    pushToFileQueue(message.trim(), internalMsgId, `daemon-${process.pid}`, sessionKey, false, {
+      chatType: "p2p",
+      chatId,
+    });
+    trackMessageSession(internalMsgId, sessionKey);
+    rememberSessionKey(sessionKey);
+    broadcastQueueEvent(chatId);
+    broadcastTempChatActiveEvent({ chatId, sessionKey, invokerSessionKey: invokerSessionKey?.trim() });
+    log("INFO", `临时会话已创建并入队: ${sessionKey} len=${message.trim().length}`);
+    json(res, { ok: true, sessionKey, workspaceDir, message: "已切换临时目录会话并入队" });
     return true;
   }
   if (supportedActions.includes(action)) {
@@ -4528,6 +4579,10 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       return true;
     }
     const sk = normalizeSessionKey(session_key) || session_key;
+    if (isIndependentTaskSessionKey(sk, readTasksSafe())) {
+      json(res, { ok: true, skipped: true });
+      return true;
+    }
     const ch = resolveChannel(sk, { allowDefault: false });
     if (ch.type === "error") {
       json(res, { ok: false, error: ch.message }, 400);
@@ -4985,16 +5040,19 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void
   const rt = pickChannel(task.channelId);
   const target = rt ? channelDefaultChatId(rt) : null;
   const notifyChatKey = rt && target ? makeChatKey(rt.cfg.id, target) : undefined;
-  const notifySessionKey = buildNotifySessionKey(task);
   const internalMsgId = `internal_${task.id}_${Date.now()}`;
 
-  if (notifySessionKey) {
-    rememberSessionKey(notifySessionKey);
-    log("INFO", `定时任务「${task.name}」投递目标: ${notifySessionKey}`);
-  }
-
   if (task.independent !== false) {
-    if (notifyChatKey) sessionToChatMap.set(task.id, notifyChatKey);
+    const outboundChatKey = rt
+      ? resolveTaskOutboundChatKey(task, rt.cfg.mainUserChatId ?? target)
+      : resolveTaskOutboundChatKey(task);
+    if (!outboundChatKey) {
+      log("WARN", `定时任务「${task.name}」跳过: 未配置会话 ID 且通道无主用户绑定`);
+      return;
+    }
+    rememberSessionKey(outboundChatKey);
+    log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
+    sessionToChatMap.set(task.id, outboundChatKey);
     if (task.model?.trim()) {
       try {
         const rid = rt?.cfg.agentResourceId?.trim()
@@ -5010,7 +5068,7 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void
     pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, task.id, false, { chatType: "task" });
     trackMessageSession(internalMsgId, task.id);
     rememberSessionKey(task.id);
-    broadcastQueueEvent(notifyChatKey);
+    broadcastQueueEvent(outboundChatKey);
     log("INFO", `定时任务已直投独立会话队列: ${task.name} → ${task.id}`);
     return;
   }

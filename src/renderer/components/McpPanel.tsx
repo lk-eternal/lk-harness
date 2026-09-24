@@ -11,6 +11,15 @@ interface McpEditForm { json: string; jsonError?: string }
 
 type McpTool = { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }
 
+type BuiltinToolDoc = {
+  summary: string
+  params: { name: string; required?: boolean; type?: string; description?: string; enumValues?: string[] }[]
+  example?: string
+  notes?: string
+}
+
+type BuiltinTool = { name: string; description: string; doc?: BuiltinToolDoc }
+
 function mcpToolTip(t: McpTool): string {
   const lines = [
     t.description,
@@ -33,7 +42,8 @@ export default function McpPanel() {
   const [mcpStatus, setMcpStatus] = useState<Record<string, string>>({})
   const [mcpTools, setMcpTools] = useState<Record<string, { loading: boolean; tools: McpTool[]; error?: string }>>({})
   const [mcpLoginPending, setMcpLoginPending] = useState<Record<string, boolean>>({})
-  const [builtinGroups, setBuiltinGroups] = useState<{ key: string; title: string; scope: string; tools: { name: string; description: string }[] }[] | null>(null)
+  const [builtinGroups, setBuiltinGroups] = useState<{ key: string; title: string; scope: string; tools: BuiltinTool[] }[] | null>(null)
+  const [selectedBuiltinTool, setSelectedBuiltinTool] = useState<{ groupKey: string; name: string } | null>(null)
   const [selectedKey, setSelectedKey] = useState<string | null>(null)
   const [draft, setDraft] = useState<McpEditForm | null>(null)
   const [originalName, setOriginalName] = useState<string | null>(null)
@@ -105,6 +115,7 @@ export default function McpPanel() {
       if (choice === "save" && !(await handleSave())) return
     }
     setSelectedKey(BUILTIN_KEY)
+    setSelectedBuiltinTool(null)
     setDraft(null)
     setOriginalName(null)
     setIsNew(false)
@@ -159,9 +170,9 @@ export default function McpPanel() {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) { setErr(`"${name}" 的值必须是一个对象`); return false }
     const isNewEntry = !originalName
     if (originalName && originalName !== name) {
-      await window.electronAPI.deleteMcpServer(originalName, "claw")
+      await window.electronAPI.deleteMcpServer(originalName)
     }
-    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>, "claw")
+    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>)
     if (isNewEntry) await window.electronAPI.toggleMcp(name, true)
     markSaved()
     await reload(true)
@@ -174,7 +185,7 @@ export default function McpPanel() {
   const handleDelete = async () => {
     if (!currentServer || isNew) return
     if (!(await showConfirm("删除 MCP", `确定删除「${currentServer.name}」？`))) return
-    await window.electronAPI.deleteMcpServer(currentServer.name, "claw")
+    await window.electronAPI.deleteMcpServer(currentServer.name)
     await reload()
     setSelectedKey(null)
     setDraft(null)
@@ -192,6 +203,9 @@ export default function McpPanel() {
 
   const currentServer = selectedKey ? servers.find((s) => s.name === selectedKey) : null
   const toolState = selectedKey ? mcpTools[selectedKey] : undefined
+  const selectedBuiltinToolEntry = selectedBuiltinTool && builtinGroups
+    ? builtinGroups.find((g) => g.key === selectedBuiltinTool.groupKey)?.tools.find((t) => t.name === selectedBuiltinTool.name)
+    : undefined
 
   return (
     <>
@@ -283,21 +297,58 @@ export default function McpPanel() {
               </div>
             </>
           ) : selectedKey === BUILTIN_KEY ? (
-            <div className={PANEL_SCROLL}>
-              {builtinGroups === null
-                ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
-                : builtinGroups.map((g) => (
-                  <div key={g.key} className="rounded-lg border border-gray-800 bg-gray-900/30 px-3 py-2">
-                    <p className="mb-1.5 text-xs font-medium text-gray-300">{g.title}<span className="ml-2 text-[10px] font-normal text-gray-500">{g.scope}</span></p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {g.tools.map((t) => (
-                        <span key={t.name} title={t.description} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300">
-                          <Wrench size={10} className="text-gray-500" />{t.name}
-                        </span>
-                      ))}
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className={`${PANEL_SCROLL} min-h-0 flex-1`}>
+                {builtinGroups === null
+                  ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
+                  : builtinGroups.map((g) => (
+                    <div key={g.key} className="mb-2 rounded-lg border border-gray-800 bg-gray-900/30 px-3 py-2">
+                      <p className="mb-1.5 text-xs font-medium text-gray-300">{g.title}<span className="ml-2 text-[10px] font-normal text-gray-500">{g.scope}</span></p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {g.tools.map((t) => {
+                          const active = selectedBuiltinTool?.groupKey === g.key && selectedBuiltinTool.name === t.name
+                          return (
+                            <button key={t.name} type="button"
+                              onClick={() => setSelectedBuiltinTool({ groupKey: g.key, name: t.name })}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition ${active ? "bg-blue-900/50 text-blue-200 ring-1 ring-blue-700" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
+                              <Wrench size={10} className={active ? "text-blue-400" : "text-gray-500"} />{t.name}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+              </div>
+              <div className="shrink-0 border-t border-gray-800 bg-gray-900/50 px-3 py-3">
+                {!selectedBuiltinToolEntry
+                  ? <p className="text-xs text-gray-500">点击上方工具名查看参数、可选值与示例</p>
+                  : (
+                    <div className="space-y-2 text-xs text-gray-300">
+                      <p className="font-mono text-sm text-white">{selectedBuiltinToolEntry.name}</p>
+                      <p className="text-gray-400">{selectedBuiltinToolEntry.doc?.summary ?? selectedBuiltinToolEntry.description}</p>
+                      {selectedBuiltinToolEntry.doc?.params?.length ? (
+                        <table className="w-full text-left text-[11px]">
+                          <thead><tr className="text-gray-500"><th className="pb-1 pr-2">参数</th><th className="pb-1 pr-2">类型</th><th className="pb-1">说明</th></tr></thead>
+                          <tbody>
+                            {selectedBuiltinToolEntry.doc.params.map((p) => (
+                              <tr key={p.name} className="border-t border-gray-800/80 align-top">
+                                <td className="py-1 pr-2 font-mono text-gray-200">{p.required ? "* " : ""}{p.name}</td>
+                                <td className="py-1 pr-2 text-gray-500">{p.enumValues?.length ? p.enumValues.join(" | ") : (p.type ?? "—")}</td>
+                                <td className="py-1 text-gray-400">{p.description ?? ""}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : null}
+                      {selectedBuiltinToolEntry.doc?.example ? (
+                        <pre className="overflow-x-auto rounded bg-gray-950 p-2 font-mono text-[10px] text-gray-400">{selectedBuiltinToolEntry.doc.example}</pre>
+                      ) : null}
+                      {selectedBuiltinToolEntry.doc?.notes ? (
+                        <p className="text-[11px] text-amber-200/90">{selectedBuiltinToolEntry.doc.notes}</p>
+                      ) : null}
+                    </div>
+                  )}
+              </div>
             </div>
           ) : (
             <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择 MCP</div>
