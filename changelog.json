@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.2.21",
+    "date": "2026-09-24",
+    "changes": [
+      "MCP 出站不再要求 AI 填写 session_key：interactive / task / admin 请求自动带当前会话头，send_* 与定时任务 notify 由 Daemon 解析目标",
+      "manage_agent launch 与 /c new 统一为 workspaces/temp_* 目录会话；入队携带飞书 messageId 与发送方，internal 占位 id 不再写入 [本轮投递]",
+      "设置页内置 MCP 可点看参数说明；admin 工具描述改为 Harness 自有 MCP/规则/Skills，去掉 manage_mcp 的 scope 与无效 source 参数",
+      "项目会话首注：分支红线区分生产基线与开发/测试（允许基线同步进 feature、禁止本地合 feature 进基线）；节点索引改由每轮 node_protocol 注入",
+      "/c ls 与首页 Tab 合并 routing 登记过的目录/临时会话，/c w set 或 /c new 切走后仍列出，/c del 清除"
+    ]
+  },
+  {
     "version": "0.2.20",
     "date": "2026-09-23",
     "changes": [
