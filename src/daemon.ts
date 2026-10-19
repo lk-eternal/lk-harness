@@ -342,6 +342,13 @@ interface ChannelRuntime {
   botOpenId?: string;
   /** 机器人应用名（bot/v3/info 的 app_name），用于协作名册 */
   botName?: string;
+  /** 进行中的机器人身份拉取（并发调用共享同一次请求） */
+  botIdentityPending?: Promise<boolean>;
+  /** 身份拉取失败后的后台退避重试定时器 */
+  botIdentityRetryTimer?: ReturnType<typeof setTimeout>;
+  botIdentityFailures?: number;
+  /** 上次因身份未知而丢弃群消息的告警时间（限频用） */
+  botIdentityDropWarnedAt?: number;
   feishuConnected?: boolean;
   // wechat
   wechat?: WeChatManager;
@@ -1364,8 +1371,58 @@ function startFeishuWsWatchdog(): void {
   }, FEISHU_WS_WATCHDOG_MS).unref();
 }
 
+const BOT_IDENTITY_RETRY_BASE_MS = 5_000;
+const BOT_IDENTITY_RETRY_MAX_MS = 60_000;
+const BOT_IDENTITY_DROP_WARN_INTERVAL_MS = 60_000;
+
+/** 拉取机器人身份（open_id / 名称）。失败则排退避重试，直到成功或通道停用。 */
+async function fetchBotIdentity(rt: ChannelRuntime): Promise<boolean> {
+  try {
+    const botInfo = await rt.client!.request({ method: "GET", url: "/open-apis/bot/v3/info" }) as any;
+    const openId = botInfo?.bot?.open_id;
+    if (!openId) throw new Error("bot/v3/info 响应缺少 open_id");
+    rt.botOpenId = openId;
+    rt.botName = botInfo.bot.app_name || rt.cfg.name;
+    rt.botIdentityFailures = 0;
+    log("INFO", `[${rt.cfg.name}] 机器人 open_id: ${rt.botOpenId} (${rt.botName})`);
+    return true;
+  } catch (e: any) {
+    rt.botIdentityFailures = (rt.botIdentityFailures ?? 0) + 1;
+    log("WARN", `[${rt.cfg.name}] 获取机器人信息失败(第 ${rt.botIdentityFailures} 次): ${e?.message ?? e}`);
+    scheduleBotIdentityRetry(rt);
+    return false;
+  }
+}
+
+function scheduleBotIdentityRetry(rt: ChannelRuntime): void {
+  if (rt.botIdentityRetryTimer || channels.get(rt.cfg.id) !== rt) return;
+  const failures = rt.botIdentityFailures ?? 1;
+  const delay = Math.min(BOT_IDENTITY_RETRY_BASE_MS * 2 ** (failures - 1), BOT_IDENTITY_RETRY_MAX_MS);
+  rt.botIdentityRetryTimer = setTimeout(() => {
+    rt.botIdentityRetryTimer = undefined;
+    void ensureBotIdentity(rt);
+  }, delay);
+  rt.botIdentityRetryTimer.unref();
+}
+
+/** 保证机器人身份已知；已知则立即返回，进行中则复用同一次请求。 */
+function ensureBotIdentity(rt: ChannelRuntime): Promise<boolean> {
+  if (rt.botOpenId) return Promise.resolve(true);
+  if (!rt.botIdentityPending) {
+    rt.botIdentityPending = fetchBotIdentity(rt).finally(() => { rt.botIdentityPending = undefined; });
+  }
+  return rt.botIdentityPending;
+}
+
+function warnDroppedForUnknownBotIdentity(rt: ChannelRuntime, chatId: string): void {
+  const now = Date.now();
+  if (now - (rt.botIdentityDropWarnedAt ?? 0) < BOT_IDENTITY_DROP_WARN_INTERVAL_MS) return;
+  rt.botIdentityDropWarnedAt = now;
+  log("WARN", `[${rt.cfg.name}] 机器人身份未知，群消息已丢弃 chat=${chatId}（后台持续重试获取身份）`);
+}
+
 function isBotMentioned(rt: ChannelRuntime, ev: LarkMessageEvent): boolean {
-  if (!rt.botOpenId) return ev.mentions.length > 0;
+  if (!rt.botOpenId) return false;
   return ev.mentions.some((m) => m.id === rt.botOpenId || m.key === "@_all");
 }
 
@@ -1405,6 +1462,8 @@ async function stopChannelRuntime(channelId: string): Promise<boolean> {
   if (!rt) return false;
   const name = rt.cfg.name;
   if (rt.cfg.type === "feishu") {
+    clearTimeout(rt.botIdentityRetryTimer);
+    rt.botIdentityRetryTimer = undefined;
     rt.sender?.closeConnection(true);
     rt.feishuConnected = false;
   } else if (rt.wechat) {
@@ -1443,25 +1502,17 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
     log: (level: string, ...args: unknown[]) => log(level, `[${rt.cfg.name}]`, ...args),
   });
 
-  try {
-    const botInfo = await rt.client.request({ method: "GET", url: "/open-apis/bot/v3/info" }) as any;
-    rt.botOpenId = botInfo?.bot?.open_id;
-    rt.botName = botInfo?.bot?.app_name || rt.cfg.name;
-    if (rt.botOpenId) log("INFO", `[${rt.cfg.name}] 机器人 open_id: ${rt.botOpenId} (${rt.botName})`);
-    else log("WARN", `[${rt.cfg.name}] 未能获取机器人 open_id，群消息过滤将使用宽松模式`);
-  } catch (e: any) {
-    log("WARN", `[${rt.cfg.name}] 获取机器人信息失败: ${e?.message ?? e}`);
-  }
+  await ensureBotIdentity(rt);
 
   const sender = rt.sender;
   const wsLifecycle = {
     onReady: () => { rt.feishuConnected = true; },
     onReconnecting: () => { rt.feishuConnected = false; },
-    onReconnected: () => { rt.feishuConnected = true; },
+    onReconnected: () => { rt.feishuConnected = true; void ensureBotIdentity(rt); },
     onDisconnected: () => { rt.feishuConnected = false; },
     onError: () => { rt.feishuConnected = false; },
   };
-  sender.startConnection(appId, appSecret, ENCRYPT_KEY, (ev) => {
+  const onMessage = (ev: LarkMessageEvent): void => {
     rt.feishuConnected = true;
     const { text, messageId, chatId, chatType, messageType, rawContent, senderOpenId, parentId } = ev;
     const chatKey = makeChatKey(rt.cfg.id, chatId);
@@ -1539,6 +1590,16 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
         })
         .catch(() => enqueue(cleanText));
     }
+  };
+  sender.startConnection(appId, appSecret, ENCRYPT_KEY, (ev) => {
+    if (ev.chatType === "group" && !rt.botOpenId) {
+      void ensureBotIdentity(rt).then((ok) => {
+        if (ok) onMessage(ev);
+        else warnDroppedForUnknownBotIdentity(rt, ev.chatId);
+      });
+      return;
+    }
+    onMessage(ev);
   }, (cardEvt) => handleCardAction(rt, cardEvt), wsLifecycle, (recall) => {
     handleMessageRecalled(rt, recall.messageId, recall.chatId, recall.recallType);
   }).then(
