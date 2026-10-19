@@ -24,7 +24,7 @@
     "clean": "rimraf dist",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
     "build:mcp": "tsc",
     "build:bundle": "node scripts/bundle-daemon.cjs",
     "vendor:diff2html": "node scripts/vendor-diff2html.mjs",
