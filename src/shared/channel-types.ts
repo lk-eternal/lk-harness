@@ -22,12 +22,24 @@ export interface AgentResource {
 /** 会话人群：主用户私聊（+ task/project/temp 系统会话归主） vs 其他人/群聊 */
 export type ChannelAudience = "main" | "others";
 
-/** 消息通道：一个飞书自建应用或一个微信账号 */
+/** 通道类型：飞书 / 微信 / 应用内对话（不经外部服务，永远是主用户私聊） */
+export type ChannelType = "feishu" | "wechat" | "app";
+
+export const CHANNEL_TYPE_LABELS: Record<ChannelType, string> = {
+  feishu: "飞书",
+  wechat: "微信",
+  app: "应用内对话",
+};
+
+/** 应用内对话通道的固定主用户 chatId（通道无外部身份，创建即绑定） */
+export const APP_CHANNEL_CHAT_ID = "app_main";
+
+/** 消息通道：一个飞书自建应用、一个微信账号或一个应用内对话入口 */
 export interface MessageChannel {
   id: string;            // "ch_<hex>"
   name: string;
   enabled: boolean;
-  type: "feishu" | "wechat";
+  type: ChannelType;
   // 飞书凭据
   larkAppId?: string;
   larkAppSecret?: string;
@@ -90,7 +102,7 @@ export interface MessageChannel {
 export interface DaemonChannelConfig {
   id: string;
   name: string;
-  type: "feishu" | "wechat";
+  type: ChannelType;
   appId?: string;
   appSecret?: string;
   wechatToken?: string;
@@ -132,7 +144,7 @@ export interface DaemonChannelConfig {
 export interface ChannelStatusInfo {
   id: string;
   name: string;
-  type: "feishu" | "wechat";
+  type: ChannelType;
   connected: boolean;
   /** wechat: disconnected/qr_pending/logging_in/connected/error；feishu: connected/connecting */
   status: string;

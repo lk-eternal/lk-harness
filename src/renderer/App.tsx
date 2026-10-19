@@ -1,12 +1,13 @@
 import { useState, useEffect } from "react"
 import Dashboard from "./pages/Dashboard"
 import Settings from "./pages/Settings"
+import ChatPage from "./pages/ChatPage"
 import CloseWindowModal from "./components/CloseWindowModal"
 import AppModalHost from "./components/AppModalHost"
 import UpdateDownloadBanner from "./components/UpdateDownloadBanner"
 import SetupWizard from "./components/SetupWizard"
 
-type Page = "dashboard" | "settings"
+type Page = "dashboard" | "settings" | "chat"
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard")
@@ -62,7 +63,18 @@ export default function App() {
   return (
     <>
       <div className={page === "dashboard" ? undefined : "hidden"}>
-        <Dashboard active={page === "dashboard"} onSettings={(tab) => { setSettingsInitTab(tab); setPage("settings") }} />
+        <Dashboard
+          active={page === "dashboard"}
+          onSettings={(tab) => { setSettingsInitTab(tab); setPage("settings") }}
+          onChat={() => setPage("chat")}
+        />
+      </div>
+      <div className={page === "chat" ? undefined : "hidden"}>
+        <ChatPage
+          active={page === "chat"}
+          onBack={() => setPage("dashboard")}
+          onOpenChannelSettings={() => { setSettingsInitTab("channel"); setPage("settings") }}
+        />
       </div>
       <div className={page === "settings" ? undefined : "hidden"}>
         <Settings

@@ -79,6 +79,7 @@ import {
   dirBaseName,
 } from "../src/shared/session-label.js"
 import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToMainSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
+import { forwardAppChatEvent } from "./app-chat"
 import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 import {
   applyChannelWorkspaceSwitch,
@@ -487,6 +488,7 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
 /** 通道是否凭据齐全可下发给 Daemon */
 function channelReady(c: MessageChannel): boolean {
   if (!c.enabled) return false
+  if (c.type === "app") return true
   if (c.type === "feishu") return !!(c.larkAppId?.trim() && c.larkAppSecret?.trim())
   return !!c.wechatToken?.trim()
 }
@@ -959,6 +961,8 @@ function connectSseQueueEvents(): void {
             if (projectIdFromSessionKey(ev.invokerSessionKey)) setCurrentProjectId(null)
           } else if (ev.type === "poll-phase" && ev.sessionKey && ev.phase) {
             handleAgentPollPhase(ev.sessionKey, ev.phase, ev)
+          } else if (ev.type === "app-chat" && ev.event) {
+            forwardAppChatEvent(ev.event)
           }
         } catch { /* ignore */ }
       }
@@ -1121,6 +1125,17 @@ function resolveResetWorkspaceDir(sessionKey?: string, chatId?: string, chatType
   })
 }
 
+/** 清掉某会话的全部排队消息，返回清除条数 */
+async function clearSessionQueue(sessionKey: string): Promise<number> {
+  const target = normalizeSessionKey(sessionKey) || sessionKey
+  const pending = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
+  let cleared = 0
+  for (const m of pending) {
+    try { if (await deleteQueueMessage(m.fileId)) cleared++ } catch { /* ignore */ }
+  }
+  return cleared
+}
+
 async function checkAndExecutePendingCommands(): Promise<void> {
   const lock = readLockFile()
   if (!lock?.port) return
@@ -1181,14 +1196,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
               && (s.sessionKey === claimed.chatId || s.sessionKey.startsWith(`${claimed.chatId}::`))
             )?.sessionKey
           if (matchedKey) {
-            let cleared = 0
-            if (clearQueue) {
-              const target = normalizeSessionKey(matchedKey) || matchedKey
-              const pending = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
-              for (const m of pending) {
-                try { if (await deleteQueueMessage(m.fileId)) cleared++ } catch { /* ignore */ }
-              }
-            }
+            const cleared = clearQueue ? await clearSessionQueue(matchedKey) : 0
             await stopSessionAgent(matchedKey)
             await reply(true, cleared > 0 ? `✅ 已停止当前对话（已清除 ${cleared} 条排队消息）` : "✅ 已停止当前对话")
           } else if (isAdmin) {
@@ -1880,7 +1888,8 @@ export function initDaemonManager(): void {
 
   ipcMain.handle("feishu:app-info", (_e, appId: string, appSecret: string) =>
     fetchLarkBotInfo(appId?.trim() ?? "", appSecret?.trim() ?? ""))
-  ipcMain.handle("agent:stop-session", async (_e, sessionKey: string) => {
+  ipcMain.handle("agent:stop-session", async (_e, sessionKey: string, clearQueue?: boolean) => {
+    if (clearQueue) await clearSessionQueue(sessionKey)
     await stopSessionAgent(sessionKey)
     return { ok: true }
   })

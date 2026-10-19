@@ -1,5 +1,10 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
+import type {
+  AppChatEvent as AppChatEventType,
+  AppChatResult as AppChatResultType,
+  AppChatSendPayload as AppChatSendPayloadType,
+} from "../shared/app-chat-types"
 
 declare global {
   type AgentResource = AgentResourceType
@@ -169,13 +174,22 @@ declare global {
     getToolboxStatus(): Promise<{ larkCli: { installed: boolean; version?: string; loggedIn?: boolean; userName?: string }; meegle: { installed: boolean; version?: string }; nodeOk?: boolean; nodeVersion?: string }>
     installToolboxTool(key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }>
     loginLarkCli(): Promise<{ ok: boolean; error?: string }>
+    appChatHistory(sessionKey: string): Promise<AppChatResultType>
+    appChatSend(payload: AppChatSendPayloadType): Promise<AppChatResultType>
+    appChatClear(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResultType>
+    appChatUsage(channelId: string): Promise<AppChatResultType>
+    appChatSaveImage(bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    appChatReadImage(file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }>
+    appChatOpenFile(file: string): Promise<{ ok: boolean; error?: string }>
+    appChatShowInFolder(file: string): Promise<{ ok: boolean; error?: string }>
+    onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
     startDaemon(): Promise<{ ok: boolean; error?: string }>
     stopDaemon(): Promise<void>
     stopAgent(): Promise<{ ok: boolean }>
     getSessionAgents(): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]>
     getSessionDiagnostics(sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>
     exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }>
-    stopSessionAgent(sessionKey: string): Promise<{ ok: boolean }>
+    stopSessionAgent(sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }>
     setSessionModel(sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
     listSessionTabs(): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }>
     listDashboardTree(): Promise<{

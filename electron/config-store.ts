@@ -4,7 +4,7 @@ import { randomBytes } from "node:crypto"
 import * as path from "node:path"
 import * as os from "node:os"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
-import { channelIdFromSessionKey } from "../src/shared/channel-types"
+import { APP_CHANNEL_CHAT_ID, channelIdFromSessionKey } from "../src/shared/channel-types"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { preserveChannelBindings } from "../src/shared/channel-binding.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
@@ -453,6 +453,8 @@ export function getChannels(): MessageChannel[] {
   // 主/其他三开关：存量老值归主用户，其他人走独立默认值（保留开/长连接关/思考关）
   return (cfg.channels ?? []).map((c) => ({
     ...c,
+    // 应用内对话没有外部身份：通道本身就是主用户私聊，绑定恒成立
+    ...(c.type === "app" ? { mainUserEnabled: true, mainUserChatId: APP_CHANNEL_CHAT_ID } : {}),
     allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
     digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     othersAgentResourceId: c.othersAgentResourceId ?? "",

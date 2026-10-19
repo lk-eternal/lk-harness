@@ -96,15 +96,19 @@ const MEDIA_MCP_RE = /^send_(?:file|image)$/i
 
 export { POLL_DIRECTIVE_END_MARK, POLL_DIRECTIVE_TIMEOUT_MARK }
 
-export function isFeishuStreamEnabled(sessionKey: string): boolean {
-  const ch = resolveChannelForSession(sessionKey)
-  return !!ch && ch.type === "feishu" && resolveChannelSessionFlags(ch, audienceOf(sessionKey, ch)).showThinking
+/** 流式卡承载输出的通道类型：飞书（卡片）与应用内对话（界面分段）；微信没有 */
+function carriesStreamCard(ch: { type: string } | undefined): boolean {
+  return ch?.type === "feishu" || ch?.type === "app"
 }
 
-/** 仅看通道类型（飞书才有卡片）：正文收集与 agg 存活只认它，与思考开关无关 */
-export function isFeishuChannel(sessionKey: string): boolean {
+export function isFeishuStreamEnabled(sessionKey: string): boolean {
   const ch = resolveChannelForSession(sessionKey)
-  return !!ch && ch.type === "feishu"
+  return !!ch && carriesStreamCard(ch) && resolveChannelSessionFlags(ch, audienceOf(sessionKey, ch)).showThinking
+}
+
+/** 仅看通道类型（有流式卡才有 agg）：正文收集与 agg 存活只认它，与思考开关无关；名称沿用「飞书」，实际含应用内对话 */
+export function isFeishuChannel(sessionKey: string): boolean {
+  return carriesStreamCard(resolveChannelForSession(sessionKey))
 }
 
 /** 独立定时任务（chatType=task）不走流式卡，仅 MCP 投递 */

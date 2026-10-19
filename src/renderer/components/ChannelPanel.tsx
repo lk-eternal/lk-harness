@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import {
   Plus, Loader2, CheckCircle2, ShieldAlert, Eye, EyeOff, Trash2,
-  LogIn, MessageSquare, Bird, FolderOpen, ExternalLink,
+  LogIn, MessageSquare, Bird, FolderOpen, ExternalLink, MonitorSmartphone,
 } from "lucide-react"
+import { APP_CHANNEL_CHAT_ID, CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
 import SearchableSelect from "./SearchableSelect"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
 import PanelAddMenu from "./PanelAddMenu"
@@ -20,7 +21,7 @@ function newLocalChannelId(): string {
   return `ch_${hex}`
 }
 
-function emptyChannel(type: "feishu" | "wechat", defaultName: string): ChannelConfig {
+function emptyChannel(type: ChannelType, defaultName: string): ChannelConfig {
   return {
     id: newLocalChannelId(),
     name: defaultName,
@@ -32,8 +33,9 @@ function emptyChannel(type: "feishu" | "wechat", defaultName: string): ChannelCo
     modelParams: "",
     othersModel: "",
     othersModelParams: "",
-    mainUserEnabled: false,
-    mainUserChatId: "",
+    // 应用内对话固定绑定本机主用户，无需扫码/绑定流程
+    mainUserEnabled: type === "app",
+    mainUserChatId: type === "app" ? APP_CHANNEL_CHAT_ID : "",
     allowOthers: false,
     digitalIdentity: "",
     workspaceDir: "",
@@ -118,11 +120,11 @@ export default function ChannelPanel() {
     openDraft(c, false)
   }
 
-  const openAdd = async (type: "feishu" | "wechat") => {
+  const openAdd = async (type: ChannelType) => {
     if (!(await guardUnsaved("保存并继续"))) return
     setShowAddMenu(false)
     const count = channels.filter((c) => c.type === type).length
-    const base = type === "feishu" ? "飞书" : "微信"
+    const base = CHANNEL_TYPE_LABELS[type]
     openDraft(emptyChannel(type, count > 0 ? `${base} ${count + 1}` : base), true)
   }
 
@@ -214,7 +216,11 @@ export default function ChannelPanel() {
                   onClick={() => void selectChannel(c)}
                   className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}
                 >
-                  {c.type === "feishu" ? <Bird size={14} className="shrink-0 text-blue-400" /> : <MessageSquare size={14} className="shrink-0 text-green-400" />}
+                  {c.type === "feishu"
+                    ? <Bird size={14} className="shrink-0 text-blue-400" />
+                    : c.type === "wechat"
+                      ? <MessageSquare size={14} className="shrink-0 text-green-400" />
+                      : <MonitorSmartphone size={14} className="shrink-0 text-purple-400" />}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{c.name}</p>
                     <p className="truncate text-[10px] text-gray-600">{st?.connected ? "已连接" : c.enabled ? "未连接" : "已停用"}</p>
@@ -233,6 +239,7 @@ export default function ChannelPanel() {
               <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
                 <button type="button" onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><Bird size={12} className="text-blue-400" />飞书</button>
                 <button type="button" onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><MessageSquare size={12} className="text-green-400" />微信</button>
+                <button type="button" onClick={() => openAdd("app")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"><MonitorSmartphone size={12} className="text-purple-400" />应用内对话</button>
               </PanelAddMenu>
             </div>
           </div>
@@ -589,6 +596,21 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const credOk = draft.type === "feishu" ? !!(draft.larkAppId?.trim() && draft.larkAppSecret?.trim()) : !!draft.wechatToken?.trim()
   /** 已绑定 = 开关开且有 chatId；旧暂停态视为未绑定，点绑定即覆盖自愈 */
   const bound = draft.mainUserEnabled && !!draft.mainUserChatId
+  /** 带"思考/工具流式卡片"的通道（飞书、应用内对话）才有思考展示相关设置 */
+  const hasStreamCard = draft.type === "feishu" || draft.type === "app"
+
+  const workDirField = (
+    <div>
+      <label className="mb-1 block text-xs text-gray-500">工作目录</label>
+      <div className="flex items-center gap-2">
+        <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-gray-700 px-3 py-2 transition hover:border-blue-500">
+          <FolderOpen size={14} className="text-blue-400" />
+          <span className="truncate text-xs">{draft.workspaceDir || "点击选择…"}</span>
+        </div>
+        {draft.workspaceDir && <button onClick={() => set({ workspaceDir: "" })} className="text-xs text-gray-500 hover:text-red-400">清除</button>}
+      </div>
+    </div>
+  )
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -596,7 +618,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
           {/* 名称 */}
           <div>
             <label className="mb-1 block text-xs text-gray-500">通道名称</label>
-            <input type="text" value={draft.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} placeholder={draft.type === "feishu" ? "飞书" : "微信"} />
+            <input type="text" value={draft.name} onChange={(e) => set({ name: e.target.value })} className={inputCls} placeholder={CHANNEL_TYPE_LABELS[draft.type]} />
           </div>
 
           {/* ── 凭据 ── */}
@@ -670,7 +692,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               {!appInfoState.checking && draft.larkBotName && <p className="flex items-center gap-1.5 text-xs text-green-400"><CheckCircle2 size={12} />已识别应用：{draft.larkBotName}</p>}
               {!appInfoState.checking && appInfoState.error && <p className="flex items-center gap-1.5 text-xs text-red-400"><ShieldAlert size={12} />{appInfoState.error}</p>}
             </section>
-          ) : (
+          ) : draft.type === "wechat" ? (
             <section className={sectionCls}>
               <h4 className="text-xs font-medium text-gray-400">微信账号</h4>
               {draft.wechatToken && wechatQrStatus === "idle" ? (
@@ -703,9 +725,18 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 </div>
               )}
             </section>
+          ) : (
+            <section className={sectionCls}>
+              <h4 className="text-xs font-medium text-gray-400">应用内对话</h4>
+              <p className="text-xs leading-relaxed text-gray-500">
+                在本应用的「对话」页与 Agent 交流，消息不经过飞书/微信。仅本机可用，无需凭据与绑定。
+                对话内容仍会发送给所选模型服务商，并保存在本机的会话记录中。
+              </p>
+            </section>
           )}
 
-          {/* ── 人群 Tab：主用户 | 其他用户（同草稿，切换不丢未保存） ── */}
+          {/* ── 人群 Tab：主用户 | 其他用户（同草稿，切换不丢未保存；应用内对话只有主用户） ── */}
+          {draft.type !== "app" && (
           <div className="mt-5 flex gap-1 border-b border-gray-800">
             {(["main", "others"] as const).map((t) => (
               <button
@@ -716,9 +747,18 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               >{t === "main" ? "主用户" : "其他用户"}</button>
             ))}
           </div>
+          )}
+
+          {/* ── 应用内对话：仅需工作目录（固定本机主用户，无绑定流程） ── */}
+          {draft.type === "app" && (
+          <section className={sectionFirstCls}>
+            <h4 className="text-xs font-medium text-gray-400">主工作目录</h4>
+            {workDirField}
+          </section>
+          )}
 
           {/* ── 主用户：绑定与工作目录（依赖前置） ── */}
-          {activeTab === "main" && (
+          {activeTab === "main" && draft.type !== "app" && (
           <section className={sectionFirstCls}>
             <h4 className="text-xs font-medium text-gray-400">绑定主用户</h4>
             <div className="flex items-center gap-3 rounded-lg border border-gray-700 px-3 py-2.5">
@@ -742,18 +782,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                           <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">绑定</button>
                         </>}
                 </div>
-            {(draft.mainUserEnabled || draft.mainUserChatId) && (
-                <div>
-                  <label className="mb-1 block text-xs text-gray-500">工作目录</label>
-                  <div className="flex items-center gap-2">
-                    <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-gray-700 px-3 py-2 transition hover:border-blue-500">
-                      <FolderOpen size={14} className="text-blue-400" />
-                      <span className="truncate text-xs">{draft.workspaceDir || "点击选择…"}</span>
-                    </div>
-                    {draft.workspaceDir && <button onClick={() => set({ workspaceDir: "" })} className="text-xs text-gray-500 hover:text-red-400">清除</button>}
-                  </div>
-                </div>
-            )}
+            {(draft.mainUserEnabled || draft.mainUserChatId) && workDirField}
           </section>
           )}
 
@@ -794,7 +823,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 </button>
               </div>
             )}
-            {draft.type === "feishu" && (
+            {hasStreamCard && (
               <div className="flex items-center justify-between border-t border-gray-800 pt-3">
                 <p className="text-xs text-gray-400">展示思考过程</p>
                 <button onClick={() => set({ showThinkingMain: !(draft.showThinkingMain ?? true) })}
@@ -803,7 +832,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 </button>
               </div>
             )}
-            {draft.type === "feishu" && (draft.showThinkingMain ?? true) && (
+            {hasStreamCard && (draft.showThinkingMain ?? true) && (
               <>
               <div className="flex items-center justify-between border-t border-gray-800 pt-3 pl-2">
                 <p className="text-xs text-gray-400">思考/工具块保留数</p>

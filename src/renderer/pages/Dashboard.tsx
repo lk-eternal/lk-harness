@@ -10,6 +10,7 @@ import {
   Bot,
   Bird,
   MessageSquare,
+  MessagesSquare,
   Clock,
   Loader2,
   Trash2,
@@ -44,6 +45,8 @@ import { makeChatKey } from "../../shared/channel-types"
 interface Props {
   /** 打开设置页，可指定初始 Tab */
   onSettings: (tab?: string) => void
+  /** 打开应用内对话页 */
+  onChat: () => void
   /** 当前是否为可见页面（从设置页返回时立即刷新） */
   active?: boolean
 }
@@ -54,7 +57,7 @@ interface OnboardState {
   channelReady: boolean
 }
 
-export default function Dashboard({ onSettings, active }: Props) {
+export default function Dashboard({ onSettings, onChat, active }: Props) {
   const [status, setStatus] = useState<DaemonStatus>({ running: false })
   const [logLines, setLogLines] = useState<string[]>([])
   const [starting, setStarting] = useState(false)
@@ -827,6 +830,13 @@ export default function Dashboard({ onSettings, active }: Props) {
               title="检查更新"
             >
               {checkingUpdate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+            </button>
+            <button
+              onClick={() => onChat()}
+              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+              title="应用内对话"
+            >
+              <MessagesSquare size={16} />
             </button>
             <button
               onClick={() => onSettings()}

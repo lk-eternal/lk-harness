@@ -7,11 +7,12 @@ import {
 
 function channelReady(c: MessageChannel): boolean {
   if (!c.enabled) return false
+  if (c.type === "app") return true
   if (c.type === "feishu") return !!(c.larkAppId?.trim() && c.larkAppSecret?.trim())
   return !!c.wechatToken?.trim()
 }
 import { readGitBranch, dirBaseName } from "../src/shared/session-label.js"
-import { resolveChannelSessionFlags } from "../src/shared/channel-types.js"
+import { CHANNEL_TYPE_LABELS, resolveChannelSessionFlags } from "../src/shared/channel-types.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { cleanupChannelWorkspaces, clearInjectionCache } from "./workspace-injector"
 import { broadcastLog } from "./ui-logger"
@@ -112,7 +113,7 @@ export function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig
   const others = resolveChannelSessionFlags(c, "others")
   return {
     id: c.id,
-    name: c.name || (c.type === "feishu" ? "飞书" : "微信"),
+    name: c.name || CHANNEL_TYPE_LABELS[c.type],
     type: c.type,
     appId: c.larkAppId?.trim(),
     appSecret: c.larkAppSecret?.trim(),

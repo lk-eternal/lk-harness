@@ -50,6 +50,7 @@ import {
 import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
+import { initAppChat } from "./app-chat"
 import { broadcastLog } from "./ui-logger"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
@@ -476,6 +477,7 @@ app.whenReady().then(() => {
   warmupMcpCache()
   warmModelsDevCatalog()
   initToolbox()
+  initAppChat()
 })
 
 app.on("window-all-closed", () => {

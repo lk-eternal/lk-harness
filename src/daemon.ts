@@ -2,7 +2,7 @@ import * as http from "node:http";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import {
   startDaemonScheduledTasks,
@@ -11,6 +11,9 @@ import {
 } from "./daemon-scheduled-tasks.js";
 import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessageEvent, LarkCardActionEvent, CardButton, CardInput, CardTitle, cleanupMediaCache } from "./shared/lark-core.js";
 import { WeChatManager } from "./wechat-manager.js";
+import { AppChat } from "./app-channel.js";
+import type { AppChatButton, AppChatEvent } from "./shared/app-chat-types.js";
+import { COMMANDS } from "./shared/command-catalog.js";
 import {
   initFileQueue,
   getQueueDir,
@@ -41,6 +44,7 @@ import {
   normalizeSessionKey,
   resolveChannelAudience,
   resolveDaemonSessionFlags,
+  APP_CHANNEL_CHAT_ID,
   type DaemonChannelConfig,
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
@@ -381,8 +385,15 @@ function sameWorkspaceDir(a: string, b: string): boolean {
 }
 
 function isChannelConnected(rt: ChannelRuntime): boolean {
+  if (rt.cfg.type === "app") return true;
   if (rt.cfg.type === "feishu") return !!rt.feishuConnected && !!rt.sender;
   return rt.wechat?.isConnected() ?? false;
+}
+
+function channelStatusText(rt: ChannelRuntime): string {
+  if (rt.cfg.type === "app") return "connected";
+  if (rt.cfg.type === "wechat") return rt.wechat?.getStatus() ?? "disconnected";
+  return rt.sender?.getWsConnectionStatus()?.state ?? (rt.feishuConnected ? "connected" : "connecting");
 }
 
 function getChannelStatusList(): ChannelStatusInfo[] {
@@ -391,9 +402,7 @@ function getChannelStatusList(): ChannelStatusInfo[] {
     name: rt.cfg.name,
     type: rt.cfg.type,
     connected: isChannelConnected(rt),
-    status: rt.cfg.type === "wechat"
-      ? (rt.wechat?.getStatus() ?? "disconnected")
-      : (rt.sender?.getWsConnectionStatus()?.state ?? (rt.feishuConnected ? "connected" : "connecting")),
+    status: channelStatusText(rt),
     mainUserBound: !!(rt.cfg.mainUserEnabled && rt.cfg.mainUserChatId),
     botName: rt.botName,
   }));
@@ -563,6 +572,16 @@ function broadcastCommandEvent(): void {
     try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
   }
 }
+
+/** 应用内对话：聊天条目变更推给界面（正文不进日志） */
+function broadcastAppChatEvent(event: AppChatEvent): void {
+  const data = JSON.stringify({ type: "app-chat", event });
+  for (const res of sseClients) {
+    try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
+  }
+}
+
+const appChat = new AppChat(path.join(APP_DATA_DIR, "app-chat"), broadcastAppChatEvent);
 
 /** Agent poll HTTP 生命周期 → SDK 流式卡状态（不解析 command） */
 function broadcastPollPhaseEvent(
@@ -1005,6 +1024,7 @@ function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle 
 
 type ResolvedChannel =
   | { type: "wechat"; rt: ChannelRuntime; chatId: string }
+  | { type: "app"; rt: ChannelRuntime; chatId: string }
   | { type: "feishu"; rt: ChannelRuntime; chatId?: string }
   | { type: "error"; message: string };
 
@@ -1017,6 +1037,7 @@ function resolveChannel(sessionKey?: string, opts?: { allowDefault?: boolean }):
     if (channelId) {
       const rt = channels.get(channelId);
       if (rt) {
+        if (rt.cfg.type === "app") return { type: "app", rt, chatId };
         if (rt.cfg.type === "wechat") {
           return rt.wechat?.isConnected()
             ? { type: "wechat", rt, chatId }
@@ -1044,6 +1065,8 @@ function resolveChannel(sessionKey?: string, opts?: { allowDefault?: boolean }):
 
   // 兜底：第一个有默认私聊目标的已连接通道（仅内部非发送路径）
   for (const rt of channels.values()) {
+    // 应用内对话只接受显式 session_key 路由，不参与兜底（防内部通知漏进本机对话）
+    if (rt.cfg.type === "app") continue;
     const target = channelDefaultChatId(rt);
     if (!target || !isChannelConnected(rt)) continue;
     if (rt.cfg.type === "wechat") return { type: "wechat", rt, chatId: target };
@@ -1482,10 +1505,12 @@ async function startChannelRuntime(cfg: DaemonChannelConfig): Promise<void> {
   channelRuntimeFlags.set(cfg.id, { ...cfg });
   if (cfg.type === "feishu") {
     await startFeishuChannel(rt);
-  } else {
+  } else if (cfg.type === "wechat") {
     loadWechatState(rt);
     rt.wechat = initWeChatChannel(rt);
     await rt.wechat.start(cfg.wechatToken ?? "", cfg.wechatAccountId);
+  } else {
+    rememberChatType(makeChatKey(cfg.id, APP_CHANNEL_CHAT_ID), "p2p");
   }
   log("INFO", `[${cfg.name}] 通道已启用`);
 }
@@ -1609,34 +1634,6 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
 }
 
 // ── 指令系统 ─────────────────────────────────────────────
-
-const COMMANDS: Record<string, string> = {
-  "/stop": "停止当前运行中的 Agent（/stop -c 顺带清除当前会话排队消息）",
-  "/x": "同 /stop",
-  "/f": "打断当前对话并带新指示重开（/f <内容>）",
-  "/status": "查看 Agent / Daemon 状态",
-  "/s": "同 /status",
-  "/list": "查看消息队列列表（不消费）",
-  "/ls": "同 /list",
-  "/task": "定时任务（/task 查看子命令说明；如 /task ls）",
-  "/t": "同 /task",
-  "/project": "项目工作区（/project 查看；/p new|ls|use|plan|build|review|ship|sync）",
-  "/p": "同 /project",
-  "/model": "Agent 模型（/model ls | info | set <序号>）",
-  "/m": "同 /model",
-  "/mcp": "MCP 服务器管理（/mcp ls | info | enable | disable | delete | add）",
-  "/mc": "同 /mcp",
-  "/chat": "会话管理（/c ls | /c w 切换目录 | /c <序号> | /c new <描述>）",
-  "/c": "同 /chat",
-  "/clean": "清空消息队列",
-  "/cl": "同 /clean",
-  "/reset": "下次拉起 Agent 时不 resume 旧会话（新 SDK 会话），不删除本地文件",
-  "/r": "同 /reset",
-  "/restart": "停止 Agent + 清空队列 + 重启 Daemon",
-  "/rr": "同 /restart",
-  "/help": "显示可用指令列表",
-  "/h": "同 /help",
-};
 
 function isCommand(text: string): boolean {
   const trimmed = text.trim().toLowerCase();
@@ -3178,6 +3175,30 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
   return {};
 }
 
+/** 应用内对话的出站落点：显式会话 > 触发消息所属会话 > 当前活跃会话 > 裸 chatKey */
+function resolveAppSessionKey(ch: { rt: ChannelRuntime; chatId: string }, messageId?: string, sessionKey?: string): string {
+  const chatKey = makeChatKey(ch.rt.cfg.id, ch.chatId);
+  return sessionKey
+    || (messageId ? messageSessionMap.get(messageId) : undefined)
+    || lookupActiveSessionKey(chatKey)
+    || chatKey;
+}
+
+function appNoticeParts(
+  text: string,
+  buttons?: { label: string; cmd: string; section?: string }[],
+  sections?: { text: string; buttons?: { label: string; cmd: string; section?: string }[] }[],
+): { text: string; buttons: AppChatButton[] } {
+  const body = [text, ...(sections ?? []).map((s) => s.text)].filter((t) => t.trim()).join("\n\n");
+  const all = sections?.length ? sections.flatMap((s) => s.buttons ?? []) : (buttons ?? []);
+  return {
+    text: body,
+    buttons: all
+      .filter((b) => b.cmd.trim())
+      .map((b) => ({ label: (b.label || b.cmd).trim(), cmd: b.cmd.trim(), ...(b.section ? { section: b.section } : {}) })),
+  };
+}
+
 async function replyToMessage(
   messageId: string,
   text: string,
@@ -3202,6 +3223,11 @@ async function replyToMessage(
   const ch = resolveChannel(routeKey, { allowDefault: false });
   if (ch.type === "error") {
     log("WARN", `回复失败: ${ch.message} (messageId=${messageId}, chatId=${chatId ?? "-"})`);
+    return;
+  }
+  if (ch.type === "app") {
+    const notice = appNoticeParts(text, buttons, opts?.sections);
+    appChat.addNotice(resolveAppSessionKey(ch, messageId, opts?.sessionKey), notice.text, notice.buttons);
     return;
   }
   if (ch.type === "wechat") {
@@ -3665,7 +3691,11 @@ function startHttpServer(): Promise<number> {
           const chatId = channelDefaultChatId(rt);
           if (!chatId) { json(res, { ok: false, error: "暂无私聊记录，请先绑定主用户或给机器人发一条消息" }, 400); return; }
           try {
-            if (rt.cfg.type === "wechat") {
+            if (rt.cfg.type === "app") {
+              const chatKey = makeChatKey(rt.cfg.id, chatId);
+              appChat.addNotice(lookupActiveSessionKey(chatKey) || chatKey, "🔗 应用内对话测试成功！连接正常。");
+              json(res, { ok: true });
+            } else if (rt.cfg.type === "wechat") {
               json(res, { ok: await rt.wechat!.sendText(chatId, "🔗 微信测试成功！连接正常。") });
             } else {
               const msgId = await rt.sender!.sendMessage("🔗 绑定测试成功！连接正常。", undefined, chatId);
@@ -4347,8 +4377,92 @@ const ADMIN_ENTITY_ROUTES: Record<string, RouteHandler> = {
   "/api/agent": handleAgentAdmin,
 };
 
+/** sessionKey 属于某个应用内对话通道的固定主用户私聊时返回该通道运行时 */
+function appChannelOfSession(sessionKey: string): ChannelRuntime | undefined {
+  const channelId = channelIdFromSessionKey(sessionKey);
+  const rt = channelId ? channels.get(channelId) : undefined;
+  if (rt?.cfg.type !== "app") return undefined;
+  return chatIdFromSessionKey(sessionKey) === makeChatKey(rt.cfg.id, APP_CHANNEL_CHAT_ID) ? rt : undefined;
+}
+
+async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+  const body = JSON.parse(await readBody(req)) as {
+    sessionKey?: string; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string;
+  };
+  const sessionKey = normalizeSessionKey(body.sessionKey);
+
+  if (pathname === "/api/app-chat/usage") {
+    json(res, { ok: true, bytes: appChat.usageBytes(body.channelId ?? "") });
+    return true;
+  }
+
+  if (pathname === "/api/app-chat/clear" && !sessionKey) {
+    const rt = body.channelId ? channels.get(body.channelId) : undefined;
+    if (rt?.cfg.type !== "app") { json(res, { ok: false, error: "通道不存在或不是应用内对话" }, 400); return true; }
+    appChat.clearChannel(rt.cfg.id);
+    json(res, { ok: true });
+    return true;
+  }
+
+  const rt = appChannelOfSession(sessionKey);
+  if (!rt) { json(res, { ok: false, error: "会话不属于应用内对话通道" }, 400); return true; }
+
+  if (pathname === "/api/app-chat/history") {
+    json(res, { ok: true, items: appChat.list(sessionKey) });
+    return true;
+  }
+
+  if (pathname === "/api/app-chat/clear") {
+    appChat.clearSession(sessionKey);
+    json(res, { ok: true });
+    return true;
+  }
+
+  if (pathname !== "/api/app-chat/send") return false;
+
+  const chatKey = chatIdFromSessionKey(sessionKey);
+  if (!setActiveSession(chatKey, sessionKey, true)) { json(res, { ok: false, error: "会话路由绑定失败" }, 409); return true; }
+
+  if (body.questionId) {
+    const option = body.option?.trim();
+    if (!option) { json(res, { ok: false, error: "option 必填" }, 400); return true; }
+    if (!appChat.answerQuestion(sessionKey, body.questionId, option)) {
+      json(res, { ok: false, error: "该问题已关闭或已作答" }, 409);
+      return true;
+    }
+    const internalId = `internal_app_${randomUUID()}`;
+    trackInternalMsgChat(internalId, chatKey);
+    pushMessage(option, internalId, chatKey, "p2p", undefined, body.questionId, { senderType: "user" });
+    json(res, { ok: true });
+    return true;
+  }
+
+  const text = (body.text ?? "").trim();
+  const images = (Array.isArray(body.images) ? body.images : []).filter((p) => typeof p === "string" && fs.existsSync(p));
+  if (!text && images.length === 0) { json(res, { ok: false, error: "消息为空" }, 400); return true; }
+
+  const messageId = `app_${randomUUID()}`;
+  trackMessageSession(messageId, sessionKey);
+  appChat.addUser(sessionKey, messageId, text, images);
+
+  if (images.length === 0 && isCommand(text)) {
+    handleCommand(text, messageId, chatKey, "p2p").catch((e: unknown) =>
+      log("ERROR", `[${rt.cfg.name}] 指令处理失败: ${e instanceof Error ? e.message : String(e)}`),
+    );
+  } else if (hasProjectNewDraft(chatKey)) {
+    process.stdout.write(`__PROJECT_NEW_FILL__:${JSON.stringify({ chatId: chatKey, messageId, text })}\n`);
+  } else {
+    appChat.closeOpenQuestions(sessionKey, "问题已关闭");
+    const content = [...images.map((p) => `[图片已保存: ${p}]`), text].filter(Boolean).join("\n");
+    pushMessage(content, messageId, chatKey, "p2p", undefined, undefined, { senderType: "user" });
+  }
+  json(res, { ok: true, messageId });
+  return true;
+}
+
 async function handleAdminApi(pathname: string, method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (!pathname.startsWith("/api/")) return false;
+  if (method === "POST" && pathname.startsWith("/api/app-chat/")) return handleAppChatApi(pathname, req, res);
 
   if (method === "GET" && pathname === "/api/status") {
     const tasks = readTasks();
@@ -4381,6 +4495,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { log("WARN", `[send-text] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "app") {
+      appChat.addText(resolveAppSessionKey(ch, message_id, session_key), text);
+      if (session_key) touchSessionLastReply(session_key);
+      json(res, { ok: true });
+      return true;
+    }
     if (ch.type === "wechat") {
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, text) });
     } else {
@@ -4433,16 +4553,19 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (rejectUnroutedSend(res, "project-new-form", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
-    if (ch.type === "wechat") {
+    if (ch.type === "wechat" || ch.type === "app") {
       const roots = (repo_roots || []).map((r, i) => `#${i + 1} ${r}`).join("\n") || "(无预置主仓，请在路径里手填)";
       const tip = [
-        "微信暂不支持表单卡片，请用一行命令：",
+        `${ch.type === "wechat" ? "微信" : "应用内对话"}暂不支持表单卡片，请用一行命令：`,
         "/p new <名> <主仓序号或路径> <基线分支> <feature分支> <目标…>",
         "",
         `worktree 根: ${worktree_root || "(未设)"}`,
         `主仓:\n${roots}`,
       ].join("\n");
-      json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, tip), degraded: true });
+      let sent = true;
+      if (ch.type === "wechat") sent = await ch.rt.wechat!.sendText(ch.chatId, tip);
+      else appChat.addNotice(resolveAppSessionKey(ch, message_id, session_key), tip);
+      json(res, { ok: sent, degraded: true });
       return true;
     }
     const sender = ch.rt.sender!;
@@ -4519,9 +4642,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     if (rejectUnroutedSend(res, "project-setup-form", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
-    if (ch.type === "wechat") {
-      // 微信无表单卡：调用方降级走分步问答
-      json(res, { ok: false, degraded: true, error: "wechat form unsupported" });
+    if (ch.type === "wechat" || ch.type === "app") {
+      // 微信/应用内对话无表单卡：调用方降级走分步问答
+      json(res, { ok: false, degraded: true, error: `${ch.type} form unsupported` });
       return true;
     }
     const sender = ch.rt.sender!;
@@ -4553,7 +4676,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { log("WARN", `[send-question] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
 
-    if (ch.type === "wechat") {
+    if (ch.type === "app") {
+      const appSessionKey = resolveAppSessionKey(ch, message_id, session_key);
+      const questionId = appChat.addQuestion(appSessionKey, text, opts);
+      trackMessageSession(questionId, appSessionKey);
+      json(res, { ok: true, message_id: questionId });
+    } else if (ch.type === "wechat") {
       // 微信无交互卡片：降级为文本选项列表，用户直接回复字母或内容
       const fallback = `${text}\n\n请回复字母或选项内容:\n${opts.map((o, i) => `${questionOptionLetter(i)}. ${o}`).join("\n")}`;
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, fallback), degraded: true });
@@ -4658,7 +4786,11 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { log("WARN", `[send-image] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     let sentOk: boolean;
-    if (ch.type === "wechat") {
+    if (ch.type === "app") {
+      if (!fs.existsSync(image_path)) { json(res, { ok: false, error: "图片文件不存在" }, 400); return true; }
+      appChat.addImage(resolveAppSessionKey(ch, message_id, session_key), image_path);
+      sentOk = true;
+    } else if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, image_path);
     } else {
       const replyId = shouldReplyToMessage(ch, message_id) ? message_id : undefined;
@@ -4684,7 +4816,11 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { log("WARN", `[send-file] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     let sentOk: boolean;
-    if (ch.type === "wechat") {
+    if (ch.type === "app") {
+      if (!fs.existsSync(file_path)) { json(res, { ok: false, error: "文件不存在" }, 400); return true; }
+      appChat.addFile(resolveAppSessionKey(ch, message_id, session_key), file_path);
+      sentOk = true;
+    } else if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, file_path);
     } else {
       const replyId = shouldReplyToMessage(ch, message_id) ? message_id : undefined;
@@ -4725,6 +4861,21 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(sk, { allowDefault: false });
     if (ch.type === "error") {
       json(res, { ok: false, error: ch.message }, 400);
+      return true;
+    }
+    if (ch.type === "app") {
+      if (action !== "ensure" && action !== "update" && action !== "finish") {
+        json(res, { ok: false, error: `unknown action: ${action}` }, 500);
+        return true;
+      }
+      const r = appChat.streamCard(sk, action, segments, { cardId: card_id, modelLabel: model_label });
+      if (r.gone) {
+        json(res, { ok: true, gone: true, cardId: r.cardId });
+        return true;
+      }
+      const runtime = getSessionRuntime(sk);
+      if (r.hasReply || (action === "finish" && (runtime === "llm" || runtime === "sdk"))) touchSessionLastReply(sk);
+      json(res, { ok: true, cardId: r.cardId });
       return true;
     }
     if (ch.type === "wechat") {
@@ -5249,6 +5400,7 @@ export async function daemonMain(): Promise<void> {
   process.on("SIGINT", cleanup);
   process.on("SIGTERM", cleanup);
   process.on("exit", removeLockFile);
+  process.on("exit", () => appChat.flush());
 
   // 全局兜底：消息桥接守护进程，掉线比带病更糟——漏网异步异常只记录不退出，避免飞书/微信整体掉线
   process.on("uncaughtException", (e) => {

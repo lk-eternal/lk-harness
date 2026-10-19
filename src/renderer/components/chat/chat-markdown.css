@@ -1,0 +1,62 @@
+/* 对话 Markdown 的元素级排版（Tailwind preflight 会清掉标题/列表样式，这里补回）。
+   结构性容器（代码块头、表格滚动层）的样式写在 Markdown.tsx 里。 */
+.chat-md {
+  font-size: 14px;
+  line-height: 1.65;
+  color: #e5e7eb;
+  overflow-wrap: anywhere;
+}
+.chat-md > :first-child { margin-top: 0; }
+.chat-md > :last-child { margin-bottom: 0; }
+
+.chat-md p { margin: 0.6em 0; }
+
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4, .chat-md h5, .chat-md h6 {
+  margin: 1.1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #f3f4f6;
+}
+.chat-md h1 { font-size: 1.4em; }
+.chat-md h2 { font-size: 1.25em; }
+.chat-md h3 { font-size: 1.1em; }
+.chat-md h4, .chat-md h5, .chat-md h6 { font-size: 1em; }
+
+.chat-md ul, .chat-md ol { margin: 0.6em 0; padding-left: 1.5em; }
+.chat-md ul { list-style: disc; }
+.chat-md ol { list-style: decimal; }
+.chat-md li { margin: 0.2em 0; }
+.chat-md li > p { margin: 0.2em 0; }
+.chat-md li > ul, .chat-md li > ol { margin: 0.2em 0; }
+.chat-md li.task-list-item { list-style: none; margin-left: -1.2em; }
+.chat-md li.task-list-item input { margin-right: 0.4em; }
+
+.chat-md blockquote {
+  margin: 0.6em 0;
+  padding: 0.1em 1em;
+  border-left: 3px solid #374151;
+  color: #9ca3af;
+}
+.chat-md hr { border: 0; border-top: 1px solid #374151; margin: 1em 0; }
+
+.chat-md a { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
+.chat-md a:hover { color: #93c5fd; }
+.chat-md strong { font-weight: 600; color: #f9fafb; }
+
+.chat-md code {
+  font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+.chat-md :not(pre) > code {
+  background: #1f2937;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.88em;
+}
+
+.chat-md table { border-collapse: collapse; font-size: 13px; }
+.chat-md th, .chat-md td { border: 1px solid #374151; padding: 0.35em 0.7em; text-align: left; }
+.chat-md th { background: #111827; font-weight: 600; }
+
+/* 代码块：背景由外层容器给，高亮主题自带的 .hljs 背景/内边距清掉 */
+.chat-md pre { margin: 0; }
+.chat-md pre code.hljs { background: transparent; padding: 0; }

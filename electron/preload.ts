@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
+import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 
 export type { AgentResource, MessageChannel, ChannelStatusInfo, ScheduledTask }
@@ -159,6 +160,19 @@ const api = {
   getToolboxStatus: (): Promise<{ larkCli: { installed: boolean; version?: string; loggedIn?: boolean; userName?: string }; meegle: { installed: boolean; version?: string } }> => ipcRenderer.invoke("toolbox:status"),
   installToolboxTool: (key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:install", key),
   loginLarkCli: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:login-lark"),
+  appChatHistory: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:history", sessionKey),
+  appChatSend: (payload: AppChatSendPayload): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:send", payload),
+  appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
+  appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
+  appChatSaveImage: (bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:save-image", bytes, ext),
+  appChatReadImage: (file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:read-image", file),
+  appChatOpenFile: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:open-file", file),
+  appChatShowInFolder: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:show-in-folder", file),
+  onAppChatEvent: (cb: (event: AppChatEvent) => void) => {
+    const handler = (_: unknown, event: AppChatEvent) => cb(event)
+    ipcRenderer.on("app-chat:event", handler)
+    return () => ipcRenderer.removeListener("app-chat:event", handler)
+  },
   startDaemon: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("daemon:start"),
   stopAgent: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop"),
   getSessionAgents: (): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]> =>
@@ -167,7 +181,7 @@ const api = {
     ipcRenderer.invoke("diagnostics:session", sessionKey),
   exportDiagnostics: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("diagnostics:export"),
-  stopSessionAgent: (sessionKey: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey),
+  stopSessionAgent: (sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey, clearQueue),
   setSessionModel: (sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
     ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams, resourceId),
   listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }> =>
