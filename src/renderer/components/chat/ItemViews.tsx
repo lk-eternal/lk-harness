@@ -140,10 +140,10 @@ export function NoticePill({ item, onCommand }: { item: AppChatNoticeItem; onCom
     else groups.push({ section, buttons: [b] })
   }
   return (
-    <div className="max-w-[90%] self-center rounded-lg bg-gray-800/60 px-3.5 py-2 text-center text-xs text-gray-400">
+    <div className="max-w-[90%] self-center rounded-lg bg-gray-800/60 px-3.5 py-2 text-left text-xs text-gray-400">
       {item.text && <p className="whitespace-pre-wrap leading-relaxed">{item.text}</p>}
       {groups.map((g) => (
-        <div key={g.section} className="mt-2 flex flex-wrap items-center justify-center gap-1.5">
+        <div key={g.section} className="mt-2 flex flex-wrap items-center justify-start gap-1.5">
           {g.section && <span className="text-gray-600">{g.section}</span>}
           {g.buttons.map((b) => (
             <button key={b.cmd} type="button" onClick={() => onCommand(b.cmd)} className="rounded-md border border-gray-700 px-2 py-0.5 text-gray-300 transition hover:border-blue-500 hover:text-blue-300">{b.label}</button>
