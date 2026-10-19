@@ -4564,7 +4564,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       ].join("\n");
       let sent = true;
       if (ch.type === "wechat") sent = await ch.rt.wechat!.sendText(ch.chatId, tip);
-      else appChat.addNotice(resolveAppSessionKey(ch, message_id, session_key), tip);
+      else appChat.addNotice(resolveAppSessionKey(ch, message_id), tip);
       json(res, { ok: sent, degraded: true });
       return true;
     }
