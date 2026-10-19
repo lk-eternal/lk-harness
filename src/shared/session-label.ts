@@ -54,6 +54,19 @@ export function readGitBranch(dir: string): string | undefined {
   return undefined
 }
 
+const BRANCH_CACHE_TTL_MS = 30_000
+const branchCache = new Map<string, { at: number; branch: string | undefined }>()
+
+/** 首页轮询专用：分支名短时缓存，避免每轮为每个会话同步起 git 进程；命令回复等要即时值的场景仍用 readGitBranch */
+export function readGitBranchCached(dir: string): string | undefined {
+  const now = Date.now()
+  const hit = branchCache.get(dir)
+  if (hit && now - hit.at < BRANCH_CACHE_TTL_MS) return hit.branch
+  const branch = readGitBranch(dir)
+  branchCache.set(dir, { at: now, branch })
+  return branch
+}
+
 export function dirBaseName(dir: string): string {
   return dir.split(/[\\/]/).filter(Boolean).pop() ?? dir
 }

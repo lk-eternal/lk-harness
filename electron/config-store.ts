@@ -146,6 +146,15 @@ function getStore(): Store<AppConfig> {
   return _store
 }
 
+/** getConfig 结果缓存：配置文件只由本模块写入，所有写入点统一经 writeStore 失效 */
+let configCache: AppConfig | null = null
+
+function writeStore(patch: Partial<AppConfig>): void {
+  // electron-store 的 set(object) 重载要求完整 AppConfig，实际支持部分键合并
+  getStore().set(patch as unknown as AppConfig)
+  configCache = null
+}
+
 // ── 敏感凭据 OS 级加密 ────────────────────────────────────
 // App Secret / iLink Token / API Key / GitLab Token 落盘为 enc:v1:<base64> 密文
 // （Windows DPAPI / macOS Keychain）；getConfig 读出即明文，调用方无感。
@@ -167,6 +176,8 @@ function sealSecret(value: string | undefined): string | undefined {
 /** 解密失败去重（按密文前缀，不记明文） */
 const loggedSecretFailures = new Set<string>()
 let secretDecryptFailureReported = false
+/** 解密失败累计次数：getConfig 读到失败值（app ready 前 / DPAPI 抖动）时不写缓存，避免空凭据被固化 */
+let secretDecryptFailureCount = 0
 
 function openSecret(value: string | undefined): string | undefined {
   if (!value || !value.startsWith(SECRET_PREFIX)) return value
@@ -174,6 +185,7 @@ function openSecret(value: string | undefined): string | undefined {
     return safeStorage.decryptString(Buffer.from(value.slice(SECRET_PREFIX.length), "base64"))
   } catch {
     // OS 密钥不可用（换机/换用户/换 profile 目录）：密文无法还原，视为未配置
+    secretDecryptFailureCount++
     loggedSecretFailures.add(value.slice(0, 20))
     return ""
   }
@@ -251,7 +263,7 @@ export function scrubUndecryptableSecretsInStore(): number {
   }
 
   if (Object.keys(patch).length > 0) {
-    getStore().set(patch as unknown as AppConfig)
+    writeStore(patch)
   }
   loggedSecretFailures.clear()
   return scrubbed
@@ -331,7 +343,7 @@ export function migrateSecretsToSafeStorage(): void {
     || (raw.agentResources ?? []).some((r) => plain(r.apiKey))
     || plain(raw.gitlabToken) || plain(raw.flowHubToken) || plain(raw.larkAppSecret) || plain(raw.wechatToken) || plain(raw.cursorApiKey)
   if (!dirty) return
-  getStore().set(sealPartialSecrets({
+  writeStore(sealPartialSecrets({
     channels: raw.channels,
     agentResources: raw.agentResources,
     gitlabToken: raw.gitlabToken,
@@ -339,14 +351,16 @@ export function migrateSecretsToSafeStorage(): void {
     larkAppSecret: raw.larkAppSecret,
     wechatToken: raw.wechatToken,
     cursorApiKey: raw.cursorApiKey,
-  }) as unknown as AppConfig)
+  }))
 }
 
 export function getConfig(): AppConfig {
+  if (configCache) return structuredClone(configCache)
+  const failuresBefore = secretDecryptFailureCount
   const cfg = openConfigSecrets({ ...defaults, ...getStore().store })
   const fav = dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces)
   if (fav.length !== (cfg.favoriteWorkspaces?.length ?? 0)) {
-    getStore().set({ favoriteWorkspaces: fav } as unknown as AppConfig)
+    writeStore({ favoriteWorkspaces: fav })
     cfg.favoriteWorkspaces = fav
   } else {
     cfg.favoriteWorkspaces = fav
@@ -358,6 +372,7 @@ export function getConfig(): AppConfig {
   if (cfg.repoRoots?.length) {
     cfg.repoRoots = cfg.repoRoots.map((r) => normalizeRepoPath(r))
   }
+  if (secretDecryptFailureCount === failuresBefore) configCache = structuredClone(cfg)
   return cfg
 }
 
@@ -383,8 +398,7 @@ export function saveConfig(partial: Partial<AppConfig>): void {
       .map((p) => ({ ...p, path: normalizeRepoPath(p.path) }))
   }
   if (Object.keys(cleaned).length > 0) {
-    // electron-store 的 set(object) 重载要求完整 AppConfig，实际支持部分键合并
-    getStore().set(sealPartialSecrets(cleaned) as unknown as AppConfig)
+    writeStore(sealPartialSecrets(cleaned))
   }
 }
 

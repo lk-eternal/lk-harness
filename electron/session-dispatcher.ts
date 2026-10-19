@@ -30,7 +30,7 @@ import {
 } from "./agent-engine"
 import { cleanupWorkspaceDir } from "./workspace-injector"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
-import { buildSessionCardTitle, readGitBranch, dirBaseName } from "../src/shared/session-label.js"
+import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
@@ -627,46 +627,29 @@ function buildSwitchableSessions(
   chatId: string | undefined,
   running: { sessionKey: string }[],
   activeKey?: string,
-): { sessionKey: string; label: string }[] {
+): string[] {
   if (!chatId) return []
   const skip = new Set(running.map((r) => r.sessionKey))
   if (activeKey) skip.add(activeKey)
   const seen = new Set<string>()
-  const out: { sessionKey: string; label: string }[] = []
-  const push = (key: string, label: string) => {
+  const out: string[] = []
+  const push = (key: string) => {
     if (!key || skip.has(key) || seen.has(key)) return
     seen.add(key)
-    out.push({ sessionKey: key, label })
+    out.push(key)
   }
   const channel = resolveChannelForSession(chatId)
   const mainDir = effectiveWorkspaceDir(channel)
-  // 目录会话：重名目录带父目录区分 + 显示当前分支
-  const dirs: { dir: string; main?: boolean }[] = []
-  if (mainDir) dirs.push({ dir: mainDir, main: true })
-  for (const d of getChannelFavoriteWorkspaces(channel)) dirs.push({ dir: d })
-  const nameCount = new Map<string, number>()
-  for (const { dir } of dirs) {
-    const n = dirBaseName(dir).toLowerCase()
-    nameCount.set(n, (nameCount.get(n) ?? 0) + 1)
-  }
-  const dirLabel = (dir: string): string => {
-    const base = dirBaseName(dir)
-    const dup = (nameCount.get(base.toLowerCase()) ?? 0) > 1
-    const parent = path.basename(path.dirname(dir))
-    const name = dup && parent ? `${parent}/${base}` : base
-    const branch = readGitBranch(dir)
-    return `📂 ${name}${branch ? ` · 🌿 ${branch}` : ""}`
-  }
   const bound = listProjects().find((p) => p.status !== "done" && projectGroupChatMatches(p, chatId))
   // 专属群：只协作本群项目，目录会话/其它项目一律不列（切了也会被强制路由拉回）
   if (bound) {
     const key = bound.sessionKey || projectSessionKey(bound.groupChatId || chatId, bound.id)
-    push(key, `📦 ${bound.name} · 🌿 ${bound.featureBranch || "—"}`)
+    push(key)
     return out.slice(0, 8)
   }
   if (mainDir) {
     const key = normalizeSessionKey(`${chatId}::${mainDir}`) || `${chatId}::${mainDir}`
-    push(key, `${dirLabel(mainDir)}（主会话）`)
+    push(key)
   }
   for (const p of listProjects()) {
     // 私聊/普通群：独立群项目不可切，不列
@@ -674,12 +657,11 @@ function buildSwitchableSessions(
     const key = p.groupChatId
       ? (p.sessionKey || projectSessionKey(p.groupChatId, p.id))
       : projectSessionKey(chatId, p.id)
-    push(key, `📦 ${p.name} · 🌿 ${p.featureBranch || "—"}`)
+    push(key)
   }
-  for (const { dir, main } of dirs) {
-    if (main) continue
+  for (const dir of getChannelFavoriteWorkspaces(channel)) {
     const key = normalizeSessionKey(`${chatId}::${dir}`) || `${chatId}::${dir}`
-    push(key, dirLabel(dir))
+    push(key)
   }
   return out.slice(0, 8)
 }
@@ -734,7 +716,7 @@ function buildSessionListForChat(
   }
   if (activeKey) push(activeKey)
   for (const s of running.sort((a, b) => a.sessionKey.localeCompare(b.sessionKey))) push(s.sessionKey)
-  for (const sw of switchable) push(sw.sessionKey)
+  for (const key of switchable) push(key)
   if (chatId) {
     for (const sk of listRoutedSessionKeysForChat(chatId)) push(sk)
   }
@@ -814,7 +796,7 @@ function tabLabelForSession(
     const channel = resolveChannelForSession(sessionKey)
     const mainDir = effectiveWorkspaceDir(channel)
     const base = dirBaseName(ws)
-    const branch = readGitBranch(ws)
+    const branch = readGitBranchCached(ws)
     const mainTag = mainDir && sameDirPath(mainDir, ws) ? "（主）" : ""
     return `${base}${mainTag}${branch ? ` · ${branch}` : ""}`
   }
