@@ -145,19 +145,19 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-gray-700 bg-gray-950 shadow-xl">
-        <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-          <h3 className="text-sm font-semibold text-gray-100">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-page shadow-xl">
+        <div className="flex items-center justify-between border-b border-line-subtle px-4 py-3">
+          <h3 className="text-sm font-semibold text-fg">
             {kind === "group" ? "从共享空间获取流程组" : "从共享空间获取节点"}
           </h3>
-          <button type="button" onClick={onClose} className="text-gray-500 hover:text-white"><X className="h-4 w-4" /></button>
+          <button type="button" onClick={onClose} className="text-fg-muted hover:text-fg"><X className="h-4 w-4" /></button>
         </div>
-        <div className="border-b border-gray-800 px-4 py-2">
+        <div className="border-b border-line-subtle px-4 py-2">
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setVisible(PAGE) }}
             placeholder="搜索名称 / 作者 / 节点…"
-            className="w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+            className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg-soft"
           />
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-3" onScroll={(e) => {
@@ -166,17 +166,17 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
             setVisible((v) => v + PAGE)
           }
         }}>
-          {loading && <p className="text-xs text-gray-500">加载中…</p>}
-          {error && <p className="text-xs text-red-400">{error}</p>}
-          {!loading && !error && groupSlice.length === 0 && nodeSlice.length === 0 && <p className="text-xs text-gray-500">无匹配项</p>}
+          {loading && <p className="text-xs text-fg-muted">加载中…</p>}
+          {error && <p className="text-xs text-danger">{error}</p>}
+          {!loading && !error && groupSlice.length === 0 && nodeSlice.length === 0 && <p className="text-xs text-fg-muted">无匹配项</p>}
           {kind === "group" && groupSlice.map((g: FlowHubCatalogGroup) => {
             const st = statusMap[g.hubId] ?? "missing"
             return (
-              <div key={g.hubId} className="rounded-lg border border-gray-800 p-3">
+              <div key={g.hubId} className="rounded-lg border border-line-subtle p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="text-sm font-medium text-gray-100">{g.name}</div>
-                    <div className="text-[10px] text-gray-500">by {g.author || "未知"} · {g.updatedAt.slice(0, 10)}</div>
+                    <div className="text-sm font-medium text-fg">{g.name}</div>
+                    <div className="text-[10px] text-fg-muted">by {g.author || "未知"} · {g.updatedAt.slice(0, 10)}</div>
                   </div>
                   <ActionBtn st={st} busy={busyId === g.hubId} onAdd={() => void handleImport(g)} onSync={() => void handleSync(g)} />
                 </div>
@@ -184,7 +184,7 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
                   {g.nodeLabels.map((label, i) => (
                     <span
                       key={`${g.hubId}-${g.nodeIds[i] ?? i}`}
-                      className="cursor-default rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-400"
+                      className="cursor-default rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-3"
                       onMouseEnter={(e) => void previewNode(e, g.hubId, g.nodeIds[i])}
                       onMouseMove={moveTooltip}
                       onMouseLeave={hideTooltip}
@@ -199,14 +199,14 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
             return (
               <div
                 key={n.hubId}
-                className="flex items-center justify-between rounded-lg border border-gray-800 p-3"
+                className="flex items-center justify-between rounded-lg border border-line-subtle p-3"
                 onMouseEnter={(e) => void previewNode(e, n.hubId, n.localId, n.groupHubId)}
                 onMouseMove={moveTooltip}
                 onMouseLeave={hideTooltip}
               >
                 <div>
-                  <div className="text-sm text-gray-100">{n.label} <span className="font-mono text-xs text-gray-500">/p {n.localId}</span></div>
-                  <div className="text-[10px] text-gray-500">by {n.author}{n.sourceGroupName ? ` · 来自 ${n.sourceGroupName}` : ""}</div>
+                  <div className="text-sm text-fg">{n.label} <span className="font-mono text-xs text-fg-muted">/p {n.localId}</span></div>
+                  <div className="text-[10px] text-fg-muted">by {n.author}{n.sourceGroupName ? ` · 来自 ${n.sourceGroupName}` : ""}</div>
                 </div>
                 <ActionBtn st={st} busy={busyId === n.hubId} onAdd={() => void handleImport(n)} onSync={() => void handleSync(n)} />
               </div>
@@ -216,7 +216,7 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
       </div>
       {tooltip && (
         <div
-          className="pointer-events-none fixed z-[60] max-w-xs rounded-md border border-gray-600 bg-gray-900/95 px-3 py-2 text-[10px] leading-relaxed text-gray-300 shadow-xl whitespace-pre-wrap"
+          className="pointer-events-none fixed z-[60] max-w-xs rounded-md border border-line-strong bg-surface/95 px-3 py-2 text-[10px] leading-relaxed text-fg-2 shadow-xl whitespace-pre-wrap"
           style={{
             left: Math.min(tooltip.x, window.innerWidth - 280),
             top: Math.min(tooltip.y, window.innerHeight - 120),
@@ -235,17 +235,17 @@ function ActionBtn({ st, busy, onAdd, onSync }: {
   onAdd: () => void
   onSync: () => void
 }) {
-  if (busy) return <span className="text-xs text-gray-500">…</span>
+  if (busy) return <span className="text-xs text-fg-muted">…</span>
   if (st === "synced") return <span className="text-xs text-emerald-500">✓ 已添加</span>
   if (st === "outdated" || st === "local_modified") {
     return (
-      <button type="button" onClick={onSync} className="inline-flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300">
+      <button type="button" onClick={onSync} className="inline-flex items-center gap-1 text-xs text-warning hover:text-warning-soft">
         <RefreshCw className="h-3 w-3" />同步
       </button>
     )
   }
   return (
-    <button type="button" onClick={onAdd} className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300">
+    <button type="button" onClick={onAdd} className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-soft">
       <Plus className="h-3 w-3" />添加
     </button>
   )

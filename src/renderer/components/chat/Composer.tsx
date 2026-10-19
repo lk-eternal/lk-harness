@@ -113,20 +113,20 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
   }
 
   return (
-    <div className="shrink-0 border-t border-gray-800 px-6 py-3">
+    <div className="shrink-0 border-t border-line-subtle px-6 py-3">
       <div className="relative mx-auto max-w-3xl">
         {menuItems.length > 0 && (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-64 overflow-y-auto rounded-lg border border-gray-700 bg-gray-950 py-1 shadow-lg">
+          <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-64 overflow-y-auto rounded-lg border border-line bg-page py-1 shadow-lg">
             {menuItems.map((c, i) => (
               <button
                 key={c.cmd}
                 type="button"
                 onMouseDown={(e) => { e.preventDefault(); pickCommand(c.cmd) }}
                 onMouseEnter={() => setMenuIndex(i)}
-                className={`flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-xs ${i === menuIndex ? "bg-gray-800" : ""}`}
+                className={`flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-xs ${i === menuIndex ? "bg-raised" : ""}`}
               >
-                <span className="shrink-0 font-mono text-blue-300">{c.cmd}</span>
-                <span className="min-w-0 flex-1 truncate text-gray-500">{c.desc}</span>
+                <span className="shrink-0 font-mono text-accent-soft">{c.cmd}</span>
+                <span className="min-w-0 flex-1 truncate text-fg-muted">{c.desc}</span>
               </button>
             ))}
           </div>
@@ -141,7 +141,7 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
             const files = Array.from(e.dataTransfer.files)
             if (files.some((f) => f.type.startsWith("image/"))) { e.preventDefault(); void addImageFiles(files) }
           }}
-          className={`rounded-lg border bg-gray-900 transition ${dragging ? "border-blue-500" : "border-gray-700 focus-within:border-blue-500"} ${disabled ? "opacity-50" : ""}`}
+          className={`rounded-lg border bg-surface transition ${dragging ? "border-blue-500" : "border-line focus-within:border-blue-500"} ${disabled ? "opacity-50" : ""}`}
         >
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -152,7 +152,7 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
                     type="button"
                     onClick={() => removeImage(i.path)}
                     title="移除"
-                    className="absolute -right-1.5 -top-1.5 hidden rounded-full bg-gray-700 p-0.5 text-gray-200 hover:bg-red-600 group-hover:block"
+                    className="absolute -right-1.5 -top-1.5 hidden rounded-full bg-strong p-0.5 text-fg-soft hover:bg-red-600 group-hover:block"
                   ><X size={11} /></button>
                 </div>
               ))}
@@ -164,7 +164,7 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
               disabled={disabled}
               onClick={() => fileInputRef.current?.click()}
               title="添加图片"
-              className="rounded-md p-2 text-gray-500 transition hover:bg-gray-800 hover:text-gray-200 disabled:opacity-40"
+              className="rounded-md p-2 text-fg-muted transition hover:bg-raised hover:text-fg-soft disabled:opacity-40"
             ><ImagePlus size={16} /></button>
             <input
               ref={fileInputRef}

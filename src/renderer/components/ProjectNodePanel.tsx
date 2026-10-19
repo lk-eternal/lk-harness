@@ -6,7 +6,7 @@ import { usePanelSave } from "./usePanelSave"
 
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 export type ProjectNodeItem = { id: string; label: string; prompt?: string; defaultPrompt?: string; hubId?: string; hubRevision?: number; hubContentHash?: string; localRevision?: number }
 
@@ -97,7 +97,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
   return (
     <>
       <div className={PANEL_ROOT} style={{ minHeight: 320 }}>
-        <aside className="flex w-44 shrink-0 flex-col border-r border-gray-800 pl-2 pr-2">
+        <aside className="flex w-44 shrink-0 flex-col border-r border-line-subtle pl-2 pr-2">
           <SortableList
             items={nodes}
             getId={(n) => n.id}
@@ -106,18 +106,18 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
             renderItem={(n, { grip }) => {
               const idx = nodes.findIndex((x) => x.id === n.id)
               return (
-                <div className={`flex items-center gap-1 rounded-md transition ${selectedIndex === idx ? "bg-gray-800/70" : "hover:bg-gray-800/40"}`}>
+                <div className={`flex items-center gap-1 rounded-md transition ${selectedIndex === idx ? "bg-raised/70" : "hover:bg-raised/40"}`}>
                   {grip}
                   <button type="button" onClick={() => void selectNode(idx)} className="min-w-0 flex-1 py-2 pr-2 text-left">
-                    <span className="block truncate text-xs text-gray-200">{n.label}</span>
-                    <span className="font-mono text-[10px] text-gray-600">/p {n.id}</span>
+                    <span className="block truncate text-xs text-fg-soft">{n.label}</span>
+                    <span className="font-mono text-[10px] text-fg-faint">/p {n.id}</span>
                   </button>
                 </div>
               )
             }}
           />
           <button type="button" onClick={() => void openAdd()}
-            className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 hover:border-gray-600 hover:bg-gray-800/40">
+            className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40">
             <Plus size={14} />添加节点
           </button>
         </aside>
@@ -126,13 +126,13 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
             <>
               <div className={PANEL_SCROLL}>
                 <div className="grid grid-cols-2 gap-3">
-                  <div><label className="mb-1 block text-xs text-gray-500">节点 id</label>
+                  <div><label className="mb-1 block text-xs text-fg-muted">节点 id</label>
                     <input type="text" value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value.trim() })} className={inputCls} placeholder="test-report" /></div>
-                  <div><label className="mb-1 block text-xs text-gray-500">按钮名称</label>
+                  <div><label className="mb-1 block text-xs text-fg-muted">按钮名称</label>
                     <input type="text" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} className={inputCls} placeholder="测试报告" /></div>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">节点提示词</label>
+                  <label className="mb-1 block text-xs text-fg-muted">节点提示词</label>
                   <textarea rows={14} value={draft.prompt ?? draft.defaultPrompt ?? ""} onChange={(e) => setDraft({ ...draft, prompt: e.target.value })}
                     className={inputCls + " font-mono text-xs leading-relaxed"} />
                 </div>
@@ -140,16 +140,16 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
               <div className={PANEL_FOOTER}>
                 <div className="flex items-center gap-2">
                   {draft.index >= 0 && hubConfigured && onUploadNode && (
-                    <button type="button" onClick={() => void onUploadNode(draft.id)} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-blue-400 hover:bg-gray-800">
+                    <button type="button" onClick={() => void onUploadNode(draft.id)} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-accent hover:bg-raised">
                       <Upload size={13} />上传
                     </button>
                   )}
                   {draft.index >= 0 && (
-                    <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/30"><Trash2 size={13} />删除</button>
+                    <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => { setDraft(null); setSelectedIndex(null) }} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => { setDraft(null); setSelectedIndex(null) }} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.id.trim() || !draft.label.trim()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
@@ -158,7 +158,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择节点</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择节点</div>
           )}
         </div>
       </div>

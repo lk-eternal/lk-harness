@@ -4,7 +4,7 @@ import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 const MCP_TEMPLATE = JSON.stringify({ "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] } }, null, 2)
 
 interface McpEditForm { json: string; jsonError?: string }
@@ -212,11 +212,11 @@ export default function McpPanel() {
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
           <button type="button" onClick={() => void selectBuiltin()}
-            className={`mb-1 flex w-full shrink-0 flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === BUILTIN_KEY ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
+            className={`mb-1 flex w-full shrink-0 flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === BUILTIN_KEY ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
             <span className="truncate text-xs font-medium">Harness 内置 MCP</span>
-            <span className="truncate text-[10px] text-gray-600">{builtinGroups ? `只读 · ${builtinGroups.reduce((n, g) => n + g.tools.length, 0)} 个工具` : "只读"}</span>
+            <span className="truncate text-[10px] text-fg-faint">{builtinGroups ? `只读 · ${builtinGroups.reduce((n, g) => n + g.tools.length, 0)} 个工具` : "只读"}</span>
           </button>
-          <p className="shrink-0 px-1 py-0.5 text-[10px] font-medium text-gray-600">自定义</p>
+          <p className="shrink-0 px-1 py-0.5 text-[10px] font-medium text-fg-faint">自定义</p>
           <div className={PANEL_LIST}>
             {servers.map((s) => {
               const key = mcpKey(s.name)
@@ -225,14 +225,14 @@ export default function McpPanel() {
               const statusText = s.enabled ? (isReady ? "ready" : rawStatus || "—") : "disabled"
               return (
                 <button key={key} type="button" onClick={() => void selectServer(s)}
-                  className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === key ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
+                  className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === key ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
                   <span className="truncate text-xs font-medium">{s.name}</span>
-                  <span className={`truncate text-[10px] text-gray-600`}>{statusText}</span>
+                  <span className={`truncate text-[10px] text-fg-faint`}>{statusText}</span>
                 </button>
               )
             })}
             <button type="button" onClick={() => void openAdd()}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300">
+              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40 hover:text-fg-2">
               <Plus size={14} />添加
             </button>
           </div>
@@ -244,34 +244,34 @@ export default function McpPanel() {
               <div className={PANEL_SCROLL}>
                 <div>
                   <div className="mb-1 flex items-center justify-between">
-                    <label className="text-xs text-gray-500">配置 JSON</label>
+                    <label className="text-xs text-fg-muted">配置 JSON</label>
                     <div className="flex items-center gap-2">
                       {currentServer?.type === "url" && currentServer.enabled && !currentServer.authenticated && (
                         mcpLoginPending[currentServer.name]
-                          ? <span className="text-xs text-blue-400"><Loader2 size={12} className="inline animate-spin" /> 认证中</span>
-                          : <button type="button" onClick={() => handleLogin(currentServer.name)} className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"><LogIn size={12} />授权</button>
+                          ? <span className="text-xs text-accent"><Loader2 size={12} className="inline animate-spin" /> 认证中</span>
+                          : <button type="button" onClick={() => handleLogin(currentServer.name)} className="flex items-center gap-1 text-xs text-accent hover:text-accent-soft"><LogIn size={12} />授权</button>
                       )}
                     </div>
                   </div>
                   <textarea value={draft.json} onChange={(e) => setDraft({ ...draft, json: e.target.value, jsonError: undefined })}
                     rows={14} spellCheck={false} className={inputCls + " font-mono text-xs leading-relaxed" + (draft.jsonError ? " border-red-500" : "")} />
-                  {draft.jsonError && <p className="mt-1 text-xs text-red-400">{draft.jsonError}</p>}
+                  {draft.jsonError && <p className="mt-1 text-xs text-danger">{draft.jsonError}</p>}
                 </div>
                 {currentServer && (
-                  <div className="rounded-lg border border-gray-800 bg-gray-900/30 px-3 py-2">
-                    <p className="mb-1.5 text-xs font-medium text-gray-500">Tools</p>
-                    {!toolState ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
-                      : toolState.loading ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
-                      : toolState.error ? <p className="text-xs text-gray-500">{toolState.error}</p>
+                  <div className="rounded-lg border border-line-subtle bg-surface/30 px-3 py-2">
+                    <p className="mb-1.5 text-xs font-medium text-fg-muted">Tools</p>
+                    {!toolState ? <p className="text-xs text-fg-muted"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
+                      : toolState.loading ? <p className="text-xs text-fg-muted"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
+                      : toolState.error ? <p className="text-xs text-fg-muted">{toolState.error}</p>
                       : toolState.tools.length > 0 ? (
                         <div className="flex flex-wrap gap-1.5">
                           {toolState.tools.map((t) => (
-                            <span key={t.name} title={mcpToolTip(t)} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300">
-                              <Wrench size={10} className="text-gray-500" />{t.name}
+                            <span key={t.name} title={mcpToolTip(t)} className="inline-flex items-center gap-1 rounded-md bg-raised px-2 py-0.5 text-[11px] text-fg-2">
+                              <Wrench size={10} className="text-fg-muted" />{t.name}
                             </span>
                           ))}
                         </div>
-                      ) : <p className="text-xs text-gray-500">无已注册工具</p>}
+                      ) : <p className="text-xs text-fg-muted">无已注册工具</p>}
                   </div>
                 )}
               </div>
@@ -279,16 +279,16 @@ export default function McpPanel() {
                 <div className="flex items-center gap-2">
                   {!isNew && currentServer && (
                     <>
-                      <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/30"><Trash2 size={13} />删除</button>
+                      <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>
                       <button type="button" onClick={() => void handleToggle()} disabled={!!mcpLoading[selectedKey!]}
-                        className={`rounded-md px-2.5 py-1.5 text-xs transition ${currentServer.enabled ? "text-green-400 hover:bg-gray-800" : "text-gray-500 hover:bg-gray-800"}`}>
+                        className={`rounded-md px-2.5 py-1.5 text-xs transition ${currentServer.enabled ? "text-success hover:bg-raised" : "text-fg-muted hover:bg-raised"}`}>
                         {currentServer.enabled ? "已启用" : "已停用"}
                       </button>
                     </>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
@@ -300,18 +300,18 @@ export default function McpPanel() {
             <div className="flex min-h-0 flex-1 flex-col">
               <div className={`${PANEL_SCROLL} min-h-0 flex-1`}>
                 {builtinGroups === null
-                  ? <p className="text-xs text-gray-500"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
+                  ? <p className="text-xs text-fg-muted"><Loader2 size={12} className="inline animate-spin" /> 加载中…</p>
                   : builtinGroups.map((g) => (
-                    <div key={g.key} className="mb-2 rounded-lg border border-gray-800 bg-gray-900/30 px-3 py-2">
-                      <p className="mb-1.5 text-xs font-medium text-gray-300">{g.title}<span className="ml-2 text-[10px] font-normal text-gray-500">{g.scope}</span></p>
+                    <div key={g.key} className="mb-2 rounded-lg border border-line-subtle bg-surface/30 px-3 py-2">
+                      <p className="mb-1.5 text-xs font-medium text-fg-2">{g.title}<span className="ml-2 text-[10px] font-normal text-fg-muted">{g.scope}</span></p>
                       <div className="flex flex-wrap gap-1.5">
                         {g.tools.map((t) => {
                           const active = selectedBuiltinTool?.groupKey === g.key && selectedBuiltinTool.name === t.name
                           return (
                             <button key={t.name} type="button"
                               onClick={() => setSelectedBuiltinTool({ groupKey: g.key, name: t.name })}
-                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition ${active ? "bg-blue-900/50 text-blue-200 ring-1 ring-blue-700" : "bg-gray-800 text-gray-300 hover:bg-gray-700"}`}>
-                              <Wrench size={10} className={active ? "text-blue-400" : "text-gray-500"} />{t.name}
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition ${active ? "bg-accent-tint-strong/50 text-accent-bright ring-1 ring-blue-700" : "bg-raised text-fg-2 hover:bg-strong"}`}>
+                              <Wrench size={10} className={active ? "text-accent" : "text-fg-muted"} />{t.name}
                             </button>
                           )
                         })}
@@ -319,39 +319,39 @@ export default function McpPanel() {
                     </div>
                   ))}
               </div>
-              <div className="shrink-0 border-t border-gray-800 bg-gray-900/50 px-3 py-3">
+              <div className="shrink-0 border-t border-line-subtle bg-surface/50 px-3 py-3">
                 {!selectedBuiltinToolEntry
-                  ? <p className="text-xs text-gray-500">点击上方工具名查看参数、可选值与示例</p>
+                  ? <p className="text-xs text-fg-muted">点击上方工具名查看参数、可选值与示例</p>
                   : (
-                    <div className="space-y-2 text-xs text-gray-300">
-                      <p className="font-mono text-sm text-white">{selectedBuiltinToolEntry.name}</p>
-                      <p className="text-gray-400">{selectedBuiltinToolEntry.doc?.summary ?? selectedBuiltinToolEntry.description}</p>
+                    <div className="space-y-2 text-xs text-fg-2">
+                      <p className="font-mono text-sm text-fg">{selectedBuiltinToolEntry.name}</p>
+                      <p className="text-fg-3">{selectedBuiltinToolEntry.doc?.summary ?? selectedBuiltinToolEntry.description}</p>
                       {selectedBuiltinToolEntry.doc?.params?.length ? (
                         <table className="w-full text-left text-[11px]">
-                          <thead><tr className="text-gray-500"><th className="pb-1 pr-2">参数</th><th className="pb-1 pr-2">类型</th><th className="pb-1">说明</th></tr></thead>
+                          <thead><tr className="text-fg-muted"><th className="pb-1 pr-2">参数</th><th className="pb-1 pr-2">类型</th><th className="pb-1">说明</th></tr></thead>
                           <tbody>
                             {selectedBuiltinToolEntry.doc.params.map((p) => (
-                              <tr key={p.name} className="border-t border-gray-800/80 align-top">
-                                <td className="py-1 pr-2 font-mono text-gray-200">{p.required ? "* " : ""}{p.name}</td>
-                                <td className="py-1 pr-2 text-gray-500">{p.enumValues?.length ? p.enumValues.join(" | ") : (p.type ?? "—")}</td>
-                                <td className="py-1 text-gray-400">{p.description ?? ""}</td>
+                              <tr key={p.name} className="border-t border-line-subtle/80 align-top">
+                                <td className="py-1 pr-2 font-mono text-fg-soft">{p.required ? "* " : ""}{p.name}</td>
+                                <td className="py-1 pr-2 text-fg-muted">{p.enumValues?.length ? p.enumValues.join(" | ") : (p.type ?? "—")}</td>
+                                <td className="py-1 text-fg-3">{p.description ?? ""}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       ) : null}
                       {selectedBuiltinToolEntry.doc?.example ? (
-                        <pre className="overflow-x-auto rounded bg-gray-950 p-2 font-mono text-[10px] text-gray-400">{selectedBuiltinToolEntry.doc.example}</pre>
+                        <pre className="overflow-x-auto rounded bg-page p-2 font-mono text-[10px] text-fg-3">{selectedBuiltinToolEntry.doc.example}</pre>
                       ) : null}
                       {selectedBuiltinToolEntry.doc?.notes ? (
-                        <p className="text-[11px] text-amber-200/90">{selectedBuiltinToolEntry.doc.notes}</p>
+                        <p className="text-[11px] text-warning-bright/90">{selectedBuiltinToolEntry.doc.notes}</p>
                       ) : null}
                     </div>
                   )}
               </div>
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择 MCP</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择 MCP</div>
           )}
         </div>
       </div>

@@ -8,7 +8,7 @@ import ConfigMigratePanel from "./ConfigMigratePanel"
 import useInlineModal from "./useInlineModal"
 import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 function newId(prefix: string): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -271,8 +271,8 @@ export default function SetupWizard({ open, onClose }: Props) {
   const stepDone = [!!wsDir, agentConfigured, !!botName, bindDone, false]
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-gray-950">
-      <div className="flex items-center justify-between border-b border-gray-800 px-8 py-4">
+    <div className="fixed inset-0 z-50 flex flex-col bg-page">
+      <div className="flex items-center justify-between border-b border-line-subtle px-8 py-4">
         <div className="flex items-center gap-1">
           {STEPS.map((s, i) => (
             <div key={s.label} className="flex items-center">
@@ -280,28 +280,28 @@ export default function SetupWizard({ open, onClose }: Props) {
                 onClick={() => { if (i <= maxStep) setStep(i) }}
                 disabled={i > maxStep}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${
-                  i === step ? "bg-blue-600/20 text-blue-300"
-                  : stepDone[i] ? "text-green-400 hover:bg-gray-800"
-                  : i <= maxStep ? "text-gray-400 hover:bg-gray-800" : "text-gray-700"}`}
+                  i === step ? "bg-blue-600/20 text-accent-soft"
+                  : stepDone[i] ? "text-success hover:bg-raised"
+                  : i <= maxStep ? "text-fg-3 hover:bg-raised" : "text-fg-ghost"}`}
               >
                 {stepDone[i] ? <CheckCircle2 size={13} /> : <Circle size={13} />}
                 {i + 1}. {s.label}
               </button>
-              {i < STEPS.length - 1 && <div className="mx-0.5 h-px w-4 bg-gray-800" />}
+              {i < STEPS.length - 1 && <div className="mx-0.5 h-px w-4 bg-raised" />}
             </div>
           ))}
         </div>
-        <button onClick={() => void finish(false)} className="text-xs text-gray-600 transition hover:text-gray-300">
+        <button onClick={() => void finish(false)} className="text-xs text-fg-faint transition hover:text-fg-2">
           跳过引导
         </button>
       </div>
 
       <div className="flex flex-1 items-center justify-center overflow-y-auto p-8">
-        <div className="w-full max-w-lg rounded-2xl border border-gray-800 bg-gray-900/80 p-8 shadow-2xl">
+        <div className="w-full max-w-lg rounded-2xl border border-line-subtle bg-surface/80 p-8 shadow-2xl">
 
           {step === 0 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 1 步：选一个工作文件夹</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+            <h2 className="text-lg font-semibold text-fg">第 1 步：选一个工作文件夹</h2>
+            <p className="mt-2 text-sm leading-relaxed text-fg-3">
               AI 收到你的消息后，就在这个文件夹里干活——读写文件、跑命令。
               一般选你的代码项目文件夹。以后随时可以在首页一键切换。
             </p>
@@ -309,14 +309,14 @@ export default function SetupWizard({ open, onClose }: Props) {
               <button onClick={() => void pickDir()} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
                 <FolderOpen size={15} />选择文件夹
               </button>
-              {wsDir && <span className="flex min-w-0 items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} className="shrink-0" /><span className="truncate" title={wsDir}>{wsDir}</span></span>}
+              {wsDir && <span className="flex min-w-0 items-center gap-1 text-xs text-success"><CheckCircle2 size={13} className="shrink-0" /><span className="truncate" title={wsDir}>{wsDir}</span></span>}
             </div>
             {wsDir && (
-              <button onClick={() => goto(1)} className="mt-6 flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
+              <button onClick={() => goto(1)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
                 下一步 <ArrowRight size={14} />
               </button>
             )}
-            <div className="mt-8 border-t border-gray-800 pt-6">
+            <div className="mt-8 border-t border-line-subtle pt-6">
               <ConfigMigratePanel
                 variant="wizard"
                 showAlert={showAlert}
@@ -329,9 +329,9 @@ export default function SetupWizard({ open, onClose }: Props) {
           </>)}
 
           {step === 1 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 2 步：接入 AI</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
-              推荐 <span className="text-gray-200">Cursor SDK</span> 或 <span className="text-gray-200">大模型 API</span>。
+            <h2 className="text-lg font-semibold text-fg">第 2 步：接入 AI</h2>
+            <p className="mt-2 text-sm leading-relaxed text-fg-3">
+              推荐 <span className="text-fg-soft">Cursor SDK</span> 或 <span className="text-fg-soft">大模型 API</span>。
             </p>
             <div className="mt-4 grid grid-cols-2 gap-2">
               {([
@@ -341,9 +341,9 @@ export default function SetupWizard({ open, onClose }: Props) {
               ]).map((opt) => (
                 <button key={opt.id} type="button"
                   onClick={() => { setAgentMode(opt.id); setVerifyErr(""); setAgentConfigured(false); setSdkSaved(false) }}
-                  className={`rounded-lg border px-3 py-2.5 text-left transition ${agentMode === opt.id ? "border-blue-500 bg-blue-600/10" : "border-gray-800 hover:border-gray-600"}`}>
-                  <div className="flex items-center gap-2 text-sm text-gray-200"><opt.icon size={14} />{opt.title}</div>
-                  <p className="mt-0.5 text-[11px] text-gray-500">{opt.desc}</p>
+                  className={`rounded-lg border px-3 py-2.5 text-left transition ${agentMode === opt.id ? "border-blue-500 bg-blue-600/10" : "border-line-subtle hover:border-line-strong"}`}>
+                  <div className="flex items-center gap-2 text-sm text-fg-soft"><opt.icon size={14} />{opt.title}</div>
+                  <p className="mt-0.5 text-[11px] text-fg-muted">{opt.desc}</p>
                 </button>
               ))}
             </div>
@@ -376,19 +376,19 @@ export default function SetupWizard({ open, onClose }: Props) {
                 {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                 {verifying ? "验证中..." : agentConfigured ? "已验证" : "验证并继续"}
               </button>
-              {agentConfigured && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已保存</span>}
-              {verifyErr && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyErr}</span>}
+              {agentConfigured && <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已保存</span>}
+              {verifyErr && <span className="flex items-center gap-1 text-xs text-danger"><ShieldAlert size={13} />{verifyErr}</span>}
             </div>
             {agentConfigured && (
-              <button onClick={() => goto(2)} className="mt-6 flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
+              <button onClick={() => goto(2)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
                 下一步 <ArrowRight size={14} />
               </button>
             )}
           </>)}
 
           {step === 2 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 3 步：连上飞书</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+            <h2 className="text-lg font-semibold text-fg">第 3 步：连上飞书</h2>
+            <p className="mt-2 text-sm leading-relaxed text-fg-3">
               创建一个飞书机器人并接进来。之后你在飞书里给它发消息，就是在指挥你电脑上的 AI。
               推荐用「一键创建」：扫个码，应用自动建好、凭据自动填回来。
             </p>
@@ -402,40 +402,40 @@ export default function SetupWizard({ open, onClose }: Props) {
               {qrState !== "idle" && (
                 <div className="flex flex-col items-center gap-2 py-2">
                   {qrState === "loading" && !qrUrl
-                    ? <Loader2 size={22} className="animate-spin text-blue-400" />
+                    ? <Loader2 size={22} className="animate-spin text-accent" />
                     : <img src={qrUrl} alt="Feishu QR" className="h-40 w-40 rounded bg-white p-1" />}
-                  <p className="text-xs text-gray-400">用飞书 App 扫码创建，完成后凭据自动回填</p>
-                  <button onClick={async () => { await window.electronAPI.feishuRegisterAppCancel(); setQrState("idle"); setQrUrl("") }} className="text-xs text-gray-500 hover:text-red-400">取消</button>
+                  <p className="text-xs text-fg-3">用飞书 App 扫码创建，完成后凭据自动回填</p>
+                  <button onClick={async () => { await window.electronAPI.feishuRegisterAppCancel(); setQrState("idle"); setQrUrl("") }} className="text-xs text-fg-muted hover:text-danger">取消</button>
                 </div>
               )}
-              <div className="space-y-2 rounded-lg border border-gray-800 p-3">
-                <p className="text-xs text-gray-500">已有飞书应用？直接填凭据（<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">开发者后台</a>可查）：</p>
+              <div className="space-y-2 rounded-lg border border-line-subtle p-3">
+                <p className="text-xs text-fg-muted">已有飞书应用？直接填凭据（<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-accent hover:underline">开发者后台</a>可查）：</p>
                 <div className="grid grid-cols-2 gap-2">
                   <input type="text" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="App ID (cli_...)" className={inputCls} />
                   <input type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} placeholder="App Secret" className={inputCls} />
                 </div>
                 <button onClick={() => void saveChannel(appId, appSecret, false)} disabled={chanChecking || !appId.trim() || !appSecret.trim()}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-600 px-3 py-1.5 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">
+                  className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
                   {chanChecking ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                   {chanChecking ? "校验中..." : "校验并继续"}
                 </button>
               </div>
-              {botName && <p className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已连接机器人「{botName}」</p>}
-              {chanErr && <p className="text-xs text-red-400">{chanErr}</p>}
+              {botName && <p className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已连接机器人「{botName}」</p>}
+              {chanErr && <p className="text-xs text-danger">{chanErr}</p>}
             </div>
             {botName && (
-              <button onClick={() => goto(3)} className="mt-6 flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">
+              <button onClick={() => goto(3)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
                 下一步 <ArrowRight size={14} />
               </button>
             )}
           </>)}
 
           {step === 3 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 4 步：绑定你自己（推荐）</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
-              让机器人认识你：点「开始绑定」，然后<span className="text-gray-200">打开飞书，私聊给机器人随便发一句话</span>（比如你好）。
+            <h2 className="text-lg font-semibold text-fg">第 4 步：绑定你自己（推荐）</h2>
+            <p className="mt-2 text-sm leading-relaxed text-fg-3">
+              让机器人认识你：点「开始绑定」，然后<span className="text-fg-soft">打开飞书，私聊给机器人随便发一句话</span>（比如你好）。
             </p>
-            <p className="mt-2 text-sm leading-relaxed text-gray-500">
+            <p className="mt-2 text-sm leading-relaxed text-fg-muted">
               绑定后：你私聊它 = 直接指挥第 1 步选的那个文件夹里的 AI，聊天记忆一直保留。
               不绑定：所有人的消息都只能在临时文件夹里处理，碰不到你的项目。
             </p>
@@ -446,50 +446,50 @@ export default function SetupWizard({ open, onClose }: Props) {
                 </button>
               )}
               {binding && (
-                <span className="flex items-center gap-2 text-sm text-blue-300">
+                <span className="flex items-center gap-2 text-sm text-accent-soft">
                   <Loader2 size={15} className="animate-spin" />
                   等待中——现在去飞书私聊机器人发一句话...
-                  <button onClick={() => void cancelBind()} className="text-xs text-gray-500 hover:text-red-400">取消</button>
+                  <button onClick={() => void cancelBind()} className="text-xs text-fg-muted hover:text-danger">取消</button>
                 </span>
               )}
-              {bindDone && <span className="flex items-center gap-1 text-sm text-green-400"><CheckCircle2 size={15} />绑定成功！</span>}
+              {bindDone && <span className="flex items-center gap-1 text-sm text-success"><CheckCircle2 size={15} />绑定成功！</span>}
             </div>
-            {bindErr && <p className="mt-3 text-xs text-red-400">{bindErr}</p>}
+            {bindErr && <p className="mt-3 text-xs text-danger">{bindErr}</p>}
             <div className="mt-6 flex items-center gap-4">
               {bindDone
-                ? <button onClick={() => goto(4)} className="flex items-center gap-1 text-sm text-blue-400 hover:text-blue-300">下一步 <ArrowRight size={14} /></button>
-                : <button onClick={() => goto(4)} className="text-sm text-gray-500 hover:text-gray-300">暂不绑定，跳过</button>}
+                ? <button onClick={() => goto(4)} className="flex items-center gap-1 text-sm text-accent hover:text-accent-soft">下一步 <ArrowRight size={14} /></button>
+                : <button onClick={() => goto(4)} className="text-sm text-fg-muted hover:text-fg-2">暂不绑定，跳过</button>}
             </div>
           </>)}
 
           {step === 4 && (<>
-            <h2 className="text-lg font-semibold text-gray-100">第 5 步：装点工具（可选）</h2>
-            <p className="mt-2 text-sm leading-relaxed text-gray-400">
+            <h2 className="text-lg font-semibold text-fg">第 5 步：装点工具（可选）</h2>
+            <p className="mt-2 text-sm leading-relaxed text-fg-3">
               给 AI 装上飞书的手脚：装完并登录后，AI 能帮你读写飞书文档、查日历、管理飞书项目。
               也可以以后在 设置 → 工具箱 里随时安装。
             </p>
-            <p className="mt-2 rounded-lg border border-amber-800/40 bg-amber-950/30 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
-              一键安装需要本机已装 <span className="font-medium text-amber-100">Node.js</span>
-              （<a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">nodejs.org</a>
+            <p className="mt-2 rounded-lg border border-warning-line/40 bg-warning-tint/30 px-3 py-2 text-xs leading-relaxed text-warning-bright/90">
+              一键安装需要本机已装 <span className="font-medium text-warning-bright">Node.js</span>
+              （<a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a>
               ，安装时勾选 Add to PATH）。新电脑若未安装，点安装会失败并在下方提示原因。
-              {toolStatus && toolStatus.nodeOk === false && <span className="mt-1 block text-red-300">当前未检测到 Node.js。</span>}
-              {toolStatus?.nodeOk && toolStatus.nodeVersion && <span className="mt-1 block text-green-400/80">已检测到 Node v{toolStatus.nodeVersion}</span>}
+              {toolStatus && toolStatus.nodeOk === false && <span className="mt-1 block text-danger-soft">当前未检测到 Node.js。</span>}
+              {toolStatus?.nodeOk && toolStatus.nodeVersion && <span className="mt-1 block text-success/80">已检测到 Node v{toolStatus.nodeVersion}</span>}
             </p>
             <div className="mt-6 space-y-3">
               {(["larkCli", "meegle"] as const).map((key) => {
                 const meta = key === "larkCli" ? { label: "飞书（lark-cli）", desc: "文档 / 日历 / 消息 / 表格" } : { label: "飞书项目（meegle）", desc: "飞书项目（Meegle）管理" }
                 const st = key === "larkCli" ? toolStatus?.larkCli : toolStatus?.meegle
                 return (
-                  <div key={key} className="flex items-center justify-between rounded-lg border border-gray-800 px-4 py-3">
+                  <div key={key} className="flex items-center justify-between rounded-lg border border-line-subtle px-4 py-3">
                     <div>
-                      <p className="text-sm text-gray-200">{meta.label}</p>
-                      <p className="text-xs text-gray-600">{meta.desc}</p>
+                      <p className="text-sm text-fg-soft">{meta.label}</p>
+                      <p className="text-xs text-fg-faint">{meta.desc}</p>
                     </div>
-                    {!toolStatus ? <Loader2 size={13} className="animate-spin text-gray-500" />
-                      : st?.installed ? <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已安装</span>
+                    {!toolStatus ? <Loader2 size={13} className="animate-spin text-fg-muted" />
+                      : st?.installed ? <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已安装</span>
                       : (
                         <button onClick={() => void installTool(key)} disabled={!!toolBusy}
-                          className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2.5 py-1 text-xs text-blue-300 hover:bg-blue-600/20 disabled:opacity-50">
+                          className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2.5 py-1 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
                           {toolBusy === key ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
                           {toolBusy === key ? "安装中..." : "一键安装"}
                         </button>
@@ -498,7 +498,7 @@ export default function SetupWizard({ open, onClose }: Props) {
                 )
               })}
             </div>
-            {toolErr && <p className="mt-3 text-xs leading-relaxed text-red-400">{toolErr}</p>}
+            {toolErr && <p className="mt-3 text-xs leading-relaxed text-danger">{toolErr}</p>}
             <button onClick={() => void finish(true)} className="mt-8 flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-green-500">
               <CheckCircle2 size={15} />完成，开始使用
             </button>

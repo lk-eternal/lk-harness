@@ -81,7 +81,7 @@ export default function useInlineModal(): {
         </div>
       }
     >
-      <p className="whitespace-pre-wrap text-gray-200">{state.opts.message}</p>
+      <p className="whitespace-pre-wrap text-fg-soft">{state.opts.message}</p>
     </ModalShell>
   ) : null
 

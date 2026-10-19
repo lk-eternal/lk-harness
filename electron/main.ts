@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, screen } from "electron"
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, nativeTheme } from "electron"
 import * as path from "node:path"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -221,6 +221,11 @@ function registerIpcHandlers(): void {
   ipcMain.handle("app:set-auto-start", (_, enabled: boolean) => {
     saveConfig({ autoStart: enabled })
     applyLoginItemSetting(enabled)
+    return { ok: true }
+  })
+  ipcMain.handle("app:set-theme", (_, theme: AppConfig["theme"]) => {
+    saveConfig({ theme })
+    nativeTheme.themeSource = theme
     return { ok: true }
   })
 
@@ -470,6 +475,7 @@ app.whenReady().then(() => {
   reportSecretDecryptFailuresIfNeeded()
   registerIpcHandlers()
   applyLoginItemSetting(getConfig().autoStart)
+  nativeTheme.themeSource = getConfig().theme
   createWindow()
   initAppUpdater(() => mainWindow)
   initTray()

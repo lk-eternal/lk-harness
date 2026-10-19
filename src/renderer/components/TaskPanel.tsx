@@ -6,7 +6,7 @@ import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 import { modelSlug } from "../model-utils"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 interface TaskItem {
   id: string; name: string; cron: string; content: string; enabled: boolean; independent?: boolean
@@ -214,18 +214,18 @@ export default function TaskPanel() {
                   key={t.id}
                   type="button"
                   onClick={() => void selectTask(t)}
-                  className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}
+                  className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                 >
                   <span className={`truncate text-xs font-medium ${t.enabled ? "" : "line-through opacity-60"}`}>{t.name || "未命名"}</span>
-                  <span className="truncate font-mono text-[10px] text-gray-600">{t.cron}</span>
-                  {isRunning && <span className="mt-0.5 text-[10px] text-green-400">运行中</span>}
+                  <span className="truncate font-mono text-[10px] text-fg-faint">{t.cron}</span>
+                  {isRunning && <span className="mt-0.5 text-[10px] text-success">运行中</span>}
                 </button>
               )
             })}
             <button
               type="button"
               onClick={openAdd}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 transition hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300"
+              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
             >
               <Plus size={14} />添加
             </button>
@@ -236,28 +236,28 @@ export default function TaskPanel() {
           {draft ? (
             <>
               <div className={PANEL_SCROLL}>
-                <div><label className="mb-1 block text-xs text-gray-500">任务名称</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">任务名称</label>
                   <input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} placeholder="日报推送" /></div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">Cron 表达式</label>
+                  <label className="mb-1 block text-xs text-fg-muted">Cron 表达式</label>
                   <input type="text" value={draft.cron} onChange={(e) => { setDraft({ ...draft, cron: e.target.value }); setTaskCronValid(true) }} className={inputCls + (!taskCronValid ? " border-red-500" : "")} placeholder="0 9 * * 1-5" />
-                  {!taskCronValid && <p className="mt-1 text-xs text-red-400">Cron 表达式无效</p>}
-                  <div className="mt-2 rounded-lg border border-gray-800 bg-gray-900/80 px-3 py-2">
-                    <p className="text-xs font-medium text-gray-500">最近 5 次触发</p>
-                    {cronPreviewLoading && <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />计算中…</p>}
-                    {!cronPreviewLoading && cronPreviewErr && <p className="mt-1 text-xs text-amber-400/90">{cronPreviewErr}</p>}
+                  {!taskCronValid && <p className="mt-1 text-xs text-danger">Cron 表达式无效</p>}
+                  <div className="mt-2 rounded-lg border border-line-subtle bg-surface/80 px-3 py-2">
+                    <p className="text-xs font-medium text-fg-muted">最近 5 次触发</p>
+                    {cronPreviewLoading && <p className="mt-1 flex items-center gap-1.5 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />计算中…</p>}
+                    {!cronPreviewLoading && cronPreviewErr && <p className="mt-1 text-xs text-warning/90">{cronPreviewErr}</p>}
                     {cronPreviewRuns && cronPreviewRuns.length > 0 && (
-                      <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 font-mono text-[11px] text-gray-400">
+                      <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 font-mono text-[11px] text-fg-3">
                         {cronPreviewRuns.map((line, i) => <li key={`${line}-${i}`}>{line}</li>)}
                       </ol>
                     )}
                   </div>
                 </div>
-                <div><label className="mb-1 block text-xs text-gray-500">消息内容</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">消息内容</label>
                   <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="要发送给 Agent 的消息..." /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-gray-500">消息通道</label>
+                    <label className="mb-1 block text-xs text-fg-muted">消息通道</label>
                     <select value={draft.channelId ?? ""} onChange={(e) => { setDraft({ ...draft, channelId: e.target.value || undefined }); setTaskModelOptions([]) }} className={inputCls}>
                       <option value="">默认</option>
                       {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -265,8 +265,8 @@ export default function TaskPanel() {
                   </div>
                   <div>
                     <div className="mb-1 flex items-center gap-2">
-                      <label className="text-xs text-gray-500">模型</label>
-                      <button onClick={() => void fetchTaskModels(draft.channelId)} disabled={loadingTaskModels} className="text-[10px] text-gray-500 hover:text-white">
+                      <label className="text-xs text-fg-muted">模型</label>
+                      <button onClick={() => void fetchTaskModels(draft.channelId)} disabled={loadingTaskModels} className="text-[10px] text-fg-muted hover:text-fg">
                         {loadingTaskModels ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
                       </button>
                     </div>
@@ -288,10 +288,10 @@ export default function TaskPanel() {
                   </div>
                 </div>
                 <div>
-                  <div className="mb-1 flex items-center gap-2 text-xs text-gray-500">
+                  <div className="mb-1 flex items-center gap-2 text-xs text-fg-muted">
                     <span>会话 ID（可选）</span>
                     <span
-                      className="cursor-help text-blue-400/90 underline decoration-dotted underline-offset-2"
+                      className="cursor-help text-accent/90 underline decoration-dotted underline-offset-2"
                       title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
                     >
                       如何获取?
@@ -306,22 +306,22 @@ export default function TaskPanel() {
                   />
                 </div>
                 <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} className="rounded border-gray-600" />启用</label>
-                  <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={draft.independent !== false} onChange={(e) => setDraft({ ...draft, independent: e.target.checked })} className="rounded border-gray-600" />独立运行</label>
+                  <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} className="rounded border-line-strong" />启用</label>
+                  <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={draft.independent !== false} onChange={(e) => setDraft({ ...draft, independent: e.target.checked })} className="rounded border-line-strong" />独立运行</label>
                 </div>
               </div>
               <div className={PANEL_FOOTER}>
                 <div className="flex items-center gap-2">
                   {!isNew && (
                     <>
-                      <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/30"><Trash2 size={13} />删除</button>
-                      <button type="button" onClick={() => void handleTrigger()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-blue-400 hover:bg-blue-600/20"><Play size={13} />立即执行</button>
-                      <button type="button" onClick={() => void handleToggle()} className={`rounded-md px-2.5 py-1.5 text-xs ${draft.enabled ? "text-green-400" : "text-gray-500"}`}>{draft.enabled ? "已启用" : "已停用"}</button>
+                      <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>
+                      <button type="button" onClick={() => void handleTrigger()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-accent hover:bg-blue-600/20"><Play size={13} />立即执行</button>
+                      <button type="button" onClick={() => void handleToggle()} className={`rounded-md px-2.5 py-1.5 text-xs ${draft.enabled ? "text-success" : "text-fg-muted"}`}>{draft.enabled ? "已启用" : "已停用"}</button>
                     </>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.name.trim() || !draft.cron.trim()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
@@ -330,7 +330,7 @@ export default function TaskPanel() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择任务</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择任务</div>
           )}
         </div>
       </div>

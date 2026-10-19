@@ -46,10 +46,10 @@ export function LocalImage({ path, className }: { path: string; className: strin
   const { url, failed } = useLocalImage(path)
   const [zoom, setZoom] = useState(false)
   if (failed) {
-    return <div className={`flex items-center justify-center gap-1 rounded bg-gray-800 text-xs text-gray-500 ${className}`} title={path}><ImageOff size={14} />图片不可用</div>
+    return <div className={`flex items-center justify-center gap-1 rounded bg-raised text-xs text-fg-muted ${className}`} title={path}><ImageOff size={14} />图片不可用</div>
   }
   if (!url) {
-    return <div className={`flex items-center justify-center rounded bg-gray-800 ${className}`}><Loader2 size={14} className="animate-spin text-gray-500" /></div>
+    return <div className={`flex items-center justify-center rounded bg-raised ${className}`}><Loader2 size={14} className="animate-spin text-fg-muted" /></div>
   }
   return (
     <>
@@ -77,8 +77,8 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
 export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; onAnswer: (questionId: string, option: string) => void }) {
   const locked = !!item.answered || !!item.closedNote
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-900/60 p-3">
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-gray-200">{item.text}</p>
+    <div className="rounded-lg border border-line bg-surface/60 p-3">
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>
       <div className="mt-3 flex flex-col gap-1.5">
         {item.options.map((o, i) => {
           const picked = item.answered === o
@@ -90,20 +90,20 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
               onClick={() => onAnswer(item.messageId, o)}
               className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-left text-sm transition ${
                 picked
-                  ? "border-blue-500 bg-blue-600/20 text-blue-200"
+                  ? "border-blue-500 bg-blue-600/20 text-accent-bright"
                   : locked
-                    ? "border-gray-800 text-gray-600"
-                    : "border-gray-700 text-gray-300 hover:border-blue-500 hover:bg-gray-800"
+                    ? "border-line-subtle text-fg-faint"
+                    : "border-line text-fg-2 hover:border-blue-500 hover:bg-raised"
               }`}
             >
-              <span className="w-4 shrink-0 text-xs tabular-nums text-gray-500">{i + 1}.</span>
+              <span className="w-4 shrink-0 text-xs tabular-nums text-fg-muted">{i + 1}.</span>
               <span className="min-w-0 flex-1 break-words">{o}</span>
               {picked && <Check size={14} className="shrink-0" />}
             </button>
           )
         })}
       </div>
-      {item.closedNote && !item.answered && <p className="mt-2 text-xs text-gray-500">{item.closedNote}</p>}
+      {item.closedNote && !item.answered && <p className="mt-2 text-xs text-fg-muted">{item.closedNote}</p>}
     </div>
   )
 }
@@ -115,17 +115,17 @@ export function FileCard({ item }: { item: AppChatFileItem }) {
     setError(r.ok ? "" : (r.error ?? "操作失败"))
   }
   return (
-    <div className="rounded-lg border border-gray-700 bg-gray-900/60 px-3 py-2">
+    <div className="rounded-lg border border-line bg-surface/60 px-3 py-2">
       <div className="flex items-center gap-3">
-        <FileText size={20} className="shrink-0 text-blue-400" />
+        <FileText size={20} className="shrink-0 text-accent" />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm text-gray-200" title={item.name}>{item.name}</p>
-          <p className="truncate text-[11px] text-gray-600" title={item.path}>{item.path}</p>
+          <p className="truncate text-sm text-fg-soft" title={item.name}>{item.name}</p>
+          <p className="truncate text-[11px] text-fg-faint" title={item.path}>{item.path}</p>
         </div>
-        <button type="button" onClick={() => void run(() => window.electronAPI.appChatOpenFile(item.path))} className="shrink-0 rounded border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-300">打开</button>
-        <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(item.path))} className="flex shrink-0 items-center gap-1 rounded border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-300"><FolderOpen size={12} />所在位置</button>
+        <button type="button" onClick={() => void run(() => window.electronAPI.appChatOpenFile(item.path))} className="shrink-0 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">打开</button>
+        <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(item.path))} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"><FolderOpen size={12} />所在位置</button>
       </div>
-      {error && <p className="mt-1.5 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
     </div>
   )
 }
@@ -140,13 +140,13 @@ export function NoticePill({ item, onCommand }: { item: AppChatNoticeItem; onCom
     else groups.push({ section, buttons: [b] })
   }
   return (
-    <div className="max-w-[90%] self-center rounded-lg bg-gray-800/60 px-3.5 py-2 text-left text-xs text-gray-400">
+    <div className="max-w-[90%] self-center rounded-lg bg-raised/60 px-3.5 py-2 text-left text-xs text-fg-3">
       {item.text && <p className="whitespace-pre-wrap leading-relaxed">{item.text}</p>}
       {groups.map((g) => (
         <div key={g.section} className="mt-2 flex flex-wrap items-center justify-start gap-1.5">
-          {g.section && <span className="text-gray-600">{g.section}</span>}
+          {g.section && <span className="text-fg-faint">{g.section}</span>}
           {g.buttons.map((b) => (
-            <button key={b.cmd} type="button" onClick={() => onCommand(b.cmd)} className="rounded-md border border-gray-700 px-2 py-0.5 text-gray-300 transition hover:border-blue-500 hover:text-blue-300">{b.label}</button>
+            <button key={b.cmd} type="button" onClick={() => onCommand(b.cmd)} className="rounded-md border border-line px-2 py-0.5 text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">{b.label}</button>
           ))}
         </div>
       ))}

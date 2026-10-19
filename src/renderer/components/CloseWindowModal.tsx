@@ -22,12 +22,12 @@ export default function CloseWindowModal({ open, onClose }: Props) {
       title="关闭窗口"
       footer={
         <>
-          <label className="flex w-full cursor-pointer items-start gap-2 text-xs leading-snug text-gray-400">
+          <label className="flex w-full cursor-pointer items-start gap-2 text-xs leading-snug text-fg-3">
             <input
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              className="mt-0.5 shrink-0 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500/40"
+              className="mt-0.5 shrink-0 rounded border-line-strong bg-raised text-blue-500 focus:ring-blue-500/40"
             />
             <span>不再提醒，以后按本次选择执行</span>
           </label>
@@ -45,8 +45,8 @@ export default function CloseWindowModal({ open, onClose }: Props) {
         </>
       }
     >
-      <p className="mb-2 text-gray-200">请选择关闭主窗口后的操作：</p>
-      <p className="text-xs text-gray-500">
+      <p className="mb-2 text-fg-soft">请选择关闭主窗口后的操作：</p>
+      <p className="text-xs text-fg-muted">
         可在
         <span className="whitespace-nowrap">「设置 → 通用」</span>
         中随时修改默认行为。

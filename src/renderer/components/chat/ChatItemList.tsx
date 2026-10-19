@@ -24,8 +24,8 @@ export default function ChatItemList({ items, loading, busy, onAnswer, onCommand
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          {loading && items.length === 0 && <p className="text-center text-xs text-gray-600">加载中…</p>}
-          {!loading && items.length === 0 && <p className="py-20 text-center text-sm text-gray-600">发一条消息开始对话</p>}
+          {loading && items.length === 0 && <p className="text-center text-xs text-fg-faint">加载中…</p>}
+          {!loading && items.length === 0 && <p className="py-20 text-center text-sm text-fg-faint">发一条消息开始对话</p>}
           {items.map((it) => {
             switch (it.kind) {
               case "user": return <UserBubble key={it.id} item={it} />
@@ -37,7 +37,7 @@ export default function ChatItemList({ items, loading, busy, onAnswer, onCommand
               case "notice": return <NoticePill key={it.id} item={it} onCommand={onCommand} />
             }
           })}
-          {waiting && <div className="flex items-center gap-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}
+          {waiting && <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}
           <div ref={sentinelRef} />
         </div>
       </div>
@@ -46,7 +46,7 @@ export default function ChatItemList({ items, loading, busy, onAnswer, onCommand
           type="button"
           onClick={scrollToBottom}
           title="回到底部"
-          className="absolute bottom-3 right-6 rounded-full border border-gray-700 bg-gray-900 p-2 text-gray-300 shadow-lg transition hover:bg-gray-800"
+          className="absolute bottom-3 right-6 rounded-full border border-line bg-surface p-2 text-fg-2 shadow-lg transition hover:bg-raised"
         ><ArrowDown size={14} /></button>
       )}
     </div>

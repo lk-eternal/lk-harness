@@ -227,30 +227,30 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
           <button
             type="button"
             onClick={onBack}
-            className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+            className="rounded-lg p-1.5 text-fg-3 transition hover:bg-raised hover:text-fg"
             style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             title="返回首页"
           ><ArrowLeft size={16} /></button>
           <h1 className="text-lg font-semibold">对话</h1>
-          <span className="flex items-center gap-1 rounded bg-purple-900/40 px-2 py-0.5 text-xs text-purple-300" title="消息不经过飞书/微信，仅在本机展示；对话内容仍会发送给所选模型服务商，并保存在本机会话记录中">
+          <span className="flex items-center gap-1 rounded bg-purple-tint/40 px-2 py-0.5 text-xs text-purple" title="消息不经过飞书/微信，仅在本机展示；对话内容仍会发送给所选模型服务商，并保存在本机会话记录中">
             <MonitorSmartphone size={12} />仅本机
           </span>
         </div>
       </TitleBar>
 
       {noChannel ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-gray-500">
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-fg-muted">
           <p>还没有「应用内对话」通道</p>
           <button type="button" onClick={onOpenChannelSettings} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">去设置里添加</button>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* 左：会话列表 */}
-          <aside className="flex w-60 shrink-0 flex-col border-r border-gray-800">
+          <aside className="flex w-60 shrink-0 flex-col border-r border-line-subtle">
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
               {views.map((v) => (
                 <div key={v.channelId}>
-                  {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-gray-600">{v.name}</p>}
+                  {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-fg-faint">{v.name}</p>}
                   <div className="space-y-0.5">
                     {v.tabs.map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
@@ -260,7 +260,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                           type="button"
                           onClick={() => setSelected(t.sessionKey)}
                           title={workspaceDirFromSessionKey(t.sessionKey) ?? t.label}
-                          className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${on ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}
+                          className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                         >
                           <span className="min-w-0 flex-1 truncate">{t.label}</span>
                         </button>
@@ -269,16 +269,16 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                     <button
                       type="button"
                       onClick={() => void addSession(v.channelId)}
-                      className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 transition hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300"
+                      className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
                     ><Plus size={14} />新会话（选择目录）</button>
                   </div>
                 </div>
               ))}
               {treeError && <p className="px-2 text-[11px] text-yellow-500">{treeError}</p>}
             </div>
-            <div className="flex shrink-0 items-center justify-between border-t border-gray-800 px-3 py-2 text-[11px] text-gray-600">
+            <div className="flex shrink-0 items-center justify-between border-t border-line-subtle px-3 py-2 text-[11px] text-fg-faint">
               <span title="对话记录占用的本机磁盘空间">{usageBytes == null ? "" : `记录 ${fmtBytes(usageBytes)}`}</span>
-              <button type="button" onClick={() => void clearAll()} className="transition hover:text-red-400">清空全部</button>
+              <button type="button" onClick={() => void clearAll()} className="transition hover:text-danger">清空全部</button>
             </div>
           </aside>
 
@@ -286,17 +286,17 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
           <section className="flex min-w-0 flex-1 flex-col">
             {selected && tab ? (
               <>
-                <div className="flex shrink-0 items-center gap-3 border-b border-gray-800 px-6 py-2">
-                  <FolderOpen size={14} className="shrink-0 text-blue-400" />
+                <div className="flex shrink-0 items-center gap-3 border-b border-line-subtle px-6 py-2">
+                  <FolderOpen size={14} className="shrink-0 text-accent" />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{tab.label}</p>
-                    {workspaceDir && <p className="truncate text-[11px] text-gray-600" title={workspaceDir}>{workspaceDir}</p>}
+                    {workspaceDir && <p className="truncate text-[11px] text-fg-faint" title={workspaceDir}>{workspaceDir}</p>}
                   </div>
                   <div className="relative shrink-0" ref={modelMenuRef}>
                     <button
                       type="button"
                       onClick={() => setModelMenuOpen((o) => !o)}
-                      className="inline-flex max-w-[12rem] items-center gap-1 rounded border border-gray-700 px-2 py-1 text-[11px] text-violet-200 transition hover:border-violet-500"
+                      className="inline-flex max-w-[12rem] items-center gap-1 rounded border border-line px-2 py-1 text-[11px] text-violet transition hover:border-violet-500"
                       title="切换本会话模型"
                     >
                       {modelBusy && <Loader2 size={10} className="animate-spin" />}
@@ -304,8 +304,8 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                       <ChevronDown size={10} />
                     </button>
                     {modelMenuOpen && (
-                      <div className="absolute right-0 top-full z-20 mt-1 max-h-60 w-56 overflow-auto rounded border border-gray-700 bg-gray-950 py-1 shadow-lg">
-                        {quickModels.length === 0 && <div className="px-2 py-1 text-[11px] text-gray-600">暂无常用模型（可在首页添加）</div>}
+                      <div className="absolute right-0 top-full z-20 mt-1 max-h-60 w-56 overflow-auto rounded border border-line bg-page py-1 shadow-lg">
+                        {quickModels.length === 0 && <div className="px-2 py-1 text-[11px] text-fg-faint">暂无常用模型（可在首页添加）</div>}
                         {quickModels.map((m) => {
                           const cur = tab.model === m.model && (tab.modelParams ?? "") === (m.modelParams ?? "")
                           return (
@@ -313,7 +313,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                               key={`${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`}
                               type="button"
                               onClick={() => void switchModel(m)}
-                              className={`block w-full truncate px-2 py-1 text-left text-[11px] hover:bg-violet-950/50 ${cur ? "text-violet-200" : "text-gray-300"}`}
+                              className={`block w-full truncate px-2 py-1 text-left text-[11px] hover:bg-violet-tint/50 ${cur ? "text-violet" : "text-fg-2"}`}
                             >{m.label || modelSlug(m.model, m.modelParams)}</button>
                           )
                         })}
@@ -321,21 +321,21 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                     )}
                   </div>
                   <div className="relative shrink-0" ref={moreMenuRef}>
-                    <button type="button" onClick={() => setMoreMenuOpen((o) => !o)} title="更多" className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-gray-200"><MoreHorizontal size={15} /></button>
+                    <button type="button" onClick={() => setMoreMenuOpen((o) => !o)} title="更多" className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-soft"><MoreHorizontal size={15} /></button>
                     {moreMenuOpen && (
-                      <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded border border-gray-700 bg-gray-950 py-1 shadow-lg">
-                        <button type="button" onClick={() => void clearSession()} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-red-400 hover:bg-gray-900"><Trash2 size={12} />清空本会话记录</button>
+                      <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded border border-line bg-page py-1 shadow-lg">
+                        <button type="button" onClick={() => void clearSession()} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-danger hover:bg-surface"><Trash2 size={12} />清空本会话记录</button>
                       </div>
                     )}
                   </div>
                 </div>
 
                 <ChatItemList key={selected} items={items} loading={loading} busy={busy} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
-                {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-red-400">{actionError || historyError}</p>}
+                {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer disabled={!selected} busy={busy} onSend={(t, imgs) => void send(t, imgs)} onStop={() => void stop()} onError={setActionError} />
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center text-sm text-gray-600">
+              <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">
                 {loaded ? "← 选择会话，或新建一个" : "加载中…"}
               </div>
             )}

@@ -117,7 +117,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
               setActiveId(id)
               setOverId(id)
             }}
-            className="shrink-0 cursor-grab touch-none text-gray-600 transition hover:text-gray-300 active:cursor-grabbing"
+            className="shrink-0 cursor-grab touch-none text-fg-faint transition hover:text-fg-2 active:cursor-grabbing"
           />
         ) : null
         return (

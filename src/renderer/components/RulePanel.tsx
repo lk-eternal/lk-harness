@@ -5,7 +5,7 @@ import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 function normalizeScope(scope?: RuleScope): RuleScope {
   if (!scope || scope.mode !== "custom") return { mode: "main" }
@@ -114,16 +114,16 @@ export default function RulePanel() {
           <div className={PANEL_LIST}>
             {rules.map((r) => (
               <button key={r.id} type="button" onClick={() => void selectRule(r)}
-                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition ${selectedId === r.id ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.enabled ? "bg-green-500" : "bg-gray-600"}`} />
+                className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition ${selectedId === r.id ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.enabled ? "bg-green-500" : "bg-stronger"}`} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{r.id}</p>
-                  <p className="truncate text-[10px] text-gray-600">{r.enabled ? "已启用" : "已停用"} · {scopeHint(r)}</p>
+                  <p className="truncate text-[10px] text-fg-faint">{r.enabled ? "已启用" : "已停用"} · {scopeHint(r)}</p>
                 </div>
               </button>
             ))}
             <button type="button" onClick={() => void openAdd()}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300">
+              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40 hover:text-fg-2">
               <Plus size={14} />添加
             </button>
           </div>
@@ -133,23 +133,23 @@ export default function RulePanel() {
             <>
               <div className={PANEL_SCROLL}>
                 <div className="mb-3 flex items-center gap-2">
-                  <label className="flex items-center gap-1.5 text-xs text-gray-400">
+                  <label className="flex items-center gap-1.5 text-xs text-fg-3">
                     <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })}
-                      className="rounded border-gray-600 bg-gray-900" />
+                      className="rounded border-line-strong bg-surface" />
                     启用
                   </label>
                 </div>
                 <ScopeEditor scope={draft.scope} channels={channels} onChange={(scope) => setDraft({ ...draft, scope })} />
-                <div><label className="mb-1 block text-xs text-gray-500">规则名</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">规则名</label>
                   <input type="text" value={draft.name}
                     onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} placeholder="my-rule" /></div>
-                <div><label className="mb-1 block text-xs text-gray-500">内容</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">内容</label>
                   <textarea value={draft.content} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={20} className={inputCls + " font-mono text-xs leading-relaxed"} /></div>
               </div>
               <div className={PANEL_FOOTER}>
-                {!isNew && draft.id && <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/30"><Trash2 size={13} />删除</button>}
+                {!isNew && draft.id && <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>}
                 <div className="ml-auto flex items-center gap-2">
-                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.name.trim()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
@@ -158,7 +158,7 @@ export default function RulePanel() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择 Claw 规则</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择 Claw 规则</div>
           )}
         </div>
       </div>
@@ -179,9 +179,9 @@ function ScopeEditor({ scope, channels, onChange }: {
   // 通道未加载完时不展开为空框，避免误存（空 custom = 不生效）
   if (s.mode !== "custom" && channels.length === 0) {
     return (
-      <div className="mb-3 space-y-2 rounded-lg border border-gray-800 p-3">
-        <p className="text-xs font-medium text-gray-400">生效范围</p>
-        <div className="rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-xs text-gray-500">正在加载通道…</div>
+      <div className="mb-3 space-y-2 rounded-lg border border-line-subtle p-3">
+        <p className="text-xs font-medium text-fg-3">生效范围</p>
+        <div className="rounded-md border border-line bg-raised px-3 py-2 text-xs text-fg-muted">正在加载通道…</div>
       </div>
     )
   }
@@ -189,8 +189,8 @@ function ScopeEditor({ scope, channels, onChange }: {
     ? (s.targets ?? [])
     : channels.map((c) => ({ channelId: c.id, audiences: ["main" as const] }))
   return (
-    <div className="mb-3 space-y-2 rounded-lg border border-gray-800 p-3">
-      <p className="text-xs font-medium text-gray-400">生效范围</p>
+    <div className="mb-3 space-y-2 rounded-lg border border-line-subtle p-3">
+      <p className="text-xs font-medium text-fg-3">生效范围</p>
       <AudienceMultiSelect channels={channels} value={targets} onChange={(t) => onChange({ mode: "custom", targets: t })} />
     </div>
   )
@@ -280,50 +280,50 @@ function AudienceMultiSelect({ channels, value, onChange }: {
         ref={btnRef}
         type="button"
         onClick={() => { setOpen(!open); setQuery("") }}
-        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-left text-sm outline-none transition hover:border-gray-600 focus:border-blue-500"
+        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-line bg-raised px-2 py-1 text-left text-sm outline-none transition hover:border-line-strong focus:border-blue-500"
       >
         <span className="flex min-w-0 flex-1 flex-wrap gap-1">
           {chips.length === 0
-            ? <span className="px-1 text-gray-500">选择生效范围…（不选=不生效）</span>
+            ? <span className="px-1 text-fg-muted">选择生效范围…（不选=不生效）</span>
             : chips.map((c) => (
-              <span key={c.id} className="flex max-w-full items-center gap-1 rounded bg-blue-600/25 px-1.5 py-0.5 text-xs text-blue-200">
+              <span key={c.id} className="flex max-w-full items-center gap-1 rounded bg-blue-600/25 px-1.5 py-0.5 text-xs text-accent-bright">
                 <span className="truncate" title={c.label}>{c.label}</span>
                 <span
                   role="button"
                   tabIndex={-1}
                   onClick={(e) => { e.stopPropagation(); toggle(c.id) }}
-                  className="cursor-pointer rounded hover:text-white"
+                  className="cursor-pointer rounded hover:text-fg"
                   title="移除"
                 ><X size={12} /></span>
               </span>
             ))}
         </span>
-        <ChevronDown size={14} className={`shrink-0 text-gray-500 transition ${open ? "rotate-180" : ""}`} />
+        <ChevronDown size={14} className={`shrink-0 text-fg-muted transition ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && createPortal(
         <div
           ref={dropRef}
-          className="fixed z-[9999] flex flex-col rounded-lg border border-gray-700 bg-gray-900 shadow-xl"
+          className="fixed z-[9999] flex flex-col rounded-lg border border-line bg-surface shadow-xl"
           style={style}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="flex shrink-0 items-center gap-2 border-b border-gray-800 px-3 py-2">
-            <Search size={14} className="text-gray-500" />
+          <div className="flex shrink-0 items-center gap-2 border-b border-line-subtle px-3 py-2">
+            <Search size={14} className="text-fg-muted" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索通道..."
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-600"
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-fg-faint"
             />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1" onWheel={(e) => e.stopPropagation()}>
             {channels.length === 0
-              ? <div className="px-3 py-2 text-xs text-gray-500">暂无通道，先去「消息通道」添加。</div>
+              ? <div className="px-3 py-2 text-xs text-fg-muted">暂无通道，先去「消息通道」添加。</div>
               : filtered.length === 0
-                ? <div className="px-3 py-2 text-xs text-gray-500">无匹配结果</div>
+                ? <div className="px-3 py-2 text-xs text-fg-muted">无匹配结果</div>
                 : filtered.map((o) => {
                   const checked = picked.has(o.id)
                   return (
@@ -331,9 +331,9 @@ function AudienceMultiSelect({ channels, value, onChange }: {
                       key={o.id}
                       type="button"
                       onClick={() => toggle(o.id)}
-                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-gray-800 ${checked ? "text-blue-300" : "text-gray-300"}`}
+                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-raised ${checked ? "text-accent-soft" : "text-fg-2"}`}
                     >
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-blue-500 bg-blue-600" : "border-gray-600"}`}>
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-blue-500 bg-blue-600" : "border-line-strong"}`}>
                         {checked && <Check size={12} />}
                       </span>
                       <span className="truncate" title={o.label}>{o.label}</span>

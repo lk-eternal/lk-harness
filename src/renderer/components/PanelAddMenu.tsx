@@ -65,7 +65,7 @@ export default function PanelAddMenu({ open, anchorRef, onClose, children, maxHe
 
   if (!open) return null
   return createPortal(
-    <div ref={menuRef} className="z-[200] overflow-y-auto rounded-lg border border-gray-700 bg-gray-900 py-1 shadow-xl" style={style}>
+    <div ref={menuRef} className="z-[200] overflow-y-auto rounded-lg border border-line bg-surface py-1 shadow-xl" style={style}>
       {children}
     </div>,
     document.body,

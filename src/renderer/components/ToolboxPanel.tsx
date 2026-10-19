@@ -38,25 +38,25 @@ export default function ToolboxPanel() {
 
   const toolRow = (label: string, st: ToolStatus | undefined, key: "larkCli" | "meegle") => (
     <div className="flex items-center gap-3">
-      <span className="w-40 shrink-0 text-sm text-gray-200">{label}</span>
+      <span className="w-40 shrink-0 text-sm text-fg-soft">{label}</span>
       {!status ? (
-        <Loader2 size={13} className="animate-spin text-gray-500" />
+        <Loader2 size={13} className="animate-spin text-fg-muted" />
       ) : st?.installed ? (
         <>
-          <span className="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-300">v{st.version ?? "?"}</span>
+          <span className="rounded-full border border-line px-2 py-0.5 text-xs text-fg-2">v{st.version ?? "?"}</span>
           {key === "larkCli" && (st.loggedIn
-            ? <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={13} />已登录{st.userName ? `：${st.userName}` : ""}</span>
+            ? <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已登录{st.userName ? `：${st.userName}` : ""}</span>
             : <button onClick={() => void login()} disabled={!!busy}
-                className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-blue-300 hover:bg-blue-600/20 disabled:opacity-50">
+                className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
                 {busy === "login" ? <Loader2 size={11} className="animate-spin" /> : <LogIn size={11} />}
                 {busy === "login" ? "请在浏览器完成授权..." : "登录"}
               </button>)}
         </>
       ) : (
         <>
-          <span className="rounded-full border border-gray-700 px-2 py-0.5 text-xs text-gray-500">未安装</span>
+          <span className="rounded-full border border-line px-2 py-0.5 text-xs text-fg-muted">未安装</span>
           <button onClick={() => void install(key)} disabled={!!busy}
-            className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-blue-300 hover:bg-blue-600/20 disabled:opacity-50">
+            className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
             {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
             {busy === key ? "安装中..." : "一键安装"}
           </button>
@@ -67,18 +67,18 @@ export default function ToolboxPanel() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-xl border border-gray-800 bg-gray-900/60 p-5">
-        <h3 className="text-sm font-semibold text-gray-100">飞书集成</h3>
-        <p className="mt-1 text-xs text-gray-500">内置官方 CLI、装完登录即可——AI 自动获得飞书 / 飞书项目全部能力</p>
-        <p className="mt-2 text-xs text-gray-500">
+      <div className="rounded-xl border border-line-subtle bg-surface/60 p-5">
+        <h3 className="text-sm font-semibold text-fg">飞书集成</h3>
+        <p className="mt-1 text-xs text-fg-muted">内置官方 CLI、装完登录即可——AI 自动获得飞书 / 飞书项目全部能力</p>
+        <p className="mt-2 text-xs text-fg-muted">
           依赖 Node.js
           {status?.nodeOk
-            ? <span className="text-green-400">（已检测到{status.nodeVersion ? ` v${status.nodeVersion}` : ""}）</span>
-            : <span className="text-amber-400">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">nodejs.org</a> 并勾选 Add to PATH，然后重启本应用）</span>}
+            ? <span className="text-success">（已检测到{status.nodeVersion ? ` v${status.nodeVersion}` : ""}）</span>
+            : <span className="text-warning">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a> 并勾选 Add to PATH，然后重启本应用）</span>}
         </p>
         {anyInstalled && (
           <button onClick={() => void updateAll()} disabled={!!busy}
-            className="mt-3 flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-300 disabled:opacity-50">
+            className="mt-3 flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft disabled:opacity-50">
             {busy === "update" ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
             {busy === "update" ? "更新中..." : "更新"}
           </button>
@@ -87,7 +87,7 @@ export default function ToolboxPanel() {
           {toolRow("飞书（lark-cli）", status?.larkCli, "larkCli")}
           {toolRow("飞书项目（meegle）", status?.meegle, "meegle")}
         </div>
-        {error && <p className="mt-3 text-xs leading-relaxed text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-xs leading-relaxed text-danger">{error}</p>}
       </div>
     </section>
   )

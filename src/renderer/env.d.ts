@@ -25,6 +25,7 @@ declare global {
     httpsProxy: string
     noProxy: string
     closeWindowAction: "ask" | "minimize" | "quit"
+    theme: "system" | "light" | "dark"
     autoUpgradePrompt?: boolean
     allowOthers: boolean
     digitalIdentity: string
@@ -168,6 +169,7 @@ declare global {
     }
     saveConfig(config: Partial<AppConfig>): Promise<ConfigSaveResult>
     setAutoStart(enabled: boolean): Promise<{ ok: boolean }>
+    setTheme(theme: AppConfig["theme"]): Promise<{ ok: boolean }>
     applyWorkspaceSwitch(workspaceDir: string, stopOldSessions: boolean, notifyMain?: boolean): Promise<{ ok: boolean; error?: string }>
     respondWindowClose(payload: { action: "minimize" | "quit" | "cancel"; remember: boolean }): Promise<void>
     selectDirectory(): Promise<string | null>

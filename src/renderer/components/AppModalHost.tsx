@@ -57,8 +57,8 @@ export default function AppModalHost() {
         </div>
       }
     >
-      <p className="mb-2 whitespace-pre-wrap text-gray-200">{payload.message}</p>
-      {payload.detail ? <p className="whitespace-pre-wrap text-xs text-gray-500">{payload.detail}</p> : null}
+      <p className="mb-2 whitespace-pre-wrap text-fg-soft">{payload.message}</p>
+      {payload.detail ? <p className="whitespace-pre-wrap text-xs text-fg-muted">{payload.detail}</p> : null}
     </ModalShell>
   )
 }

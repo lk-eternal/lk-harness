@@ -17,6 +17,7 @@ export interface AppConfig {
   httpsProxy: string
   noProxy: string
   closeWindowAction: "ask" | "minimize" | "quit"
+  theme: "system" | "light" | "dark"
   digitalIdentity: string
   // 旧字段（Setup 向导兼容）
   larkAppId: string
@@ -152,6 +153,7 @@ const api = {
   getConfig: (): Promise<AppConfig> => ipcRenderer.invoke("config:get"),
   saveConfig: (config: Partial<AppConfig>): Promise<ConfigSaveResult> => ipcRenderer.invoke("config:save", config),
   setAutoStart: (enabled: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("app:set-auto-start", enabled),
+  setTheme: (theme: AppConfig["theme"]): Promise<{ ok: boolean }> => ipcRenderer.invoke("app:set-theme", theme),
   applyWorkspaceSwitch: (workspaceDir: string, stopOldSessions: boolean, notifyMain?: boolean): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("config:apply-workspace-switch", workspaceDir, stopOldSessions, notifyMain),
   respondWindowClose: (payload: { action: "minimize" | "quit" | "cancel"; remember: boolean }): Promise<void> =>

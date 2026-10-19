@@ -77,30 +77,30 @@ export default function SearchableSelect({ value, onChange, options, placeholder
         ref={btnRef}
         type="button"
         onClick={() => { setOpen(!open); setQuery("") }}
-        className="flex h-[34px] w-full items-center justify-between rounded-md border border-gray-700 bg-gray-800 px-3 text-left text-sm outline-none transition hover:border-gray-600 focus:border-blue-500"
+        className="flex h-[34px] w-full items-center justify-between rounded-md border border-line bg-raised px-3 text-left text-sm outline-none transition hover:border-line-strong focus:border-blue-500"
       >
-        <span className={`truncate ${displayText ? "text-gray-100" : "text-gray-500"}`} title={displayText}>
+        <span className={`truncate ${displayText ? "text-fg" : "text-fg-muted"}`} title={displayText}>
           {displayText || placeholder || "选择..."}
         </span>
-        <ChevronDown size={14} className={`text-gray-500 transition ${open ? "rotate-180" : ""}`} />
+        <ChevronDown size={14} className={`text-fg-muted transition ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && createPortal(
         <div
           ref={dropRef}
-          className="fixed z-[9999] flex flex-col rounded-lg border border-gray-700 bg-gray-900 shadow-xl"
+          className="fixed z-[9999] flex flex-col rounded-lg border border-line bg-surface shadow-xl"
           style={style}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="flex shrink-0 items-center gap-2 border-b border-gray-800 px-3 py-2">
-            <Search size={14} className="text-gray-500" />
+          <div className="flex shrink-0 items-center gap-2 border-b border-line-subtle px-3 py-2">
+            <Search size={14} className="text-fg-muted" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜索..."
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-gray-600"
+              className="flex-1 bg-transparent text-sm outline-none placeholder:text-fg-faint"
             />
           </div>
           <div
@@ -108,15 +108,15 @@ export default function SearchableSelect({ value, onChange, options, placeholder
             onWheel={(e) => e.stopPropagation()}
           >
             {filtered.length === 0 ? (
-              <div className="px-3 py-2 text-xs text-gray-500">无匹配结果</div>
+              <div className="px-3 py-2 text-xs text-fg-muted">无匹配结果</div>
             ) : (
               filtered.map((o) => (
                 <button
                   key={o.id}
                   type="button"
                   onClick={() => { onChange(o.id); setOpen(false) }}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-gray-800 ${
-                    o.id === value ? "bg-blue-600/20 text-blue-400" : "text-gray-300"
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-raised ${
+                    o.id === value ? "bg-blue-600/20 text-accent" : "text-fg-2"
                   }`}
                 >
                   <span className="truncate" title={o.label}>{o.label}</span>

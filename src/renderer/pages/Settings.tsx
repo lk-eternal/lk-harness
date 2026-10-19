@@ -38,6 +38,9 @@ import {
   Github,
   MessageSquare,
   Upload,
+  Monitor,
+  Sun,
+  Moon,
 } from "lucide-react"
 import SearchableSelect from "../components/SearchableSelect"
 import SortableList from "../components/SortableList"
@@ -62,6 +65,13 @@ interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () =>
 
 type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
 type CloseWindowAction = "ask" | "minimize" | "quit"
+type Theme = AppConfig["theme"]
+
+const THEME_OPTIONS: { v: Theme; label: string; icon: typeof Sun }[] = [
+  { v: "system", label: "跟随系统", icon: Monitor },
+  { v: "light", label: "浅色", icon: Sun },
+  { v: "dark", label: "深色", icon: Moon },
+]
 
 interface McpEditForm {
   json: string; jsonError?: string
@@ -127,6 +137,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [noProxy, setNoProxy] = useState("localhost,127.0.0.1,feishu.cn,weixin.qq.com")
   const [closeWindowAction, setCloseWindowAction] = useState<CloseWindowAction>("ask")
   const [autoLaunch, setAutoLaunch] = useState(false)
+  const [theme, setTheme] = useState<Theme>("dark")
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
   /** 帮助引导页飞书控制台链接用 */
   const [firstFeishuAppId, setFirstFeishuAppId] = useState("")
@@ -333,6 +344,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn,weixin.qq.com")
       setCloseWindowAction(config.closeWindowAction ?? "ask")
       setAutoLaunch(config.autoStart ?? false)
+      setTheme(config.theme ?? "dark")
       setFirstFeishuAppId(config.channels?.find((c) => c.type === "feishu")?.larkAppId ?? config.larkAppId ?? "")
       loaded.current = true
     })
@@ -565,6 +577,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     const next = !autoLaunch
     setAutoLaunch(next)
     await window.electronAPI.setAutoStart(next)
+  }
+
+  const handleThemeChange = async (next: Theme) => {
+    setTheme(next)
+    await window.electronAPI.setTheme(next)
   }
 
   const handleAutoUpgradePromptToggle = async () => {
@@ -855,24 +872,24 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     refreshProjectList()
   }
 
-  const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+  const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
   const masterDetailLayout = MASTER_DETAIL_TABS.includes(tab) || tab === "projects"
 
   return (
     <div className="flex h-screen flex-col">
       <TitleBar>
         <div className="flex flex-1 items-center gap-3">
-          <button onClick={onBack} className="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-800 hover:text-white" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><ArrowLeft size={18} /></button>
+          <button onClick={onBack} className="rounded-lg p-1.5 text-fg-3 transition hover:bg-raised hover:text-fg" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}><ArrowLeft size={18} /></button>
           <h1 className="text-lg font-semibold">设置</h1>
           <div className="flex-1" />
-          {saved && <span className="flex items-center gap-1 text-xs text-green-400"><CheckCircle2 size={14} />已保存</span>}
+          {saved && <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={14} />已保存</span>}
         </div>
       </TitleBar>
 
       <div className="flex flex-1 overflow-hidden">
-        <nav className="w-36 shrink-0 border-r border-gray-800 py-3">
+        <nav className="w-36 shrink-0 border-r border-line-subtle py-3">
           {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm transition ${tab === t.id ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
+            <button key={t.id} onClick={() => setTab(t.id)} className={`flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm transition ${tab === t.id ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
               <t.icon size={15} />{t.label}
             </button>
           ))}
@@ -893,15 +910,15 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
                   <button type="button"
                     onClick={() => { setProjectsSubTab("list"); refreshProjectList() }}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "list" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "list" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
                   >项目列表</button>
                   <button type="button"
                     onClick={() => setProjectsSubTab("settings")}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "settings" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "settings" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
                   >项目设置</button>
                   <button type="button"
                     onClick={() => setProjectsSubTab("groups")}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "groups" ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "groups" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
                   >流程组</button>
                 </div>
                 {projectsSubTab === "list" && <ProjectListPanel />}
@@ -909,23 +926,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   <div className="flex-1 overflow-y-auto pb-6">
                     <div className="mx-auto max-w-xl space-y-6">
                       <section className="space-y-4">
-                        <h3 className="text-sm font-medium text-gray-300">项目配置</h3>
+                        <h3 className="text-sm font-medium text-fg-2">项目配置</h3>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500">GitLab Token</label>
+                          <label className="mb-1 block text-xs text-fg-muted">GitLab Token</label>
                           <div className="relative">
                             <input type={showGitlabToken ? "text" : "password"} value={gitlabToken} onChange={(e) => setGitlabToken(e.target.value)} placeholder="glpat-..." className={inputCls + " pr-16"} />
                             <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                              <button type="button" title="复制" disabled={!gitlabToken.trim()} onClick={() => void navigator.clipboard.writeText(gitlabToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
-                              <button type="button" title={showGitlabToken ? "隐藏" : "显示"} onClick={() => setShowGitlabToken(!showGitlabToken)} className="text-gray-500 hover:text-gray-300">{showGitlabToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
+                              <button type="button" title="复制" disabled={!gitlabToken.trim()} onClick={() => void navigator.clipboard.writeText(gitlabToken)} className="text-fg-muted hover:text-fg-2 disabled:opacity-40"><Copy size={13} /></button>
+                              <button type="button" title={showGitlabToken ? "隐藏" : "显示"} onClick={() => setShowGitlabToken(!showGitlabToken)} className="text-fg-muted hover:text-fg-2">{showGitlabToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
                             </div>
                           </div>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500">GitLab Host（可空，默认从 origin 推断）</label>
+                          <label className="mb-1 block text-xs text-fg-muted">GitLab Host（可空，默认从 origin 推断）</label>
                           <input type="text" value={gitlabHost} onChange={(e) => setGitlabHost(e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500">主仓（路径须为 git 根目录；基线=生产分支，只作切 feature 起点；测试/开发可空）</label>
+                          <label className="mb-1 block text-xs text-fg-muted">主仓（路径须为 git 根目录；基线=生产分支，只作切 feature 起点；测试/开发可空）</label>
                           <div className="space-y-2">
                             {repoProfiles.map((p, i) => (
                               <div key={i} className="flex items-center gap-2">
@@ -943,19 +960,19 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                                   className={`${inputCls} flex-1`} />
                                 <button type="button" title="删除"
                                   onClick={() => setRepoProfiles((list) => list.filter((_, j) => j !== i))}
-                                  className="shrink-0 rounded-md border border-gray-700 px-2 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-red-400"
+                                  className="shrink-0 rounded-md border border-line px-2 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-danger"
                                 >✕</button>
                               </div>
                             ))}
                             <button
                               type="button"
                               onClick={() => setRepoProfiles((list) => [...list, { path: "", baseBranch: "" }])}
-                              className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
+                              className="rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-fg-3 hover:bg-raised"
                             >+ 添加主仓</button>
                           </div>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500">AI 工作目录</label>
+                          <label className="mb-1 block text-xs text-fg-muted">AI 工作目录</label>
                           <div className="flex gap-2">
                             <input type="text" value={worktreeRoot} onChange={(e) => setWorktreeRoot(e.target.value)} placeholder="D:\claw-projects" className={inputCls} />
                             <button
@@ -964,7 +981,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                                 const dir = await window.electronAPI.selectDirectory()
                                 if (dir) setWorktreeRoot(dir)
                               }}
-                              className="shrink-0 rounded-md border border-gray-700 px-3 text-xs text-gray-300 hover:bg-gray-800"
+                              className="shrink-0 rounded-md border border-line px-3 text-xs text-fg-2 hover:bg-raised"
                             >浏览</button>
                           </div>
                         </div>
@@ -976,71 +993,71 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2">
                     <div className="flex-1 overflow-y-auto">
                       <div className="space-y-4">
-                        <h3 className="text-sm font-medium text-gray-300">流程组</h3>
-                        <p className="text-xs text-gray-500">建项可多选（不选默认「开发」）；推进节点按所选组分组展示；点击节点编辑提示词；拖动左侧把手调整顺序。</p>
-                        <div className="rounded-lg border border-gray-800 p-3 space-y-2">
-                          <h4 className="text-xs font-medium text-gray-400">共享空间</h4>
+                        <h3 className="text-sm font-medium text-fg-2">流程组</h3>
+                        <p className="text-xs text-fg-muted">建项可多选（不选默认「开发」）；推进节点按所选组分组展示；点击节点编辑提示词；拖动左侧把手调整顺序。</p>
+                        <div className="rounded-lg border border-line-subtle p-3 space-y-2">
+                          <h4 className="text-xs font-medium text-fg-3">共享空间</h4>
                           <div>
-                            <label className="mb-1 block text-xs text-gray-500">Hub 地址</label>
+                            <label className="mb-1 block text-xs text-fg-muted">Hub 地址</label>
                             <input type="text" value={flowHubUrl} onChange={(e) => setFlowHubUrl(e.target.value)}
                               placeholder="https://gitlab.example.com/group/your-flow-hub" className={inputCls} />
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs text-gray-500">Hub Token（Flow Hub 项目专用）</label>
+                            <label className="mb-1 block text-xs text-fg-muted">Hub Token（Flow Hub 项目专用）</label>
                             <div className="relative">
                               <input type={showFlowHubToken ? "text" : "password"} value={flowHubToken} onChange={(e) => setFlowHubToken(e.target.value)}
                                 placeholder="glpat-...（需 Maintainer 及以上权限）" className={inputCls + " pr-16"} />
                               <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                                <button type="button" title="复制" disabled={!flowHubToken.trim()} onClick={() => void navigator.clipboard.writeText(flowHubToken)} className="text-gray-500 hover:text-gray-300 disabled:opacity-40"><Copy size={13} /></button>
-                                <button type="button" title={showFlowHubToken ? "隐藏" : "显示"} onClick={() => setShowFlowHubToken(!showFlowHubToken)} className="text-gray-500 hover:text-gray-300">{showFlowHubToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
+                                <button type="button" title="复制" disabled={!flowHubToken.trim()} onClick={() => void navigator.clipboard.writeText(flowHubToken)} className="text-fg-muted hover:text-fg-2 disabled:opacity-40"><Copy size={13} /></button>
+                                <button type="button" title={showFlowHubToken ? "隐藏" : "显示"} onClick={() => setShowFlowHubToken(!showFlowHubToken)} className="text-fg-muted hover:text-fg-2">{showFlowHubToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
                               </div>
                             </div>
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs text-gray-500">作者昵称（上传时展示）</label>
+                            <label className="mb-1 block text-xs text-fg-muted">作者昵称（上传时展示）</label>
                             <input type="text" value={flowHubAuthor} onChange={(e) => setFlowHubAuthor(e.target.value)}
                               placeholder="你的名字" className={inputCls} />
                           </div>
-                          <p className="text-[10px] text-gray-600">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
+                          <p className="text-[10px] text-fg-faint">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
                           <button
                             type="button"
                             onClick={() => openHubBrowser("group")}
-                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-blue-600/50 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
+                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-blue-600/50 text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
                           ><Download className="h-3 w-3" />从共享空间获取组</button>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           {nodeGroups.map((g) => (
                             <button key={g.id} type="button"
                               onClick={() => setActiveGroupId(g.id)}
-                              className={`rounded-md border px-3 py-1.5 text-xs transition ${g.id === activeGroup?.id ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                              className={`rounded-md border px-3 py-1.5 text-xs transition ${g.id === activeGroup?.id ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
                             >{g.name}</button>
                           ))}
                           <button
                             type="button"
                             onClick={() => setGroupEditing({ id: "", name: "", index: -1 })}
-                            className="rounded-md border border-dashed border-gray-700 px-3 py-1.5 text-xs text-gray-400 hover:bg-gray-800"
+                            className="rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-fg-3 hover:bg-raised"
                           >+ 新增组</button>
                           <button
                             type="button"
                             onClick={() => openHubBrowser("group")}
-                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-gray-700 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
+                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-line text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
                           ><Download className="h-3 w-3" />从共享空间获取组</button>
                         </div>
                         {activeGroup && (
                           <div className="space-y-1.5">
-                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                            <div className="flex items-center gap-3 text-xs text-fg-muted">
                               <span>当前组 <span className="font-mono">{activeGroup.id}</span> · {activeGroup.nodes.length} 个节点</span>
-                              <button type="button" className="text-blue-400 hover:text-blue-300"
+                              <button type="button" className="text-accent hover:text-accent-soft"
                                 onClick={() => setGroupEditing({ id: activeGroup.id, name: activeGroup.name, index: nodeGroups.findIndex((g) => g.id === activeGroup.id) })}
                               >编辑</button>
-                              <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupExport()}>
+                              <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft" onClick={() => void handleGroupExport()}>
                                 <Download className="h-3 w-3" />导出
                               </button>
-                              <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300" onClick={() => void handleGroupImport()}>
+                              <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft" onClick={() => void handleGroupImport()}>
                                 <FilePlus className="h-3 w-3" />导入
                               </button>
                               {hubConfigured && (
-                                <button type="button" className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300"
+                                <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft"
                                   onClick={async () => {
                                     const r = await window.electronAPI.flowHub.uploadGroup(activeGroup.id)
                                     if (r.ok) { void showAlert("上传成功", `流程组「${activeGroup.name}」已上传到共享空间`); void refreshNodeGroups() }
@@ -1050,7 +1067,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                                 </button>
                               )}
                               {nodeGroups.length > 1 && (
-                                <button type="button" className="text-red-400 hover:text-red-300" onClick={handleGroupDelete}>删除组</button>
+                                <button type="button" className="text-danger hover:text-danger-soft" onClick={handleGroupDelete}>删除组</button>
                               )}
                             </div>
                             <ProjectNodePanel
@@ -1068,7 +1085,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                               <button
                                 type="button"
                                 onClick={() => openHubBrowser("node")}
-                                className={`w-full rounded-md border border-dashed px-3 py-2 text-xs transition ${hubConfigured ? "border-gray-700 text-blue-400 hover:bg-gray-800" : "border-gray-700 text-gray-500 hover:bg-gray-800 hover:text-gray-300"}`}
+                                className={`w-full rounded-md border border-dashed px-3 py-2 text-xs transition ${hubConfigured ? "border-line text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
                               >从共享空间获取节点</button>
                             )}
                           </div>
@@ -1087,26 +1104,42 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {/* ═══ General ═══ */}
             {tab === "general" && (<>
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">启动</h3>
-                <div className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
+                <h3 className="text-sm font-medium text-fg-2">外观</h3>
+                <div className="flex gap-2">
+                  {THEME_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.v}
+                      type="button"
+                      onClick={() => void handleThemeChange(opt.v)}
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${theme === opt.v ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:border-line-strong"}`}
+                    >
+                      <opt.icon size={15} />{opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-fg-muted">切换后立即生效；「跟随系统」随 Windows 的深浅色设置变化。</p>
+              </section>
+              <section className="space-y-3">
+                <h3 className="text-sm font-medium text-fg-2">启动</h3>
+                <div className="flex items-center justify-between rounded-lg border border-line px-4 py-3">
                   <div className="min-w-0 pr-3">
                     <p className="text-sm font-medium">开机自启</p>
-                    <p className="text-xs text-gray-500">系统登录后自动启动 LK Harness；应用启动后自动拉起 Daemon 并连接消息通道</p>
+                    <p className="text-xs text-fg-muted">系统登录后自动启动 LK Harness；应用启动后自动拉起 Daemon 并连接消息通道</p>
                   </div>
                   <button
                     type="button"
                     role="switch"
                     aria-checked={autoLaunch}
                     onClick={handleAutoLaunchToggle}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoLaunch ? "bg-green-500" : "bg-gray-600"}`}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoLaunch ? "bg-green-500" : "bg-stronger"}`}
                   >
                     <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${autoLaunch ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
                   </button>
                 </div>
               </section>
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">关闭主窗口</h3>
-                <p className="text-xs text-gray-600">点击窗口右上角关闭时的行为（可从系统托盘再次打开窗口）。</p>
+                <h3 className="text-sm font-medium text-fg-2">关闭主窗口</h3>
+                <p className="text-xs text-fg-faint">点击窗口右上角关闭时的行为（可从系统托盘再次打开窗口）。</p>
                 <div className="space-y-2">
                   {([
                     { v: "ask" as const, t: "每次询问", d: "弹窗选择最小化到托盘或退出应用" },
@@ -1115,25 +1148,25 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   ]).map((opt) => (
                     <label
                       key={opt.v}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition ${closeWindowAction === opt.v ? "border-blue-500 bg-blue-500/10" : "border-gray-700 hover:border-gray-600"}`}
+                      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition ${closeWindowAction === opt.v ? "border-blue-500 bg-blue-500/10" : "border-line hover:border-line-strong"}`}
                     >
                       <input
                         type="radio"
                         name="closeWindowAction"
                         checked={closeWindowAction === opt.v}
                         onChange={() => setCloseWindowAction(opt.v)}
-                        className="mt-1 rounded-full border-gray-600"
+                        className="mt-1 rounded-full border-line-strong"
                       />
                       <div>
                         <p className="text-sm font-medium">{opt.t}</p>
-                        <p className="text-xs text-gray-500">{opt.d}</p>
+                        <p className="text-xs text-fg-muted">{opt.d}</p>
                       </div>
                     </label>
                   ))}
                 </div>
               </section>
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">配置迁移</h3>
+                <h3 className="text-sm font-medium text-fg-2">配置迁移</h3>
                 <ConfigMigratePanel
                   showAlert={showAlert}
                   showConfirm={showConfirm}
@@ -1145,19 +1178,19 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   }}
                 />
               </section>
-              <p className="text-xs text-gray-500">关闭窗口相关选项保存后立即生效。其余设置自动保存，部分项需重启 Daemon 后生效。</p>
+              <p className="text-xs text-fg-muted">关闭窗口相关选项保存后立即生效。其余设置自动保存，部分项需重启 Daemon 后生效。</p>
             </>)}
 
             {/* ═══ Proxy ═══ */}
             {tab === "proxy" && (<>
               <section className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-300">代理设置</h3>
+                <h3 className="text-sm font-medium text-fg-2">代理设置</h3>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">HTTP / HTTPS 代理</label>
+                  <label className="mb-1 block text-xs text-fg-muted">HTTP / HTTPS 代理</label>
                   <input type="text" value={proxy} onChange={(e) => setProxy(e.target.value)} placeholder="http://127.0.0.1:1080" className={inputCls} />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">NO_PROXY</label>
+                  <label className="mb-1 block text-xs text-fg-muted">NO_PROXY</label>
                   <input type="text" value={noProxy} onChange={(e) => setNoProxy(e.target.value)} placeholder="localhost,127.0.0.1,feishu.cn,weixin.qq.com" className={inputCls} />
                 </div>
               </section>
@@ -1167,8 +1200,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {tab === "mcp" && (<>
               <section className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-gray-300">MCP 服务器</h3>
-                  <button onClick={() => refreshMcpServers(true)} disabled={mcpRefreshing} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white disabled:opacity-50"><RefreshCw size={12} className={mcpRefreshing ? "animate-spin" : ""} />{mcpRefreshing ? "加载中" : "刷新"}</button>
+                  <h3 className="text-sm font-medium text-fg-2">MCP 服务器</h3>
+                  <button onClick={() => refreshMcpServers(true)} disabled={mcpRefreshing} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg disabled:opacity-50"><RefreshCw size={12} className={mcpRefreshing ? "animate-spin" : ""} />{mcpRefreshing ? "加载中" : "刷新"}</button>
                   <div className="flex-1" />
                   <button onClick={openMcpAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
                 </div>
@@ -1178,38 +1211,38 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     const toolState = mcpTools[s.name]
                     const rawStatus = mcpStatus[s.name]
                     const isReady = rawStatus === "ready" || rawStatus === "enabled"
-                    const statusColor = !rawStatus ? "text-gray-600" : isReady ? "text-green-400" : rawStatus === "disabled" || rawStatus.includes("not loaded") ? "text-gray-500" : "text-red-400"
+                    const statusColor = !rawStatus ? "text-fg-faint" : isReady ? "text-success" : rawStatus === "disabled" || rawStatus.includes("not loaded") ? "text-fg-muted" : "text-danger"
                     const statusLabel = !rawStatus ? "—" : isReady ? "ready" : rawStatus === "disabled" ? "disabled" : rawStatus.includes("not loaded") ? "not loaded" : rawStatus
                     return (
-                    <div key={s.name} className="rounded-lg border border-gray-700 overflow-hidden">
+                    <div key={s.name} className="rounded-lg border border-line overflow-hidden">
                       <div className="flex items-center justify-between px-4 py-3">
                         <div className="flex items-center gap-3 min-w-0">
-                          <button onClick={() => toggleMcpExpand(s.name)} className="shrink-0 rounded p-0.5 text-gray-500 transition hover:text-white">
+                          <button onClick={() => toggleMcpExpand(s.name)} className="shrink-0 rounded p-0.5 text-fg-muted transition hover:text-fg">
                             <ChevronDown size={14} className={`transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
                           </button>
-                          {s.type === "url" ? (s.enabled && s.authenticated ? <ShieldCheck size={16} className="shrink-0 text-green-400" /> : s.enabled && !s.authenticated ? <ShieldAlert size={16} className="shrink-0 text-amber-400" /> : <Network size={16} className="shrink-0 text-gray-400" />) : <Terminal size={16} className="shrink-0 text-gray-400" />}
+                          {s.type === "url" ? (s.enabled && s.authenticated ? <ShieldCheck size={16} className="shrink-0 text-success" /> : s.enabled && !s.authenticated ? <ShieldAlert size={16} className="shrink-0 text-warning" /> : <Network size={16} className="shrink-0 text-fg-3" />) : <Terminal size={16} className="shrink-0 text-fg-3" />}
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <p className="truncate text-sm font-medium">{s.name}</p>
-                              <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">Claw</span>
+                              <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-muted">Claw</span>
                               {!mcpStatusLoading && <span className={`shrink-0 text-[10px] ${statusColor}`}>{statusLabel}</span>}
-                              {toolState && !toolState.loading && toolState.tools.length > 0 && <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 text-[10px] text-gray-500">{toolState.tools.length} tools</span>}
+                              {toolState && !toolState.loading && toolState.tools.length > 0 && <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-muted">{toolState.tools.length} tools</span>}
                             </div>
-                            <p className="truncate text-xs text-gray-500">{s.type === "url" ? s.url : `${s.command} ${(s.args ?? []).join(" ")}`}</p>
+                            <p className="truncate text-xs text-fg-muted">{s.type === "url" ? s.url : `${s.command} ${(s.args ?? []).join(" ")}`}</p>
                           </div>
                         </div>
                         <div className="ml-3 flex shrink-0 items-center gap-2">
-                          {s.type === "url" && s.enabled && (s.authenticated ? <span className="text-xs text-green-400">已认证</span> : mcpLoginPending[s.name] ? <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600/70 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Loader2 size={12} className="animate-spin" />认证中</button> : <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500" title="仅当该 MCP 使用浏览器 OAuth 时需要"><LogIn size={12} />授权</button>)}
-                          <button onClick={() => openMcpEdit(s)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white"><Pencil size={13} /></button>
-                          <button onClick={() => handleMcpDelete(s.name)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400"><Trash2 size={13} /></button>
+                          {s.type === "url" && s.enabled && (s.authenticated ? <span className="text-xs text-success">已认证</span> : mcpLoginPending[s.name] ? <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600/70 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Loader2 size={12} className="animate-spin" />认证中</button> : <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500" title="仅当该 MCP 使用浏览器 OAuth 时需要"><LogIn size={12} />授权</button>)}
+                          <button onClick={() => openMcpEdit(s)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg"><Pencil size={13} /></button>
+                          <button onClick={() => handleMcpDelete(s.name)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger"><Trash2 size={13} /></button>
                           {(mcpStatusLoading && s.enabled === undefined) || mcpLoading[s.name] ? (
-                            <div className="inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full bg-gray-700">
-                              <Loader2 size={12} className="animate-spin text-gray-400" />
+                            <div className="inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full bg-strong">
+                              <Loader2 size={12} className="animate-spin text-fg-3" />
                             </div>
                           ) : (
                             <button
                               onClick={() => handleMcpToggle(s.name, !s.enabled)}
-                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${s.enabled ? "bg-green-500" : "bg-gray-600"}`}
+                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${s.enabled ? "bg-green-500" : "bg-stronger"}`}
                             >
                               <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${s.enabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
                             </button>
@@ -1217,30 +1250,30 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                         </div>
                       </div>
                       {expanded && (
-                        <div className="border-t border-gray-700/50 bg-gray-900/30 px-4 py-2.5">
+                        <div className="border-t border-line/50 bg-surface/30 px-4 py-2.5">
                           {toolState?.loading ? (
-                            <div className="flex items-center gap-2 py-1 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />正在获取工具列表…</div>
+                            <div className="flex items-center gap-2 py-1 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />正在获取工具列表…</div>
                           ) : toolState?.error ? (
-                            <p className="py-1 text-xs text-gray-500">{toolState.error}</p>
+                            <p className="py-1 text-xs text-fg-muted">{toolState.error}</p>
                           ) : toolState && toolState.tools.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                               {toolState.tools.map((t) => {
                                 const tip = [t.description, ...(t.params ?? []).map((p) => `${p.required ? "* " : ""}${p.name}${p.type ? `: ${p.type}` : ""}${p.description ? ` — ${p.description}` : ""}`)].filter(Boolean).join("\n") || t.name
                                 return (
-                                  <span key={t.name} className="inline-flex items-center gap-1 rounded-md bg-gray-800 px-2 py-0.5 text-[11px] text-gray-300" title={tip}>
-                                    <Wrench size={10} className="shrink-0 text-gray-500" />{t.name}
+                                  <span key={t.name} className="inline-flex items-center gap-1 rounded-md bg-raised px-2 py-0.5 text-[11px] text-fg-2" title={tip}>
+                                    <Wrench size={10} className="shrink-0 text-fg-muted" />{t.name}
                                   </span>
                                 )
                               })}
                             </div>
                           ) : (
-                            <p className="py-1 text-xs text-gray-500">无已注册工具</p>
+                            <p className="py-1 text-xs text-fg-muted">无已注册工具</p>
                           )}
                         </div>
                       )}
                     </div>
                   )})}
-                  {mcpServers.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无 MCP 服务器配置</p>}
+                  {mcpServers.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无 MCP 服务器配置</p>}
                 </div>
               </section>
             </>)}
@@ -1249,8 +1282,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {tab === "tasks" && (<>
               <section className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-gray-300">定时任务</h3>
-                  <button onClick={refreshTasks} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
+                  <h3 className="text-sm font-medium text-fg-2">定时任务</h3>
+                  <button onClick={refreshTasks} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"><RefreshCw size={12} />刷新</button>
                   <div className="flex-1" />
                   <button onClick={openTaskAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
                 </div>
@@ -1259,31 +1292,31 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     const status = taskStatuses[t.id]
                     const isRunning = !!status?.running
                     return (
-                    <div key={t.id} className={`flex items-center justify-between rounded-lg border px-4 py-3 ${isRunning ? "border-green-700/50 bg-green-950/20" : "border-gray-700"}`}>
+                    <div key={t.id} className={`flex items-center justify-between rounded-lg border px-4 py-3 ${isRunning ? "border-green-700/50 bg-success-tint/20" : "border-line"}`}>
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className={`truncate text-sm font-medium ${t.enabled ? "" : "text-gray-600 line-through"}`}>{t.name}</p>
-                          <span className="shrink-0 rounded bg-gray-800 px-1.5 py-0.5 font-mono text-[10px] text-gray-500">{t.cron}</span>
-                          {t.channelId && <span className="shrink-0 rounded bg-blue-900/40 px-1.5 py-0.5 text-[10px] text-blue-400">{taskChannels.find((c) => c.id === t.channelId)?.name ?? "通道已删除"}</span>}
-                          {t.model && <span className="shrink-0 rounded bg-purple-900/40 px-1.5 py-0.5 text-[10px] text-purple-400">{modelSlug(t.model, t.modelParams)}</span>}
-                          {t.independent !== false && <span className="shrink-0 rounded bg-indigo-900/40 px-1.5 py-0.5 text-[10px] text-indigo-400">独立</span>}
-                          {t.notifyChatId && <span className="shrink-0 rounded bg-amber-900/40 px-1.5 py-0.5 text-[10px] text-amber-400/90" title={t.notifyChatId}>会话</span>}
-                          {isRunning && <span className="inline-flex items-center gap-1 shrink-0 rounded bg-green-900/40 px-1.5 py-0.5 text-[10px] text-green-400"><span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />运行中</span>}
+                          <p className={`truncate text-sm font-medium ${t.enabled ? "" : "text-fg-faint line-through"}`}>{t.name}</p>
+                          <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">{t.cron}</span>
+                          {t.channelId && <span className="shrink-0 rounded bg-accent-tint-strong/40 px-1.5 py-0.5 text-[10px] text-accent">{taskChannels.find((c) => c.id === t.channelId)?.name ?? "通道已删除"}</span>}
+                          {t.model && <span className="shrink-0 rounded bg-purple-tint/40 px-1.5 py-0.5 text-[10px] text-purple">{modelSlug(t.model, t.modelParams)}</span>}
+                          {t.independent !== false && <span className="shrink-0 rounded bg-indigo-tint/40 px-1.5 py-0.5 text-[10px] text-indigo">独立</span>}
+                          {t.notifyChatId && <span className="shrink-0 rounded bg-warning-tint-strong/40 px-1.5 py-0.5 text-[10px] text-warning/90" title={t.notifyChatId}>会话</span>}
+                          {isRunning && <span className="inline-flex items-center gap-1 shrink-0 rounded bg-success-tint-strong/40 px-1.5 py-0.5 text-[10px] text-success"><span className="inline-block h-1.5 w-1.5 rounded-full bg-success animate-pulse" />运行中</span>}
                         </div>
-                        <p className="truncate text-xs text-gray-500">{t.content.slice(0, 80)}{t.content.length > 80 ? "..." : ""}</p>
+                        <p className="truncate text-xs text-fg-muted">{t.content.slice(0, 80)}{t.content.length > 80 ? "..." : ""}</p>
                       </div>
                       <div className="ml-3 flex shrink-0 items-center gap-2">
-                        <button onClick={() => handleTaskTrigger(t.id)} title="立即执行" className="rounded p-1 text-gray-500 transition hover:bg-blue-600/20 hover:text-blue-400"><Play size={13} /></button>
-                        <button onClick={() => handleTaskToggle(t.id)} className={`rounded px-2 py-0.5 text-xs transition ${t.enabled ? "text-green-400 hover:bg-green-600/20" : "text-gray-500 hover:bg-gray-800"}`}>
+                        <button onClick={() => handleTaskTrigger(t.id)} title="立即执行" className="rounded p-1 text-fg-muted transition hover:bg-blue-600/20 hover:text-accent"><Play size={13} /></button>
+                        <button onClick={() => handleTaskToggle(t.id)} className={`rounded px-2 py-0.5 text-xs transition ${t.enabled ? "text-success hover:bg-green-600/20" : "text-fg-muted hover:bg-raised"}`}>
                           {t.enabled ? "启用" : "禁用"}
                         </button>
-                        <button onClick={() => openTaskEdit(t)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white"><Pencil size={13} /></button>
-                        <button onClick={() => handleTaskDelete(t.id)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400"><Trash2 size={13} /></button>
+                        <button onClick={() => openTaskEdit(t)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg"><Pencil size={13} /></button>
+                        <button onClick={() => handleTaskDelete(t.id)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger"><Trash2 size={13} /></button>
                       </div>
                     </div>
                     )
                   })}
-                  {tasks.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无定时任务</p>}
+                  {tasks.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无定时任务</p>}
                 </div>
               </section>
             </>)}
@@ -1292,8 +1325,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {tab === "skills" && (<>
               <section className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-gray-300">Agent Skills</h3>
-                  <button onClick={() => { refreshSkillRoots(); refreshSkills() }} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"><RefreshCw size={12} />刷新</button>
+                  <h3 className="text-sm font-medium text-fg-2">Agent Skills</h3>
+                  <button onClick={() => { refreshSkillRoots(); refreshSkills() }} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"><RefreshCw size={12} />刷新</button>
                   <div className="flex-1" />
                   <button onClick={openSkillAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
                 </div>
@@ -1303,7 +1336,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       key={root.id}
                       type="button"
                       onClick={() => { setSkillRootId(root.id); setSkillExpanded(new Set()) }}
-                      className={`rounded-md border px-2.5 py-1 text-xs transition ${skillRootId === root.id ? "border-blue-500 bg-blue-500/10 font-medium text-white" : "border-gray-700 text-gray-400 hover:bg-gray-800 hover:text-gray-200"}`}
+                      className={`rounded-md border px-2.5 py-1 text-xs transition ${skillRootId === root.id ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
                     >
                       {root.label} ({root.skillCount})
                     </button>
@@ -1323,16 +1356,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                             <div className="group flex items-center" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
                               <button
                                 onClick={() => toggleSkillExpand(nodeKey)}
-                                className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-gray-400 transition hover:bg-gray-800/50 hover:text-gray-200"
+                                className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-fg-3 transition hover:bg-raised/50 hover:text-fg-soft"
                               >
                                 {dirExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                <Folder size={12} className="text-blue-400/70" />
+                                <Folder size={12} className="text-accent/70" />
                                 <span>{node.name}</span>
                               </button>
                               <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-                                <button onClick={() => handleCreateFile(skill.name, fullPath)} className="rounded p-0.5 text-gray-600 hover:text-gray-300" title="新建文件"><FilePlus size={12} /></button>
-                                <button onClick={() => handleCreateFolder(skill.name, fullPath)} className="rounded p-0.5 text-gray-600 hover:text-gray-300" title="新建文件夹"><FolderPlus size={12} /></button>
-                                <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="rounded p-0.5 text-gray-600 hover:text-red-400" title="删除文件夹"><Trash2 size={12} /></button>
+                                <button onClick={() => handleCreateFile(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-fg-2" title="新建文件"><FilePlus size={12} /></button>
+                                <button onClick={() => handleCreateFolder(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-fg-2" title="新建文件夹"><FolderPlus size={12} /></button>
+                                <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-danger" title="删除文件夹"><Trash2 size={12} /></button>
                               </div>
                             </div>
                             {dirExpanded && node.children?.map((child) => renderNode(child, fullPath, depth + 1))}
@@ -1343,39 +1376,39 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                         <div key={nodeKey} className="group flex items-center" style={{ paddingLeft: `${(depth + 1) * 16 + 20}px` }}>
                           <button
                             onClick={() => openSkillFile(skill.name, fullPath)}
-                            className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-gray-500 transition hover:bg-gray-800/50 hover:text-gray-200"
+                            className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-fg-muted transition hover:bg-raised/50 hover:text-fg-soft"
                           >
-                            <File size={11} className="shrink-0 text-gray-600" />
+                            <File size={11} className="shrink-0 text-fg-faint" />
                             <span className="truncate">{node.name}</span>
                           </button>
-                          <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="shrink-0 rounded p-0.5 text-gray-600 opacity-0 transition hover:text-red-400 group-hover:opacity-100" title="删除文件"><Trash2 size={12} /></button>
+                          <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="shrink-0 rounded p-0.5 text-fg-faint opacity-0 transition hover:text-danger group-hover:opacity-100" title="删除文件"><Trash2 size={12} /></button>
                         </div>
                       )
                     }
                     return (
-                      <div key={skillKey} className="rounded-lg border border-gray-700 overflow-hidden">
+                      <div key={skillKey} className="rounded-lg border border-line overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2.5">
                           <button onClick={() => toggleSkillExpand(skillKey)} className="flex items-center gap-2 min-w-0">
-                            {isExpanded ? <ChevronDown size={14} className="shrink-0 text-gray-500" /> : <ChevronRight size={14} className="shrink-0 text-gray-500" />}
-                            <Sparkles size={14} className="shrink-0 text-amber-400/70" />
+                            {isExpanded ? <ChevronDown size={14} className="shrink-0 text-fg-muted" /> : <ChevronRight size={14} className="shrink-0 text-fg-muted" />}
+                            <Sparkles size={14} className="shrink-0 text-warning/70" />
                             <span className="truncate text-sm font-medium">{skill.name}</span>
                           </button>
                           <div className="ml-3 flex shrink-0 items-center gap-1">
-                            <button onClick={() => handleCreateFile(skill.name, "")} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="新建文件"><FilePlus size={13} /></button>
-                            <button onClick={() => handleCreateFolder(skill.name, "")} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="新建文件夹"><FolderPlus size={13} /></button>
-                            <button onClick={() => { const s = skills.find((x) => x.skillPath === skill.name); if (s) openSkillEdit(s) }} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-white" title="编辑 SKILL.md"><Pencil size={13} /></button>
-                            <button onClick={() => handleSkillDelete(skill.name)} className="rounded p-1 text-gray-500 transition hover:bg-gray-800 hover:text-red-400" title="删除整个 Skill"><Trash2 size={13} /></button>
+                            <button onClick={() => handleCreateFile(skill.name, "")} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="新建文件"><FilePlus size={13} /></button>
+                            <button onClick={() => handleCreateFolder(skill.name, "")} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="新建文件夹"><FolderPlus size={13} /></button>
+                            <button onClick={() => { const s = skills.find((x) => x.skillPath === skill.name); if (s) openSkillEdit(s) }} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="编辑 SKILL.md"><Pencil size={13} /></button>
+                            <button onClick={() => handleSkillDelete(skill.name)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger" title="删除整个 Skill"><Trash2 size={13} /></button>
                           </div>
                         </div>
                         {isExpanded && skill.children && skill.children.length > 0 && (
-                          <div className="border-t border-gray-700/50 bg-gray-900/30 px-1 py-1.5">
+                          <div className="border-t border-line/50 bg-surface/30 px-1 py-1.5">
                             {skill.children.map((child) => renderNode(child, "", 0))}
                           </div>
                         )}
                       </div>
                     )
                   })}
-                  {skillTree.length === 0 && <p className="py-4 text-center text-xs text-gray-600">暂无 Skill</p>}
+                  {skillTree.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无 Skill</p>}
                 </div>
               </section>
             </>)}
@@ -1386,26 +1419,26 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {/* ═══ Setup Guide ═══ */}
             {tab === "setup" && (<>
               <section className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-300">新手引导</h3>
-                <div className="rounded-lg border border-gray-700 p-4 space-y-3">
-                  <p className="text-sm text-gray-400">从头走一遍五步引导：选工作目录 → 接入 AI → 连上飞书 → 绑定自己 → 装工具。已有配置会自动带入，不会被清空。</p>
+                <h3 className="text-sm font-medium text-fg-2">新手引导</h3>
+                <div className="rounded-lg border border-line p-4 space-y-3">
+                  <p className="text-sm text-fg-3">从头走一遍五步引导：选工作目录 → 接入 AI → 连上飞书 → 绑定自己 → 装工具。已有配置会自动带入，不会被清空。</p>
                   <button
                     onClick={() => onReenterWizard?.()}
                     className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
                   >
                     <BookOpen size={15} />重新进入引导
                   </button>
-                  <p className="text-xs text-gray-600">以下为飞书手动建应用时需要的权限与事件配置参考。</p>
+                  <p className="text-xs text-fg-faint">以下为飞书手动建应用时需要的权限与事件配置参考。</p>
                 </div>
               </section>
 
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-gray-300">应用权限</h3>
+                  <h3 className="text-sm font-medium text-fg-2">应用权限</h3>
                   <div className="flex items-center gap-2">
                     {firstFeishuAppId.trim() && (
                       <a href={`https://open.feishu.cn/app/${firstFeishuAppId.trim()}/auth`} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
+                        className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-3 transition hover:bg-raised hover:text-accent">
                         <ExternalLink size={12} />前往设置权限
                       </a>
                     )}
@@ -1413,17 +1446,17 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       onClick={() => {
                         navigator.clipboard.writeText(FEISHU_SCOPES_JSON)
                       }}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"
                     >
                       <Copy size={12} />复制权限 JSON
                     </button>
                   </div>
                 </div>
-                <div className="rounded-lg border border-gray-800 divide-y divide-gray-800">
+                <div className="rounded-lg border border-line-subtle divide-y divide-line-subtle">
                   {REQUIRED_FEISHU_SCOPES.map((p) => (
                     <div key={p.scope} className="flex items-center justify-between px-3 py-2">
-                      <code className="text-xs text-blue-400">{p.scope}</code>
-                      <span className="text-xs text-gray-500">{p.desc}</span>
+                      <code className="text-xs text-accent">{p.scope}</code>
+                      <span className="text-xs text-fg-muted">{p.desc}</span>
                     </div>
                   ))}
                 </div>
@@ -1431,67 +1464,67 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
 
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-gray-300">事件订阅</h3>
+                  <h3 className="text-sm font-medium text-fg-2">事件订阅</h3>
                   {firstFeishuAppId.trim() && (
                     <a href={`https://open.feishu.cn/app/${firstFeishuAppId.trim()}/event`} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
+                      className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-3 transition hover:bg-raised hover:text-accent">
                       <ExternalLink size={12} />前往设置事件订阅
                     </a>
                   )}
                 </div>
-                <div className="rounded-lg border border-gray-800 divide-y divide-gray-800">
+                <div className="rounded-lg border border-line-subtle divide-y divide-line-subtle">
                   {FEISHU_EVENT_SUBSCRIPTIONS.map((e) => (
                     <div key={e.event} className="px-3 py-2 flex items-center justify-between">
-                      <code className="text-xs text-blue-400">{e.event}</code>
-                      <span className="text-xs text-gray-500">{e.desc}</span>
+                      <code className="text-xs text-accent">{e.event}</code>
+                      <span className="text-xs text-fg-muted">{e.desc}</span>
                     </div>
                   ))}
                   <div className="px-3 py-2 flex items-center justify-between">
-                    <span className="text-xs text-gray-300">读取用户发给机器人的单聊消息</span>
-                    <span className="text-xs text-emerald-400">需开通</span>
+                    <span className="text-xs text-fg-2">读取用户发给机器人的单聊消息</span>
+                    <span className="text-xs text-success">需开通</span>
                   </div>
                   <div className="px-3 py-2 flex items-center justify-between">
-                    <span className="text-xs text-gray-300">获取群组中用户@机器人消息</span>
-                    <span className="text-xs text-emerald-400">需开通</span>
+                    <span className="text-xs text-fg-2">获取群组中用户@机器人消息</span>
+                    <span className="text-xs text-success">需开通</span>
                   </div>
-                  <div className="px-3 py-2 text-xs text-gray-500 space-y-1">
-                    <div>订阅方式：<span className="text-gray-300">应用身份</span></div>
-                    <div>回调类型：<span className="text-gray-300">长连接（WebSocket）</span></div>
+                  <div className="px-3 py-2 text-xs text-fg-muted space-y-1">
+                    <div>订阅方式：<span className="text-fg-2">应用身份</span></div>
+                    <div>回调类型：<span className="text-fg-2">长连接（WebSocket）</span></div>
                   </div>
                 </div>
               </section>
 
               <section className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-gray-300">回调订阅</h3>
+                  <h3 className="text-sm font-medium text-fg-2">回调订阅</h3>
                   {firstFeishuAppId.trim() && (
                     <a href={`https://open.feishu.cn/app/${firstFeishuAppId.trim()}/event?tab=callback`} target="_blank" rel="noreferrer"
-                      className="flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
+                      className="flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-3 transition hover:bg-raised hover:text-accent">
                       <ExternalLink size={12} />前往设置回调订阅
                     </a>
                   )}
                 </div>
-                <div className="rounded-lg border border-gray-800 divide-y divide-gray-800">
+                <div className="rounded-lg border border-line-subtle divide-y divide-line-subtle">
                   <div className="px-3 py-2 flex items-center justify-between">
-                    <code className="text-xs text-blue-400">card.action.trigger</code>
-                    <span className="text-xs text-gray-500">卡片回传交互</span>
+                    <code className="text-xs text-accent">card.action.trigger</code>
+                    <span className="text-xs text-fg-muted">卡片回传交互</span>
                   </div>
                   <div className="px-3 py-2 flex items-center justify-between">
-                    <span className="text-xs text-gray-300">用户点击卡片按钮（选项 / 指令）时回调</span>
-                    <span className="text-xs text-emerald-400">需订阅</span>
+                    <span className="text-xs text-fg-2">用户点击卡片按钮（选项 / 指令）时回调</span>
+                    <span className="text-xs text-success">需订阅</span>
                   </div>
-                  <div className="px-3 py-2 text-xs text-gray-500 space-y-1">
-                    <div>订阅方式：<span className="text-gray-300">应用身份</span></div>
-                    <div>回调类型：<span className="text-gray-300">长连接（WebSocket）</span></div>
-                    <div className="text-gray-600">不订阅时按钮点击无响应，send_question / 指令按钮不可用</div>
+                  <div className="px-3 py-2 text-xs text-fg-muted space-y-1">
+                    <div>订阅方式：<span className="text-fg-2">应用身份</span></div>
+                    <div>回调类型：<span className="text-fg-2">长连接（WebSocket）</span></div>
+                    <div className="text-fg-faint">不订阅时按钮点击无响应，send_question / 指令按钮不可用</div>
                   </div>
                 </div>
               </section>
 
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">参考文档</h3>
+                <h3 className="text-sm font-medium text-fg-2">参考文档</h3>
                 <div className="flex flex-wrap gap-2">
-                  <a href="https://github.com/lk-eternal/lk-harness" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-gray-700 px-2.5 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-blue-400">
+                  <a href="https://github.com/lk-eternal/lk-harness" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md border border-line px-2.5 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-accent">
                     <ExternalLink size={12} />项目 GitHub
                   </a>
                 </div>
@@ -1500,24 +1533,24 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
 
             {tab === "about" && (<>
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">应用更新</h3>
-                <div className="flex items-center justify-between rounded-lg border border-gray-700 px-4 py-3">
+                <h3 className="text-sm font-medium text-fg-2">应用更新</h3>
+                <div className="flex items-center justify-between rounded-lg border border-line px-4 py-3">
                   <div className="min-w-0 pr-3">
                     <p className="text-sm font-medium">启动时自动提示升级</p>
-                    <p className="text-xs text-gray-500">关闭后不再弹窗打扰；仍可在下方手动「检查更新」</p>
+                    <p className="text-xs text-fg-muted">关闭后不再弹窗打扰；仍可在下方手动「检查更新」</p>
                   </div>
                   <button
                     type="button"
                     role="switch"
                     aria-checked={autoUpgradePrompt}
                     onClick={() => void handleAutoUpgradePromptToggle()}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoUpgradePrompt ? "bg-green-500" : "bg-gray-600"}`}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoUpgradePrompt ? "bg-green-500" : "bg-stronger"}`}
                   >
                     <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${autoUpgradePrompt ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
                   </button>
                 </div>
-                <p className="text-xs text-gray-600">
-                  当前 <span className="font-mono text-gray-400">v{appVersion || "…"}</span>
+                <p className="text-xs text-fg-faint">
+                  当前 <span className="font-mono text-fg-3">v{appVersion || "…"}</span>
                   ，可检查是否有新版本。
                 </p>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1525,7 +1558,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     type="button"
                     disabled={updateBusy || updateDownloading}
                     onClick={() => void handleCheckUpdate()}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-800/50 px-4 py-2 text-sm transition hover:border-blue-500 hover:bg-gray-800 disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm transition hover:border-blue-500 hover:bg-raised disabled:opacity-50"
                   >
                     {updateBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                     检查更新
@@ -1535,7 +1568,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       type="button"
                       disabled={updateBusy || updateDownloading}
                       onClick={() => void handleApplyUpdate()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-blue-500 bg-blue-500/15 px-4 py-2 text-sm text-blue-200 transition hover:bg-blue-500/25 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-blue-500 bg-blue-500/15 px-4 py-2 text-sm text-accent-bright transition hover:bg-blue-500/25 disabled:opacity-50"
                     >
                       立即更新
                     </button>
@@ -1545,23 +1578,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       type="button"
                       disabled={updateBusy}
                       onClick={() => void handleApplyUpdate()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-green-500 bg-green-500/15 px-4 py-2 text-sm text-green-200 transition hover:bg-green-500/25 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-green-500 bg-green-500/15 px-4 py-2 text-sm text-success-bright transition hover:bg-green-500/25 disabled:opacity-50"
                     >
                       立即安装
                     </button>
                   )}
                 </div>
                 {(updateCheck?.status === "available" || updateCheck?.status === "ready") && updateCheck.releaseNotes && (
-                  <div className="rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2">
-                    <p className="mb-1.5 text-xs font-medium text-gray-300">更新内容</p>
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-gray-400">{updateCheck.releaseNotes}</p>
+                  <div className="rounded-lg border border-line bg-surface/50 px-3 py-2">
+                    <p className="mb-1.5 text-xs font-medium text-fg-2">更新内容</p>
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-fg-3">{updateCheck.releaseNotes}</p>
                   </div>
                 )}
                 {updateMsg && (
                   <div className="space-y-2">
-                    <p className="whitespace-pre-wrap rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2 text-xs text-gray-400">{updateMsg}</p>
+                    <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface/50 px-3 py-2 text-xs text-fg-3">{updateMsg}</p>
                     {updateDownloading && (
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-800">
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-raised">
                         <div
                           className="h-full rounded-full bg-blue-500 transition-[width] duration-300 ease-out"
                           style={{ width: updateDownloadPct === null ? "0%" : `${updateDownloadPct}%` }}
@@ -1573,16 +1606,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               </section>
 
               <section className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-300">项目信息</h3>
+                <h3 className="text-sm font-medium text-fg-2">项目信息</h3>
                 <a
                   href="https://github.com/lk-eternal/lk-harness"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg border border-gray-600 bg-gray-800/50 px-4 py-2 text-sm text-gray-300 transition hover:border-blue-500 hover:bg-gray-800 hover:text-blue-400"
+                  className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm text-fg-2 transition hover:border-blue-500 hover:bg-raised hover:text-accent"
                 >
                   <Github size={16} />
                   GitHub 仓库
-                  <ExternalLink size={12} className="text-gray-500" />
+                  <ExternalLink size={12} className="text-fg-muted" />
                 </a>
               </section>
             </>)}
@@ -1596,14 +1629,14 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ MCP Edit Modal ═══ */}
       {mcpEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{mcpEditOriginalName ? "编辑 MCP" : "新增 MCP"}</h3>
-              <button onClick={() => setMcpEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
+              <h3 className="text-sm font-semibold text-fg-soft">{mcpEditOriginalName ? "编辑 MCP" : "新增 MCP"}</h3>
+              <button onClick={() => setMcpEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
               <div>
-                <label className="mb-1 block text-xs text-gray-500">配置 JSON</label>
+                <label className="mb-1 block text-xs text-fg-muted">配置 JSON</label>
                 <textarea
                   value={mcpEditing.json}
                   onChange={(e) => setMcpEditing({ ...mcpEditing, json: e.target.value, jsonError: undefined })}
@@ -1612,12 +1645,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   className={inputCls + " font-mono text-xs leading-relaxed" + (mcpEditing.jsonError ? " border-red-500" : "")}
                   placeholder={MCP_TEMPLATE}
                 />
-                {mcpEditing.jsonError && <p className="mt-1 text-xs text-red-400">{mcpEditing.jsonError}</p>}
-                <p className="mt-1 text-xs text-gray-600">格式: {"{"} "名称": {"{"} "command"|"url": ... {"}"} {"}"}</p>
+                {mcpEditing.jsonError && <p className="mt-1 text-xs text-danger">{mcpEditing.jsonError}</p>}
+                <p className="mt-1 text-xs text-fg-faint">格式: {"{"} "名称": {"{"} "command"|"url": ... {"}"} {"}"}</p>
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setMcpEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
+              <button onClick={() => setMcpEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleMcpSave} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>
@@ -1627,27 +1660,27 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Project Node Edit Modal ═══ */}
       {nodeEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{nodeEditing.index < 0 ? "添加节点" : `编辑节点 · ${nodeEditing.label || nodeEditing.id}`}</h3>
-              <button onClick={() => setNodeEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
+              <h3 className="text-sm font-semibold text-fg-soft">{nodeEditing.index < 0 ? "添加节点" : `编辑节点 · ${nodeEditing.label || nodeEditing.id}`}</h3>
+              <button onClick={() => setNodeEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
               <div className="flex gap-3">
-                <div className="flex-1"><label className="mb-1 block text-xs text-gray-500">节点 id（/p 命令）</label>
+                <div className="flex-1"><label className="mb-1 block text-xs text-fg-muted">节点 id（/p 命令）</label>
                   <input type="text" value={nodeEditing.id}
                     onChange={(e) => setNodeEditing({ ...nodeEditing, id: e.target.value.trim() })}
                     className={inputCls} placeholder="如 test-report" /></div>
-                <div className="flex-1"><label className="mb-1 block text-xs text-gray-500">按钮名称</label>
+                <div className="flex-1"><label className="mb-1 block text-xs text-fg-muted">按钮名称</label>
                   <input type="text" value={nodeEditing.label}
                     onChange={(e) => setNodeEditing({ ...nodeEditing, label: e.target.value })}
                     className={inputCls} placeholder="如 测试报告" /></div>
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className="block text-xs text-gray-500">节点提示词（告诉 AI 该节点做什么、产出标准）</label>
+                  <label className="block text-xs text-fg-muted">节点提示词（告诉 AI 该节点做什么、产出标准）</label>
                   {(nodeEditing.defaultPrompt ?? "").trim() !== "" && (nodeEditing.prompt ?? "").trim() !== "" && (
-                    <button type="button" className="text-xs text-blue-400 hover:text-blue-300"
+                    <button type="button" className="text-xs text-accent hover:text-accent-soft"
                       onClick={() => setNodeEditing({ ...nodeEditing, prompt: undefined })}
                     >恢复默认模板</button>
                   )}
@@ -1658,16 +1691,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   className={inputCls + " font-mono text-xs leading-relaxed"}
                   placeholder="每行一条要求，会原样进入节点任务提示词" />
                 {(nodeEditing.defaultPrompt ?? "").trim() !== "" && (nodeEditing.prompt ?? "").trim() === "" && (
-                  <p className="mt-1 text-[10px] text-gray-500">当前使用内置默认模板（上方内容即模板全文，编辑即覆盖）</p>
+                  <p className="mt-1 text-[10px] text-fg-muted">当前使用内置默认模板（上方内容即模板全文，编辑即覆盖）</p>
                 )}
               </div>
             </div>
-            <div className="flex items-center justify-between border-t border-gray-800 px-6 py-4">
+            <div className="flex items-center justify-between border-t border-line-subtle px-6 py-4">
               <div>
                 {nodeEditing.index >= 0 && hubConfigured && activeGroup && (
                   <button
                     type="button"
-                    className="mr-2 inline-flex items-center gap-1 rounded-md px-4 py-1.5 text-xs text-blue-400 transition hover:bg-gray-800"
+                    className="mr-2 inline-flex items-center gap-1 rounded-md px-4 py-1.5 text-xs text-accent transition hover:bg-raised"
                     onClick={async () => {
                       const r = await window.electronAPI.flowHub.uploadNode(activeGroup.id, nodeEditing.id)
                       if (r.ok) void showAlert("上传成功", `节点「${nodeEditing.label}」已上传`)
@@ -1683,12 +1716,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       await saveActiveGroupNodes(activeGroup.nodes.filter((_, j) => j !== nodeEditing.index))
                       setNodeEditing(null)
                     }}
-                    className="rounded-md px-4 py-1.5 text-xs text-red-400 transition hover:bg-gray-800"
+                    className="rounded-md px-4 py-1.5 text-xs text-danger transition hover:bg-raised"
                   >删除节点</button>
                 )}
               </div>
               <div className="flex gap-2">
-                <button onClick={() => setNodeEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+                <button onClick={() => setNodeEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
                 <button
                   disabled={!nodeEditing.id.trim() || !nodeEditing.label.trim()}
                   onClick={async () => {
@@ -1726,23 +1759,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Node Group Edit Modal ═══ */}
       {groupEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-sm flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{groupEditing.index < 0 ? "新增流程组" : "编辑流程组"}</h3>
-              <button onClick={() => setGroupEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex w-full max-w-sm flex-col rounded-xl border border-line bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
+              <h3 className="text-sm font-semibold text-fg-soft">{groupEditing.index < 0 ? "新增流程组" : "编辑流程组"}</h3>
+              <button onClick={() => setGroupEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="space-y-3 px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">组 id</label>
+              <div><label className="mb-1 block text-xs text-fg-muted">组 id</label>
                 <input type="text" value={groupEditing.id} disabled={groupEditing.index >= 0}
                   onChange={(e) => setGroupEditing({ ...groupEditing, id: e.target.value.trim() })}
                   className={`${inputCls} ${groupEditing.index >= 0 ? "opacity-60" : ""}`} placeholder="如 design" /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">组名</label>
+              <div><label className="mb-1 block text-xs text-fg-muted">组名</label>
                 <input type="text" value={groupEditing.name}
                   onChange={(e) => setGroupEditing({ ...groupEditing, name: e.target.value })}
                   className={inputCls} placeholder="如 设计" /></div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setGroupEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
+              <button onClick={() => setGroupEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleGroupSave} disabled={!groupEditing.id.trim() || !groupEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>
@@ -1752,17 +1785,17 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Skill Edit Modal ═══ */}
       {skillEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{skillEditOriginalName ? "编辑 Skill" : "新增 Skill"}</h3>
-              <button onClick={() => setSkillEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
+              <h3 className="text-sm font-semibold text-fg-soft">{skillEditOriginalName ? "编辑 Skill" : "新增 Skill"}</h3>
+              <button onClick={() => setSkillEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">路径（相对根目录）</label><input type="text" value={skillEditing.name} onChange={(e) => setSkillEditing({ ...skillEditing, name: e.target.value })} className={inputCls} placeholder="my-skill 或 group/my-skill" /></div>
-              <div><label className="mb-1 block text-xs text-gray-500">SKILL.md 内容</label><textarea value={skillEditing.content} onChange={(e) => setSkillEditing({ ...skillEditing, content: e.target.value })} rows={16} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="# My Skill\n\nDescription of what this skill does..." /></div>
+              <div><label className="mb-1 block text-xs text-fg-muted">路径（相对根目录）</label><input type="text" value={skillEditing.name} onChange={(e) => setSkillEditing({ ...skillEditing, name: e.target.value })} className={inputCls} placeholder="my-skill 或 group/my-skill" /></div>
+              <div><label className="mb-1 block text-xs text-fg-muted">SKILL.md 内容</label><textarea value={skillEditing.content} onChange={(e) => setSkillEditing({ ...skillEditing, content: e.target.value })} rows={16} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="# My Skill\n\nDescription of what this skill does..." /></div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setSkillEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
+              <button onClick={() => setSkillEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleSkillSave} disabled={!skillEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>
@@ -1772,13 +1805,13 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Skill File Edit Modal ═══ */}
       {skillFileEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-2xl flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "85vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
+          <div className="flex w-full max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "85vh" }}>
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
               <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-gray-200">编辑文件</h3>
-                <p className="truncate text-xs text-gray-500 mt-0.5">{skillFileEditing.skillPath}/{skillFileEditing.relativePath}</p>
+                <h3 className="text-sm font-semibold text-fg-soft">编辑文件</h3>
+                <p className="truncate text-xs text-fg-muted mt-0.5">{skillFileEditing.skillPath}/{skillFileEditing.relativePath}</p>
               </div>
-              <button onClick={() => setSkillFileEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+              <button onClick={() => setSkillFileEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 overflow-y-auto px-6 py-4">
               <textarea
@@ -1789,8 +1822,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 className={inputCls + " font-mono text-xs leading-relaxed"}
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setSkillFileEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
+              <button onClick={() => setSkillFileEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleSkillFileSave} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500">保存</button>
             </div>
           </div>
@@ -1800,9 +1833,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Skill Create Prompt ═══ */}
       {skillPrompt && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
-            <div className="border-b border-gray-800 px-5 py-3">
-              <h3 className="text-sm font-semibold text-gray-200">新建{skillPrompt.kind === "file" ? "文件" : "文件夹"}</h3>
+          <div className="w-full max-w-xs rounded-xl border border-line bg-surface shadow-2xl">
+            <div className="border-b border-line-subtle px-5 py-3">
+              <h3 className="text-sm font-semibold text-fg-soft">新建{skillPrompt.kind === "file" ? "文件" : "文件夹"}</h3>
             </div>
             <div className="px-5 py-4">
               <input
@@ -1815,8 +1848,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 className={inputCls}
               />
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-5 py-3">
-              <button onClick={() => setSkillPrompt(null)} className="rounded-md px-3 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-3">
+              <button onClick={() => setSkillPrompt(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
               <button onClick={() => void handleSkillPromptConfirm()} disabled={!skillPrompt.value.trim()} className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40">确定</button>
             </div>
           </div>
@@ -1826,12 +1859,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Skill Delete Confirm ═══ */}
       {skillDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
+          <div className="w-full max-w-xs rounded-xl border border-line bg-surface shadow-2xl">
             <div className="px-5 py-4">
-              <p className="text-sm text-gray-300">确定删除 <code className="text-red-300">{skillDeleteConfirm.relativePath}</code> ？</p>
+              <p className="text-sm text-fg-2">确定删除 <code className="text-danger-soft">{skillDeleteConfirm.relativePath}</code> ？</p>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-5 py-3">
-              <button onClick={() => setSkillDeleteConfirm(null)} className="rounded-md px-3 py-1 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-3">
+              <button onClick={() => setSkillDeleteConfirm(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
               <button onClick={() => void handleDeleteFileConfirm()} className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500">删除</button>
             </div>
           </div>
@@ -1841,53 +1874,53 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       {/* ═══ Task Edit Modal ═══ */}
       {taskEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-gray-800 px-6 py-4">
-              <h3 className="text-sm font-semibold text-gray-200">{tasks.find((t) => t.id === taskEditing.id) ? "编辑定时任务" : "新增定时任务"}</h3>
-              <button onClick={() => setTaskEditing(null)} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
+            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
+              <h3 className="text-sm font-semibold text-fg-soft">{tasks.find((t) => t.id === taskEditing.id) ? "编辑定时任务" : "新增定时任务"}</h3>
+              <button onClick={() => setTaskEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-gray-500">任务名称</label><input type="text" value={taskEditing.name} onChange={(e) => setTaskEditing({ ...taskEditing, name: e.target.value })} className={inputCls} placeholder="日报推送" /></div>
+              <div><label className="mb-1 block text-xs text-fg-muted">任务名称</label><input type="text" value={taskEditing.name} onChange={(e) => setTaskEditing({ ...taskEditing, name: e.target.value })} className={inputCls} placeholder="日报推送" /></div>
               <div>
-                <label className="mb-1 block text-xs text-gray-500">Cron 表达式</label>
+                <label className="mb-1 block text-xs text-fg-muted">Cron 表达式</label>
                 <input type="text" value={taskEditing.cron} onChange={(e) => { setTaskEditing({ ...taskEditing, cron: e.target.value }); setTaskCronValid(true) }} className={inputCls + (!taskCronValid ? " border-red-500" : "")} placeholder="0 9 * * 1-5" />
-                {!taskCronValid && <p className="mt-1 text-xs text-red-400">Cron 表达式无效</p>}
-                <p className="mt-1 text-xs text-gray-600">
+                {!taskCronValid && <p className="mt-1 text-xs text-danger">Cron 表达式无效</p>}
+                <p className="mt-1 text-xs text-fg-faint">
                   五段：分 时 日 月 周（如 0 9 * * 1-5 = 工作日 9:00）。六段时在前面加「秒」：秒 分 时 日 月 周。
-                  每 5 秒请用 <code className="rounded bg-gray-800 px-1">*/5 * * * * *</code>，勿用 <code className="rounded bg-gray-800 px-1">0/5</code>（在 node-cron 里会变成每分钟一次）。
+                  每 5 秒请用 <code className="rounded bg-raised px-1">*/5 * * * * *</code>，勿用 <code className="rounded bg-raised px-1">0/5</code>（在 node-cron 里会变成每分钟一次）。
                 </p>
-                <div className="mt-2 rounded-lg border border-gray-800 bg-gray-900/80 px-3 py-2">
+                <div className="mt-2 rounded-lg border border-line-subtle bg-surface/80 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-medium text-gray-500">最近 5 次触发（本地时间）</p>
+                    <p className="text-xs font-medium text-fg-muted">最近 5 次触发（本地时间）</p>
                     {cronPreviewLoading && cronPreviewRuns && cronPreviewRuns.length > 0 && (
-                      <span className="flex items-center gap-1 text-[11px] text-gray-500">
+                      <span className="flex items-center gap-1 text-[11px] text-fg-muted">
                         <Loader2 size={11} className="animate-spin shrink-0" />
                         更新中…
                       </span>
                     )}
                   </div>
                   {cronPreviewLoading && (!cronPreviewRuns || cronPreviewRuns.length === 0) && (
-                    <p className="mt-1 flex items-center gap-1.5 text-xs text-gray-500">
+                    <p className="mt-1 flex items-center gap-1.5 text-xs text-fg-muted">
                       <Loader2 size={12} className="animate-spin" />计算中…
                     </p>
                   )}
                   {!cronPreviewLoading && cronPreviewErr && (
-                    <p className="mt-1 text-xs text-amber-400/90">{cronPreviewErr}</p>
+                    <p className="mt-1 text-xs text-warning/90">{cronPreviewErr}</p>
                   )}
                   {cronPreviewRuns && cronPreviewRuns.length > 0 && (
-                    <ol className={`mt-1.5 list-decimal space-y-0.5 pl-4 font-mono text-[11px] leading-relaxed text-gray-400 ${cronPreviewLoading ? "opacity-70" : ""}`}>
+                    <ol className={`mt-1.5 list-decimal space-y-0.5 pl-4 font-mono text-[11px] leading-relaxed text-fg-3 ${cronPreviewLoading ? "opacity-70" : ""}`}>
                       {cronPreviewRuns.map((line, i) => (
                         <li key={`${line}-${i}`}>{line}</li>
                       ))}
                     </ol>
                   )}
-                  <p className="mt-1.5 text-[10px] text-gray-600">由解析库推算，与 node-cron 在少数写法上可能略有差异，以实际日志为准。</p>
+                  <p className="mt-1.5 text-[10px] text-fg-faint">由解析库推算，与 node-cron 在少数写法上可能略有差异，以实际日志为准。</p>
                 </div>
               </div>
-              <div><label className="mb-1 block text-xs text-gray-500">消息内容</label><textarea value={taskEditing.content} onChange={(e) => setTaskEditing({ ...taskEditing, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="要发送给 Agent 的消息..." /></div>
+              <div><label className="mb-1 block text-xs text-fg-muted">消息内容</label><textarea value={taskEditing.content} onChange={(e) => setTaskEditing({ ...taskEditing, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="要发送给 Agent 的消息..." /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500">消息通道</label>
+                  <label className="mb-1 block text-xs text-fg-muted">消息通道</label>
                   <select
                     value={taskEditing.channelId ?? ""}
                     onChange={(e) => { setTaskEditing({ ...taskEditing, channelId: e.target.value || undefined }); setTaskModelOptions([]) }}
@@ -1899,8 +1932,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
                 <div>
                   <div className="mb-1 flex items-center gap-2">
-                    <label className="block text-xs text-gray-500">模型</label>
-                    <button onClick={() => void fetchTaskModels(taskEditing.channelId)} disabled={loadingTaskModels} className="flex items-center gap-1 rounded px-1.5 py-0 text-[10px] text-gray-500 transition hover:bg-gray-800 hover:text-white disabled:opacity-50">
+                    <label className="block text-xs text-fg-muted">模型</label>
+                    <button onClick={() => void fetchTaskModels(taskEditing.channelId)} disabled={loadingTaskModels} className="flex items-center gap-1 rounded px-1.5 py-0 text-[10px] text-fg-muted transition hover:bg-raised hover:text-fg disabled:opacity-50">
                       {loadingTaskModels ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}{loadingTaskModels ? "加载中" : "刷新"}
                     </button>
                   </div>
@@ -1922,10 +1955,10 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
               </div>
               <div>
-                <div className="mb-1 flex items-center gap-2 text-xs text-gray-500">
+                <div className="mb-1 flex items-center gap-2 text-xs text-fg-muted">
                   <span>会话 ID（可选）</span>
                   <span
-                    className="cursor-help text-blue-400/90 underline decoration-dotted underline-offset-2"
+                    className="cursor-help text-accent/90 underline decoration-dotted underline-offset-2"
                     title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
                   >
                     如何获取?
@@ -1938,16 +1971,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   className={inputCls + " font-mono text-xs"}
                   placeholder="不填则默认通知到主用户私聊会话"
                 />
-                <p className="mt-1 text-[10px] text-gray-600">独立任务仅通过 MCP 投递到该会话；不填时使用通道主用户私聊。</p>
+                <p className="mt-1 text-[10px] text-fg-faint">独立任务仅通过 MCP 投递到该会话；不填时使用通道主用户私聊。</p>
               </div>
               <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={taskEditing.enabled} onChange={(e) => setTaskEditing({ ...taskEditing, enabled: e.target.checked })} className="rounded border-gray-600" />启用</label>
-                <label className="flex items-center gap-2 text-xs text-gray-400"><input type="checkbox" checked={taskEditing.independent !== false} onChange={(e) => setTaskEditing({ ...taskEditing, independent: e.target.checked })} className="rounded border-gray-600" />独立运行</label>
+                <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={taskEditing.enabled} onChange={(e) => setTaskEditing({ ...taskEditing, enabled: e.target.checked })} className="rounded border-line-strong" />启用</label>
+                <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={taskEditing.independent !== false} onChange={(e) => setTaskEditing({ ...taskEditing, independent: e.target.checked })} className="rounded border-line-strong" />独立运行</label>
               </div>
-              <p className="text-[10px] text-gray-600">独立运行：触发时直接启动新 Agent 会话，不进入消息队列</p>
+              <p className="text-[10px] text-fg-faint">独立运行：触发时直接启动新 Agent 会话，不进入消息队列</p>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-6 py-4">
-              <button onClick={() => setTaskEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
+              <button onClick={() => setTaskEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleTaskSave} disabled={!taskEditing.name.trim() || !taskEditing.cron.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>

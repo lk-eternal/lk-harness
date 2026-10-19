@@ -26,22 +26,22 @@ function ThinkingBlock({ text, ms, live, expanded }: { text: string; ms?: number
   const [open, toggle] = useAutoOpen(expanded)
   return (
     <div>
-      <button type="button" onClick={toggle} className="flex items-center gap-1.5 text-xs text-gray-500 transition hover:text-gray-300">
+      <button type="button" onClick={toggle} className="flex items-center gap-1.5 text-xs text-fg-muted transition hover:text-fg-2">
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         {live ? <Loader2 size={12} className="animate-spin" /> : <Brain size={12} />}
         <span>{live ? "思考中…" : `思考${ms != null ? ` ${fmtMs(ms)}` : ""}`}</span>
       </button>
       {open && (
-        <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap border-l-2 border-gray-800 pl-3 text-xs leading-relaxed text-gray-500">{text}</p>
+        <p className="mt-1 max-h-60 overflow-y-auto whitespace-pre-wrap border-l-2 border-line-subtle pl-3 text-xs leading-relaxed text-fg-muted">{text}</p>
       )}
     </div>
   )
 }
 
 function ToolIcon({ status }: { status: string }) {
-  if (status === "running") return <Loader2 size={12} className="shrink-0 animate-spin text-blue-400" />
-  if (status === "error") return <XCircle size={12} className="shrink-0 text-red-400" />
-  return <Check size={12} className="shrink-0 text-green-400" />
+  if (status === "running") return <Loader2 size={12} className="shrink-0 animate-spin text-accent" />
+  if (status === "error") return <XCircle size={12} className="shrink-0 text-danger" />
+  return <Check size={12} className="shrink-0 text-success" />
 }
 
 function ToolsBlock({ tools, live, expanded }: { tools: AppChatTool[]; live: boolean; expanded: boolean }) {
@@ -51,21 +51,21 @@ function ToolsBlock({ tools, live, expanded }: { tools: AppChatTool[]; live: boo
   const names = [...new Set(tools.map((t) => t.name))]
   return (
     <div>
-      <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 text-left text-xs text-gray-500 transition hover:text-gray-300">
+      <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 text-left text-xs text-fg-muted transition hover:text-fg-2">
         {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         {running ? <Loader2 size={12} className="animate-spin" /> : <Wrench size={12} />}
         <span>工具调用 {tools.length} 项</span>
-        {failed > 0 && <span className="text-red-400">{failed} 失败</span>}
-        {!open && <span className="min-w-0 flex-1 truncate text-gray-600">{names.slice(0, 4).join(" · ")}{names.length > 4 ? ` +${names.length - 4}` : ""}</span>}
+        {failed > 0 && <span className="text-danger">{failed} 失败</span>}
+        {!open && <span className="min-w-0 flex-1 truncate text-fg-faint">{names.slice(0, 4).join(" · ")}{names.length > 4 ? ` +${names.length - 4}` : ""}</span>}
       </button>
       {open && (
-        <ul className="mt-1 space-y-1 border-l-2 border-gray-800 pl-3">
+        <ul className="mt-1 space-y-1 border-l-2 border-line-subtle pl-3">
           {tools.map((t, i) => (
             <li key={i} className="flex items-center gap-2 text-xs">
               <ToolIcon status={t.status} />
-              <span className="shrink-0 font-mono text-gray-300">{t.name}</span>
-              {t.summary && <span className="min-w-0 flex-1 truncate text-gray-500" title={t.summary}>{t.summary}</span>}
-              {t.ms != null && <span className="ml-auto shrink-0 tabular-nums text-gray-600">{fmtMs(t.ms)}</span>}
+              <span className="shrink-0 font-mono text-fg-2">{t.name}</span>
+              {t.summary && <span className="min-w-0 flex-1 truncate text-fg-muted" title={t.summary}>{t.summary}</span>}
+              {t.ms != null && <span className="ml-auto shrink-0 tabular-nums text-fg-faint">{fmtMs(t.ms)}</span>}
             </li>
           ))}
         </ul>
@@ -75,22 +75,22 @@ function ToolsBlock({ tools, live, expanded }: { tools: AppChatTool[]; live: boo
 }
 
 function TodoIcon({ status }: { status: string }) {
-  if (status === "completed") return <CheckCircle2 size={13} className="shrink-0 text-emerald-400" />
-  if (status === "in_progress") return <Loader2 size={13} className="shrink-0 animate-spin text-blue-400" />
-  if (status === "cancelled") return <XCircle size={13} className="shrink-0 text-gray-600" />
-  return <Circle size={13} className="shrink-0 text-gray-600" />
+  if (status === "completed") return <CheckCircle2 size={13} className="shrink-0 text-success" />
+  if (status === "in_progress") return <Loader2 size={13} className="shrink-0 animate-spin text-accent" />
+  if (status === "cancelled") return <XCircle size={13} className="shrink-0 text-fg-faint" />
+  return <Circle size={13} className="shrink-0 text-fg-faint" />
 }
 
 function TodosBlock({ items }: { items: AppChatTodo[] }) {
   const done = items.filter((t) => t.status === "completed").length
   const pct = items.length > 0 ? Math.round((done / items.length) * 100) : 0
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2">
-      <div className="flex items-center gap-2 text-xs text-gray-400">
+    <div className="rounded-lg border border-line-subtle bg-surface/40 px-3 py-2">
+      <div className="flex items-center gap-2 text-xs text-fg-3">
         <ListChecks size={13} />
         <span>任务清单</span>
-        <span className="tabular-nums text-gray-500">{done}/{items.length}</span>
-        <div className="ml-auto h-1 w-24 overflow-hidden rounded bg-gray-800">
+        <span className="tabular-nums text-fg-muted">{done}/{items.length}</span>
+        <div className="ml-auto h-1 w-24 overflow-hidden rounded bg-raised">
           <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
@@ -98,7 +98,7 @@ function TodosBlock({ items }: { items: AppChatTodo[] }) {
         {items.map((t, i) => (
           <li key={i} className="flex items-start gap-2 text-xs">
             <span className="mt-0.5"><TodoIcon status={t.status} /></span>
-            <span className={t.status === "completed" || t.status === "cancelled" ? "text-gray-600 line-through" : t.status === "in_progress" ? "text-gray-200" : "text-gray-400"}>{t.content}</span>
+            <span className={t.status === "completed" || t.status === "cancelled" ? "text-fg-faint line-through" : t.status === "in_progress" ? "text-fg-soft" : "text-fg-3"}>{t.content}</span>
           </li>
         ))}
       </ul>
@@ -123,10 +123,10 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
         }
       })}
       {!item.finished && item.segments.length === 0 && (
-        <div className="flex items-center gap-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>
+        <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>
       )}
       {item.finished && (replyText || item.modelLabel) && (
-        <div className="flex items-center gap-3 text-[11px] text-gray-600">
+        <div className="flex items-center gap-3 text-[11px] text-fg-faint">
           {item.modelLabel && <span>{item.modelLabel}</span>}
           {replyText && <CopyButton text={replyText} />}
         </div>

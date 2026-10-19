@@ -3,7 +3,6 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { Check, Copy } from "lucide-react"
-import "highlight.js/styles/github-dark.css"
 import "./chat-markdown.css"
 
 /** 取 React 子树的纯文本（高亮后代码被拆成 span，复制要还原原文） */
@@ -27,10 +26,10 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
           window.setTimeout(() => setDone(false), 1500)
         })
       }}
-      className={`flex items-center gap-1 text-gray-500 transition hover:text-gray-200 ${className}`}
+      className={`flex items-center gap-1 text-fg-muted transition hover:text-fg-soft ${className}`}
     >
-      {done ? <Check size={13} className="text-green-400" /> : <Copy size={13} />}
-      {done && <span className="text-[11px] text-green-400">已复制</span>}
+      {done ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+      {done && <span className="text-[11px] text-success">已复制</span>}
     </button>
   )
 }
@@ -40,8 +39,8 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   const className = typeof code === "object" && code && "props" in code ? String((code.props as { className?: string }).className ?? "") : ""
   const lang = /language-([\w+#-]+)/.exec(className)?.[1] ?? ""
   return (
-    <div className="my-3 overflow-hidden rounded-lg border border-gray-800 bg-[#0d1117]">
-      <div className="flex items-center justify-between bg-[#161b22] px-3 py-1 text-xs text-gray-500">
+    <div className="my-3 overflow-hidden rounded-lg border border-line-subtle bg-code">
+      <div className="flex items-center justify-between bg-code-head px-3 py-1 text-xs text-fg-muted">
         <span>{lang || "text"}</span>
         <CopyButton text={textOf(children).replace(/\n$/, "")} />
       </div>
@@ -55,14 +54,14 @@ function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
   if (href && /^https?:\/\//i.test(href)) {
     return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
   }
-  return <span className="text-gray-400">{children}</span>
+  return <span className="text-fg-3">{children}</span>
 }
 
 const components: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
   // 不加载 Agent 输出里的远程/本地图片（追踪与越权读取风险），保留 alt 文本
-  img: ({ alt }) => <span className="text-gray-500">[图片{alt ? `：${alt}` : ""}]</span>,
+  img: ({ alt }) => <span className="text-fg-muted">[图片{alt ? `：${alt}` : ""}]</span>,
   table: ({ children }) => (
     <div className="my-3 overflow-x-auto"><table>{children}</table></div>
   ),

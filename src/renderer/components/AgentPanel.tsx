@@ -9,7 +9,7 @@ import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 type AddKind = "sdk" | "llm-builtin" | "llm-custom"
 
@@ -19,9 +19,9 @@ function newResourceId(prefix: string): string {
 }
 
 function resourceIcon(r: AgentResource) {
-  if (r.type === "sdk") return <KeyRound size={14} className="shrink-0 text-purple-400" />
-  if (r.type === "llm-custom") return <Globe size={14} className="shrink-0 text-amber-400" />
-  return <Cloud size={14} className="shrink-0 text-sky-400" />
+  if (r.type === "sdk") return <KeyRound size={14} className="shrink-0 text-purple" />
+  if (r.type === "llm-custom") return <Globe size={14} className="shrink-0 text-warning" />
+  return <Cloud size={14} className="shrink-0 text-sky" />
 }
 
 function resourceSubtitle(r: AgentResource): string {
@@ -112,20 +112,20 @@ function AgentModelsList({ draft, refreshKey }: { draft: AgentResource; refreshK
 
   return (
     <div>
-      <label className="mb-1 block text-xs text-gray-500">可用模型{models.length > 0 ? ` (${models.length})` : ""}</label>
+      <label className="mb-1 block text-xs text-fg-muted">可用模型{models.length > 0 ? ` (${models.length})` : ""}</label>
       {loading ? (
-        <div className="flex items-center gap-2 py-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />加载中...</div>
+        <div className="flex items-center gap-2 py-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />加载中...</div>
       ) : error ? (
-        <p className="text-xs text-red-400">{error}</p>
+        <p className="text-xs text-danger">{error}</p>
       ) : models.length === 0 ? (
-        <p className="text-xs text-gray-600">填写凭据后将自动加载；自定义网关需 Base URL + Key。</p>
+        <p className="text-xs text-fg-faint">填写凭据后将自动加载；自定义网关需 Base URL + Key。</p>
       ) : (
-        <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-gray-800 bg-gray-950/50 px-2 py-1.5">
+        <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-line-subtle bg-page/50 px-2 py-1.5">
           {models.map((m) => (
             <li key={m.id} className="flex items-center justify-between gap-2 text-xs">
-              <span className="truncate text-gray-300" title={m.label}>{m.label}</span>
+              <span className="truncate text-fg-2" title={m.label}>{m.label}</span>
               <span className="flex shrink-0 items-center gap-2">
-                <span className="font-mono text-[10px] text-gray-600">{m.id}</span>
+                <span className="font-mono text-[10px] text-fg-faint">{m.id}</span>
               </span>
             </li>
           ))}
@@ -291,12 +291,12 @@ export default function AgentPanel() {
                   key={r.id}
                   type="button"
                   onClick={() => void selectItem(r.id)}
-                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                 >
                   {resourceIcon(r)}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{r.name}</p>
-                    <p className="truncate text-[10px] text-gray-600">{resourceSubtitle(r)}</p>
+                    <p className="truncate text-[10px] text-fg-faint">{resourceSubtitle(r)}</p>
                   </div>
                 </button>
               )
@@ -305,23 +305,23 @@ export default function AgentPanel() {
               <button
                 type="button"
                 onClick={() => setShowAddMenu(!showAddMenu)}
-                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-gray-700 py-2 text-xs text-gray-500 transition hover:border-gray-600 hover:bg-gray-800/40 hover:text-gray-300"
+                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
               >
                 <Plus size={14} />添加
               </button>
               <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
-                <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800">
-                  <KeyRound size={12} className="text-purple-400" />Cursor SDK
+                <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                  <KeyRound size={12} className="text-purple" />Cursor SDK
                 </button>
-                <div className="my-1 border-t border-gray-800" />
+                <div className="my-1 border-t border-line-subtle" />
                 {BUILTIN_LLM_PROVIDERS.map((p) => (
-                  <button key={p.id} type="button" onClick={() => openAdd("llm-builtin", p.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800">
-                    <Cloud size={12} className="text-sky-400" />{p.label}
+                  <button key={p.id} type="button" onClick={() => openAdd("llm-builtin", p.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                    <Cloud size={12} className="text-sky" />{p.label}
                   </button>
                 ))}
-                <div className="my-1 border-t border-gray-800" />
-                <button type="button" onClick={() => openAdd("llm-custom")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800">
-                  <Globe size={12} className="text-amber-400" />自定义网关
+                <div className="my-1 border-t border-line-subtle" />
+                <button type="button" onClick={() => openAdd("llm-custom")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                  <Globe size={12} className="text-warning" />自定义网关
                 </button>
               </PanelAddMenu>
             </div>
@@ -332,38 +332,38 @@ export default function AgentPanel() {
           {draft ? (
             <>
               <div className={PANEL_SCROLL}>
-                <h3 className="text-sm font-medium text-gray-200">{draft.name || "新 Agent"}</h3>
+                <h3 className="text-sm font-medium text-fg-soft">{draft.name || "新 Agent"}</h3>
                 {usedByCount > 0 && (
-                  <p className="mt-1 text-xs text-blue-400">{usedByCount} 个通道使用中</p>
+                  <p className="mt-1 text-xs text-accent">{usedByCount} 个通道使用中</p>
                 )}
 
                 <div className="mt-4 space-y-3">
                   <div>
-                    <label className="mb-1 block text-xs text-gray-500">名称</label>
+                    <label className="mb-1 block text-xs text-fg-muted">名称</label>
                     <input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} />
                   </div>
 
                   {draft.type === "sdk" && (
                     <>
                       <div>
-                        <label className="mb-1 block text-xs text-gray-500">API Key</label>
+                        <label className="mb-1 block text-xs text-fg-muted">API Key</label>
                         <div className="relative">
                           <input type={showKey ? "text" : "password"} value={draft.apiKey ?? ""} onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setVerifyResult(null) }} placeholder="crsr_..." className={inputCls + " pr-9"} />
-                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted hover:text-fg-2">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
                         </div>
-                        <p className="mt-1.5 text-xs text-gray-500">
+                        <p className="mt-1.5 text-xs text-fg-muted">
                           还没有 Key？前往{" "}
-                          <a href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Cursor Dashboard</a>
+                          <a href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys" target="_blank" rel="noreferrer" className="text-accent hover:underline">Cursor Dashboard</a>
                           {" "}创建。
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
-                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-green-400"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
-                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyResult.error}</span>}
+                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-success"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
+                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-danger"><ShieldAlert size={13} />{verifyResult.error}</span>}
                       </div>
                     </>
                   )}
@@ -371,23 +371,23 @@ export default function AgentPanel() {
                   {draft.type === "llm-builtin" && (
                     <>
                       <div>
-                        <label className="mb-1 block text-xs text-gray-500">供应商</label>
-                        <input type="text" readOnly value={builtinProviderLabel(draft.providerId)} className={inputCls + " text-gray-500"} />
+                        <label className="mb-1 block text-xs text-fg-muted">供应商</label>
+                        <input type="text" readOnly value={builtinProviderLabel(draft.providerId)} className={inputCls + " text-fg-muted"} />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-gray-500">API Key</label>
+                        <label className="mb-1 block text-xs text-fg-muted">API Key</label>
                         <div className="relative">
                           <input type={showKey ? "text" : "password"} value={draft.apiKey ?? ""} onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setVerifyResult(null) }} className={inputCls + " pr-9"} />
-                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted hover:text-fg-2">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
-                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-green-400"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
-                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyResult.error}</span>}
+                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-success"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
+                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-danger"><ShieldAlert size={13} />{verifyResult.error}</span>}
                       </div>
                     </>
                   )}
@@ -395,23 +395,23 @@ export default function AgentPanel() {
                   {draft.type === "llm-custom" && (
                     <>
                       <div>
-                        <label className="mb-1 block text-xs text-gray-500">Base URL</label>
+                        <label className="mb-1 block text-xs text-fg-muted">Base URL</label>
                         <input type="text" value={draft.baseUrl ?? ""} onChange={(e) => { setDraft({ ...draft, baseUrl: e.target.value }); setVerifyResult(null) }} placeholder="https://opencode.ai/zen/v1" className={inputCls} />
                       </div>
                       <div>
-                        <label className="mb-1 block text-xs text-gray-500">API Key</label>
+                        <label className="mb-1 block text-xs text-fg-muted">API Key</label>
                         <div className="relative">
                           <input type={showKey ? "text" : "password"} value={draft.apiKey ?? ""} onChange={(e) => { setDraft({ ...draft, apiKey: e.target.value }); setVerifyResult(null) }} className={inputCls + " pr-9"} />
-                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                          <button type="button" onClick={() => setShowKey(!showKey)} className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-muted hover:text-fg-2">{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim() || !draft.baseUrl?.trim()} className="flex items-center gap-1 rounded-md border border-gray-600 px-3 py-1.5 text-xs text-gray-300 transition hover:border-blue-500 hover:text-blue-400 disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim() || !draft.baseUrl?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
-                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-green-400"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
-                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-red-400"><ShieldAlert size={13} />{verifyResult.error}</span>}
+                        {verifyResult?.ok && <span className="flex items-center gap-1 text-xs text-success"><ShieldCheck size={13} />有效{verifyResult.email ? ` (${verifyResult.email})` : ""}</span>}
+                        {verifyResult && !verifyResult.ok && <span className="flex items-center gap-1 text-xs text-danger"><ShieldAlert size={13} />{verifyResult.error}</span>}
                       </div>
                     </>
                   )}
@@ -422,13 +422,13 @@ export default function AgentPanel() {
               <div className={PANEL_FOOTER}>
                 <div>
                   {!isNew && (
-                    <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-950/30">
+                    <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-tint/30">
                       <Trash2 size={13} />删除
                     </button>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => { setDraft(null); setSelectedId(null); setIsNew(false) }} className="rounded-md px-4 py-1.5 text-xs text-gray-400 transition hover:bg-gray-800 hover:text-white">取消</button>
+                  <button type="button" onClick={() => { setDraft(null); setSelectedId(null); setIsNew(false) }} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
                   <button type="button" onClick={() => void handleSave()} className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
                   </button>
@@ -437,7 +437,7 @@ export default function AgentPanel() {
             </>
           ) : (
             <div className={PANEL_SCROLL}>
-              <p className="text-sm text-gray-500">从左侧选择 Agent，或点击「添加」新建。</p>
+              <p className="text-sm text-fg-muted">从左侧选择 Agent，或点击「添加」新建。</p>
             </div>
           )}
         </div>

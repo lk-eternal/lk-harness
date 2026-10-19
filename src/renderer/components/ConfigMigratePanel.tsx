@@ -134,7 +134,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
     <>
       <div className="space-y-3">
         {variant === "settings" && (
-          <p className="text-xs text-gray-600">导出/导入 LK Harness 配置包；或从 Cursor Claw 一键迁移。</p>
+          <p className="text-xs text-fg-faint">导出/导入 LK Harness 配置包；或从 Cursor Claw 一键迁移。</p>
         )}
         <div className={`flex flex-wrap gap-2 ${variant === "wizard" ? "justify-center" : ""}`}>
           {variant === "settings" && (
@@ -150,7 +150,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                   setBusy("")
                 }
               }}
-              className="flex items-center gap-2 rounded-lg border border-gray-700 px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
             >
               <Download size={16} /> 导出配置
             </button>
@@ -175,7 +175,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                 setBusy("")
               }
             }}
-            className="flex items-center gap-2 rounded-lg border border-gray-700 px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
           >
             <Upload size={16} /> 导入配置
           </button>
@@ -205,42 +205,42 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
           </button>
         </div>
         {!hasClaw && variant === "settings" && (
-          <p className="text-xs text-gray-600">未检测到 Cursor Claw 数据目录。</p>
+          <p className="text-xs text-fg-faint">未检测到 Cursor Claw 数据目录。</p>
         )}
       </div>
 
       {modal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
-          <div className="flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border border-gray-700 bg-gray-900 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-gray-800 px-5 py-4">
-              <h3 className="text-sm font-semibold text-gray-100">{modalTitle}</h3>
-              <button type="button" onClick={closeModal} className="text-gray-500 hover:text-white"><X size={16} /></button>
+          <div className="flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border border-line bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-line-subtle px-5 py-4">
+              <h3 className="text-sm font-semibold text-fg">{modalTitle}</h3>
+              <button type="button" onClick={closeModal} className="text-fg-muted hover:text-fg"><X size={16} /></button>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              <p className="mb-3 text-xs text-gray-500">{modalHint}</p>
+              <p className="mb-3 text-xs text-fg-muted">{modalHint}</p>
               <div className="space-y-2">
                 {modalItems.map((item) => {
                   const badge = countLabel(item)
                   return (
                     <label
                       key={item.id}
-                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${selected.has(item.id) ? "border-blue-500 bg-blue-500/10" : "border-gray-700 hover:border-gray-600"}`}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${selected.has(item.id) ? "border-blue-500 bg-blue-500/10" : "border-line hover:border-line-strong"}`}
                     >
                       <input
                         type="checkbox"
                         checked={selected.has(item.id)}
                         onChange={() => toggle(item.id)}
-                        className="rounded border-gray-600"
+                        className="rounded border-line-strong"
                       />
                       <span className="flex-1">{item.label}</span>
-                      {badge && <span className="shrink-0 text-xs text-gray-500">{badge}</span>}
+                      {badge && <span className="shrink-0 text-xs text-fg-muted">{badge}</span>}
                     </label>
                   )
                 })}
               </div>
             </div>
-            <div className="flex justify-end gap-2 border-t border-gray-800 px-5 py-4">
-              <button type="button" onClick={closeModal} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800">取消</button>
+            <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-4">
+              <button type="button" onClick={closeModal} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised">取消</button>
               <button
                 type="button"
                 onClick={() => void confirmModal()}

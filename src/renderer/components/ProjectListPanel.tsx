@@ -4,7 +4,7 @@ import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
-const inputCls = "w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 const STATUS_LABEL: Record<string, string> = { active: "进行中", paused: "已暂停", done: "已完成" }
 
@@ -163,10 +163,10 @@ export default function ProjectListPanel() {
           <div className={PANEL_LIST}>
             {projects.map((p) => (
               <button key={p.id} type="button" onClick={() => void selectProject(p)}
-                className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left transition ${selectedId === p.id ? "bg-gray-800/70 font-medium text-white" : "text-gray-400 hover:bg-gray-800/40 hover:text-gray-200"}`}>
+                className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left transition ${selectedId === p.id ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
                 <span className="truncate text-xs font-medium">{p.name}</span>
-                <span className="truncate font-mono text-[10px] text-gray-600">{p.featureBranch}</span>
-                <span className="text-[10px] text-gray-600">{STATUS_LABEL[p.status] ?? p.status}</span>
+                <span className="truncate font-mono text-[10px] text-fg-faint">{p.featureBranch}</span>
+                <span className="text-[10px] text-fg-faint">{STATUS_LABEL[p.status] ?? p.status}</span>
               </button>
             ))}
           </div>
@@ -175,44 +175,44 @@ export default function ProjectListPanel() {
           {draft ? (
             <>
               <div className={PANEL_SCROLL}>
-                <div><label className="mb-1 block text-xs text-gray-500">名称</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">名称</label>
                   <input type="text" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} /></div>
-                <div><label className="mb-1 block text-xs text-gray-500">目标（可空）</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">目标（可空）</label>
                   <textarea value={draft.goal ?? ""} onChange={(e) => setDraft({ ...draft, goal: e.target.value })} rows={2} className={inputCls} /></div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div><label className="mb-1 block text-xs text-gray-500">状态</label>
+                  <div><label className="mb-1 block text-xs text-fg-muted">状态</label>
                     <select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} className={inputCls}>
                       <option value="active">进行中</option>
                       <option value="paused">已暂停</option>
                       <option value="done">已完成</option>
                     </select></div>
-                  <div className="col-span-2"><label className="mb-1 block text-xs text-gray-500">流程组（可多选）</label>
-                    <div className="flex flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-900 px-3 py-2">
+                  <div className="col-span-2"><label className="mb-1 block text-xs text-fg-muted">流程组（可多选）</label>
+                    <div className="flex flex-wrap gap-2 rounded-lg border border-line bg-surface px-3 py-2">
                       {nodeGroups.map((g) => {
                         const selected = (draft.groupIds ?? []).includes(g.id)
                         return (
-                          <label key={g.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-300">
+                          <label key={g.id} className="flex cursor-pointer items-center gap-1.5 text-xs text-fg-2">
                             <input type="checkbox" checked={selected} onChange={(e) => {
                               const cur = draft.groupIds ?? []
                               const next = e.target.checked ? [...cur, g.id] : cur.filter((id) => id !== g.id)
                               setDraft({ ...draft, groupIds: next, groupId: next[0] })
-                            }} className="rounded border-gray-600" />
+                            }} className="rounded border-line-strong" />
                             {g.name}
                           </label>
                         )
                       })}
                     </div></div>
                 </div>
-                <div><label className="mb-1 block text-xs text-gray-500">飞书项目 / 需求链接</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">飞书项目 / 需求链接</label>
                   <input type="text" value={draft.storyUrl ?? ""} onChange={(e) => setDraft({ ...draft, storyUrl: e.target.value })} className={inputCls} /></div>
-                <div><label className="mb-1 block text-xs text-gray-500">产品文档</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">产品文档</label>
                   <input type="text" value={draft.productDocUrl ?? ""} onChange={(e) => setDraft({ ...draft, productDocUrl: e.target.value })} className={inputCls} /></div>
-                <div><label className="mb-1 block text-xs text-gray-500">技术文档</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">技术文档</label>
                   <input type="text" value={draft.techDocUrl ?? ""} onChange={(e) => setDraft({ ...draft, techDocUrl: e.target.value })} className={inputCls} /></div>
-                <div><label className="mb-1 block text-xs text-gray-500">metadata（JSON 对象）</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">metadata（JSON 对象）</label>
                   <textarea value={metadataText} onChange={(e) => setMetadataText(e.target.value)} rows={6} className={`${inputCls} font-mono text-xs`} /></div>
-                <div className="rounded-lg border border-gray-800 bg-gray-950/50 px-3 py-2 text-[11px] text-gray-500">
-                  <p className="mb-1 text-gray-400">只读</p>
+                <div className="rounded-lg border border-line-subtle bg-page/50 px-3 py-2 text-[11px] text-fg-muted">
+                  <p className="mb-1 text-fg-3">只读</p>
                   <p className="truncate">🌿 {draft.featureBranch || "—"}</p>
                   {draft.repoPath && <p className="truncate">📦 {draft.repoPath}</p>}
                   {draft.worktreePath && <p className="truncate">📁 {draft.worktreePath}</p>}
@@ -220,13 +220,13 @@ export default function ProjectListPanel() {
               </div>
               <div className={PANEL_FOOTER}>
                 <div className="flex items-center gap-2">
-                  <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-red-400 hover:bg-red-950/30"><Trash2 size={13} />删除</button>
+                  <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>
                   {!draft.groupChatId && (
-                    <button type="button" onClick={() => void handleSwitch()} className="rounded-md px-2.5 py-1.5 text-xs text-blue-400 hover:bg-blue-600/20">切换至</button>
+                    <button type="button" onClick={() => void handleSwitch()} className="rounded-md px-2.5 py-1.5 text-xs text-accent hover:bg-blue-600/20">切换至</button>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-gray-400 hover:bg-gray-800 hover:text-white">取消</button>
+                  <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.name.trim()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}
@@ -235,7 +235,7 @@ export default function ProjectListPanel() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-gray-600">← 选择项目</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择项目</div>
           )}
         </div>
       </div>

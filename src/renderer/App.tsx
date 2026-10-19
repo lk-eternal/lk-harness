@@ -52,9 +52,9 @@ export default function App() {
   if (error) {
     return (
       <div className="flex h-screen items-center justify-center p-8">
-        <div className="max-w-md rounded-lg border border-red-800 bg-red-950/50 p-6 text-center">
-          <h2 className="mb-2 text-lg font-semibold text-red-400">启动错误</h2>
-          <p className="text-sm text-red-300">{error}</p>
+        <div className="max-w-md rounded-lg border border-danger-line bg-danger-tint/50 p-6 text-center">
+          <h2 className="mb-2 text-lg font-semibold text-danger">启动错误</h2>
+          <p className="text-sm text-danger-soft">{error}</p>
         </div>
       </div>
     )

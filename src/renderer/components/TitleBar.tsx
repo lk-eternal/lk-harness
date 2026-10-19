@@ -15,7 +15,7 @@ export default function TitleBar({ children }: Props) {
 
   return (
     <div
-      className="flex h-12 items-center border-b border-gray-800"
+      className="flex h-12 items-center border-b border-line-subtle"
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >
       <div className="flex flex-1 items-center overflow-hidden px-6">
@@ -27,19 +27,19 @@ export default function TitleBar({ children }: Props) {
       >
         <button
           onClick={() => window.electronAPI.windowMinimize()}
-          className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+          className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
         >
           <Minus size={16} />
         </button>
         <button
           onClick={() => window.electronAPI.windowMaximize()}
-          className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+          className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
         >
           {maximized ? <Copy size={14} className="rotate-180" /> : <Square size={14} />}
         </button>
         <button
           onClick={() => window.electronAPI.windowClose()}
-          className="rounded-lg p-2 text-gray-400 transition hover:bg-red-600 hover:text-white"
+          className="rounded-lg p-2 text-fg-3 transition hover:bg-red-600 hover:text-white"
         >
           <X size={16} />
         </button>

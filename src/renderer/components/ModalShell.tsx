@@ -21,21 +21,21 @@ export function ModalShell({ title, children, footer }: ModalShellProps) {
       }}
     >
       <div
-        className="w-full max-w-xl rounded-xl border border-gray-800 bg-gray-950 shadow-2xl ring-1 ring-white/[0.06]"
+        className="w-full max-w-xl rounded-xl border border-line-subtle bg-page shadow-2xl ring-1 ring-white/[0.06]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-gray-800 px-5 py-3">
-          <h2 id="modal-title" className="text-base font-semibold text-white">
+        <div className="border-b border-line-subtle px-5 py-3">
+          <h2 id="modal-title" className="text-base font-semibold text-fg">
             {title}
           </h2>
         </div>
-        <div className="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm leading-relaxed text-gray-300 [word-break:keep-all]">
+        <div className="max-h-[60vh] overflow-y-auto px-5 py-4 text-sm leading-relaxed text-fg-2 [word-break:keep-all]">
           {children}
         </div>
-        <div className="flex flex-col gap-3 border-t border-gray-800 bg-gray-900/40 px-5 py-3">
+        <div className="flex flex-col gap-3 border-t border-line-subtle bg-surface/40 px-5 py-3">
           {footer}
         </div>
       </div>
@@ -47,10 +47,10 @@ export const modalBtnBase =
   "rounded-lg px-3 py-1.5 text-xs font-medium transition disabled:opacity-50"
 
 export const modalBtnGhost =
-  `${modalBtnBase} border border-gray-700 bg-gray-800/60 text-gray-200 hover:bg-gray-700/80`
+  `${modalBtnBase} border border-line bg-raised/60 text-fg-soft hover:bg-strong/80`
 
 export const modalBtnPrimary =
-  `${modalBtnBase} border border-blue-600/40 bg-blue-600/20 text-blue-300 hover:bg-blue-600/30`
+  `${modalBtnBase} border border-blue-600/40 bg-blue-600/20 text-accent-soft hover:bg-blue-600/30`
 
 export const modalBtnDanger =
-  `${modalBtnBase} border border-red-800/50 bg-red-950/40 text-red-300 hover:bg-red-900/50`
+  `${modalBtnBase} border border-danger-line/50 bg-danger-tint/40 text-danger-soft hover:bg-danger-tint-strong/50`

@@ -817,7 +817,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <img src={logoUrl} alt="logo" className="h-6 w-6" />
             <h1 className="text-lg font-semibold">LK Harness</h1>
             {status.version && (
-              <span className="rounded bg-gray-800 px-2 py-0.5 text-xs text-gray-400">
+              <span className="rounded bg-raised px-2 py-0.5 text-xs text-fg-3">
                 v{status.version}
               </span>
             )}
@@ -826,21 +826,21 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={() => void handleCheckUpdate()}
               disabled={checkingUpdate}
-              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white disabled:opacity-50"
+              className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg disabled:opacity-50"
               title="检查更新"
             >
               {checkingUpdate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             </button>
             <button
               onClick={() => onChat()}
-              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+              className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
               title="应用内对话"
             >
               <MessagesSquare size={16} />
             </button>
             <button
               onClick={() => onSettings()}
-              className="rounded-lg p-2 text-gray-400 transition hover:bg-gray-800 hover:text-white"
+              className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
               title="设置"
             >
               <Settings size={16} />
@@ -872,14 +872,14 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={handleStop}
               disabled={stopping}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-red-400 transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
               title="停止 Daemon"
             >
               {stopping ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
               停止
             </button>
           ) : isStarting ? (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-yellow-400" title="正在启动 Daemon">
+            <span className="flex items-center gap-1 px-1.5 py-0.5 text-xs text-warning" title="正在启动 Daemon">
               <Loader2 size={10} className="animate-spin" />
               启动中
             </span>
@@ -887,7 +887,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={handleStart}
               disabled={starting}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-green-400 transition hover:bg-green-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-success transition hover:bg-green-600/20 disabled:opacity-50"
               title="启动 Daemon"
             >
               {starting ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
@@ -919,7 +919,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             })()}
             sub={treeChannels.length > 0 ? (showChannels ? "点击收起会话树" : "点击展开会话树") : "等待目标"}
             action={treeChannels.length > 0 ? (
-              showChannels ? <ChevronDown size={12} className="text-gray-500" /> : <ChevronRight size={12} className="text-gray-500" />
+              showChannels ? <ChevronDown size={12} className="text-fg-muted" /> : <ChevronRight size={12} className="text-fg-muted" />
             ) : undefined}
           />
         </div>
@@ -941,7 +941,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={(e) => { e.stopPropagation(); handleStopAgent() }}
               disabled={stoppingAgent}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-red-400 transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
               title="停止全部 Agent"
             >
               {stoppingAgent ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
@@ -961,12 +961,12 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             return (
               <span className="flex items-baseline gap-2.5">
                 {processing > 0 && (
-                  <span className="flex items-baseline gap-1 text-blue-400" title="处理中">
+                  <span className="flex items-baseline gap-1 text-accent" title="处理中">
                     {processing}<span className="text-[10px] text-blue-500/70">处理中</span>
                   </span>
                 )}
                 {pending > 0 && (
-                  <span className="flex items-baseline gap-1 text-yellow-400" title="排队中">
+                  <span className="flex items-baseline gap-1 text-warning" title="排队中">
                     {pending}<span className="text-[10px] text-yellow-500/70">排队</span>
                   </span>
                 )}
@@ -979,7 +979,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={handleClearQueue}
               disabled={clearingQueue}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-red-400 transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
               title="清空队列"
             >
               {clearingQueue ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
@@ -993,7 +993,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
       {showSessions && (
         <PanelShell title="活跃会话" meta={`${activeSessions.length} 个运行中`}>
           {activeSessions.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-gray-600">当前没有运行中的会话</p>
+            <p className="px-3 py-6 text-center text-xs text-fg-faint">当前没有运行中的会话</p>
           ) : (
             activeSessions.map(({ channelName, node }) => (
               <SessionRow
@@ -1018,33 +1018,33 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
       {showQueue && (
         <PanelShell title="全局消息队列" meta={`${queueMessages.length} 条`}>
           {queueMessages.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-gray-600">队列为空</p>
+            <p className="px-3 py-6 text-center text-xs text-fg-faint">队列为空</p>
           ) : (
             <div className="space-y-1.5 p-3">
               {queueMessages.map((msg) => {
                 const meta = msg.sessionKey ? sessionMetaByKey.get(msg.sessionKey.toLowerCase()) : undefined
                 return (
-                  <div key={msg.fileId || msg.index} className="flex items-start justify-between gap-2 rounded-lg bg-gray-800/60 px-3 py-2">
+                  <div key={msg.fileId || msg.index} className="flex items-start justify-between gap-2 rounded-lg bg-raised/60 px-3 py-2">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
                         {meta && (
-                          <span className="shrink-0 rounded bg-gray-800 px-1 text-[10px] text-gray-400" title="所属通道">
+                          <span className="shrink-0 rounded bg-raised px-1 text-[10px] text-fg-3" title="所属通道">
                             {meta.channelName}
                           </span>
                         )}
-                        <span className="min-w-0 truncate text-[10px] font-medium text-blue-400" title={msg.sessionKey}>
+                        <span className="min-w-0 truncate text-[10px] font-medium text-accent" title={msg.sessionKey}>
                           {meta?.label ?? getSessionLabel(msg)}
                         </span>
-                        <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-blue-600/25 text-blue-300" : "bg-yellow-600/20 text-yellow-300"}`}>
+                        <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-blue-600/25 text-accent-soft" : "bg-yellow-600/20 text-warning-soft"}`}>
                           {msg.status === "processing" ? "处理中" : "排队"}
                         </span>
-                        <span className="shrink-0 text-[10px] text-gray-500">{formatTimestamp(msg.timestamp)}</span>
+                        <span className="shrink-0 text-[10px] text-fg-muted">{formatTimestamp(msg.timestamp)}</span>
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-gray-300">{msg.preview}</p>
+                      <p className="mt-0.5 truncate text-xs text-fg-2">{msg.preview}</p>
                     </div>
                     <button
                       onClick={(e) => handleDeleteQueueMessage(msg.fileId, e)}
-                      className="shrink-0 rounded p-0.5 text-gray-500 transition hover:bg-red-600/20 hover:text-red-400"
+                      className="shrink-0 rounded p-0.5 text-fg-muted transition hover:bg-red-600/20 hover:text-danger"
                       title="删除此消息"
                     >
                       <Trash2 size={12} />
@@ -1080,10 +1080,10 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
 
       {/* Error message */}
       {actionError && (
-        <div className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-red-800 bg-red-950/50 px-4 py-2 text-sm text-red-300">
+        <div className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-tint/50 px-4 py-2 text-sm text-danger-soft">
           <span className="min-w-0 flex-1">{actionError}</span>
           <button type="button" onClick={() => setActionError("")}
-            className="shrink-0 rounded px-1 text-red-400 hover:bg-red-900/50 hover:text-red-200" title="关闭">
+            className="shrink-0 rounded px-1 text-danger hover:bg-danger-tint-strong/50 hover:text-danger-bright" title="关闭">
             <X size={14} />
           </button>
         </div>
@@ -1091,22 +1091,22 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
 
       {/* Logs */}
       <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
-        <div className="mb-2 flex items-center justify-between gap-3 text-sm text-gray-400">
+        <div className="mb-2 flex items-center justify-between gap-3 text-sm text-fg-3">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Clock size={14} className="shrink-0" />
             <span className="shrink-0">日志</span>
             <div className="relative ml-2 flex max-w-[260px] flex-1 items-center">
-              <Search size={12} className="pointer-events-none absolute left-2 text-gray-600" />
+              <Search size={12} className="pointer-events-none absolute left-2 text-fg-faint" />
               <input
                 value={logFilter}
                 onChange={(e) => setLogFilter(e.target.value)}
                 placeholder="搜索日志..."
-                className="w-full rounded-md border border-gray-800 bg-gray-900/60 py-1 pl-7 pr-7 text-xs text-gray-300 placeholder-gray-600 outline-none transition focus:border-gray-600"
+                className="w-full rounded-md border border-line-subtle bg-surface/60 py-1 pl-7 pr-7 text-xs text-fg-2 placeholder-fg-faint outline-none transition focus:border-line-strong"
               />
               {logFilter && (
                 <button
                   onClick={() => setLogFilter("")}
-                  className="absolute right-1.5 rounded p-0.5 text-gray-600 transition hover:text-gray-300"
+                  className="absolute right-1.5 rounded p-0.5 text-fg-faint transition hover:text-fg-2"
                   title="清除搜索"
                 >
                   <X size={11} />
@@ -1115,7 +1115,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             </div>
             {logQuery && (
               <>
-                <span className="shrink-0 text-[10px] text-gray-600">
+                <span className="shrink-0 text-[10px] text-fg-faint">
                   {logMatchIndexes.length > 0
                     ? `${logMatchCursor + 1}/${logMatchIndexes.length}`
                     : "0 条命中"}
@@ -1124,7 +1124,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
                   type="button"
                   onClick={() => jumpToLogMatch(-1)}
                   disabled={logMatchIndexes.length === 0}
-                  className="rounded p-0.5 text-gray-500 transition hover:bg-gray-800 hover:text-gray-300 disabled:opacity-40"
+                  className="rounded p-0.5 text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-40"
                   title="上一条命中"
                 >
                   <ChevronUp size={14} />
@@ -1133,7 +1133,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
                   type="button"
                   onClick={() => jumpToLogMatch(1)}
                   disabled={logMatchIndexes.length === 0}
-                  className="rounded p-0.5 text-gray-500 transition hover:bg-gray-800 hover:text-gray-300 disabled:opacity-40"
+                  className="rounded p-0.5 text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-40"
                   title="下一条命中"
                 >
                   <ChevronDown size={14} />
@@ -1145,7 +1145,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             <button
               onClick={() => void handleExportDiagnostics()}
               disabled={exportingDiag}
-              className="rounded px-2 py-0.5 text-xs text-gray-500 transition hover:bg-gray-800 hover:text-gray-300 disabled:opacity-50"
+              className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-50"
               title="汇总日志、脱敏配置、会话与队列快照到单个文件，用于远程排障"
             >
               {exportingDiag ? "导出中..." : "导出诊断包"}
@@ -1153,7 +1153,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             {logLines.length > 0 && (
               <button
                 onClick={() => { navigator.clipboard.writeText(logLines.join("\n")) }}
-                className="rounded px-2 py-0.5 text-xs text-gray-500 transition hover:bg-gray-800 hover:text-gray-300"
+                className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2"
                 title="复制全部日志"
               >
                 复制
@@ -1162,7 +1162,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
             {logLines.length > 0 && (
               <button
                 onClick={() => setLogLines([])}
-                className="rounded px-2 py-0.5 text-xs text-gray-500 transition hover:bg-gray-800 hover:text-gray-300"
+                className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2"
               >
                 清空
               </button>
@@ -1172,7 +1172,7 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
         <div className="relative min-h-0 flex-1">
           <div
             ref={logRef}
-            className="h-full overflow-auto overscroll-contain rounded-lg border border-gray-800 bg-gray-900/50 p-3 font-mono text-xs leading-5"
+            className="h-full overflow-auto overscroll-contain rounded-lg border border-line-subtle bg-surface/50 p-3 font-mono text-xs leading-5"
           >
             {logLines.length > 0
               ? logLines.map((line, i) => (
@@ -1188,13 +1188,13 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
                     />
                   </div>
                 ))
-              : <span className="text-gray-600">暂无日志</span>}
+              : <span className="text-fg-faint">暂无日志</span>}
             <div ref={logSentinelRef} className="h-px shrink-0" aria-hidden />
           </div>
           {!logAtBottom && (
             <button
               onClick={scrollLogToBottom}
-              className="absolute bottom-3 right-4 flex items-center gap-1 rounded-full border border-gray-700 bg-gray-800/95 px-2.5 py-1 text-[11px] text-gray-300 shadow-lg transition hover:bg-gray-700"
+              className="absolute bottom-3 right-4 flex items-center gap-1 rounded-full border border-line bg-raised/95 px-2.5 py-1 text-[11px] text-fg-2 shadow-lg transition hover:bg-strong"
               title="恢复自动滚动"
             >
               <ChevronDown size={12} />
@@ -1209,24 +1209,24 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
           onClick={() => { setModelFavPickerOpen(false); setModelFavQuery("") }}
         >
           <div
-            className="flex max-h-[60vh] w-96 flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-900 shadow-2xl"
+            className="flex max-h-[60vh] w-96 flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="border-b border-gray-800 p-2">
+            <div className="border-b border-line-subtle p-2">
               <div className="relative flex items-center">
-                <Search size={12} className="pointer-events-none absolute left-2 text-gray-600" />
+                <Search size={12} className="pointer-events-none absolute left-2 text-fg-faint" />
                 <input
                   autoFocus
                   value={modelFavQuery}
                   onChange={(e) => setModelFavQuery(e.target.value)}
                   placeholder="搜索模型…"
-                  className="w-full rounded border border-gray-700 bg-gray-950 py-1.5 pl-7 pr-2 text-xs text-gray-200 outline-none placeholder:text-gray-600 focus:border-violet-500"
+                  className="w-full rounded border border-line bg-page py-1.5 pl-7 pr-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-violet-500"
                 />
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto py-1">
               {modelFavLoading && (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500">
+                <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
                   <Loader2 size={12} className="animate-spin" />加载模型列表…
                 </div>
               )}
@@ -1239,28 +1239,28 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
                       || (m.modelParams || "").toLowerCase().includes(q))
                   : modelFavOptions
                 if (filtered.length === 0) {
-                  return <div className="px-3 py-2 text-xs text-gray-500">{modelFavOptions.length === 0 ? "暂无可添加的模型" : "无匹配模型"}</div>
+                  return <div className="px-3 py-2 text-xs text-fg-muted">{modelFavOptions.length === 0 ? "暂无可添加的模型" : "无匹配模型"}</div>
                 }
                 const used = filtered.filter((m) => m.used)
                 const rest = filtered.filter((m) => !m.used)
                 return (
                   <>
                     {used.length > 0 && (
-                      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-gray-600">用过的</div>
+                      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-fg-faint">用过的</div>
                     )}
                     {used.map((m) => (
                       <button key={`u:${m.model}\0${m.modelParams ?? ""}`} type="button"
-                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-violet-200 hover:bg-gray-800"
+                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-violet hover:bg-raised"
                         onClick={() => void pickFavoriteModel(m)}>
                         {m.label || m.model}
                       </button>
                     ))}
                     {rest.length > 0 && (
-                      <div className={`px-3 py-1 text-[10px] uppercase tracking-wide text-gray-600 ${used.length ? "mt-1 border-t border-gray-800" : ""}`}>全部模型</div>
+                      <div className={`px-3 py-1 text-[10px] uppercase tracking-wide text-fg-faint ${used.length ? "mt-1 border-t border-line-subtle" : ""}`}>全部模型</div>
                     )}
                     {rest.map((m) => (
                       <button key={`a:${m.model}\0${m.modelParams ?? ""}`} type="button"
-                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-gray-800"
+                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"
                         onClick={() => void pickFavoriteModel(m)}>
                         {m.label || m.model}
                       </button>
@@ -1286,17 +1286,17 @@ function displayLogMessageBody(msg: string): string {
 }
 
 const LEVEL_COLORS: Record<string, string> = {
-  ERROR: "text-red-400",
-  WARN: "text-yellow-400",
-  INFO: "text-blue-400",
-  DEBUG: "text-gray-500",
+  ERROR: "text-danger",
+  WARN: "text-warning",
+  INFO: "text-accent",
+  DEBUG: "text-fg-muted",
 }
 
 const PROCESS_COLORS: Record<string, string> = {
-  Daemon: "text-purple-400",
-  Agent: "text-cyan-400",
-  Electron: "text-orange-400",
-  Scheduler: "text-teal-400",
+  Daemon: "text-purple",
+  Agent: "text-cyan",
+  Electron: "text-orange",
+  Scheduler: "text-teal",
 }
 
 const CHANNEL_STATUS_TEXT: Record<string, string> = {
@@ -1318,7 +1318,7 @@ function renderHighlighted(text: string, query: string): React.ReactNode {
   let idx: number
   while ((idx = lower.indexOf(q, i)) >= 0) {
     if (idx > i) parts.push(text.slice(i, idx))
-    parts.push(<mark key={idx} className="rounded-sm bg-yellow-500/40 text-yellow-100">{text.slice(idx, idx + q.length)}</mark>)
+    parts.push(<mark key={idx} className="rounded-sm bg-yellow-500/40 text-warning-bright">{text.slice(idx, idx + q.length)}</mark>)
     i = idx + q.length
   }
   if (parts.length === 0) return text
@@ -1330,19 +1330,19 @@ const LogLine = memo(function LogLine({ line, highlight = "", resolveLabel }: { 
   const view = formatLogLineForUi(line, resolveLabel)
   const m = LOG_RE.exec(view)
   if (!m) {
-    return <div className="whitespace-pre-wrap break-all text-gray-400">{renderHighlighted(displayLogMessageBody(view), highlight)}</div>
+    return <div className="whitespace-pre-wrap break-all text-fg-3">{renderHighlighted(displayLogMessageBody(view), highlight)}</div>
   }
   const [, ts, proc, level, msg] = m
   const body = displayLogMessageBody(msg)
   return (
     <div className="whitespace-pre-wrap break-all" title={line.length > 120 ? line : undefined}>
-      <span className="text-gray-600">{renderHighlighted(ts, highlight)}</span>
+      <span className="text-fg-faint">{renderHighlighted(ts, highlight)}</span>
       {" "}
-      <span className={PROCESS_COLORS[proc] ?? "text-gray-400"}>{renderHighlighted(`[${proc}]`, highlight)}</span>
+      <span className={PROCESS_COLORS[proc] ?? "text-fg-3"}>{renderHighlighted(`[${proc}]`, highlight)}</span>
       {" "}
-      <span className={LEVEL_COLORS[level] ?? "text-gray-400"}>{renderHighlighted(level, highlight)}</span>
+      <span className={LEVEL_COLORS[level] ?? "text-fg-3"}>{renderHighlighted(level, highlight)}</span>
       {" "}
-      <span className={level === "ERROR" ? "text-red-300" : level === "WARN" ? "text-yellow-300" : "text-gray-300"}>{renderHighlighted(body, highlight)}</span>
+      <span className={level === "ERROR" ? "text-danger-soft" : level === "WARN" ? "text-warning-soft" : "text-fg-2"}>{renderHighlighted(body, highlight)}</span>
     </div>
   )
 })
@@ -1363,27 +1363,27 @@ function StatusCard({
   action?: React.ReactNode
 }) {
   const colors: Record<string, string> = {
-    green: "text-green-400",
-    red: "text-red-400",
-    blue: "text-blue-400",
-    yellow: "text-yellow-400",
-    gray: "text-gray-500",
+    green: "text-success",
+    red: "text-danger",
+    blue: "text-accent",
+    yellow: "text-warning",
+    gray: "text-fg-muted",
   }
 
   const dotColors: Record<string, string> = {
-    green: "bg-green-400",
-    red: "bg-red-400",
-    blue: "bg-blue-400",
-    yellow: "bg-yellow-400",
-    gray: "bg-gray-600",
+    green: "bg-success",
+    red: "bg-danger",
+    blue: "bg-accent",
+    yellow: "bg-warning",
+    gray: "bg-stronger",
   }
 
   return (
-    <div className="flex h-[88px] flex-col rounded-lg border border-gray-800 p-3">
+    <div className="flex h-[88px] flex-col rounded-lg border border-line-subtle p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Icon size={14} className={colors[color]} />
-          <span className="text-xs text-gray-500">{label}</span>
+          <span className="text-xs text-fg-muted">{label}</span>
         </div>
         <div className="min-w-0">{action}</div>
       </div>
@@ -1392,7 +1392,7 @@ function StatusCard({
           <div className={`h-2 w-2 shrink-0 rounded-full ${dotColors[color]}`} />
           <span className={`text-sm font-medium ${colors[color]}`}>{value}</span>
         </div>
-        <div className="mt-1 h-4 truncate text-xs text-gray-600">{sub ?? "\u00A0"}</div>
+        <div className="mt-1 h-4 truncate text-xs text-fg-faint">{sub ?? "\u00A0"}</div>
       </div>
     </div>
   )
