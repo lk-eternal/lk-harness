@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto"
 import { readLockFile } from "./daemon-client"
 import { getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
-import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle } from "./app-chat-title"
+import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { createTempChatSession } from "../src/shared/temp-chat-session"
 import { isTempChatWorkspace } from "../src/shared/temp-workspace"
@@ -57,6 +57,17 @@ async function clearRecords(target: { sessionKey?: string; channelId?: string })
   if (target.sessionKey) removeAppChatTitle(target.sessionKey)
   else if (target.channelId) removeAppChatChannelTitles(target.channelId)
   return r
+}
+
+function renameSession(sessionKey: string, name: string): AppChatResult {
+  const channelId = channelIdFromSessionKey(sessionKey)
+  if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
+  try {
+    renameAppChatTitle(sessionKey, name)
+    return { ok: true }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
 }
 
 /** 会话里第一条非指令的文字消息，作为生成标题的素材 */
@@ -167,6 +178,7 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
+  ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameSession(sessionKey, name))
   ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createTempSession(channelId))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callDaemon("last-active", { sessionKeys }))

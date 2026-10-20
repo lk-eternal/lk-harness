@@ -166,6 +166,7 @@ const api = {
   appChatSend: (payload: AppChatSendPayload): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:send", payload),
   appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
   appChatDeleteSession: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:delete-session", sessionKey),
+  appChatRenameSession: (sessionKey: string, name: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:rename-session", sessionKey, name),
   appChatNewTempSession: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:new-temp-session", channelId),
   appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
   appChatLastActive: (sessionKeys: string[]): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:last-active", sessionKeys),

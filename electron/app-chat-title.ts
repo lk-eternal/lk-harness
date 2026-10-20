@@ -59,6 +59,19 @@ export function removeAppChatTitle(sessionKey: string): void {
   persistAndNotify()
 }
 
+/** 手动改名：覆盖自动标题并作废正在生成的那次；留空等于删掉标题，恢复自动命名 */
+export function renameAppChatTitle(sessionKey: string, name: string): void {
+  const title = Array.from(name.trim()).slice(0, MAX_TITLE_CHARS).join("")
+  if (!title) {
+    removeAppChatTitle(sessionKey)
+    return
+  }
+  const id = appChatSessionId(sessionKey)
+  inflight.delete(id)
+  titles()[id] = title
+  persistAndNotify()
+}
+
 export function removeAppChatChannelTitles(channelId: string): void {
   const owner = channelId.toLowerCase()
   for (const id of [...inflight.keys()]) {

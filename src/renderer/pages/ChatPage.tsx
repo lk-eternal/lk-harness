@@ -4,6 +4,7 @@ import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
 import PageTabs, { type MainPage } from "../components/PageTabs"
+import SessionTitle from "../components/SessionTitle"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
@@ -228,6 +229,12 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     void refreshUsage()
   }
 
+  const renameSession = async (name: string) => {
+    if (!selected) return
+    const r = await window.electronAPI.appChatRenameSession(selected, name)
+    if (!r.ok) setActionError(r.error ?? "重命名失败")
+  }
+
   const deleteSession = async (t: ChatTab) => {
     // 还没发过消息的草稿会话没有什么可丢的，不再确认
     const isDraft = drafts.some((d) => sameChatSession(d.sessionKey, t.sessionKey))
@@ -389,7 +396,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
             {selected && tab ? (
               <>
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-subtle px-6">
-                  <p className="min-w-0 flex-1 truncate text-sm font-semibold">{sessionName(tab)}</p>
+                  <div className="min-w-0 flex-1">
+                    <SessionTitle key={selected} name={sessionName(tab)} onRename={(name) => void renameSession(name)} />
+                  </div>
                   <div className="relative shrink-0" ref={moreMenuRef}>
                     <button type="button" onClick={() => setMoreMenuOpen((o) => !o)} title="更多" className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-soft"><MoreHorizontal size={15} /></button>
                     {moreMenuOpen && (
