@@ -12,7 +12,7 @@ import {
 import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessageEvent, LarkCardActionEvent, CardButton, CardInput, CardTitle, cleanupMediaCache } from "./shared/lark-core.js";
 import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
-import type { AppChatButton, AppChatEvent } from "./shared/app-chat-types.js";
+import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
   initFileQueue,
@@ -4422,12 +4422,24 @@ function appChannelOfSession(sessionKey: string): ChannelRuntime | undefined {
 
 async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const body = JSON.parse(await readBody(req)) as {
-    sessionKey?: string; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string;
+    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string;
   };
   const sessionKey = normalizeSessionKey(body.sessionKey);
 
   if (pathname === "/api/app-chat/usage") {
     json(res, { ok: true, bytes: appChat.usageBytes(body.channelId ?? "") });
+    return true;
+  }
+
+  if (pathname === "/api/app-chat/last-active") {
+    const times: Record<string, number> = {};
+    for (const raw of Array.isArray(body.sessionKeys) ? body.sessionKeys : []) {
+      const key = normalizeSessionKey(raw);
+      if (!appChannelOfSession(key)) continue;
+      const ts = appChat.lastActiveAt(key);
+      if (ts !== undefined) times[appChatSessionId(key)] = ts;
+    }
+    json(res, { ok: true, times });
     return true;
   }
 

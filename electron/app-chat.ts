@@ -142,6 +142,7 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
+  ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callDaemon("last-active", { sessionKeys }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))
   ipcMain.handle("app-chat:read-image", (_e, file: string) => readImage(file))
   ipcMain.handle("app-chat:copy-image", (_e, file: string) => copyImage(file))

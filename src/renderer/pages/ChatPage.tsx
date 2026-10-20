@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import { ChevronDown, FolderOpen, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, FolderOpen, Loader2, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import PageTabs, { type MainPage } from "../components/PageTabs"
@@ -11,6 +11,7 @@ import { appChatSessionId } from "../../shared/app-chat-types"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey } from "../../shared/channel-types"
 import { modelSlug } from "../model-utils"
 
+import { formatTimeAgo } from "../time-ago"
 type Tree = Awaited<ReturnType<typeof window.electronAPI.listDashboardTree>>
 type ChatTab = Tree["channels"][number]["mainTabs"][number]
 type QuickModel = { model: string; modelParams?: string; label?: string; resourceId?: string }
@@ -68,6 +69,9 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
   const [actionError, setActionError] = useState("")
   const [titles, setTitles] = useState<Record<string, string>>({})
   const busyRef = useRef(false)
+  /** 会话最近一条记录的时间，键为 appChatSessionId；now 随每次刷新更新，用来算「多久前」 */
+  const [lastActive, setLastActive] = useState<Record<string, number>>({})
+  const [now, setNow] = useState(() => Date.now())
   const modelMenuRef = useRef<HTMLDivElement>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
@@ -83,11 +87,11 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
         window.electronAPI.listDashboardTree(),
       ])
       const appNames = new Map((cfg.channels ?? []).filter((c) => c.type === "app" && c.enabled !== false).map((c) => [c.id, c.name]))
-      setViews(
-        tree.channels
-          .filter((c) => appNames.has(c.channelId))
-          .map((c) => ({ channelId: c.channelId, name: appNames.get(c.channelId) ?? c.name, tabs: c.mainTabs, activeKey: c.activeKey })),
-      )
+      const appChannels = tree.channels.filter((c) => appNames.has(c.channelId))
+      const active = await window.electronAPI.appChatLastActive(appChannels.flatMap((c) => c.mainTabs.map((t) => t.sessionKey)))
+      if (active.ok) setLastActive(active.times ?? {})
+      setNow(Date.now())
+      setViews(appChannels.map((c) => ({ channelId: c.channelId, name: appNames.get(c.channelId) ?? c.name, tabs: c.mainTabs, activeKey: c.activeKey })))
       setTreeError(tree.ok ? "" : (tree.error ?? "读取会话失败"))
     } catch (e: unknown) {
       setTreeError(e instanceof Error ? e.message : String(e))
@@ -157,6 +161,9 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
   /** 会话名：摘要标题；还没有时显示目录名（不带「（主）」和分支） */
   const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? dirName(workspaceDirFromSessionKey(t.sessionKey)) ?? t.label
   const modelLabel = tab?.model
+  const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
+  /** 最近有对话的排前面；没有记录的保持原顺序排在后面 */
+  const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0))
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
 
@@ -262,15 +269,16 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* 左：会话列表 */}
-          <aside className="flex w-60 shrink-0 flex-col border-r border-line-subtle">
+          <aside className="flex w-60 shrink-0 flex-col border-r border-line-subtle bg-surface">
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
               {views.map((v) => (
                 <div key={v.channelId}>
                   {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-fg-faint">{v.name}</p>}
                   <div className="space-y-0.5">
-                    {v.tabs.map((t) => {
+                    {byRecent(v.tabs).map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
                       // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
+                      const at = activeAt(t)
                       const deletable = !!t.removable && t.kind !== "project"
                       return (
                         <div key={t.sessionKey} className="group/row relative">
@@ -278,16 +286,20 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
                             type="button"
                             onClick={() => setSelected(t.sessionKey)}
                             title={workspaceDirFromSessionKey(t.sessionKey) ?? sessionName(t)}
-                            className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${deletable ? "pr-8" : ""} ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
+                            className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
                             <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
+                            <MessageCircle size={14} className="shrink-0 text-fg-faint" />
                           </button>
+                            {at !== undefined && (
+                              <span className={`shrink-0 text-[11px] font-normal text-fg-faint ${deletable ? "group-hover/row:invisible" : ""}`}>{formatTimeAgo(at, now)}</span>
+                            )}
                           {deletable && (
                             <button
                               type="button"
                               onClick={() => void deleteSession(t)}
                               title="删除会话"
-                              className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded p-1 text-fg-faint transition hover:bg-raised hover:text-danger group-hover/row:block"
+                              className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded bg-raised p-1 text-fg-muted transition hover:text-danger group-hover/row:block"
                             ><Trash2 size={13} /></button>
                           )}
                         </div>

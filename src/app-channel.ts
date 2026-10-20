@@ -164,6 +164,11 @@ export class AppChat {
     return [...this.entry(sessionKey).items];
   }
 
+  /** 最近一条记录的时间；会话没有记录时为 undefined */
+  lastActiveAt(sessionKey: string): number | undefined {
+    return this.entry(sessionKey).items.at(-1)?.ts;
+  }
+
   addUser(sessionKey: string, id: string, text: string, images?: string[]): void {
     this.upsert(this.entry(sessionKey), { kind: "user", id, ts: Date.now(), text, ...(images?.length ? { images } : {}) });
   }

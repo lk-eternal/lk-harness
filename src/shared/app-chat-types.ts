@@ -109,6 +109,8 @@ export interface AppChatResult {
   error?: string;
   items?: AppChatItem[];
   bytes?: number;
+  /** 会话最近一条记录的时间戳，键为 appChatSessionId；没有记录的会话不出现 */
+  times?: Record<string, number>;
 }
 
 /** 会话在存储与比对里的统一标识：路径分隔符与大小写归一（Windows 路径混写不分裂） */

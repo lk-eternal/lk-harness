@@ -167,6 +167,7 @@ const api = {
   appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
   appChatDeleteSession: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:delete-session", sessionKey),
   appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
+  appChatLastActive: (sessionKeys: string[]): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:last-active", sessionKeys),
   appChatSaveImage: (bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:save-image", bytes, ext),
   appChatReadImage: (file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:read-image", file),
   appChatCopyImage: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:copy-image", file),
