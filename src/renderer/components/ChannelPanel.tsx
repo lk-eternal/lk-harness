@@ -114,10 +114,6 @@ export default function ChannelPanel() {
   }
 
   const handleSave = async (next: ChannelConfig) => {
-    if (next.mainUserEnabled && !next.workspaceDir?.trim()) {
-      void showAlert("提示", "请设置主用户工作目录")
-      return false
-    }
     if (next.allowOthers) {
       const effOthers = next.othersAgentResourceId?.trim() || next.agentResourceId
       if (effOthers !== next.agentResourceId && !next.othersModel?.trim()) {
