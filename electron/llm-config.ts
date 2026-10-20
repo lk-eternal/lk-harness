@@ -29,7 +29,7 @@ export function resolveLlmModel(resource: AgentResource, modelId?: string): Mode
     }
   }
   if (resource.type === "llm-custom") {
-    const id = modelId?.trim()
+    const id = modelId?.trim() || resource.modelIds?.[0]?.trim()
     if (!id || !resource.baseUrl?.trim()) return null
     // 自定义网关以 models.dev 为准（按 baseUrl 找对应提供商）；pi 表只作断网/缺失兜底
     const protocol = resolveCustomModelApi(id, resource.baseUrl)

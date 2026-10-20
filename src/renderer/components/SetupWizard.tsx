@@ -124,8 +124,12 @@ export default function SetupWizard({ open, onClose }: Props) {
         const draft: AgentResource = { id: newId("llm"), type: "llm-custom", name: "自定义网关", baseUrl: llmBaseUrl.trim(), apiKey: apiKey.trim() }
         const r = await window.electronAPI.verifyLlmResource(draft)
         if (!r.ok) { setVerifyErr(r.error ?? "验证失败"); return }
-        await saveAgentResources([draft, ...keepOthers])
-        setAgentResourceId(draft.id)
+        // 自定义网关没有内置的默认模型，把网关列表的第一个（验证时 ping 的就是它）记为默认，会话没选模型时才有模型可用
+        const listed = await window.electronAPI.listLlmModels(draft)
+        if (!listed.ok) { setVerifyErr(listed.error ?? "获取模型列表失败"); return }
+        const entry: AgentResource = { ...draft, modelIds: [listed.models[0].id] }
+        await saveAgentResources([entry, ...keepOthers])
+        setAgentResourceId(entry.id)
         setAgentConfigured(true)
         autoNext(1)
         return
