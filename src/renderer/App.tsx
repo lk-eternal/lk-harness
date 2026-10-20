@@ -25,6 +25,17 @@ export default function App() {
     setPage("settings")
   }
 
+  /** 引导走完：启动 Daemon，启动成功且配置了应用内对话就进对话页，否则留在工作台 */
+  const handleWizardClose = async (completed: boolean) => {
+    setShowWizard(false)
+    if (!completed) return
+    const started = await window.electronAPI.startDaemon()
+    if (!started.ok) return
+    const cfg = await window.electronAPI.getConfig()
+    const hasAppChannel = (cfg.channels ?? []).some((c) => c.type === "app" && c.enabled !== false)
+    if (hasAppChannel) setPage("chat")
+  }
+
   useEffect(() => {
     if (!window.electronAPI) {
       setError("electronAPI 未加载（preload 脚本可能未正确注入）")
@@ -92,7 +103,7 @@ export default function App() {
           onReenterWizard={() => setShowWizard(true)}
         />
       </div>
-      <SetupWizard open={showWizard} onClose={() => setShowWizard(false)} />
+      <SetupWizard open={showWizard} onClose={(completed) => void handleWizardClose(completed)} />
       <CloseWindowModal open={closeConfirmOpen} onClose={() => setCloseConfirmOpen(false)} />
       <AppModalHost />
       <UpdateDownloadBanner />
