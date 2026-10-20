@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { GitBranch, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
@@ -13,6 +13,7 @@ import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatI
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionId } from "../../shared/app-chat-types"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
+import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
 
@@ -39,6 +40,27 @@ interface Props {
 
 const REFRESH_MS = 8000
 
+/** 刚建好、还没发过消息的临时会话：会话在首条消息发出时才建立，在此之前只存在于界面里 */
+interface DraftSession {
+  channelId: string
+  sessionKey: string
+}
+
+function isTempTab(t: ChatTab): boolean {
+  return isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey))
+}
+
+/** 把草稿会话补进对应通道的会话列表（服务端已经有同一会话时不重复） */
+function withDrafts(views: AppChannelView[], drafts: DraftSession[]): AppChannelView[] {
+  if (drafts.length === 0) return views
+  return views.map((v) => {
+    const extra = drafts
+      .filter((d) => d.channelId === v.channelId && !v.tabs.some((t) => sameChatSession(t.sessionKey, d.sessionKey)))
+      .map((d): ChatTab => ({ sessionKey: d.sessionKey, label: "新会话", kind: "dir", running: false, current: false, removable: true }))
+    return extra.length > 0 ? { ...v, tabs: [...extra, ...v.tabs] } : v
+  })
+}
+
 function dirName(dir: string | undefined): string | undefined {
   return dir?.split(/[\\/]/).filter(Boolean).pop()
 }
@@ -50,7 +72,8 @@ function fmtBytes(n: number): string {
 }
 
 export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
-  const [views, setViews] = useState<AppChannelView[]>([])
+  const [serverViews, setViews] = useState<AppChannelView[]>([])
+  const [drafts, setDrafts] = useState<DraftSession[]>([])
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
@@ -65,8 +88,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [now, setNow] = useState(() => Date.now())
   const busyRef = useRef(false)
+  const creatingRef = useRef(false)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
+  const views = useMemo(() => withDrafts(serverViews, drafts), [serverViews, drafts])
   viewsRef.current = views
   const { showConfirm, ModalPortal } = useInlineModal()
 
@@ -136,6 +161,14 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     setSelected(pick.sessionKey)
   }, [views, selected])
 
+  // 草稿会话发出第一条消息后，服务端列表里就有了，草稿即可丢弃（否则会话被删后它会冒出来）
+  useEffect(() => {
+    setDrafts((prev) => {
+      const next = prev.filter((d) => !serverViews.some((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, d.sessionKey))))
+      return next.length === prev.length ? prev : next
+    })
+  }, [serverViews])
+
   const closeMoreMenu = useCallback(() => setMoreMenuOpen(false), [])
   useOutsideClose(moreMenuOpen, moreMenuRef, closeMoreMenu)
 
@@ -154,15 +187,17 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
-  const workspaceDir = selected ? workspaceDirFromSessionKey(selected) : undefined
-  /** 会话名：摘要标题；还没有时显示目录名（不带「（主）」和分支） */
-  const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? dirName(workspaceDirFromSessionKey(t.sessionKey)) ?? t.label
+  /** 当前会话的目录；临时会话的目录对用户不可见，视为没有指定目录 */
+  const workspaceDir = selected && !isTempChatWorkspace(workspaceDirFromSessionKey(selected)) ? workspaceDirFromSessionKey(selected) : undefined
+  /** 会话名：摘要标题；还没有时临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
+  const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? (isTempTab(t) ? "新会话" : dirName(workspaceDirFromSessionKey(t.sessionKey))) ?? t.label
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
-  /** 最近有对话的排前面；没有记录的保持原顺序排在后面 */
-  const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0))
+  /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
+  const sortAt = (t: ChatTab) => activeAt(t) ?? tempWorkspaceCreatedAt(workspaceDirFromSessionKey(t.sessionKey)) ?? 0
+  const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => sortAt(b) - sortAt(a))
   /** 同一通道里有真实目录的会话，供输入框的目录菜单切换 */
   const dirOptions = (ownerView?.tabs ?? [])
-    .filter((t) => t.kind === "main" || t.kind === "dir")
+    .filter((t) => (t.kind === "main" || t.kind === "dir") && !isTempTab(t))
     .flatMap((t) => {
       const dir = workspaceDirFromSessionKey(t.sessionKey)
       return dir ? [{ sessionKey: t.sessionKey, name: dirName(dir) ?? dir, dir }] : []
@@ -194,12 +229,17 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   }
 
   const deleteSession = async (t: ChatTab) => {
-    const effect = t.kind === "main"
-      ? "这是主目录会话：会停止 Agent、清除上下文和聊天记录，之后以空会话保留在列表里。"
-      : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
-    if (!await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
+    // 还没发过消息的草稿会话没有什么可丢的，不再确认
+    const isDraft = drafts.some((d) => sameChatSession(d.sessionKey, t.sessionKey))
+    const effect = isTempTab(t)
+      ? "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
+      : t.kind === "main"
+        ? "这是主目录会话：会停止 Agent、清除上下文和聊天记录，之后以空会话保留在列表里。"
+        : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
+    if (!isDraft && !await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
+    setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
     await refresh()
     void refreshUsage()
   }
@@ -238,8 +278,28 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     }
   }
 
-  /** 新会话 = 选目录并加入该通道的常用目录，会话在首次发送时由 Agent 侧建立 */
-  const addSession = async (channelId: string) => {
+  /** 新会话 = 临时会话：用应用建的临时目录，不用先选目录；已有还没聊过的临时会话就直接用它 */
+  const newSession = async (channelId: string) => {
+    const idle = views.find((v) => v.channelId === channelId)?.tabs.find((t) => {
+      if (!isTempTab(t) || activeAt(t) !== undefined) return false
+      return !(sameChatSession(t.sessionKey, selected) && items.length > 0)
+    })
+    if (idle) { setSelected(idle.sessionKey); return }
+    if (creatingRef.current) return
+    creatingRef.current = true
+    try {
+      const r = await window.electronAPI.appChatNewTempSession(channelId)
+      const sessionKey = r.sessionKey
+      if (!r.ok || !sessionKey) { setActionError(r.error ?? "新建会话失败"); return }
+      setDrafts((prev) => [...prev, { channelId, sessionKey }])
+      setSelected(sessionKey)
+    } finally {
+      creatingRef.current = false
+    }
+  }
+
+  /** 选一个目录并加入该通道的常用目录，打开（或新建）该目录的会话，会话在首次发送时由 Agent 侧建立 */
+  const openDirSession = async (channelId: string) => {
     const dir = await window.electronAPI.selectDirectory()
     if (!dir) return
     const r = await window.electronAPI.addChannelFavoriteWorkspace(channelId, dir)
@@ -288,7 +348,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                           <button
                             type="button"
                             onClick={() => setSelected(t.sessionKey)}
-                            title={workspaceDirFromSessionKey(t.sessionKey) ?? sessionName(t)}
+                            title={(isTempTab(t) ? undefined : workspaceDirFromSessionKey(t.sessionKey)) ?? sessionName(t)}
                             className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
                             <MessageCircle size={14} className="shrink-0 text-fg-faint" />
@@ -310,9 +370,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                     })}
                     <button
                       type="button"
-                      onClick={() => void addSession(v.channelId)}
+                      onClick={() => void newSession(v.channelId)}
                       className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-                    ><Plus size={14} />新会话（选择目录）</button>
+                    ><Plus size={14} />新会话</button>
                   </div>
                 </div>
               ))}
@@ -352,7 +412,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                         options={dirOptions}
                         isCurrent={(key) => sameChatSession(key, selected)}
                         onSelect={setSelected}
-                        onPickNew={() => { if (ownerView) void addSession(ownerView.channelId) }}
+                        onPickNew={() => { if (ownerView) void openDirSession(ownerView.channelId) }}
                       />
                       {tab.branch && (
                         <span className="inline-flex items-center gap-1 px-1 text-[12.5px] text-fg-muted" title="当前分支"><GitBranch size={14} />{tab.branch}</span>

@@ -11,7 +11,9 @@ import { readLockFile } from "./daemon-client"
 import { getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle } from "./app-chat-title"
-import { chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types"
+import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
+import { createTempChatSession } from "../src/shared/temp-chat-session"
+import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 
 /** 与飞书下载图片同目录，沿用 `[图片已保存: …]` 约定，Daemon 的媒体缓存清理一并覆盖 */
@@ -64,12 +66,36 @@ async function firstUserText(sessionKey: string): Promise<string | undefined> {
   return first?.kind === "user" ? first.text : undefined
 }
 
-/** 删除应用内会话：先清 Agent 侧（进程、上下文、常用目录），成功后再清聊天记录 */
+/** 新建应用内临时会话：只建好临时目录并返回会话键，会话在第一条消息发出时才真正建立 */
+function createTempSession(channelId: string): AppChatResult {
+  if (getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的通道" }
+  try {
+    const { sessionKey } = createTempChatSession(app.getPath("userData"), makeChatKey(channelId, APP_CHANNEL_CHAT_ID))
+    return { ok: true, sessionKey }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** 删掉临时会话的目录；只动 <userData>/workspaces 下 temp_<时间戳> 形态的目录，其它目录一律不碰 */
+function removeTempWorkspace(sessionKey: string): void {
+  const dir = workspaceDirFromSessionKey(sessionKey)
+  if (!dir || !isTempChatWorkspace(dir)) return
+  const root = path.resolve(app.getPath("userData"), "workspaces")
+  const target = path.resolve(dir)
+  if (path.dirname(target).toLowerCase() !== root.toLowerCase()) return
+  try {
+    fs.rmSync(target, { recursive: true, force: true })
+  } catch { /* 目录被占用时留在磁盘上，不影响会话删除 */ }
+}
+
+/** 删除应用内会话：先清 Agent 侧（进程、上下文、常用目录），成功后再清聊天记录；临时会话的目录一并删掉 */
 async function deleteSession(sessionKey: string): Promise<AppChatResult> {
   const channelId = channelIdFromSessionKey(sessionKey)
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   const r = await deleteUserSession(sessionKey, chatIdFromSessionKey(sessionKey))
   if (!r.ok) return { ok: false, error: r.error }
+  removeTempWorkspace(sessionKey)
   return clearRecords({ sessionKey })
 }
 
@@ -141,6 +167,7 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
+  ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createTempSession(channelId))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callDaemon("last-active", { sessionKeys }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))
