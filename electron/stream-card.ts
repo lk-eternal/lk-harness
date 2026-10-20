@@ -81,8 +81,6 @@ export interface PollPhaseEventPayload {
 
 const STREAM_FLUSH_MS = 400
 const STREAM_MIN_INTERVAL_MS = 200
-const STREAM_THINKING_TAIL = 1500
-const MAX_STREAM_TOOL_STEPS = 40
 const TOOL_ARG_SUMMARY_KEYS = [
   "command", "path", "target_notebook", "pattern", "glob_pattern", "file_path",
   "image_path", "url", "query", "question", "text", "description", "name",
@@ -524,23 +522,16 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
     if (seg.type === "thinking") {
       const text = seg.text.trim()
       if (!text || !showThinking) continue
-      let thinking = text
-      if (thinking.length > STREAM_THINKING_TAIL) {
-        thinking = "…" + thinking.slice(-STREAM_THINKING_TAIL)
-      }
       const ms = seg.ms ?? (i === lastIdx && seg.startedAt != null ? Date.now() - seg.startedAt : undefined)
-      segments.push({ type: "thinking", text: thinking, ms })
+      segments.push({ type: "thinking", text, ms })
     } else if (seg.type === "tools") {
       // 思考关闭时工具面板不展示：此处直接丢弃（而非仅渲染时 strip），
       // 否则两侧正文段被隔开无法合并，strip 后卡片里出现双胞胎正文
       if (!showThinking) continue
       if (!seg.tools.length) continue
-      const tools = seg.tools.length > MAX_STREAM_TOOL_STEPS
-        ? seg.tools.slice(-MAX_STREAM_TOOL_STEPS)
-        : seg.tools
       const prev = segments[segments.length - 1]
       if (prev?.type === "tools") {
-        prev.tools.push(...tools.map((t) => ({
+        prev.tools.push(...seg.tools.map((t) => ({
           name: t.name,
           status: t.status,
           summary: t.summary || undefined,
@@ -549,7 +540,7 @@ function buildStreamPayload(agg: StreamAgg, sessionKey: string): StreamCardPaylo
       } else {
         segments.push({
           type: "tools",
-          tools: tools.map((t) => ({
+          tools: seg.tools.map((t) => ({
             name: t.name,
             status: t.status,
             summary: t.summary || undefined,

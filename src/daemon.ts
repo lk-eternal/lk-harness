@@ -1934,6 +1934,10 @@ function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfi
   return daemonFlagsForSession(sessionKey, cfg).hideThinkingOnFinish;
 }
 
+/** 飞书卡片体积上限：单块思考只留尾部，单块工具只留最近若干步。应用内通道不经过这里，不受限 */
+const FEISHU_THINKING_TAIL_CHARS = 1500;
+const FEISHU_MAX_TOOL_STEPS = 40;
+
 function buildCardSegmentsFromPayload(
   payload: AgentStreamCardPayload,
   opts: { finish: boolean; showThinking: boolean; hideThinkingOnFinish?: boolean; skipThinkingOnlyPlaceholder?: boolean },
@@ -1958,7 +1962,9 @@ function buildCardSegmentsFromPayload(
       if (!seg.text?.trim()) continue;
       out.push({
         type: "thinking",
-        text: seg.text,
+        text: seg.text.length > FEISHU_THINKING_TAIL_CHARS
+          ? "…" + seg.text.slice(-FEISHU_THINKING_TAIL_CHARS)
+          : seg.text,
         title: formatThinkingDuration(seg.ms, opts.finish || seg.ms != null),
         panelId: seg.panelId,
         expanded: false,
@@ -1966,10 +1972,13 @@ function buildCardSegmentsFromPayload(
     } else if (seg.type === "tools") {
       if (stripFoldables) continue;
       if (!seg.tools?.length) continue;
-      const steps = buildToolSteps(seg.tools, opts.finish);
+      const tools = seg.tools.length > FEISHU_MAX_TOOL_STEPS
+        ? seg.tools.slice(-FEISHU_MAX_TOOL_STEPS)
+        : seg.tools;
+      const steps = buildToolSteps(tools, opts.finish);
       out.push({
         type: "tools",
-        title: buildToolsPanelTitle(seg.tools),
+        title: buildToolsPanelTitle(tools),
         panelId: seg.panelId,
         expanded: false,
         steps,
