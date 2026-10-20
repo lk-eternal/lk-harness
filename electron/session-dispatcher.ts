@@ -938,7 +938,8 @@ export async function deleteUserSession(
   const activeKey = await getCurrentActiveSession(lock.port, resolvedChatId)
   if (activeKey === key) {
     const mainKey = resolveMainSessionKey(resolvedChatId)
-    if (mainKey) {
+    // 没配主目录时 resolveMainSessionKey 回的是裸 chatId，不是真实会话，不能当活跃会话；活跃指向由下面的 purgeSessionRouting 清掉
+    if (mainKey && mainKey !== resolvedChatId) {
       await syncActiveSession(lock.port, resolvedChatId, mainKey)
       setCurrentProjectId(null)
     }
