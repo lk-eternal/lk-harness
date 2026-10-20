@@ -953,9 +953,16 @@ export type SessionTabItem = {
   running: boolean
   current: boolean
   removable?: boolean
+  /** 工作目录所在 git 仓库的当前分支；非目录会话或不是仓库时缺省 */
+  branch?: string
   model?: string
   modelParams?: string
   resourceId?: string
+}
+
+function tabBranchFor(sessionKey: string, running?: { workspaceDir?: string }): string | undefined {
+  const ws = workspaceDirFromSessionKey(sessionKey) || running?.workspaceDir
+  return ws ? readGitBranchCached(ws) : undefined
 }
 
 /** 未运行会话也要能显示模型：跑着的用实时值，否则回落到 override，最后是通道默认 */
@@ -980,6 +987,7 @@ async function buildTabsForChat(chatId: string, port: number): Promise<{ activeK
     running: isSessionAgentRunning(entry.sessionKey),
     current: entry.current,
     removable: isDeletableSession(entry.sessionKey, chatId) || sessionTabKind(entry.sessionKey) === "project",
+    branch: tabBranchFor(entry.sessionKey, entry.running),
     ...tabModelFor(entry.sessionKey, entry.running),
   }))
   return { activeKey, tabs: disambiguateTabLabels(tabs) }

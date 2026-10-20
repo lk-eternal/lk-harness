@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { ImagePlus, Send, Square, X } from "lucide-react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { ArrowUp, ImagePlus, Square, X } from "lucide-react"
 import { primaryCommands } from "../../../shared/command-catalog"
 
 interface Props {
   disabled: boolean
   /** AI 正在工作：输入为空时显示停止按钮 */
   busy: boolean
+  /** 底部一行左侧的会话设置（目录、分支、模型等） */
+  footer?: ReactNode
   onSend: (text: string, images: string[]) => void
   onStop: () => void
   onError: (message: string) => void
@@ -29,7 +31,7 @@ const EXT_BY_MIME: Record<string, string> = {
 const MAX_TEXTAREA_PX = 200
 
 /** 输入区：Enter 发送、Shift+Enter 换行；粘贴/拖入/选择图片；`/` 唤起指令菜单 */
-export default function Composer({ disabled, busy, onSend, onStop, onError }: Props) {
+export default function Composer({ disabled, busy, footer, onSend, onStop, onError }: Props) {
   const [text, setText] = useState("")
   const [images, setImages] = useState<PendingImage[]>([])
   const [dragging, setDragging] = useState(false)
@@ -113,7 +115,7 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
   }
 
   return (
-    <div className="shrink-0 border-t border-line-subtle px-6 py-3">
+    <div className="shrink-0 px-6 pb-4 pt-2">
       <div className="relative mx-auto max-w-3xl">
         {menuItems.length > 0 && (
           <div className="absolute bottom-full left-0 right-0 z-20 mb-2 max-h-64 overflow-y-auto rounded-lg border border-line bg-page py-1 shadow-lg">
@@ -141,7 +143,7 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
             const files = Array.from(e.dataTransfer.files)
             if (files.some((f) => f.type.startsWith("image/"))) { e.preventDefault(); void addImageFiles(files) }
           }}
-          className={`rounded-lg border bg-surface transition ${dragging ? "border-blue-500" : "border-line focus-within:border-blue-500"} ${disabled ? "opacity-50" : ""}`}
+          className={`rounded-2xl border bg-page shadow-sm transition ${dragging ? "border-blue-500" : "border-line focus-within:border-blue-500"} ${disabled ? "opacity-50" : ""}`}
         >
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -158,14 +160,30 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
               ))}
             </div>
           )}
-          <div className="flex items-end gap-2 p-2">
+          <textarea
+            ref={textareaRef}
+            value={text}
+            rows={1}
+            disabled={disabled}
+            onChange={(e) => { setText(e.target.value); setMenuClosed(false) }}
+            onKeyDown={onKeyDown}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData.files)
+              if (files.some((f) => f.type.startsWith("image/"))) { e.preventDefault(); void addImageFiles(files) }
+            }}
+            placeholder={disabled ? "请先选择或新建会话" : busy ? "Agent 运行中，发送的消息会排队…" : "输入消息，/ 唤起指令，Enter 发送，Shift+Enter 换行"}
+            className="block max-h-[200px] min-h-[3.5rem] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-sm outline-none disabled:cursor-not-allowed"
+          />
+          <div className="flex items-center gap-2 px-2.5 pb-2.5 pt-1">
+            {footer}
+            <span className="flex-1" />
             <button
               type="button"
               disabled={disabled}
               onClick={() => fileInputRef.current?.click()}
               title="添加图片"
-              className="rounded-md p-2 text-fg-muted transition hover:bg-raised hover:text-fg-soft disabled:opacity-40"
-            ><ImagePlus size={16} /></button>
+              className="rounded-lg p-1.5 text-fg-muted transition hover:bg-raised hover:text-fg-soft disabled:opacity-40"
+            ><ImagePlus size={17} /></button>
             <input
               ref={fileInputRef}
               type="file"
@@ -177,24 +195,16 @@ export default function Composer({ disabled, busy, onSend, onStop, onError }: Pr
                 e.target.value = ""
               }}
             />
-            <textarea
-              ref={textareaRef}
-              value={text}
-              rows={1}
-              disabled={disabled}
-              onChange={(e) => { setText(e.target.value); setMenuClosed(false) }}
-              onKeyDown={onKeyDown}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files)
-                if (files.some((f) => f.type.startsWith("image/"))) { e.preventDefault(); void addImageFiles(files) }
-              }}
-              placeholder={disabled ? "请先选择或新建会话" : busy ? "Agent 运行中，发送的消息会排队…" : "输入消息，/ 唤起指令，Enter 发送，Shift+Enter 换行"}
-              className="max-h-[200px] min-h-[2.25rem] flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none disabled:cursor-not-allowed"
-            />
             {busy && !hasContent ? (
-              <button type="button" onClick={onStop} title="停止并清空排队消息" className="rounded-md bg-red-600 p-2 text-white transition hover:bg-red-500"><Square size={16} /></button>
+              <button type="button" onClick={onStop} title="停止并清空排队消息" className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500"><Square size={14} /></button>
             ) : (
-              <button type="button" onClick={submit} disabled={disabled || !hasContent} title="发送" className="rounded-md bg-blue-600 p-2 text-white transition hover:bg-blue-500 disabled:opacity-40"><Send size={16} /></button>
+              <button
+                type="button"
+                onClick={submit}
+                disabled={disabled || !hasContent}
+                title="发送"
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${hasContent && !disabled ? "bg-blue-600 text-white hover:bg-blue-500" : "bg-strong text-fg-faint"}`}
+              ><ArrowUp size={16} /></button>
             )}
           </div>
         </div>

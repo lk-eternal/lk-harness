@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import { ChevronDown, FolderOpen, Loader2, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { GitBranch, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -7,19 +7,23 @@ import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
+import DirPicker from "../components/chat/DirPicker"
+import ModelPicker, { type ModelChoice, type QuickModel } from "../components/chat/ModelPicker"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
+import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionId } from "../../shared/app-chat-types"
-import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey } from "../../shared/channel-types"
+import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
 
 type Tree = Awaited<ReturnType<typeof window.electronAPI.listDashboardTree>>
 type ChatTab = Tree["channels"][number]["mainTabs"][number]
-type QuickModel = { model: string; modelParams?: string; label?: string; resourceId?: string }
 
 interface AppChannelView {
   channelId: string
   name: string
+  /** 通道默认供应商；会话没有单独指定时用它 */
+  agentResourceId?: string
   tabs: ChatTab[]
   activeKey?: string
 }
@@ -45,25 +49,13 @@ function fmtBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** 菜单打开时，点到容器外面就关闭 */
-function useOutsideClose(open: boolean, ref: RefObject<HTMLElement | null>, close: () => void) {
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) close()
-    }
-    document.addEventListener("mousedown", onDoc)
-    return () => document.removeEventListener("mousedown", onDoc)
-  }, [open, ref, close])
-}
-
 export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [views, setViews] = useState<AppChannelView[]>([])
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
   const [quickModels, setQuickModels] = useState<QuickModel[]>([])
-  const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [resources, setResources] = useState<AgentResource[]>([])
   const [modelBusy, setModelBusy] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [usageBytes, setUsageBytes] = useState<number | null>(null)
@@ -73,7 +65,6 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [now, setNow] = useState(() => Date.now())
   const busyRef = useRef(false)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
   viewsRef.current = views
@@ -87,12 +78,19 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
         window.electronAPI.getConfig(),
         window.electronAPI.listDashboardTree(),
       ])
-      const appNames = new Map((cfg.channels ?? []).filter((c) => c.type === "app" && c.enabled !== false).map((c) => [c.id, c.name]))
-      const appChannels = tree.channels.filter((c) => appNames.has(c.channelId))
+      const appCfgs = new Map((cfg.channels ?? []).filter((c) => c.type === "app" && c.enabled !== false).map((c) => [c.id, c]))
+      const appChannels = tree.channels.filter((c) => appCfgs.has(c.channelId))
       const active = await window.electronAPI.appChatLastActive(appChannels.flatMap((c) => c.mainTabs.map((t) => t.sessionKey)))
       if (active.ok) setLastActive(active.times ?? {})
       setNow(Date.now())
-      setViews(appChannels.map((c) => ({ channelId: c.channelId, name: appNames.get(c.channelId) ?? c.name, tabs: c.mainTabs, activeKey: c.activeKey })))
+      setResources(cfg.agentResources ?? [])
+      setViews(appChannels.map((c) => ({
+        channelId: c.channelId,
+        name: appCfgs.get(c.channelId)?.name ?? c.name,
+        agentResourceId: appCfgs.get(c.channelId)?.agentResourceId,
+        tabs: c.mainTabs,
+        activeKey: c.activeKey,
+      })))
       setTreeError(tree.ok ? "" : (tree.error ?? "读取会话失败"))
     } catch (e: unknown) {
       setTreeError(e instanceof Error ? e.message : String(e))
@@ -138,9 +136,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     setSelected(pick.sessionKey)
   }, [views, selected])
 
-  const closeModelMenu = useCallback(() => setModelMenuOpen(false), [])
   const closeMoreMenu = useCallback(() => setMoreMenuOpen(false), [])
-  useOutsideClose(modelMenuOpen, modelMenuRef, closeModelMenu)
   useOutsideClose(moreMenuOpen, moreMenuRef, closeMoreMenu)
 
   const refreshUsage = useCallback(async () => {
@@ -164,6 +160,13 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
   /** 最近有对话的排前面；没有记录的保持原顺序排在后面 */
   const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0))
+  /** 同一通道里有真实目录的会话，供输入框的目录菜单切换 */
+  const dirOptions = (ownerView?.tabs ?? [])
+    .filter((t) => t.kind === "main" || t.kind === "dir")
+    .flatMap((t) => {
+      const dir = workspaceDirFromSessionKey(t.sessionKey)
+      return dir ? [{ sessionKey: t.sessionKey, name: dirName(dir) ?? dir, dir }] : []
+    })
   const modelLabel = tab?.model
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
@@ -223,9 +226,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     void refresh()
   }
 
-  const switchModel = async (m: QuickModel) => {
+  const switchModel = async (m: ModelChoice) => {
     if (!selected || modelBusy) return
-    setModelMenuOpen(false)
     setModelBusy(true)
     try {
       const r = await window.electronAPI.setSessionModel(selected, m.model, m.modelParams, m.resourceId)
@@ -326,40 +328,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
           <section className="flex min-w-0 flex-1 flex-col">
             {selected && tab ? (
               <>
-                <div className="flex shrink-0 items-center gap-3 border-b border-line-subtle px-6 py-2">
-                  <FolderOpen size={14} className="shrink-0 text-accent" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{sessionName(tab)}</p>
-                    {workspaceDir && <p className="truncate text-[11px] text-fg-faint" title={workspaceDir}>{workspaceDir}</p>}
-                  </div>
-                  <div className="relative shrink-0" ref={modelMenuRef}>
-                    <button
-                      type="button"
-                      onClick={() => setModelMenuOpen((o) => !o)}
-                      className="inline-flex max-w-[12rem] items-center gap-1 rounded border border-line px-2 py-1 text-[11px] text-violet transition hover:border-violet-500"
-                      title="切换本会话模型"
-                    >
-                      {modelBusy && <Loader2 size={10} className="animate-spin" />}
-                      <span className="truncate">{modelLabel}</span>
-                      <ChevronDown size={10} />
-                    </button>
-                    {modelMenuOpen && (
-                      <div className="absolute right-0 top-full z-20 mt-1 max-h-60 w-56 overflow-auto rounded border border-line bg-page py-1 shadow-lg">
-                        {quickModels.length === 0 && <div className="px-2 py-1 text-[11px] text-fg-faint">暂无常用模型（可在首页添加）</div>}
-                        {quickModels.map((m) => {
-                          const cur = tab.model === m.model && (tab.modelParams ?? "") === (m.modelParams ?? "")
-                          return (
-                            <button
-                              key={`${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`}
-                              type="button"
-                              onClick={() => void switchModel(m)}
-                              className={`block w-full truncate px-2 py-1 text-left text-[11px] hover:bg-violet-tint/50 ${cur ? "text-violet" : "text-fg-2"}`}
-                            >{m.label || modelSlug(m.model, m.modelParams)}</button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
+                <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-subtle px-6">
+                  <p className="min-w-0 flex-1 truncate text-sm font-semibold">{sessionName(tab)}</p>
                   <div className="relative shrink-0" ref={moreMenuRef}>
                     <button type="button" onClick={() => setMoreMenuOpen((o) => !o)} title="更多" className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-soft"><MoreHorizontal size={15} /></button>
                     {moreMenuOpen && (
@@ -372,7 +342,37 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
                 <ChatItemList key={selected} items={items} loading={loading} busy={busy} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
-                <Composer disabled={!selected} busy={busy} onSend={(t, imgs) => void send(t, imgs)} onStop={() => void stop()} onError={setActionError} />
+                <Composer
+                  disabled={!selected}
+                  busy={busy}
+                  footer={
+                    <>
+                      <DirPicker
+                        currentName={dirName(workspaceDir)}
+                        options={dirOptions}
+                        isCurrent={(key) => sameChatSession(key, selected)}
+                        onSelect={setSelected}
+                        onPickNew={() => { if (ownerView) void addSession(ownerView.channelId) }}
+                      />
+                      {tab.branch && (
+                        <span className="inline-flex items-center gap-1 px-1 text-[12.5px] text-fg-muted" title="当前分支"><GitBranch size={14} />{tab.branch}</span>
+                      )}
+                      <ModelPicker
+                        resources={resources}
+                        currentResourceId={tab.resourceId ?? ownerView?.agentResourceId}
+                        currentModel={tab.model}
+                        currentParams={tab.modelParams}
+                        currentLabel={modelLabel}
+                        quickModels={quickModels}
+                        switching={modelBusy}
+                        onSelect={(m) => void switchModel(m)}
+                      />
+                    </>
+                  }
+                  onSend={(t, imgs) => void send(t, imgs)}
+                  onStop={() => void stop()}
+                  onError={setActionError}
+                />
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">
