@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react"
 import {
-  FolderOpen, KeyRound, Bird, UserCheck, Wrench, CheckCircle2, Circle,
-  Loader2, ExternalLink, ShieldCheck, ShieldAlert,   LogIn, Download, ArrowRight,
+  KeyRound, MessageSquare, Wrench, CheckCircle2, Circle,
+  Loader2, ExternalLink, ShieldCheck, ShieldAlert, Download, ArrowRight,
   Cloud, Globe,
 } from "lucide-react"
+import ChannelStep from "./ChannelStep"
 import ConfigMigratePanel from "./ConfigMigratePanel"
 import useInlineModal from "./useInlineModal"
 import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
@@ -22,10 +23,8 @@ interface Props {
 }
 
 const STEPS = [
-  { icon: FolderOpen, label: "选工作文件夹" },
   { icon: KeyRound, label: "接入 AI" },
-  { icon: Bird, label: "连上飞书" },
-  { icon: UserCheck, label: "绑定你自己" },
+  { icon: MessageSquare, label: "消息通道" },
   { icon: Wrench, label: "装点工具" },
 ]
 
@@ -34,7 +33,6 @@ export default function SetupWizard({ open, onClose }: Props) {
   const [step, setStep] = useState(0)
   const [maxStep, setMaxStep] = useState(0)
 
-  const [wsDir, setWsDir] = useState("")
   type AgentMode = "sdk" | "llm-builtin" | "llm-custom"
   const [agentMode, setAgentMode] = useState<AgentMode>("sdk")
   const [agentResourceId, setAgentResourceId] = useState("")
@@ -45,17 +43,7 @@ export default function SetupWizard({ open, onClose }: Props) {
   const [verifying, setVerifying] = useState(false)
   const [verifyErr, setVerifyErr] = useState("")
   const [sdkSaved, setSdkSaved] = useState(false)
-  const [channelId, setChannelId] = useState("")
-  const [appId, setAppId] = useState("")
-  const [appSecret, setAppSecret] = useState("")
-  const [botName, setBotName] = useState("")
-  const [chanErr, setChanErr] = useState("")
-  const [chanChecking, setChanChecking] = useState(false)
-  const [qrUrl, setQrUrl] = useState("")
-  const [qrState, setQrState] = useState<"idle" | "loading" | "wait">("idle")
-  const [binding, setBinding] = useState(false)
-  const [bindDone, setBindDone] = useState(false)
-  const [bindErr, setBindErr] = useState("")
+  const [channelsDone, setChannelsDone] = useState(false)
   const [toolStatus, setToolStatus] = useState<{ larkCli: { installed: boolean }; meegle: { installed: boolean }; nodeOk?: boolean; nodeVersion?: string } | null>(null)
   const [toolBusy, setToolBusy] = useState("")
   const [toolErr, setToolErr] = useState("")
@@ -73,14 +61,7 @@ export default function SetupWizard({ open, onClose }: Props) {
     setStep(0)
     setMaxStep(0)
     void window.electronAPI.getConfig().then((cfg) => {
-      setWsDir(cfg.workspaceDir ?? "")
-      const feishu = (cfg.channels ?? []).find((c) => c.type === "feishu")
-      if (feishu) {
-        setChannelId(feishu.id)
-        setAppId(feishu.larkAppId ?? "")
-        setAppSecret(feishu.larkAppSecret ?? "")
-        if (feishu.mainUserEnabled && feishu.mainUserChatId) setBindDone(true)
-      }
+      setChannelsDone((cfg.channels ?? []).length > 0)
       const sdk = (cfg.agentResources ?? []).find((r) => r.type === "sdk" && r.apiKey?.trim())
       const llm = (cfg.agentResources ?? []).find((r) => (r.type === "llm-builtin" || r.type === "llm-custom") && r.apiKey?.trim())
       if (llm) {
@@ -101,24 +82,15 @@ export default function SetupWizard({ open, onClose }: Props) {
         setAgentResourceId("")
       }
     })
-    const unsub = window.electronAPI.onFeishuSetupQrCode((url) => { setQrUrl(url); setQrState("wait") })
-    return () => unsub()
   }, [open])
 
   useEffect(() => {
-    if (open && step === 4 && !toolStatus) {
+    if (open && step === 2 && !toolStatus) {
       void window.electronAPI.getToolboxStatus().then(setToolStatus).catch(() => {})
     }
   }, [open, step, toolStatus])
 
   if (!open) return null
-
-  const pickDir = async () => {
-    const dir = await window.electronAPI.selectDirectory()
-    if (!dir) return
-    setWsDir(dir)
-    autoNext(1)
-  }
 
   const saveAgentResources = async (list: AgentResource[]) => {
     await window.electronAPI.saveConfig({ agentResources: list })
@@ -143,7 +115,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         setAgentResourceId(entry.id)
         setSdkSaved(true)
         setAgentConfigured(true)
-        autoNext(2)
+        autoNext(1)
         return
       }
 
@@ -155,7 +127,7 @@ export default function SetupWizard({ open, onClose }: Props) {
         await saveAgentResources([draft, ...keepOthers])
         setAgentResourceId(draft.id)
         setAgentConfigured(true)
-        autoNext(2)
+        autoNext(1)
         return
       }
 
@@ -166,7 +138,7 @@ export default function SetupWizard({ open, onClose }: Props) {
       await saveAgentResources([draft, ...keepOthers])
       setAgentResourceId(draft.id)
       setAgentConfigured(true)
-      autoNext(2)
+      autoNext(1)
     } finally {
       setVerifying(false)
     }
@@ -175,78 +147,6 @@ export default function SetupWizard({ open, onClose }: Props) {
   const verifyAndSaveKey = async () => {
     setAgentMode("sdk")
     await verifyAndSaveAgent()
-  }
-
-  const saveChannel = async (id: string, secret: string, quickCreated: boolean) => {
-    setChanChecking(true)
-    setChanErr("")
-    try {
-      const info = await window.electronAPI.fetchFeishuAppInfo(id.trim(), secret.trim())
-      if (!info.ok) { setChanErr(info.error ?? "凭据无效，请检查 App ID / Secret"); return }
-      setBotName(info.name ?? "")
-      const cfg = await window.electronAPI.getConfig()
-      const channels = cfg.channels ?? []
-      const agentRes = (cfg.agentResources ?? []).find((r) => r.id === agentResourceId)
-        ?? (cfg.agentResources ?? []).find((r) =>
-          (r.type === "sdk" || r.type === "llm-builtin" || r.type === "llm-custom") && !!r.apiKey?.trim(),
-        )
-      const existing = channels.find((c) => c.id === channelId) ?? channels.find((c) => c.type === "feishu")
-      const chan = {
-        ...(existing ?? {
-          id: newId("ch"), name: info.name || "飞书机器人", enabled: true, type: "feishu" as const,
-          model: "auto", modelParams: "", othersModel: "", othersModelParams: "",
-          mainUserEnabled: false, mainUserChatId: "", allowOthers: false, digitalIdentity: "",
-          workspaceDir: wsDir.trim(), keepSession: true, persistentPoll: true, showThinking: true,
-        }),
-        larkAppId: id.trim(), larkAppSecret: secret.trim(), larkBotName: info.name,
-        larkAppQuickCreated: quickCreated, enabled: true,
-        agentResourceId: agentRes?.id ?? agentResourceId,
-        ...(wsDir.trim() ? { workspaceDir: wsDir.trim() } : {}),
-      }
-      setChannelId(chan.id)
-      const nextChannels = channels.some((c) => c.id === chan.id) ? channels.map((c) => c.id === chan.id ? chan : c) : [...channels, chan]
-      await window.electronAPI.saveConfig({ channels: nextChannels })
-      autoNext(3)
-    } finally {
-      setChanChecking(false)
-    }
-  }
-
-  const quickCreate = async () => {
-    setQrState("loading")
-    setChanErr("")
-    const r = await window.electronAPI.feishuRegisterApp({ name: "LK Harness", desc: "IM Agent 协作助手" })
-    setQrState("idle")
-    setQrUrl("")
-    if (r.ok && r.appId && r.appSecret) {
-      setAppId(r.appId)
-      setAppSecret(r.appSecret)
-      await saveChannel(r.appId, r.appSecret, true)
-    } else if (r.error && r.error !== "cancelled") {
-      setChanErr(r.error)
-    }
-  }
-
-  const startBind = async () => {
-    if (!channelId) { setBindErr("请先完成上一步（连上飞书）"); return }
-    setBinding(true)
-    setBindErr("")
-    try {
-      const r = await window.electronAPI.startChannelBind(channelId)
-      if (r.ok && r.chatId) {
-        setBindDone(true)
-        autoNext(4)
-      } else if (r.error && r.error !== "cancelled") {
-        setBindErr(r.error)
-      }
-    } finally {
-      setBinding(false)
-    }
-  }
-
-  const cancelBind = async () => {
-    await window.electronAPI.cancelChannelBind(channelId)
-    setBinding(false)
   }
 
   const installTool = async (key: "larkCli" | "meegle") => {
@@ -268,7 +168,8 @@ export default function SetupWizard({ open, onClose }: Props) {
     onClose(completed)
   }
 
-  const stepDone = [!!wsDir, agentConfigured, !!botName, bindDone, false]
+  const stepDone = [agentConfigured, channelsDone, false]
+  const anyToolInstalled = !!(toolStatus?.larkCli.installed || toolStatus?.meegle.installed)
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-page">
@@ -296,40 +197,11 @@ export default function SetupWizard({ open, onClose }: Props) {
         </button>
       </div>
 
-      <div className="flex flex-1 items-center justify-center overflow-y-auto p-8">
-        <div className="w-full max-w-lg rounded-2xl border border-line-subtle bg-surface/80 p-8 shadow-2xl">
+      <div className="flex flex-1 overflow-y-auto p-8">
+        <div className="m-auto w-full max-w-lg rounded-2xl border border-line-subtle bg-surface/80 p-8 shadow-2xl">
 
           {step === 0 && (<>
-            <h2 className="text-lg font-semibold text-fg">第 1 步：选一个工作文件夹</h2>
-            <p className="mt-2 text-sm leading-relaxed text-fg-3">
-              AI 收到你的消息后，就在这个文件夹里干活——读写文件、跑命令。
-              一般选你的代码项目文件夹。以后随时可以在首页一键切换。
-            </p>
-            <div className="mt-6 flex items-center gap-3">
-              <button onClick={() => void pickDir()} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
-                <FolderOpen size={15} />选择文件夹
-              </button>
-              {wsDir && <span className="flex min-w-0 items-center gap-1 text-xs text-success"><CheckCircle2 size={13} className="shrink-0" /><span className="truncate" title={wsDir}>{wsDir}</span></span>}
-            </div>
-            {wsDir && (
-              <button onClick={() => goto(1)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
-                下一步 <ArrowRight size={14} />
-              </button>
-            )}
-            <div className="mt-8 border-t border-line-subtle pt-6">
-              <ConfigMigratePanel
-                variant="wizard"
-                showAlert={showAlert}
-                showConfirm={showConfirm}
-                onMigrateSuccess={() => {
-                  void window.electronAPI.saveConfig({ setupComplete: true }).then(() => onClose(true))
-                }}
-              />
-            </div>
-          </>)}
-
-          {step === 1 && (<>
-            <h2 className="text-lg font-semibold text-fg">第 2 步：接入 AI</h2>
+            <h2 className="text-lg font-semibold text-fg">第 1 步：接入 AI</h2>
             <p className="mt-2 text-sm leading-relaxed text-fg-3">
               推荐 <span className="text-fg-soft">Cursor SDK</span> 或 <span className="text-fg-soft">大模型 API</span>。
             </p>
@@ -380,90 +252,28 @@ export default function SetupWizard({ open, onClose }: Props) {
               {verifyErr && <span className="flex items-center gap-1 text-xs text-danger"><ShieldAlert size={13} />{verifyErr}</span>}
             </div>
             {agentConfigured && (
-              <button onClick={() => goto(2)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
+              <button onClick={() => goto(1)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
                 下一步 <ArrowRight size={14} />
               </button>
             )}
+            <div className="mt-8 border-t border-line-subtle pt-6">
+              <ConfigMigratePanel
+                variant="wizard"
+                showAlert={showAlert}
+                showConfirm={showConfirm}
+                onMigrateSuccess={() => {
+                  void window.electronAPI.saveConfig({ setupComplete: true }).then(() => onClose(true))
+                }}
+              />
+            </div>
           </>)}
+
+          <div className={step === 1 ? undefined : "hidden"}>
+            <ChannelStep agentResourceId={agentResourceId} onNext={() => { setChannelsDone(true); goto(2) }} />
+          </div>
 
           {step === 2 && (<>
-            <h2 className="text-lg font-semibold text-fg">第 3 步：连上飞书</h2>
-            <p className="mt-2 text-sm leading-relaxed text-fg-3">
-              创建一个飞书机器人并接进来。之后你在飞书里给它发消息，就是在指挥你电脑上的 AI。
-              推荐用「一键创建」：扫个码，应用自动建好、凭据自动填回来。
-            </p>
-            <div className="mt-6 space-y-4">
-              {qrState === "idle" && (
-                <button onClick={() => void quickCreate()} disabled={chanChecking}
-                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
-                  <LogIn size={15} />一键创建飞书应用
-                </button>
-              )}
-              {qrState !== "idle" && (
-                <div className="flex flex-col items-center gap-2 py-2">
-                  {qrState === "loading" && !qrUrl
-                    ? <Loader2 size={22} className="animate-spin text-accent" />
-                    : <img src={qrUrl} alt="Feishu QR" className="h-40 w-40 rounded bg-white p-1" />}
-                  <p className="text-xs text-fg-3">用飞书 App 扫码创建，完成后凭据自动回填</p>
-                  <button onClick={async () => { await window.electronAPI.feishuRegisterAppCancel(); setQrState("idle"); setQrUrl("") }} className="text-xs text-fg-muted hover:text-danger">取消</button>
-                </div>
-              )}
-              <div className="space-y-2 rounded-lg border border-line-subtle p-3">
-                <p className="text-xs text-fg-muted">已有飞书应用？直接填凭据（<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-accent hover:underline">开发者后台</a>可查）：</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <input type="text" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="App ID (cli_...)" className={inputCls} />
-                  <input type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} placeholder="App Secret" className={inputCls} />
-                </div>
-                <button onClick={() => void saveChannel(appId, appSecret, false)} disabled={chanChecking || !appId.trim() || !appSecret.trim()}
-                  className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
-                  {chanChecking ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
-                  {chanChecking ? "校验中..." : "校验并继续"}
-                </button>
-              </div>
-              {botName && <p className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已连接机器人「{botName}」</p>}
-              {chanErr && <p className="text-xs text-danger">{chanErr}</p>}
-            </div>
-            {botName && (
-              <button onClick={() => goto(3)} className="mt-6 flex items-center gap-1 text-sm text-accent hover:text-accent-soft">
-                下一步 <ArrowRight size={14} />
-              </button>
-            )}
-          </>)}
-
-          {step === 3 && (<>
-            <h2 className="text-lg font-semibold text-fg">第 4 步：绑定你自己（推荐）</h2>
-            <p className="mt-2 text-sm leading-relaxed text-fg-3">
-              让机器人认识你：点「开始绑定」，然后<span className="text-fg-soft">打开飞书，私聊给机器人随便发一句话</span>（比如你好）。
-            </p>
-            <p className="mt-2 text-sm leading-relaxed text-fg-muted">
-              绑定后：你私聊它 = 直接指挥第 1 步选的那个文件夹里的 AI，聊天记忆一直保留。
-              不绑定：所有人的消息都只能在临时文件夹里处理，碰不到你的项目。
-            </p>
-            <div className="mt-6 flex items-center gap-3">
-              {!binding && !bindDone && (
-                <button onClick={() => void startBind()} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
-                  <UserCheck size={15} />开始绑定
-                </button>
-              )}
-              {binding && (
-                <span className="flex items-center gap-2 text-sm text-accent-soft">
-                  <Loader2 size={15} className="animate-spin" />
-                  等待中——现在去飞书私聊机器人发一句话...
-                  <button onClick={() => void cancelBind()} className="text-xs text-fg-muted hover:text-danger">取消</button>
-                </span>
-              )}
-              {bindDone && <span className="flex items-center gap-1 text-sm text-success"><CheckCircle2 size={15} />绑定成功！</span>}
-            </div>
-            {bindErr && <p className="mt-3 text-xs text-danger">{bindErr}</p>}
-            <div className="mt-6 flex items-center gap-4">
-              {bindDone
-                ? <button onClick={() => goto(4)} className="flex items-center gap-1 text-sm text-accent hover:text-accent-soft">下一步 <ArrowRight size={14} /></button>
-                : <button onClick={() => goto(4)} className="text-sm text-fg-muted hover:text-fg-2">暂不绑定，跳过</button>}
-            </div>
-          </>)}
-
-          {step === 4 && (<>
-            <h2 className="text-lg font-semibold text-fg">第 5 步：装点工具（可选）</h2>
+            <h2 className="text-lg font-semibold text-fg">第 3 步：装点工具（可选）</h2>
             <p className="mt-2 text-sm leading-relaxed text-fg-3">
               给 AI 装上飞书的手脚：装完并登录后，AI 能帮你读写飞书文档、查日历、管理飞书项目。
               也可以以后在 设置 → 工具箱 里随时安装。
@@ -500,7 +310,7 @@ export default function SetupWizard({ open, onClose }: Props) {
             </div>
             {toolErr && <p className="mt-3 text-xs leading-relaxed text-danger">{toolErr}</p>}
             <button onClick={() => void finish(true)} className="mt-8 flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-green-500">
-              <CheckCircle2 size={15} />完成，开始使用
+              <CheckCircle2 size={15} />{anyToolInstalled ? "完成，开始使用" : "跳过，开始使用"}
             </button>
           </>)}
 

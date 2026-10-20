@@ -1412,7 +1412,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
               <section className="space-y-4">
                 <h3 className="text-sm font-medium text-fg-2">新手引导</h3>
                 <div className="rounded-lg border border-line p-4 space-y-3">
-                  <p className="text-sm text-fg-3">从头走一遍五步引导：选工作目录 → 接入 AI → 连上飞书 → 绑定自己 → 装工具。已有配置会自动带入，不会被清空。</p>
+                  <p className="text-sm text-fg-3">从头走一遍三步引导：接入 AI → 选消息通道（飞书 / 微信 / 应用内，飞书和微信可顺便绑定自己）→ 装工具。已有配置会自动带入，不会被清空。</p>
                   <button
                     onClick={() => onReenterWizard?.()}
                     className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
