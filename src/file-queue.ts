@@ -492,11 +492,19 @@ export function deleteQueueMessage(fileId: string, filterSessionKey?: string): b
   return false;
 }
 
+export interface DeletedQueueMessages {
+  removed: number;
+  sessionKeys: string[];
+  /** 其中删掉了已投递给 Agent 的 .claimed（处理中）消息的会话 */
+  processingSessionKeys: string[];
+}
+
 /** 按飞书 message_id 删除队列中 pending/processing 项（.qmsg / .claimed） */
-export function deleteQueueMessagesByMessageId(messageId: string): { removed: number; sessionKeys: string[] } {
-  if (!queueDir || !messageId) return { removed: 0, sessionKeys: [] };
+export function deleteQueueMessagesByMessageId(messageId: string): DeletedQueueMessages {
+  if (!queueDir || !messageId) return { removed: 0, sessionKeys: [], processingSessionKeys: [] };
   const safeId = messageId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const sessionKeys = new Set<string>();
+  const processingSessionKeys = new Set<string>();
   let removed = 0;
   for (const dir of queueMessageDirs()) {
     try {
@@ -512,12 +520,15 @@ export function deleteQueueMessagesByMessageId(messageId: string): { removed: nu
         try {
           fs.unlinkSync(filePath);
           removed++;
-          if (sk) sessionKeys.add(sk);
+          if (sk) {
+            sessionKeys.add(sk);
+            if (f.endsWith(".claimed")) processingSessionKeys.add(sk);
+          }
         } catch { /* ignore */ }
       }
     } catch { /* ignore */ }
   }
-  return { removed, sessionKeys: [...sessionKeys] };
+  return { removed, sessionKeys: [...sessionKeys], processingSessionKeys: [...processingSessionKeys] };
 }
 
 export interface QueueSessionInfo {

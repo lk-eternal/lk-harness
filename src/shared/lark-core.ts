@@ -1747,6 +1747,20 @@ export class LarkSender {
     }
   }
 
+  /** 撤回机器人自己发出的消息（飞书限发出 24 小时内） */
+  async deleteMessage(messageId: string): Promise<boolean> {
+    if (!messageId || messageId.startsWith("internal_")) return false;
+    try {
+      const res = await this.client.im.message.delete({ path: { message_id: messageId } });
+      if (res.code === 0 || res.code === undefined) return true;
+      this.log("WARN", `撤回消息失败: code=${res.code} msg=${res.msg ?? ""} id=${messageId}`);
+      return false;
+    } catch (e: any) {
+      this.log("WARN", `撤回消息异常: ${e?.message ?? e} id=${messageId}`);
+      return false;
+    }
+  }
+
   async sendImage(imagePath: string, replyMessageId?: string, chatId?: string): Promise<string | undefined> {
     const absPath = path.resolve(imagePath);
     if (!fs.existsSync(absPath)) { this.log("ERROR", `图片不存在: ${absPath}`); return undefined; }

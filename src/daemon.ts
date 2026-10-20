@@ -573,6 +573,14 @@ function broadcastCommandEvent(): void {
   }
 }
 
+/** 处理中的消息被用户撤回：通知 electron 停止该会话 Agent 并重新调度剩余消息 */
+function broadcastMessageRecalledEvent(sessionKey: string): void {
+  const data = JSON.stringify({ type: "message-recalled", sessionKey, ts: Date.now() });
+  for (const res of sseClients) {
+    try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
+  }
+}
+
 /** 应用内对话：聊天条目变更推给界面（正文不进日志） */
 function broadcastAppChatEvent(event: AppChatEvent): void {
   const data = JSON.stringify({ type: "app-chat", event });
@@ -2448,6 +2456,27 @@ function sealActiveStreamCardOnDelivery(sessionKey: string): Promise<void> {
   });
 }
 
+/**
+ * 用户撤回了处理中的消息：摘掉该会话当前流式卡并撤回卡片消息。入全序链执行；
+ * markCardSealed 让旧回合队列随后到达的 update/finish 按 sealAt 作废，不会把卡重建出来。
+ */
+function retractActiveStreamCard(rt: ChannelRuntime, sessionKey: string): Promise<void> {
+  return enqueueCardOp(sessionKey, async () => {
+    const state = agentStreamCards.get(sessionKey);
+    if (!state) return;
+    agentStreamCards.delete(sessionKey);
+    markCardSealed(sessionKey);
+    if (!state.messageId) {
+      log("WARN", `[StreamCard] 撤回流式卡: 卡无 messageId，无法撤回 session=${sessionKey} card=${state.cardId}`);
+      return;
+    }
+    cardQuestionMap.delete(state.messageId);
+    scheduleCardQuestionSave();
+    const ok = await rt.sender!.deleteMessage(state.messageId);
+    log(ok ? "INFO" : "WARN", `[StreamCard] 撤回流式卡${ok ? "完成" : "失败"} session=${sessionKey} card=${state.cardId} msg=${state.messageId}`);
+  });
+}
+
 
 // ── 卡片按钮回调 ─────────────────────────────────────────
 
@@ -2518,7 +2547,7 @@ function scheduleCardQuestionSave(): void {
 
 function handleMessageRecalled(rt: ChannelRuntime, messageId: string, chatId: string, recallType?: string): void {
   try {
-    const { removed, sessionKeys } = deleteQueueMessagesByMessageId(messageId);
+    const { removed, sessionKeys, processingSessionKeys } = deleteQueueMessagesByMessageId(messageId);
     if (cardQuestionMap.has(messageId)) {
       cardQuestionMap.delete(messageId);
       scheduleCardQuestionSave();
@@ -2526,6 +2555,12 @@ function handleMessageRecalled(rt: ChannelRuntime, messageId: string, chatId: st
     if (removed > 0) {
       log("INFO", `[${rt.cfg.name}] 消息已撤回，移出队列 ${removed} 条 messageId=${messageId} chat=${chatId} recall=${recallType ?? "?"}`);
       for (const sk of sessionKeys) broadcastQueueEvent(sk);
+      // 处理中的消息被撤回：先摘卡再通知停 AI，避免停止流程把卡收口后再也找不到 messageId
+      for (const sk of processingSessionKeys) {
+        void retractActiveStreamCard(rt, normalizeSessionKey(sk))
+          .catch((e: any) => log("WARN", `[${rt.cfg.name}] 撤回流式卡异常 session=${sk}: ${e?.message ?? e}`))
+          .finally(() => broadcastMessageRecalledEvent(sk));
+      }
     } else {
       log("DEBUG", `[${rt.cfg.name}] 消息撤回（队列无匹配）messageId=${messageId} chat=${chatId} recall=${recallType ?? "?"}`);
     }

@@ -935,6 +935,15 @@ function scheduleSseReconnect(req: http.ClientRequest): void {
   sseBackoff = Math.min(sseBackoff * 2, SSE_BACKOFF_MAX)
 }
 
+/** 处理中的消息被撤回：停掉正在处理它的 Agent，队列里剩余未撤回的消息由调度重新拉起 */
+async function stopAgentForRecalledMessage(sessionKey: string): Promise<void> {
+  if (isSessionAgentRunning(sessionKey)) {
+    await stopSessionAgent(sessionKey)
+    broadcastLog(`[撤回] 处理中的消息已被撤回，已停止 ${sessionKey}`)
+  }
+  await dispatchSessionAgents()
+}
+
 function connectSseQueueEvents(): void {
   disconnectSseQueueEvents()
   const lock = readLockFile()
@@ -955,6 +964,9 @@ function connectSseQueueEvents(): void {
           if (ev.type === "queue-update") {
             if (sseDispatchDebounce) clearTimeout(sseDispatchDebounce)
             sseDispatchDebounce = setTimeout(() => dispatchSessionAgents().catch(() => {}), 300)
+          } else if (ev.type === "message-recalled" && ev.sessionKey) {
+            void stopAgentForRecalledMessage(ev.sessionKey)
+              .catch((e: unknown) => broadcastLog(`[撤回] 停止 ${ev.sessionKey} 失败: ${e instanceof Error ? e.message : e}`, "WARN"))
           } else if (ev.type === "command-update") {
             void checkAndExecutePendingCommands().catch(() => {})
           } else if (ev.type === "temp-chat-active" && ev.invokerSessionKey) {

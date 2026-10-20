@@ -292,9 +292,10 @@ describe("查询与删除", () => {
     pushToFileQueue("待撤回", msgId, "test", SESSION_A)
     claimSessionMessages(SESSION_A)
     expect(getQueueLength(SESSION_A)).toBe(1)
-    const { removed, sessionKeys } = deleteQueueMessagesByMessageId(msgId)
+    const { removed, sessionKeys, processingSessionKeys } = deleteQueueMessagesByMessageId(msgId)
     expect(removed).toBe(1)
     expect(sessionKeys).toEqual([SESSION_A])
+    expect(processingSessionKeys).toEqual([SESSION_A])
     expect(getQueueLength(SESSION_A)).toBe(0)
   })
 
