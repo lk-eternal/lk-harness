@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { ChevronDown, FolderOpen, Loader2, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
+import TitleActions from "../components/TitleActions"
 import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
@@ -10,8 +11,8 @@ import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatI
 import { appChatSessionId } from "../../shared/app-chat-types"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey } from "../../shared/channel-types"
 import { modelSlug } from "../model-utils"
-
 import { formatTimeAgo } from "../time-ago"
+
 type Tree = Awaited<ReturnType<typeof window.electronAPI.listDashboardTree>>
 type ChatTab = Tree["channels"][number]["mainTabs"][number]
 type QuickModel = { model: string; modelParams?: string; label?: string; resourceId?: string }
@@ -28,8 +29,8 @@ interface Props {
   active: boolean
   /** 标题栏页面切换 */
   onSwitchPage: (page: MainPage) => void
-  /** 没有应用内对话通道时，跳到设置页的消息通道 */
-  onOpenChannelSettings: () => void
+  /** 打开设置页，可指定初始 Tab */
+  onSettings: (tab?: string) => void
 }
 
 const REFRESH_MS = 8000
@@ -56,7 +57,7 @@ function useOutsideClose(open: boolean, ref: RefObject<HTMLElement | null>, clos
   }, [open, ref, close])
 }
 
-export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }: Props) {
+export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [views, setViews] = useState<AppChannelView[]>([])
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
@@ -68,10 +69,10 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
   const [usageBytes, setUsageBytes] = useState<number | null>(null)
   const [actionError, setActionError] = useState("")
   const [titles, setTitles] = useState<Record<string, string>>({})
-  const busyRef = useRef(false)
   /** 会话最近一条记录的时间，键为 appChatSessionId；now 随每次刷新更新，用来算「多久前」 */
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [now, setNow] = useState(() => Date.now())
+  const busyRef = useRef(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
@@ -160,10 +161,10 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
   const workspaceDir = selected ? workspaceDirFromSessionKey(selected) : undefined
   /** 会话名：摘要标题；还没有时显示目录名（不带「（主）」和分支） */
   const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? dirName(workspaceDirFromSessionKey(t.sessionKey)) ?? t.label
-  const modelLabel = tab?.model
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
   /** 最近有对话的排前面；没有记录的保持原顺序排在后面 */
   const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0))
+  const modelLabel = tab?.model
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
 
@@ -257,14 +258,14 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
 
   return (
     <div className="flex h-screen flex-col">
-      <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />}>
+      <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />} actions={<TitleActions onSettings={onSettings} />}>
         <TitleBrand />
       </TitleBar>
 
       {noChannel ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-fg-muted">
           <p>还没有「应用内对话」通道</p>
-          <button type="button" onClick={onOpenChannelSettings} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">去设置里添加</button>
+          <button type="button" onClick={() => onSettings("channel")} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">去设置里添加</button>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
@@ -277,8 +278,8 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
                   <div className="space-y-0.5">
                     {byRecent(v.tabs).map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
-                      // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
                       const at = activeAt(t)
+                      // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
                       const deletable = !!t.removable && t.kind !== "project"
                       return (
                         <div key={t.sessionKey} className="group/row relative">
@@ -288,12 +289,12 @@ export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }
                             title={workspaceDirFromSessionKey(t.sessionKey) ?? sessionName(t)}
                             className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
-                            <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
                             <MessageCircle size={14} className="shrink-0 text-fg-faint" />
-                          </button>
+                            <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
                             {at !== undefined && (
                               <span className={`shrink-0 text-[11px] font-normal text-fg-faint ${deletable ? "group-hover/row:invisible" : ""}`}>{formatTimeAgo(at, now)}</span>
                             )}
+                          </button>
                           {deletable && (
                             <button
                               type="button"

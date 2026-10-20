@@ -6,8 +6,9 @@ import CloseWindowModal from "./components/CloseWindowModal"
 import AppModalHost from "./components/AppModalHost"
 import UpdateDownloadBanner from "./components/UpdateDownloadBanner"
 import SetupWizard from "./components/SetupWizard"
+import type { MainPage } from "./components/PageTabs"
 
-type Page = "dashboard" | "settings" | "chat"
+type Page = MainPage | "settings"
 
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard")
@@ -15,7 +16,14 @@ export default function App() {
   const [error, setError] = useState("")
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false)
   const [settingsInitTab, setSettingsInitTab] = useState<string | undefined>()
+  const [settingsFrom, setSettingsFrom] = useState<MainPage>("dashboard")
   const [showWizard, setShowWizard] = useState(false)
+
+  const openSettings = (from: MainPage) => (tab?: string) => {
+    setSettingsInitTab(tab)
+    setSettingsFrom(from)
+    setPage("settings")
+  }
 
   useEffect(() => {
     if (!window.electronAPI) {
@@ -65,7 +73,7 @@ export default function App() {
       <div className={page === "dashboard" ? undefined : "hidden"}>
         <Dashboard
           active={page === "dashboard"}
-          onSettings={(tab) => { setSettingsInitTab(tab); setPage("settings") }}
+          onSettings={openSettings("dashboard")}
           onSwitchPage={setPage}
         />
       </div>
@@ -73,12 +81,12 @@ export default function App() {
         <ChatPage
           active={page === "chat"}
           onSwitchPage={setPage}
-          onOpenChannelSettings={() => { setSettingsInitTab("channel"); setPage("settings") }}
+          onSettings={openSettings("chat")}
         />
       </div>
       <div className={page === "settings" ? undefined : "hidden"}>
         <Settings
-          onBack={() => setPage("dashboard")}
+          onBack={() => setPage(settingsFrom)}
           initialTab={settingsInitTab}
           onTabConsumed={() => setSettingsInitTab(undefined)}
           onReenterWizard={() => setShowWizard(true)}
