@@ -793,24 +793,22 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 </button>
               </div>
             )}
-            {hasStreamCard && (draft.showThinkingMain ?? true) && (
+            {draft.type === "feishu" && (draft.showThinkingMain ?? true) && (
               <>
-              {draft.type === "feishu" && (
-                <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
-                  <p className="text-xs text-fg-3">思考/工具块保留数</p>
-                  <input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={draft.streamKeepPerKindMain ?? 5}
-                    onChange={(e) => {
-                      const n = parseInt(e.target.value, 10)
-                      set({ streamKeepPerKindMain: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
-                    }}
-                    className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
-                  />
-                </div>
-              )}
+              <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
+                <p className="text-xs text-fg-3">思考/工具块保留数</p>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={draft.streamKeepPerKindMain ?? 5}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10)
+                    set({ streamKeepPerKindMain: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
+                  }}
+                  className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
+                />
+              </div>
               <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
                 <p className="text-xs text-fg-3">回复后隐藏思考</p>
                 <button onClick={() => set({ hideThinkingOnFinishMain: !(draft.hideThinkingOnFinishMain ?? true) })}
