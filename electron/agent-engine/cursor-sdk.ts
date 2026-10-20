@@ -18,6 +18,7 @@ import {
   hasResumableSdkSession,
   getSdkSessionDiagnostics,
   getResumableSummary,
+  completeSdkText,
 } from "../agent-sdk"
 import type { AgentEngine, AgentLaunchParams } from "./types"
 
@@ -91,6 +92,8 @@ export const cursorSdkEngine: AgentEngine = {
   async checkCredentials(resource) {
     return checkSdkApiKey(resource.apiKey ?? "")
   },
+
+  complete: (p) => completeSdkText(p.resource.apiKey ?? "", p.prompt),
 
   getSessionDiagnostics: getSdkSessionDiagnostics,
   getResumableSummary,

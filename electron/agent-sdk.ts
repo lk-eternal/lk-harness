@@ -1,7 +1,8 @@
 import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
 import { resolve, join, dirname } from "node:path"
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs"
+import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
 import { createRequire } from "node:module"
 import { pushUiLog, broadcastLog, broadcastSessionStatus } from "./ui-logger"
@@ -1714,6 +1715,39 @@ export async function checkSdkApiKey(apiKey: string): Promise<{ ok: boolean; ema
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e)
     return { ok: false, error: msg }
+  }
+}
+
+/** 与 launchSdkAgent 的 "auto" 约定一致：未指定模型时落到 composer-2 */
+const SDK_COMPLETE_MODEL = "composer-2"
+const SDK_COMPLETE_TIMEOUT_MS = 60_000
+
+/**
+ * 一次性文本补全：临时 Agent 在空临时目录里跑一次就丢，不带任何内置工具，也不读项目/用户设置。
+ * 模型固定为默认档，不跟随会话模型。
+ */
+export async function completeSdkText(apiKey: string, prompt: string): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const key = apiKey?.trim()
+  if (!key) return { ok: false, error: "API Key 未配置" }
+
+  const dir = mkdtempSync(join(tmpdir(), "lk-sdk-complete-"))
+  let agent: SDKAgent | undefined
+  try {
+    agent = await Agent.create({
+      apiKey: key,
+      model: { id: SDK_COMPLETE_MODEL },
+      tools: [],
+      local: { cwd: dir, settingSources: [], sandboxOptions: { enabled: false }, store: new JsonlLocalAgentStore(dir) },
+    })
+    const run = await agent.send(prompt)
+    const res = await withTimeout(run.wait(), SDK_COMPLETE_TIMEOUT_MS, "SDK 文本补全")
+    if (res.status !== "finished") return { ok: false, error: res.error?.message ?? `运行${res.status}` }
+    return { ok: true, text: res.result ?? "" }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    try { agent?.close() } catch { /* best-effort */ }
+    try { rmSync(dir, { recursive: true, force: true }) } catch { /* 临时目录清理失败不影响结果 */ }
   }
 }
 

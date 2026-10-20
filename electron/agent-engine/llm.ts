@@ -19,6 +19,7 @@ import {
   clearLlmFailStreak,
   clearAllLlmFailStreaks,
   hasPersistedLlmSession,
+  completeLlmText,
 } from "../agent-llm"
 
 import { isThinkingLevel } from "../../src/shared/session-thinking-store.js"
@@ -98,4 +99,6 @@ export const llmEngine: AgentEngine = {
   async checkCredentials(resource: AgentResource) {
     return verifyLlmResource(resource)
   },
+
+  complete: (p) => completeLlmText(p.resource, p.model, p.prompt),
 }

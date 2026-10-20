@@ -74,6 +74,13 @@ export interface TranscriptTurn {
   }
 }
 
+export interface CompleteParams {
+  resource: AgentResource
+  /** 会话当前模型 id；引擎可自行决定是否采用（SDK 引擎统一走默认模型，免得一个标题耗掉高档位额度） */
+  model: string
+  prompt: string
+}
+
 export interface AgentEngine {
   kind: AgentEngineKind
   runtimeId: AgentRuntimeId
@@ -116,6 +123,8 @@ export interface AgentEngine {
     effParams?: string,
   ): Promise<{ ok: boolean; models?: ListedModel[]; error?: string }>
   checkCredentials?(resource: AgentResource): Promise<{ ok: boolean; email?: string; error?: string }>
+  /** 一次性文本补全：不进任何会话、不带工具（会话标题等轻量生成用） */
+  complete?(p: CompleteParams): Promise<{ ok: boolean; text?: string; error?: string }>
   getSessionDiagnostics?(sessionKey: string): AgentSessionDiagnostics
   getResumableSummary?(): { sessionKey: string; agentId: string; workspaceDir: string; updatedAt: number }[]
 }

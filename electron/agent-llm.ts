@@ -989,6 +989,33 @@ export async function verifyLlmResource(resource: AgentResource): Promise<{ ok: 
   }
 }
 
+const COMPLETE_TIMEOUT_MS = 30_000
+const COMPLETE_MAX_TOKENS = 256
+
+/** 一次性文本补全：直接调模型，不建会话、不带工具；"auto"/空按资源默认模型 */
+export async function completeLlmText(
+  resource: AgentResource,
+  modelId: string,
+  prompt: string,
+): Promise<{ ok: boolean; text?: string; error?: string }> {
+  const apiKey = llmApiKey(resource)
+  if (!apiKey) return { ok: false, error: "请填写 API Key" }
+  const trimmed = modelId.trim()
+  const model = resolveLlmModel(resource, trimmed && trimmed !== "auto" ? trimmed : undefined)
+  if (!model) return { ok: false, error: "无法解析模型，请检查 Agent 配置或通道模型设置" }
+  try {
+    const res = await complete(
+      model,
+      { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+      withLlmProxyOptions({ apiKey, maxTokens: COMPLETE_MAX_TOKENS, signal: AbortSignal.timeout(COMPLETE_TIMEOUT_MS) }),
+    )
+    if (res.stopReason === "error") return { ok: false, error: res.errorMessage || "模型调用失败" }
+    return { ok: true, text: res.content.map((c) => (c.type === "text" ? c.text : "")).join("") }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 export async function listLlmModels(
   resource: AgentResource,
   currentModel?: string,

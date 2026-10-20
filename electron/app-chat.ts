@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto"
 import { readLockFile } from "./daemon-client"
 import { getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
+import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle } from "./app-chat-title"
 import { chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 
@@ -47,13 +48,29 @@ async function callDaemon(action: string, body: object): Promise<AppChatResult> 
   }
 }
 
+/** 清聊天记录，会话摘要标题随记录一起清掉（下一条消息重新生成） */
+async function clearRecords(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> {
+  const r = await callDaemon("clear", target)
+  if (!r.ok) return r
+  if (target.sessionKey) removeAppChatTitle(target.sessionKey)
+  else if (target.channelId) removeAppChatChannelTitles(target.channelId)
+  return r
+}
+
+/** 会话里第一条非指令的文字消息，作为生成标题的素材 */
+async function firstUserText(sessionKey: string): Promise<string | undefined> {
+  const r = await callDaemon("history", { sessionKey })
+  const first = r.items?.find((it) => it.kind === "user" && it.text.trim() !== "" && !it.text.trim().startsWith("/"))
+  return first?.kind === "user" ? first.text : undefined
+}
+
 /** 删除应用内会话：先清 Agent 侧（进程、上下文、常用目录），成功后再清聊天记录 */
 async function deleteSession(sessionKey: string): Promise<AppChatResult> {
   const channelId = channelIdFromSessionKey(sessionKey)
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   const r = await deleteUserSession(sessionKey, chatIdFromSessionKey(sessionKey))
   if (!r.ok) return { ok: false, error: r.error }
-  return callDaemon("clear", { sessionKey })
+  return clearRecords({ sessionKey })
 }
 
 export function forwardAppChatEvent(event: AppChatEvent): void {
@@ -116,8 +133,13 @@ async function openFile(file: string): Promise<{ ok: boolean; error?: string }> 
 
 export function initAppChat(): void {
   ipcMain.handle("app-chat:history", (_e, sessionKey: string) => callDaemon("history", { sessionKey }))
-  ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => callDaemon("send", payload))
-  ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => callDaemon("clear", target))
+  ipcMain.handle("app-chat:send", async (_e, payload: AppChatSendPayload) => {
+    const r = await callDaemon("send", payload)
+    if (r.ok && !payload.questionId) void ensureAppChatTitle(payload.sessionKey, () => firstUserText(payload.sessionKey))
+    return r
+  })
+  ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearRecords(target))
+  ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))

@@ -173,6 +173,12 @@ const api = {
   appChatSaveImageAs: (file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }> => ipcRenderer.invoke("app-chat:save-image-as", file),
   appChatOpenFile: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:open-file", file),
   appChatShowInFolder: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:show-in-folder", file),
+  appChatTitles: (): Promise<Record<string, string>> => ipcRenderer.invoke("app-chat:get-titles"),
+  onAppChatTitles: (cb: (titles: Record<string, string>) => void) => {
+    const handler = (_: unknown, titles: Record<string, string>) => cb(titles)
+    ipcRenderer.on("app-chat:titles", handler)
+    return () => ipcRenderer.removeListener("app-chat:titles", handler)
+  },
   onAppChatEvent: (cb: (event: AppChatEvent) => void) => {
     const handler = (_: unknown, event: AppChatEvent) => cb(event)
     ipcRenderer.on("app-chat:event", handler)

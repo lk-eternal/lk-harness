@@ -187,6 +187,8 @@ declare global {
     appChatSaveImageAs(file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }>
     appChatOpenFile(file: string): Promise<{ ok: boolean; error?: string }>
     appChatShowInFolder(file: string): Promise<{ ok: boolean; error?: string }>
+    appChatTitles(): Promise<Record<string, string>>
+    onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
     startDaemon(): Promise<{ ok: boolean; error?: string }>
     stopDaemon(): Promise<void>

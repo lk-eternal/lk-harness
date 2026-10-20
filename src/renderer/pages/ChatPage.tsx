@@ -30,6 +30,10 @@ interface Props {
 
 const REFRESH_MS = 8000
 
+function dirName(dir: string | undefined): string | undefined {
+  return dir?.split(/[\\/]/).filter(Boolean).pop()
+}
+
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
@@ -59,6 +63,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [usageBytes, setUsageBytes] = useState<number | null>(null)
   const [actionError, setActionError] = useState("")
+  const [titles, setTitles] = useState<Record<string, string>>({})
   const busyRef = useRef(false)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
@@ -104,6 +109,13 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
     return () => { window.clearInterval(timer); unsub() }
   }, [active, refresh, refreshModels])
 
+  // 会话摘要标题：先订阅再拉取，生成完成/清空/删除都会整体推送
+  useEffect(() => {
+    const unsub = window.electronAPI.onAppChatTitles(setTitles)
+    void window.electronAPI.appChatTitles().then(setTitles)
+    return unsub
+  }, [])
+
   // 选中项失效（首次进入、会话被删）时回落到通道当前会话或第一个
   useEffect(() => {
     const withTabs = views.filter((v) => v.tabs.length > 0)
@@ -139,6 +151,8 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
   const workspaceDir = selected ? workspaceDirFromSessionKey(selected) : undefined
+  /** 会话名：摘要标题；还没有时显示目录名（不带「（主）」和分支） */
+  const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? dirName(workspaceDirFromSessionKey(t.sessionKey)) ?? t.label
   const modelLabel = tab?.model
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
@@ -159,7 +173,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
   const clearSession = async () => {
     setMoreMenuOpen(false)
     if (!selected || !tab) return
-    if (!await showConfirm("清空本会话记录", `确定清空「${tab.label}」在应用内的对话记录吗？\n只删除本页记录，Agent 的会话上下文不受影响。`, "清空")) return
+    if (!await showConfirm("清空本会话记录", `确定清空「${sessionName(tab)}」在应用内的对话记录吗？\n只删除本页记录（会话名随之重置），Agent 的会话上下文不受影响。`, "清空")) return
     const r = await window.electronAPI.appChatClear({ sessionKey: selected })
     if (!r.ok) setActionError(r.error ?? "清空失败")
     void refreshUsage()
@@ -169,7 +183,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
     const effect = t.kind === "main"
       ? "这是主目录会话：会停止 Agent、清除上下文和聊天记录，之后以空会话保留在列表里。"
       : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
-    if (!await showConfirm("删除会话", `确定删除「${t.label}」吗？\n${effect}`, "删除")) return
+    if (!await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     await refresh()
@@ -272,10 +286,10 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                           <button
                             type="button"
                             onClick={() => setSelected(t.sessionKey)}
-                            title={workspaceDirFromSessionKey(t.sessionKey) ?? t.label}
+                            title={workspaceDirFromSessionKey(t.sessionKey) ?? sessionName(t)}
                             className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${deletable ? "pr-8" : ""} ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                           >
-                            <span className="min-w-0 flex-1 truncate">{t.label}</span>
+                            <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
                           </button>
                           {deletable && (
                             <button
@@ -311,7 +325,7 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                 <div className="flex shrink-0 items-center gap-3 border-b border-line-subtle px-6 py-2">
                   <FolderOpen size={14} className="shrink-0 text-accent" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{tab.label}</p>
+                    <p className="truncate text-sm font-medium">{sessionName(tab)}</p>
                     {workspaceDir && <p className="truncate text-[11px] text-fg-faint" title={workspaceDir}>{workspaceDir}</p>}
                   </div>
                   <div className="relative shrink-0" ref={modelMenuRef}>
