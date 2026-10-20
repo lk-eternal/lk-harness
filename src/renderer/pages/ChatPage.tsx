@@ -307,6 +307,12 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     }
   }
 
+  // 一个会话都没有时（刚走完引导、删掉了最后一个）自动建一个临时会话，对话页不留空白
+  const emptyChannelId = loaded && views.length > 0 && views.every((v) => v.tabs.length === 0) ? views[0].channelId : undefined
+  useEffect(() => {
+    if (emptyChannelId) void newSession(emptyChannelId)
+  }, [emptyChannelId])
+
   /** 选一个目录并加入该通道的常用目录，打开（或新建）该目录的会话，会话在首次发送时由 Agent 侧建立 */
   const openDirSession = async (channelId: string) => {
     const dir = await window.electronAPI.selectDirectory()
