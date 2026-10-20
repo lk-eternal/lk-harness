@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Check, ChevronDown, ChevronRight, Loader2, Zap } from "lucide-react"
+import { Check, ChevronDown, ChevronRight, Loader2, Search, Zap } from "lucide-react"
 import useOutsideClose from "../../hooks/useOutsideClose"
 import { modelSlug } from "../../model-utils"
 import type { AgentResource } from "../../../shared/channel-types"
@@ -48,9 +48,10 @@ async function fetchProviderModels(resource: AgentResource): Promise<ProviderMod
 
 const modelKey = (id: string, params: string | undefined) => `${id}\0${params ?? ""}`
 
-/** 输入框里的「供应商 / 模型」选择：左列供应商，右列该供应商的模型（常用在前），点到模型才生效。面板高度固定，悬停切换供应商时布局不随右列内容变化 */
+/** 输入框里的「供应商 / 模型」选择：左列供应商，右列该供应商的模型（常用在前，顶部可搜索），点到模型才生效。面板高度固定，悬停切换供应商时布局不随右列内容变化 */
 export default function ModelPicker({ resources, currentResourceId, currentModel, currentParams, currentLabel, quickModels, switching, onSelect }: Props) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
   /** 右列正在展示的供应商；打开时默认当前供应商 */
   const [shownId, setShownId] = useState<string | undefined>()
   const [cache, setCache] = useState<Record<string, ProviderModels>>({})
@@ -73,6 +74,7 @@ export default function ModelPicker({ resources, currentResourceId, currentModel
   const toggle = () => {
     if (open) { setOpen(false); return }
     setShownId(undefined)
+    setQuery("")
     setCache((c) => Object.fromEntries(Object.entries(c).filter(([, v]) => v.status !== "error")))
     setOpen(true)
   }
@@ -86,9 +88,17 @@ export default function ModelPicker({ resources, currentResourceId, currentModel
     onSelect({ model: id, ...(params ? { modelParams: params } : {}), resourceId: shown.id })
   }
 
-  const favorites = quickModels.filter((m) => (m.resourceId ?? currentProvider?.id) === shown?.id)
+  const needle = query.trim().toLowerCase()
+  const matches = (id: string, label: string) => !needle || id.toLowerCase().includes(needle) || label.toLowerCase().includes(needle)
+  const favoriteLabel = (m: QuickModel) => m.label || modelSlug(m.model, m.modelParams)
+  const favorites = quickModels
+    .filter((m) => (m.resourceId ?? currentProvider?.id) === shown?.id)
+    .filter((m) => matches(m.model, favoriteLabel(m)))
   const favoriteKeys = new Set(favorites.map((m) => modelKey(m.model, m.modelParams)))
-  const others = shownModels?.status === "ok" ? shownModels.models.filter((m) => !favoriteKeys.has(modelKey(m.id, m.params))) : []
+  const others = shownModels?.status === "ok"
+    ? shownModels.models.filter((m) => !favoriteKeys.has(modelKey(m.id, m.params)) && matches(m.id, m.label))
+    : []
+  const noMatch = shownModels?.status === "ok" && needle !== "" && favorites.length === 0 && others.length === 0
 
   const row = (key: string, id: string, params: string | undefined, label: string) => {
     const cur = isCurrent(id, params)
@@ -142,23 +152,39 @@ export default function ModelPicker({ resources, currentResourceId, currentModel
               </button>
             ))}
           </div>
-          <div className="w-72 overflow-y-auto p-1.5">
-            {favorites.length > 0 && (
-              <>
-                <p className="flex items-center gap-1 px-2.5 pb-1 pt-1.5 text-[11px] text-fg-faint"><Zap size={11} />常用</p>
-                {favorites.map((m) => row(`fav:${modelKey(m.model, m.modelParams)}`, m.model, m.modelParams, m.label || modelSlug(m.model, m.modelParams)))}
-              </>
-            )}
-            {shownModels?.status === "loading" && (
-              <p className="flex items-center gap-2 px-2.5 py-3 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />加载模型列表…</p>
-            )}
-            {shownModels?.status === "error" && <p className="px-2.5 py-3 text-xs text-danger">{shownModels.error}</p>}
-            {others.length > 0 && (
-              <>
-                <p className={`px-2.5 pb-1 pt-1.5 text-[11px] text-fg-faint ${favorites.length > 0 ? "mt-1 border-t border-line-subtle pt-2.5" : ""}`}>全部模型</p>
-                {others.map((m) => row(`all:${modelKey(m.id, m.params)}`, m.id, m.params, m.label))}
-              </>
-            )}
+          <div className="flex w-72 flex-col">
+            <div className="shrink-0 border-b border-line-subtle p-1.5">
+              <label className="flex items-center gap-2 rounded-lg bg-surface px-2.5 py-1.5">
+                <Search size={13} className="shrink-0 text-fg-faint" />
+                <input
+                  autoFocus
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="搜索模型"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-faint"
+                />
+              </label>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              {favorites.length > 0 && (
+                <>
+                  <p className="flex items-center gap-1 px-2.5 pb-1 pt-1.5 text-[11px] text-fg-faint"><Zap size={11} />常用</p>
+                  {favorites.map((m) => row(`fav:${modelKey(m.model, m.modelParams)}`, m.model, m.modelParams, favoriteLabel(m)))}
+                </>
+              )}
+              {shownModels?.status === "loading" && (
+                <p className="flex items-center gap-2 px-2.5 py-3 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />加载模型列表…</p>
+              )}
+              {shownModels?.status === "error" && <p className="px-2.5 py-3 text-xs text-danger">{shownModels.error}</p>}
+              {others.length > 0 && (
+                <>
+                  <p className={`px-2.5 pb-1 pt-1.5 text-[11px] text-fg-faint ${favorites.length > 0 ? "mt-1 border-t border-line-subtle pt-2.5" : ""}`}>全部模型</p>
+                  {others.map((m) => row(`all:${modelKey(m.id, m.params)}`, m.id, m.params, m.label))}
+                </>
+              )}
+              {noMatch && <p className="px-2.5 py-3 text-xs text-fg-faint">没有匹配的模型</p>}
+            </div>
           </div>
         </div>
       )}
