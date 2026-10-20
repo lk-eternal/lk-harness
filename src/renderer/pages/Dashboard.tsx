@@ -10,7 +10,6 @@ import {
   Bot,
   Bird,
   MessageSquare,
-  MessagesSquare,
   Clock,
   Loader2,
   Trash2,
@@ -29,8 +28,9 @@ import {
   Plus,
   Cpu,
 } from "lucide-react"
-import logoUrl from "../assets/logo.png"
 import TitleBar from "../components/TitleBar"
+import TitleBrand from "../components/TitleBrand"
+import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
 import ChannelTree from "../components/dashboard/ChannelTree"
 import PanelShell from "../components/dashboard/PanelShell"
@@ -45,8 +45,8 @@ import { makeChatKey } from "../../shared/channel-types"
 interface Props {
   /** 打开设置页，可指定初始 Tab */
   onSettings: (tab?: string) => void
-  /** 打开应用内对话页 */
-  onChat: () => void
+  /** 标题栏页面切换 */
+  onSwitchPage: (page: MainPage) => void
   /** 当前是否为可见页面（从设置页返回时立即刷新） */
   active?: boolean
 }
@@ -57,7 +57,7 @@ interface OnboardState {
   channelReady: boolean
 }
 
-export default function Dashboard({ onSettings, onChat, active }: Props) {
+export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
   const [status, setStatus] = useState<DaemonStatus>({ running: false })
   const [logLines, setLogLines] = useState<string[]>([])
   const [starting, setStarting] = useState(false)
@@ -811,18 +811,10 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
 
   return (
     <div className="flex h-screen flex-col">
-      <TitleBar>
-        <div className="flex flex-1 items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src={logoUrl} alt="logo" className="h-6 w-6" />
-            <h1 className="text-lg font-semibold">LK Harness</h1>
-            {status.version && (
-              <span className="rounded bg-raised px-2 py-0.5 text-xs text-fg-3">
-                v{status.version}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
+      <TitleBar
+        center={<PageTabs page="dashboard" onChange={onSwitchPage} />}
+        actions={
+          <>
             <button
               onClick={() => void handleCheckUpdate()}
               disabled={checkingUpdate}
@@ -832,21 +824,16 @@ export default function Dashboard({ onSettings, onChat, active }: Props) {
               {checkingUpdate ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
             </button>
             <button
-              onClick={() => onChat()}
-              className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
-              title="应用内对话"
-            >
-              <MessagesSquare size={16} />
-            </button>
-            <button
               onClick={() => onSettings()}
               className="rounded-lg p-2 text-fg-3 transition hover:bg-raised hover:text-fg"
               title="设置"
             >
               <Settings size={16} />
             </button>
-          </div>
-        </div>
+          </>
+        }
+      >
+        <TitleBrand />
       </TitleBar>
 
       {/* Status cards */}

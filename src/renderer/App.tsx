@@ -66,13 +66,13 @@ export default function App() {
         <Dashboard
           active={page === "dashboard"}
           onSettings={(tab) => { setSettingsInitTab(tab); setPage("settings") }}
-          onChat={() => setPage("chat")}
+          onSwitchPage={setPage}
         />
       </div>
       <div className={page === "chat" ? undefined : "hidden"}>
         <ChatPage
           active={page === "chat"}
-          onBack={() => setPage("dashboard")}
+          onSwitchPage={setPage}
           onOpenChannelSettings={() => { setSettingsInitTab("channel"); setPage("settings") }}
         />
       </div>

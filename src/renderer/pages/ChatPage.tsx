@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
-import { ArrowLeft, ChevronDown, FolderOpen, Loader2, MoreHorizontal, MonitorSmartphone, Plus, Trash2 } from "lucide-react"
+import { ChevronDown, FolderOpen, Loader2, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
+import TitleBrand from "../components/TitleBrand"
+import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
@@ -23,7 +25,8 @@ interface AppChannelView {
 interface Props {
   /** 当前是否为可见页面（可见时才轮询刷新） */
   active: boolean
-  onBack: () => void
+  /** 标题栏页面切换 */
+  onSwitchPage: (page: MainPage) => void
   /** 没有应用内对话通道时，跳到设置页的消息通道 */
   onOpenChannelSettings: () => void
 }
@@ -52,7 +55,7 @@ function useOutsideClose(open: boolean, ref: RefObject<HTMLElement | null>, clos
   }, [open, ref, close])
 }
 
-export default function ChatPage({ active, onBack, onOpenChannelSettings }: Props) {
+export default function ChatPage({ active, onSwitchPage, onOpenChannelSettings }: Props) {
   const [views, setViews] = useState<AppChannelView[]>([])
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
@@ -247,20 +250,8 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
 
   return (
     <div className="flex h-screen flex-col">
-      <TitleBar>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-lg p-1.5 text-fg-3 transition hover:bg-raised hover:text-fg"
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            title="返回首页"
-          ><ArrowLeft size={16} /></button>
-          <h1 className="text-lg font-semibold">对话</h1>
-          <span className="flex items-center gap-1 rounded bg-purple-tint/40 px-2 py-0.5 text-xs text-purple" title="消息不经过飞书/微信，仅在本机展示；对话内容仍会发送给所选模型服务商，并保存在本机会话记录中">
-            <MonitorSmartphone size={12} />仅本机
-          </span>
-        </div>
+      <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />}>
+        <TitleBrand />
       </TitleBar>
 
       {noChannel ? (
