@@ -1,5 +1,5 @@
 import { useRef } from "react"
-import { ArrowDown, Loader2 } from "lucide-react"
+import { ArrowDown, Loader2, MessageCircle } from "lucide-react"
 import type { AppChatItem } from "../../../shared/app-chat-types"
 import { useStickToBottom } from "../../hooks/useStickToBottom"
 import AssistantTurn from "./AssistantTurn"
@@ -11,11 +11,27 @@ interface Props {
   loading: boolean
   /** AI 正在工作；最后一条是用户消息时补一个"正在处理"占位，覆盖流式卡出现前的空窗 */
   busy: boolean
+  /** 会话的目录名；临时会话没有指定目录，为空 */
+  workspaceName?: string
   onAnswer: (questionId: string, option: string) => void
   onCommand: (cmd: string) => void
 }
 
-export default function ChatItemList({ items, loading, busy, onAnswer, onCommand }: Props) {
+function EmptyChat({ workspaceName }: { workspaceName?: string }) {
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-2.5 pb-10 text-center">
+      <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-[14px] bg-raised text-fg-3"><MessageCircle size={24} /></div>
+      <p className="text-[17px] font-semibold text-fg">开始一段新对话</p>
+      <p className="max-w-[380px] text-[13px] leading-[1.75] text-fg-muted">
+        {workspaceName
+          ? `在「${workspaceName}」目录里运行，可以直接让 Agent 处理这个目录的内容。`
+          : <>没有指定目录，会在临时目录里运行，适合日常问答。<br />要处理某个项目，用输入框下方的目录选择切过去。</>}
+      </p>
+    </div>
+  )
+}
+
+export default function ChatItemList({ items, loading, busy, workspaceName, onAnswer, onCommand }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { sentinelRef, atBottom, scrollToBottom } = useStickToBottom(scrollRef, [items])
   const waiting = busy && items.length > 0 && items[items.length - 1].kind === "user"
@@ -23,9 +39,9 @@ export default function ChatItemList({ items, loading, busy, onAnswer, onCommand
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
+        <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
           {loading && items.length === 0 && <p className="text-center text-xs text-fg-faint">加载中…</p>}
-          {!loading && items.length === 0 && <p className="py-20 text-center text-sm text-fg-faint">发一条消息开始对话</p>}
+          {!loading && items.length === 0 && <EmptyChat workspaceName={workspaceName} />}
           {items.map((it) => {
             switch (it.kind) {
               case "user": return <UserBubble key={it.id} item={it} />

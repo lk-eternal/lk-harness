@@ -48,7 +48,7 @@ async function fetchProviderModels(resource: AgentResource): Promise<ProviderMod
 
 const modelKey = (id: string, params: string | undefined) => `${id}\0${params ?? ""}`
 
-/** 输入框里的「供应商 / 模型」选择：左列供应商，右列该供应商的模型（常用在前），点到模型才生效 */
+/** 输入框里的「供应商 / 模型」选择：左列供应商，右列该供应商的模型（常用在前），点到模型才生效。面板高度固定，悬停切换供应商时布局不随右列内容变化 */
 export default function ModelPicker({ resources, currentResourceId, currentModel, currentParams, currentLabel, quickModels, switching, onSelect }: Props) {
   const [open, setOpen] = useState(false)
   /** 右列正在展示的供应商；打开时默认当前供应商 */
@@ -125,8 +125,8 @@ export default function ModelPicker({ resources, currentResourceId, currentModel
         <ChevronDown size={12} className="shrink-0 text-fg-faint" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 z-20 mb-2 flex overflow-hidden rounded-xl border border-line bg-page shadow-lg">
-          <div className="w-44 shrink-0 space-y-0.5 border-r border-line-subtle bg-surface p-1.5">
+        <div className="absolute bottom-full left-0 z-20 mb-2 flex h-80 overflow-hidden rounded-xl border border-line bg-page shadow-lg">
+          <div className="w-44 shrink-0 space-y-0.5 overflow-y-auto border-r border-line-subtle bg-surface p-1.5">
             {resources.length === 0 && <p className="px-2.5 py-2 text-xs text-fg-faint">还没有配置供应商</p>}
             {resources.map((r) => (
               <button
@@ -142,7 +142,7 @@ export default function ModelPicker({ resources, currentResourceId, currentModel
               </button>
             ))}
           </div>
-          <div className="max-h-80 w-72 overflow-y-auto p-1.5">
+          <div className="w-72 overflow-y-auto p-1.5">
             {favorites.length > 0 && (
               <>
                 <p className="flex items-center gap-1 px-2.5 pb-1 pt-1.5 text-[11px] text-fg-faint"><Zap size={11} />常用</p>

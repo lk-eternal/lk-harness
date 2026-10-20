@@ -400,7 +400,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   </div>
                 </div>
 
-                <ChatItemList key={selected} items={items} loading={loading} busy={busy} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
+                <ChatItemList key={selected} items={items} loading={loading} busy={busy} workspaceName={dirName(workspaceDir)} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer
                   disabled={!selected}
