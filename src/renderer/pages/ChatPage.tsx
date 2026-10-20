@@ -165,6 +165,17 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
     void refreshUsage()
   }
 
+  const deleteSession = async (t: ChatTab) => {
+    const effect = t.kind === "main"
+      ? "这是主目录会话：会停止 Agent、清除上下文和聊天记录，之后以空会话保留在列表里。"
+      : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
+    if (!await showConfirm("删除会话", `确定删除「${t.label}」吗？\n${effect}`, "删除")) return
+    const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
+    if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
+    await refresh()
+    void refreshUsage()
+  }
+
   const clearAll = async () => {
     if (!await showConfirm("清空全部对话记录", "确定清空所有应用内会话的对话记录吗？\n只删除本页记录，Agent 的会话上下文不受影响。", "全部清空")) return
     for (const v of views) {
@@ -254,16 +265,27 @@ export default function ChatPage({ active, onBack, onOpenChannelSettings }: Prop
                   <div className="space-y-0.5">
                     {v.tabs.map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
+                      // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
+                      const deletable = !!t.removable && t.kind !== "project"
                       return (
-                        <button
-                          key={t.sessionKey}
-                          type="button"
-                          onClick={() => setSelected(t.sessionKey)}
-                          title={workspaceDirFromSessionKey(t.sessionKey) ?? t.label}
-                          className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
-                        >
-                          <span className="min-w-0 flex-1 truncate">{t.label}</span>
-                        </button>
+                        <div key={t.sessionKey} className="group/row relative">
+                          <button
+                            type="button"
+                            onClick={() => setSelected(t.sessionKey)}
+                            title={workspaceDirFromSessionKey(t.sessionKey) ?? t.label}
+                            className={`flex w-full items-center rounded-md px-2.5 py-2 text-left text-xs transition ${deletable ? "pr-8" : ""} ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{t.label}</span>
+                          </button>
+                          {deletable && (
+                            <button
+                              type="button"
+                              onClick={() => void deleteSession(t)}
+                              title="删除会话"
+                              className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded p-1 text-fg-faint transition hover:bg-raised hover:text-danger group-hover/row:block"
+                            ><Trash2 size={13} /></button>
+                          )}
+                        </div>
                       )
                     })}
                     <button

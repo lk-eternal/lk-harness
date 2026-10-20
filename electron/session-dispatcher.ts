@@ -4,7 +4,7 @@ import { app } from "electron"
 import {
   getConfig, getChannel, getChannels, getAgentResource, resolveChannelForSession,
   resolveChannelModel, effectiveWorkspaceDir, saveConfig,
-  getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromAllFavoriteLists,
+  getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromChannelFavorites,
   type MessageChannel, type ModelScenario,
 } from "./config-store"
 import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
@@ -823,10 +823,16 @@ function isMainSessionKey(sessionKey: string, chatId: string): boolean {
   return !!mainDir && sameDirPath(mainDir, ws)
 }
 
+/** 飞书/微信的主会话是私聊的固定落点，不可删；应用内对话没有这层路由语义，主目录会话与其它会话一样可删（删除即重置） */
+function isProtectedMainSession(sessionKey: string, chatId: string): boolean {
+  if (resolveChannelForSession(chatId)?.type === "app") return false
+  return isMainSessionKey(sessionKey, chatId)
+}
+
 export function isDeletableSession(sessionKey: string, chatId: string): boolean {
   if (!sessionKey?.trim() || !chatId) return false
   if (projectIdFromSessionKey(sessionKey)) return false
-  if (isMainSessionKey(sessionKey, chatId)) return false
+  if (isProtectedMainSession(sessionKey, chatId)) return false
   return true
 }
 
@@ -910,11 +916,13 @@ export async function deleteUserSession(
   if (projectIdFromSessionKey(key)) {
     return { ok: false, error: "项目会话请用 /p del 删除" }
   }
-  if (isMainSessionKey(key, resolvedChatId)) {
+  if (isProtectedMainSession(key, resolvedChatId)) {
     return { ok: false, error: "主会话不可删除" }
   }
 
   const label = tabLabelForSession(key)
+  // 先于 purgeSessionEntry 解析：会话记录被清掉后，无通道前缀的 key 就查不到所属通道了
+  const ownerChannel = resolveChannelForSession(key)
 
   if (isSessionAgentRunning(key)) await stopSessionAgent(key)
   resetAllSessionContext(key)
@@ -923,7 +931,7 @@ export async function deleteUserSession(
   previousActiveSessionMap.delete(key)
 
   const ws = workspaceDirFromSessionKey(key)
-  if (ws) removeWorkspaceFromAllFavoriteLists(ws)
+  if (ws && ownerChannel) removeWorkspaceFromChannelFavorites(ownerChannel.id, ws)
 
   const activeKey = await getCurrentActiveSession(lock.port, resolvedChatId)
   if (activeKey === key) {

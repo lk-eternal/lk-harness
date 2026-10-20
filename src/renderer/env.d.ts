@@ -179,6 +179,7 @@ declare global {
     appChatHistory(sessionKey: string): Promise<AppChatResultType>
     appChatSend(payload: AppChatSendPayloadType): Promise<AppChatResultType>
     appChatClear(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResultType>
+    appChatDeleteSession(sessionKey: string): Promise<AppChatResultType>
     appChatUsage(channelId: string): Promise<AppChatResultType>
     appChatSaveImage(bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
     appChatReadImage(file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }>

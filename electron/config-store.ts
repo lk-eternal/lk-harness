@@ -542,23 +542,15 @@ function sameDirPath(a: string, b: string): boolean {
   return a.replace(/[\\/]+$/g, "").toLowerCase() === b.replace(/[\\/]+$/g, "").toLowerCase()
 }
 
-/** 删目录会话时从全局与各通道常用列表移除，避免 Tab 刷新后再次出现 */
-export function removeWorkspaceFromAllFavoriteLists(workspaceDir: string): void {
+/** 删目录会话时只从该会话所属通道的常用列表移除，避免 Tab 刷新后再次出现；其它通道的会话列表不受影响 */
+export function removeWorkspaceFromChannelFavorites(channelId: string, workspaceDir: string): void {
   const ws = workspaceDir.trim()
-  if (!ws) return
-  const cfg = getConfig()
-  const globalNext = dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces).filter((d) => !sameDirPath(d, ws))
-  let channelsChanged = false
-  const channels = (cfg.channels ?? []).map((c) => {
-    const favs = getChannelFavoriteWorkspaces(c)
-    const next = favs.filter((d) => !sameDirPath(d, ws))
-    if (next.length === favs.length) return c
-    channelsChanged = true
-    return { ...c, favoriteWorkspaces: next }
-  })
-  const globalChanged = globalNext.length !== dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces).length
-  if (!globalChanged && !channelsChanged) return
-  saveConfig({ favoriteWorkspaces: globalNext, channels })
+  const channel = getChannel(channelId)
+  if (!ws || !channel) return
+  const favs = getChannelFavoriteWorkspaces(channel)
+  const next = favs.filter((d) => !sameDirPath(d, ws))
+  if (next.length === favs.length) return
+  setChannelFavoriteWorkspaces(channelId, next)
 }
 
 /** 全局常用目录一次性复制到各通道，此后两边独立演进 */

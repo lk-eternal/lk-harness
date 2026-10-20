@@ -8,6 +8,9 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { randomUUID } from "node:crypto"
 import { readLockFile } from "./daemon-client"
+import { getChannel } from "./config-store"
+import { deleteUserSession } from "./session-dispatcher"
+import { chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 
 /** 与飞书下载图片同目录，沿用 `[图片已保存: …]` 约定，Daemon 的媒体缓存清理一并覆盖 */
@@ -42,6 +45,15 @@ async function callDaemon(action: string, body: object): Promise<AppChatResult> 
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
+}
+
+/** 删除应用内会话：先清 Agent 侧（进程、上下文、常用目录），成功后再清聊天记录 */
+async function deleteSession(sessionKey: string): Promise<AppChatResult> {
+  const channelId = channelIdFromSessionKey(sessionKey)
+  if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
+  const r = await deleteUserSession(sessionKey, chatIdFromSessionKey(sessionKey))
+  if (!r.ok) return { ok: false, error: r.error }
+  return callDaemon("clear", { sessionKey })
 }
 
 export function forwardAppChatEvent(event: AppChatEvent): void {
@@ -106,6 +118,7 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:history", (_e, sessionKey: string) => callDaemon("history", { sessionKey }))
   ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => callDaemon("send", payload))
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => callDaemon("clear", target))
+  ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))
   ipcMain.handle("app-chat:read-image", (_e, file: string) => readImage(file))
