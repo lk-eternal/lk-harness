@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { GitBranch, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
+import { GitBranch, Loader2, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -11,6 +11,7 @@ import Composer from "../components/chat/Composer"
 import DirPicker from "../components/chat/DirPicker"
 import ModelPicker, { type ModelChoice, type QuickModel } from "../components/chat/ModelPicker"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
+import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionId } from "../../shared/app-chat-types"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
@@ -185,6 +186,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   }, [actionError])
 
   const { items, loading, error: historyError } = useAppChatItems(selected)
+  const sessionStatus = useSessionActivity(active ? selected : null)
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
@@ -348,6 +350,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                     {byRecent(v.tabs).map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
                       const at = activeAt(t)
+                      const status = sessionStatus(t.sessionKey, t.running)
                       // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
                       const deletable = !!t.removable && t.kind !== "project"
                       return (
@@ -358,7 +361,14 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                             title={(isTempTab(t) ? undefined : workspaceDirFromSessionKey(t.sessionKey)) ?? sessionName(t)}
                             className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
-                            <MessageCircle size={14} className="shrink-0 text-fg-faint" />
+                            {status === "working" ? (
+                              <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
+                            ) : (
+                              <span className="relative shrink-0">
+                                <MessageCircle size={14} className="text-fg-faint" />
+                                {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
+                              </span>
+                            )}
                             <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
                             {at !== undefined && (
                               <span className={`shrink-0 text-[11px] font-normal text-fg-faint ${deletable ? "group-hover/row:invisible" : ""}`}>{formatTimeAgo(at, now)}</span>
