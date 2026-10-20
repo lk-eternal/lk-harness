@@ -167,6 +167,7 @@ function createWindow(): void {
     icon: iconPath,
     autoHideMenuBar: true,
     frame: false,
+    accentColor: false,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
