@@ -260,7 +260,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
   return (
     <div className="flex h-screen flex-col">
-      <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />} actions={<TitleActions onSettings={onSettings} />}>
+      <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />} actions={<TitleActions onSettings={onSettings} active={active} />}>
         <TitleBrand />
       </TitleBar>
 

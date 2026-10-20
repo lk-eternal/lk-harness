@@ -38,9 +38,6 @@ import {
   Github,
   MessageSquare,
   Upload,
-  Monitor,
-  Sun,
-  Moon,
 } from "lucide-react"
 import SearchableSelect from "../components/SearchableSelect"
 import SortableList from "../components/SortableList"
@@ -60,18 +57,12 @@ import useInlineModal from "../components/useInlineModal"
 import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
 import { modelSlug } from "../model-utils"
+import { THEME_OPTIONS, type Theme } from "../theme-options"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
 
 type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
 type CloseWindowAction = "ask" | "minimize" | "quit"
-type Theme = AppConfig["theme"]
-
-const THEME_OPTIONS: { v: Theme; label: string; icon: typeof Sun }[] = [
-  { v: "system", label: "跟随系统", icon: Monitor },
-  { v: "light", label: "浅色", icon: Sun },
-  { v: "dark", label: "深色", icon: Moon },
-]
 
 interface McpEditForm {
   json: string; jsonError?: string

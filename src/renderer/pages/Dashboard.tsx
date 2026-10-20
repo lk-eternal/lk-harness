@@ -790,7 +790,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     <div className="flex h-screen flex-col">
       <TitleBar
         center={<PageTabs page="dashboard" onChange={onSwitchPage} />}
-        actions={<TitleActions onSettings={onSettings} />}
+        actions={<TitleActions onSettings={onSettings} active={active} />}
       >
         <TitleBrand />
       </TitleBar>
