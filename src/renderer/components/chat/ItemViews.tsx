@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import { Check, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
+import { Check, Copy, Download, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
 import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUserItem } from "../../../shared/app-chat-types"
 
 // ── 本地图片：经主进程读成 data URL（渲染层不直接访问文件系统），带小缓存 ──
@@ -27,7 +27,36 @@ function useLocalImage(path: string): { url?: string; failed: boolean } {
   return state
 }
 
-function ImageViewer({ url, onClose }: { url: string; onClose: () => void }) {
+/** 复制到系统剪贴板 / 另存为；悬浮在图片上和放大查看器里共用 */
+function ImageActions({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false)
+  const [error, setError] = useState("")
+  const buttonClass = "rounded bg-black/60 p-1 text-white transition hover:bg-black/80"
+
+  const copy = async () => {
+    const r = await window.electronAPI.appChatCopyImage(path)
+    setError(r.ok ? "" : (r.error ?? "复制失败"))
+    if (!r.ok) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1500)
+  }
+  const save = async () => {
+    const r = await window.electronAPI.appChatSaveImageAs(path)
+    setError(r.ok ? "" : (r.error ?? "保存失败"))
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+      <div className="flex gap-1">
+        <button type="button" onClick={() => void copy()} title="复制图片" className={buttonClass}>{copied ? <Check size={12} /> : <Copy size={12} />}</button>
+        <button type="button" onClick={() => void save()} title="另存为" className={buttonClass}><Download size={12} /></button>
+      </div>
+      {error && <span className="max-w-full break-all rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{error}</span>}
+    </div>
+  )
+}
+
+function ImageViewer({ path, url, onClose }: { path: string; url: string; onClose: () => void }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", onKey)
@@ -36,12 +65,13 @@ function ImageViewer({ url, onClose }: { url: string; onClose: () => void }) {
   return createPortal(
     <div onClick={onClose} className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-8">
       <img src={url} alt="" className="max-h-full max-w-full rounded object-contain" />
+      <div className="absolute right-4 top-4"><ImageActions path={path} /></div>
     </div>,
     document.body,
   )
 }
 
-/** 缩略图：点击放大；加载失败/文件已被清理时给占位，不报错 */
+/** 缩略图：点击放大，悬浮出现复制/另存为；加载失败/文件已被清理时给占位，不报错 */
 export function LocalImage({ path, className }: { path: string; className: string }) {
   const { url, failed } = useLocalImage(path)
   const [zoom, setZoom] = useState(false)
@@ -53,8 +83,11 @@ export function LocalImage({ path, className }: { path: string; className: strin
   }
   return (
     <>
-      <img src={url} alt="" onClick={() => setZoom(true)} className={`cursor-zoom-in rounded object-cover ${className}`} />
-      {zoom && <ImageViewer url={url} onClose={() => setZoom(false)} />}
+      <div className="group/img relative self-start">
+        <img src={url} alt="" onClick={() => setZoom(true)} className={`cursor-zoom-in rounded object-cover ${className}`} />
+        <div className="absolute inset-x-1.5 top-1.5 hidden justify-end group-hover/img:flex"><ImageActions path={path} /></div>
+      </div>
+      {zoom && <ImageViewer path={path} url={url} onClose={() => setZoom(false)} />}
     </>
   )
 }

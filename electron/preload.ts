@@ -168,6 +168,8 @@ const api = {
   appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
   appChatSaveImage: (bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:save-image", bytes, ext),
   appChatReadImage: (file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:read-image", file),
+  appChatCopyImage: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:copy-image", file),
+  appChatSaveImageAs: (file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }> => ipcRenderer.invoke("app-chat:save-image-as", file),
   appChatOpenFile: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:open-file", file),
   appChatShowInFolder: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:show-in-folder", file),
   onAppChatEvent: (cb: (event: AppChatEvent) => void) => {

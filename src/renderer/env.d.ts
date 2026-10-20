@@ -182,6 +182,8 @@ declare global {
     appChatUsage(channelId: string): Promise<AppChatResultType>
     appChatSaveImage(bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
     appChatReadImage(file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }>
+    appChatCopyImage(file: string): Promise<{ ok: boolean; error?: string }>
+    appChatSaveImageAs(file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }>
     appChatOpenFile(file: string): Promise<{ ok: boolean; error?: string }>
     appChatShowInFolder(file: string): Promise<{ ok: boolean; error?: string }>
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void

@@ -2,7 +2,7 @@
 // 界面 ↔ Daemon：历史/发送/清空走 Daemon 的 /api/app-chat/*，聊天条目事件由
 // daemon-manager 的 SSE 转给 forwardAppChatEvent，再推到所有窗口。
 
-import { BrowserWindow, ipcMain, shell } from "electron"
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, shell } from "electron"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -66,6 +66,35 @@ function readImage(file: string): { ok: true; dataUrl: string } | { ok: false; e
   return { ok: true, dataUrl: `data:${mime};base64,${fs.readFileSync(file).toString("base64")}` }
 }
 
+function copyImage(file: string): { ok: boolean; error?: string } {
+  if (!IMAGE_MIME[path.extname(file).toLowerCase()]) return { ok: false, error: "不是图片文件" }
+  if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
+  const image = nativeImage.createFromPath(file)
+  if (image.isEmpty()) return { ok: false, error: "图片无法解码" }
+  clipboard.writeImage(image)
+  return { ok: true }
+}
+
+async function saveImageAs(file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }> {
+  const ext = path.extname(file).toLowerCase()
+  if (!IMAGE_MIME[ext]) return { ok: false, error: "不是图片文件" }
+  if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
+  const win = BrowserWindow.getAllWindows()[0]
+  if (!win) return { ok: false, error: "窗口不可用" }
+  const result = await dialog.showSaveDialog(win, {
+    title: "保存图片",
+    defaultPath: path.join(app.getPath("downloads"), path.basename(file)),
+    filters: [{ name: "图片", extensions: [ext.slice(1)] }],
+  })
+  if (result.canceled || !result.filePath) return { ok: true, canceled: true }
+  try {
+    fs.copyFileSync(file, result.filePath)
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+  return { ok: true }
+}
+
 async function openFile(file: string): Promise<{ ok: boolean; error?: string }> {
   if (!OPENABLE_EXTS.has(path.extname(file).toLowerCase())) return { ok: false, error: "该类型文件不允许直接打开，请用「所在位置」" }
   if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
@@ -80,6 +109,8 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))
   ipcMain.handle("app-chat:read-image", (_e, file: string) => readImage(file))
+  ipcMain.handle("app-chat:copy-image", (_e, file: string) => copyImage(file))
+  ipcMain.handle("app-chat:save-image-as", (_e, file: string) => saveImageAs(file))
   ipcMain.handle("app-chat:open-file", (_e, file: string) => openFile(file))
   ipcMain.handle("app-chat:show-in-folder", (_e, file: string) => {
     if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
