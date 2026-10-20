@@ -2209,13 +2209,20 @@ function isGroupFeishuChat(ch: Extract<ResolvedChannel, { type: "feishu" }>): bo
   return ct === "group";
 }
 
+/**
+ * send_text/send_question 是否来自独立定时任务。任务没有会话回合去收口流式卡，出站只能是独立消息。
+ * 出站目标会被换成通知群的 chatKey，任务身份只能看调用方 key；无调用方时 sessionKey 本身就是调用方（Electron 宿主直发）。
+ */
+function isIndependentTaskSend(sessionKey: string, invokerSessionKey: string | undefined): boolean {
+  return isIndependentTaskSessionKey(invokerSessionKey || sessionKey, readTasksSafe());
+}
+
 /** 无活跃流式卡时先建卡，供 send_text/send_question 抢先合并（ACK 早于思考/工具）。整体入全序链。 */
 async function ensureStreamCardForMcpMerge(
   sessionKey: string,
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   firstBody?: string,
 ): Promise<{ state?: AgentStreamCardState; bodyMerged: boolean }> {
-  if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return { bodyMerged: false };
   if (!isStreamCardEnabled(sessionKey, ch) && !firstBody?.trim()) return { bodyMerged: false };
   // 应用无 cardkit 权限：直接走普通消息，不白撞建卡 API
   if (ch.rt.sender?.isCardkitDenied()) return { bodyMerged: false };
@@ -3542,7 +3549,7 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
         try {
           const routeKey = resolveSendSessionKeyForMcp();
           if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key: routeKey });
+          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
           if (!r?.ok) {
             const detail = r?.error?.trim() || "消息发送失败";
             log("WARN", `send_text 发送失败: message_id=${message_id} error=${detail.slice(0, 160)}`);
@@ -3611,7 +3618,7 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
       try {
         const routeKey = resolveSendSessionKeyForMcp();
         if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, message_id, session_key: routeKey });
+        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${(r as any)?.error?.trim() || "问题发送失败"}` }] };
         return { content: [{ type: "text" as const, text: r.degraded ? "问题已发送（微信文本降级）" : "问题已发送" }] };
       } catch (e: any) {
@@ -4545,7 +4552,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
   // ── 消息发送 API ──
   if (method === "POST" && pathname === "/api/send-text") {
     const body = JSON.parse(await readBody(req));
-    const { text, message_id, session_key } = body as { text: string; message_id?: string; session_key?: string };
+    const { text, message_id, session_key, invoker_session_key } = body as { text: string; message_id?: string; session_key?: string; invoker_session_key?: string };
     if (!text) { json(res, { ok: false, error: "text is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-text", session_key, message_id)) return true;
 
@@ -4565,7 +4572,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       const cardBody = LarkSender.stripAtTagsForCardDisplay(text);
       // 有活跃卡则正文并入；无卡则建卡即带正文（防空白卡闪现）。
       // bodyMerged 由串行链内保证（SDK 竞态建卡时并入已有卡）——为 false 必须回退独立消息，严禁静默吞正文
-      if (session_key) {
+      if (session_key && !isIndependentTaskSend(session_key, invoker_session_key)) {
         const r = await ensureStreamCardForMcpMerge(session_key, ch, cardBody);
         if (r.state && r.bodyMerged) {
           touchSessionLastReply(session_key);
@@ -4724,7 +4731,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/send-question") {
     const body = JSON.parse(await readBody(req));
-    const { text, options, message_id, session_key } = body as { text: string; options: unknown; message_id?: string; session_key?: string };
+    const { text, options, message_id, session_key, invoker_session_key } = body as { text: string; options: unknown; message_id?: string; session_key?: string; invoker_session_key?: string };
     const opts = (Array.isArray(options) ? options : []).map((o) => String(o).trim()).filter(Boolean).slice(0, 10);
     if (!text?.trim() || opts.length === 0) { json(res, { ok: false, error: "text 与 options 必填" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-question", session_key, message_id)) return true;
@@ -4743,8 +4750,8 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, fallback), degraded: true });
     } else {
       const sender = ch.rt.sender!;
-      // 问题一律进流式卡（思考开关只影响思考/工具面板显隐）；合并失败才降级独立卡
-      if (session_key) {
+      // 问题一律进流式卡（思考开关只影响思考/工具面板显隐）；合并失败才降级独立卡；独立定时任务直接发独立卡
+      if (session_key && !isIndependentTaskSend(session_key, invoker_session_key)) {
         // 建卡/并卡 + 设未决问题 + finish 刷卡整段入全序链，防与 SDK flush / 收口交错
         const qResult = await enqueueCardOp(session_key, async (): Promise<{ messageId?: string } | undefined> => {
           const ensured = await ensureAgentStreamCard(session_key, { segments: [] }, ch);
