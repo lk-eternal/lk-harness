@@ -3,7 +3,8 @@ import {
   Plus, Loader2, CheckCircle2, ShieldAlert, Eye, EyeOff, Trash2,
   LogIn, MessageSquare, Bird, FolderOpen, ExternalLink, MonitorSmartphone,
 } from "lucide-react"
-import { APP_CHANNEL_CHAT_ID, CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
+import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
+import { emptyChannel } from "../channel-defaults"
 import SearchableSelect from "./SearchableSelect"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
 import PanelAddMenu from "./PanelAddMenu"
@@ -15,42 +16,6 @@ const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text
 const sectionCls = "mt-5 space-y-3 border-t border-line-subtle pt-5 pb-5"
 /** tab 内首个分组：去顶部隔线，保留间隙 */
 const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
-
-function newLocalChannelId(): string {
-  const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
-  return `ch_${hex}`
-}
-
-function emptyChannel(type: ChannelType, defaultName: string): ChannelConfig {
-  return {
-    id: newLocalChannelId(),
-    name: defaultName,
-    enabled: true,
-    type,
-    agentResourceId: "",
-    othersAgentResourceId: "",
-    model: "auto",
-    modelParams: "",
-    othersModel: "",
-    othersModelParams: "",
-    // 应用内对话固定绑定本机主用户，无需扫码/绑定流程
-    mainUserEnabled: type === "app",
-    mainUserChatId: type === "app" ? APP_CHANNEL_CHAT_ID : "",
-    allowOthers: false,
-    digitalIdentity: "",
-    workspaceDir: "",
-    keepSessionMain: true,
-    persistentPollMain: true,
-    showThinkingMain: true,
-    streamKeepPerKindMain: 5,
-    hideThinkingOnFinishMain: true,
-    keepSessionOthers: true,
-    persistentPollOthers: false,
-    showThinkingOthers: false,
-    streamKeepPerKindOthers: 5,
-    hideThinkingOnFinishOthers: true,
-  }
-}
 
 interface ModelOption { id: string; label: string; params: string }
 
