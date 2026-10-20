@@ -45,6 +45,8 @@ export interface AppChatAssistantItem extends AppChatItemBase {
   kind: "assistant";
   segments: AppChatSegment[];
   finished: boolean;
+  /** 回合收口的时间戳；耗时 = finishedAt - ts。收口前和重启时被判定结束的旧记录没有 */
+  finishedAt?: number;
   modelLabel?: string;
 }
 

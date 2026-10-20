@@ -245,6 +245,7 @@ export class AppChat {
         ...live,
         segments: segments.length ? segments : live.segments,
         finished: true,
+        finishedAt: Date.now(),
         ...(opts.modelLabel?.trim() ? { modelLabel: opts.modelLabel.trim() } : {}),
       };
       this.upsert(entry, next);

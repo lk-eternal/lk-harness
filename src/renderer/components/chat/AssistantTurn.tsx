@@ -8,6 +8,14 @@ function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
+/** 整个回合的耗时：不满一分钟 12.3s，满一分钟 1m12s */
+function fmtDuration(ms: number): string {
+  const seconds = Math.round(ms / 100) / 10
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const whole = Math.round(ms / 1000)
+  return `${Math.floor(whole / 60)}m${whole % 60}s`
+}
+
 /** 折叠头：点击切换；未手动切换时由 auto 决定（回合进行中的最新块展开、其余折叠） */
 function useAutoOpen(auto: boolean): [boolean, () => void] {
   const [manual, setManual] = useState<boolean | null>(null)
@@ -129,6 +137,7 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
       {item.finished && (
         <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
           {item.modelLabel && <><span>{item.modelLabel}</span><span>·</span></>}
+          {item.finishedAt !== undefined && <><span>耗时 {fmtDuration(Math.max(0, item.finishedAt - item.ts))}</span><span>·</span></>}
           <MessageTime ts={item.ts} />
           {replyText && <CopyButton text={replyText} className="ml-1.5" />}
         </div>
