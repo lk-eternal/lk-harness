@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import { app } from "electron"
 import {
   getConfig, getChannel, getChannels, getAgentResource, resolveChannelForSession,
-  resolveChannelModel, effectiveWorkspaceDir, saveConfig,
+  resolveChannelModel, effectiveWorkspaceDir, saveConfig, updateChannel,
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromChannelFavorites,
   type MessageChannel, type ModelScenario,
 } from "./config-store"
@@ -29,6 +29,7 @@ import {
   warmupAgentModels,
 } from "./agent-engine"
 import { cleanupWorkspaceDir } from "./workspace-injector"
+import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
@@ -823,7 +824,7 @@ function isMainSessionKey(sessionKey: string, chatId: string): boolean {
   return !!mainDir && sameDirPath(mainDir, ws)
 }
 
-/** 飞书/微信的主会话是私聊的固定落点，不可删；应用内对话没有这层路由语义，主目录会话与其它会话一样可删（删除即重置） */
+/** 飞书/微信的主会话是私聊的固定落点，不可删；应用内对话没有这层路由语义，主目录会话与其它会话一样可删（删除即清除通道的主目录配置） */
 function isProtectedMainSession(sessionKey: string, chatId: string): boolean {
   if (resolveChannelForSession(chatId)?.type === "app") return false
   return isMainSessionKey(sessionKey, chatId)
@@ -919,6 +920,7 @@ export async function deleteUserSession(
   if (isProtectedMainSession(key, resolvedChatId)) {
     return { ok: false, error: "主会话不可删除" }
   }
+  const wasMainSession = isMainSessionKey(key, resolvedChatId)
 
   const label = tabLabelForSession(key)
   // 先于 purgeSessionEntry 解析：会话记录被清掉后，无通道前缀的 key 就查不到所属通道了
@@ -942,6 +944,12 @@ export async function deleteUserSession(
     }
   }
   await purgeSessionRouting(lock.port, key)
+
+  // 主目录会话由通道的主目录配置派生，只清运行态的话下次刷新又会冒出来，所以连配置一起清（须在上面的活跃会话回落之后）
+  if (wasMainSession && ownerChannel) {
+    updateChannel(ownerChannel.id, { workspaceDir: "" })
+    await pushChannelRuntimeToDaemon()
+  }
 
   return { ok: true, label }
 }

@@ -241,7 +241,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     const effect = isTempTab(t)
       ? "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
       : t.kind === "main"
-        ? "这是主目录会话：会停止 Agent、清除上下文和聊天记录，之后以空会话保留在列表里。"
+        ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
         : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
     if (!isDraft && !await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
