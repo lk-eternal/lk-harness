@@ -13,7 +13,7 @@ interface Props {
 /** 标题栏右侧：检查更新 + 主题切换 + 设置（工作台和对话页共用） */
 export default function TitleActions({ onSettings, active = true }: Props) {
   const [checkingUpdate, setCheckingUpdate] = useState(false)
-  const [theme, setTheme] = useState<Theme>("dark")
+  const [theme, setTheme] = useState<Theme>("system")
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
 
   useEffect(() => {

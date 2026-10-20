@@ -100,7 +100,7 @@ const defaults: AppConfig = {
   noProxy: "localhost,127.0.0.1,feishu.cn,weixin.qq.com",
   closeWindowAction: "ask",
   autoUpgradePrompt: true,
-  theme: "dark",
+  theme: "system",
   mainChatIds: {},
   daemonPort: 19528,
 

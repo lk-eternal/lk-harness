@@ -128,7 +128,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [noProxy, setNoProxy] = useState("localhost,127.0.0.1,feishu.cn,weixin.qq.com")
   const [closeWindowAction, setCloseWindowAction] = useState<CloseWindowAction>("ask")
   const [autoLaunch, setAutoLaunch] = useState(false)
-  const [theme, setTheme] = useState<Theme>("dark")
+  const [theme, setTheme] = useState<Theme>("system")
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
   /** 帮助引导页飞书控制台链接用 */
   const [firstFeishuAppId, setFirstFeishuAppId] = useState("")
@@ -335,7 +335,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn,weixin.qq.com")
       setCloseWindowAction(config.closeWindowAction ?? "ask")
       setAutoLaunch(config.autoStart ?? false)
-      setTheme(config.theme ?? "dark")
+      setTheme(config.theme)
       setFirstFeishuAppId(config.channels?.find((c) => c.type === "feishu")?.larkAppId ?? config.larkAppId ?? "")
       loaded.current = true
     })
