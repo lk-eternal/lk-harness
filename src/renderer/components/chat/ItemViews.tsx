@@ -2,6 +2,8 @@ import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
 import { Check, Copy, Download, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
 import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUserItem } from "../../../shared/app-chat-types"
+import { formatFullTime, formatMessageTime } from "../../time-ago"
+import { CopyButton } from "./Markdown"
 
 // ── 本地图片：经主进程读成 data URL（渲染层不直接访问文件系统），带小缓存 ──
 
@@ -94,6 +96,11 @@ export function LocalImage({ path, className }: { path: string; className: strin
 
 // ── 各类条目 ──
 
+/** 消息时间：显示简短形式，悬停看到精确到秒的完整时间 */
+export function MessageTime({ ts }: { ts: number }) {
+  return <span title={formatFullTime(ts)}>{formatMessageTime(ts)}</span>
+}
+
 export function UserBubble({ item }: { item: AppChatUserItem }) {
   return (
     <div className="flex max-w-[85%] flex-col items-end gap-1.5 self-end">
@@ -103,6 +110,10 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
         </div>
       )}
       {item.text && <div className="whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
+      <div className="flex items-center gap-2 text-[11px] text-fg-faint">
+        <MessageTime ts={item.ts} />
+        {item.text && <CopyButton text={item.text} />}
+      </div>
     </div>
   )
 }

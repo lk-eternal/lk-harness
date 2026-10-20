@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { Brain, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, ListChecks, Loader2, Wrench, XCircle } from "lucide-react"
 import type { AppChatAssistantItem, AppChatSegment, AppChatTodo, AppChatTool } from "../../../shared/app-chat-types"
+import { MessageTime } from "./ItemViews"
 import Markdown, { CopyButton } from "./Markdown"
 
 function fmtMs(ms: number): string {
@@ -125,10 +126,11 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
       {!item.finished && item.segments.length === 0 && (
         <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>
       )}
-      {item.finished && (replyText || item.modelLabel) && (
-        <div className="flex items-center gap-3 text-[11px] text-fg-faint">
-          {item.modelLabel && <span>{item.modelLabel}</span>}
-          {replyText && <CopyButton text={replyText} />}
+      {item.finished && (
+        <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
+          {item.modelLabel && <><span>{item.modelLabel}</span><span>·</span></>}
+          <MessageTime ts={item.ts} />
+          {replyText && <CopyButton text={replyText} className="ml-1.5" />}
         </div>
       )}
     </div>
