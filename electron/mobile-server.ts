@@ -94,7 +94,17 @@ function listLanUrls(port: number): string[] {
   for (const [name, addrs] of Object.entries(nets)) {
     if (!addrs) continue
     const lower = name.toLowerCase()
-    if (lower.includes("loopback") || lower.includes("vethernet") || lower.includes("wsl") || lower.includes("docker")) {
+    if (
+      lower.includes("loopback") ||
+      lower.includes("vethernet") ||
+      lower.includes("wsl") ||
+      lower.includes("docker") ||
+      lower.includes("tun") ||
+      lower.includes("tap") ||
+      lower.includes("singbox") ||
+      lower.includes("clash") ||
+      lower.includes("meta")
+    ) {
       continue
     }
     for (const addr of addrs) {
