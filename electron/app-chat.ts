@@ -34,7 +34,7 @@ const OPENABLE_EXTS = new Set([
   ...Object.keys(IMAGE_MIME),
 ])
 
-async function callDaemon(action: string, body: object): Promise<AppChatResult> {
+export async function callAppChatDaemon(action: string, body: object): Promise<AppChatResult> {
   const lock = readLockFile()
   if (!lock?.port) return { ok: false, error: "Daemon 未运行" }
   try {
@@ -51,15 +51,15 @@ async function callDaemon(action: string, body: object): Promise<AppChatResult> 
 }
 
 /** 清聊天记录，会话摘要标题随记录一起清掉（下一条消息重新生成） */
-async function clearRecords(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> {
-  const r = await callDaemon("clear", target)
+export async function clearAppChatRecords(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> {
+  const r = await callAppChatDaemon("clear", target)
   if (!r.ok) return r
   if (target.sessionKey) removeAppChatTitle(target.sessionKey)
   else if (target.channelId) removeAppChatChannelTitles(target.channelId)
   return r
 }
 
-function renameSession(sessionKey: string, name: string): AppChatResult {
+export function renameAppChatSession(sessionKey: string, name: string): AppChatResult {
   const channelId = channelIdFromSessionKey(sessionKey)
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   try {
@@ -72,13 +72,19 @@ function renameSession(sessionKey: string, name: string): AppChatResult {
 
 /** 会话里第一条非指令的文字消息，作为生成标题的素材 */
 async function firstUserText(sessionKey: string): Promise<string | undefined> {
-  const r = await callDaemon("history", { sessionKey })
+  const r = await callAppChatDaemon("history", { sessionKey })
   const first = r.items?.find((it) => it.kind === "user" && it.text.trim() !== "" && !it.text.trim().startsWith("/"))
   return first?.kind === "user" ? first.text : undefined
 }
 
+export async function sendAppChatMessage(payload: AppChatSendPayload): Promise<AppChatResult> {
+  const r = await callAppChatDaemon("send", payload)
+  if (r.ok && !payload.questionId) void ensureAppChatTitle(payload.sessionKey, () => firstUserText(payload.sessionKey))
+  return r
+}
+
 /** 新建应用内临时会话：只建好临时目录并返回会话键，会话在第一条消息发出时才真正建立 */
-function createTempSession(channelId: string): AppChatResult {
+export function createAppChatTempSession(channelId: string): AppChatResult {
   if (getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的通道" }
   try {
     const { sessionKey } = createTempChatSession(app.getPath("userData"), makeChatKey(channelId, APP_CHANNEL_CHAT_ID))
@@ -101,20 +107,30 @@ function removeTempWorkspace(sessionKey: string): void {
 }
 
 /** 删除应用内会话：先清 Agent 侧（进程、上下文、常用目录），成功后再清聊天记录；临时会话的目录一并删掉 */
-async function deleteSession(sessionKey: string): Promise<AppChatResult> {
+export async function deleteAppChatSession(sessionKey: string): Promise<AppChatResult> {
   const channelId = channelIdFromSessionKey(sessionKey)
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   const r = await deleteUserSession(sessionKey, chatIdFromSessionKey(sessionKey))
   if (!r.ok) return { ok: false, error: r.error }
   removeTempWorkspace(sessionKey)
-  return clearRecords({ sessionKey })
+  return clearAppChatRecords({ sessionKey })
+}
+
+const appChatEventListeners = new Set<(event: AppChatEvent) => void>()
+
+export function subscribeAppChatEvent(listener: (event: AppChatEvent) => void): () => void {
+  appChatEventListeners.add(listener)
+  return () => { appChatEventListeners.delete(listener) }
 }
 
 export function forwardAppChatEvent(event: AppChatEvent): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send("app-chat:event", event)
+  for (const fn of appChatEventListeners) {
+    try { fn(event) } catch { /* ignore */ }
+  }
 }
 
-function saveImage(bytes: ArrayBuffer, ext: string): { ok: true; path: string } | { ok: false; error: string } {
+export function saveAppChatImage(bytes: ArrayBuffer, ext: string): { ok: true; path: string } | { ok: false; error: string } {
   const normalized = `.${ext.replace(/^\./, "").toLowerCase()}`
   if (!IMAGE_MIME[normalized]) return { ok: false, error: `不支持的图片格式: ${ext}` }
   if (bytes.byteLength > MAX_IMAGE_BYTES) return { ok: false, error: "图片超过 20MB" }
@@ -124,7 +140,7 @@ function saveImage(bytes: ArrayBuffer, ext: string): { ok: true; path: string } 
   return { ok: true, path: file }
 }
 
-function readImage(file: string): { ok: true; dataUrl: string } | { ok: false; error: string } {
+export function readAppChatImage(file: string): { ok: true; dataUrl: string } | { ok: false; error: string } {
   const mime = IMAGE_MIME[path.extname(file).toLowerCase()]
   if (!mime) return { ok: false, error: "不是图片文件" }
   if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
@@ -169,21 +185,17 @@ async function openFile(file: string): Promise<{ ok: boolean; error?: string }> 
 }
 
 export function initAppChat(): void {
-  ipcMain.handle("app-chat:history", (_e, sessionKey: string) => callDaemon("history", { sessionKey }))
-  ipcMain.handle("app-chat:send", async (_e, payload: AppChatSendPayload) => {
-    const r = await callDaemon("send", payload)
-    if (r.ok && !payload.questionId) void ensureAppChatTitle(payload.sessionKey, () => firstUserText(payload.sessionKey))
-    return r
-  })
-  ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearRecords(target))
+  ipcMain.handle("app-chat:history", (_e, sessionKey: string) => callAppChatDaemon("history", { sessionKey }))
+  ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => sendAppChatMessage(payload))
+  ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearAppChatRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
-  ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteSession(sessionKey))
-  ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameSession(sessionKey, name))
-  ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createTempSession(channelId))
-  ipcMain.handle("app-chat:usage", (_e, channelId: string) => callDaemon("usage", { channelId }))
-  ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callDaemon("last-active", { sessionKeys }))
-  ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveImage(bytes, ext))
-  ipcMain.handle("app-chat:read-image", (_e, file: string) => readImage(file))
+  ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteAppChatSession(sessionKey))
+  ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameAppChatSession(sessionKey, name))
+  ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createAppChatTempSession(channelId))
+  ipcMain.handle("app-chat:usage", (_e, channelId: string) => callAppChatDaemon("usage", { channelId }))
+  ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callAppChatDaemon("last-active", { sessionKeys }))
+  ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveAppChatImage(bytes, ext))
+  ipcMain.handle("app-chat:read-image", (_e, file: string) => readAppChatImage(file))
   ipcMain.handle("app-chat:copy-image", (_e, file: string) => copyImage(file))
   ipcMain.handle("app-chat:save-image-as", (_e, file: string) => saveImageAs(file))
   ipcMain.handle("app-chat:open-file", (_e, file: string) => openFile(file))

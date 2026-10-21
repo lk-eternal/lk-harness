@@ -1138,7 +1138,7 @@ function resolveResetWorkspaceDir(sessionKey?: string, chatId?: string, chatType
 }
 
 /** 清掉某会话的全部排队消息，返回清除条数 */
-async function clearSessionQueue(sessionKey: string): Promise<number> {
+export async function clearSessionQueue(sessionKey: string): Promise<number> {
   const target = normalizeSessionKey(sessionKey) || sessionKey
   const pending = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
   let cleared = 0
@@ -1146,6 +1146,28 @@ async function clearSessionQueue(sessionKey: string): Promise<number> {
     try { if (await deleteQueueMessage(m.fileId)) cleared++ } catch { /* ignore */ }
   }
   return cleared
+}
+
+export async function applySessionModelChange(
+  sessionKey: string,
+  model: string,
+  modelParams?: string,
+  resourceId?: string,
+): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
+  const channel = resolveChannelForSession(sessionKey)
+  if (!channel) return { ok: false, error: "未配置通道" }
+  const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
+  initSessionResourceStore(app.getPath("userData"))
+  const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
+  const current = getAgentResource(effResId)
+  if (!current.id?.trim()) return { ok: false, error: "未配置 Agent 资源" }
+  const targetId = resourceId?.trim() || effResId
+  const target = getAgentResource(targetId)
+  if (!target.id?.trim()) return { ok: false, error: "Agent 资源未找到" }
+  if (target.id !== current.id) {
+    return switchAgentSessionProvider(sessionKey, current, target, { model, modelParams })
+  }
+  return switchAgentSessionModel(current, sessionKey, model, modelParams)
 }
 
 async function checkAndExecutePendingCommands(): Promise<void> {
@@ -1905,22 +1927,8 @@ export function initDaemonManager(): void {
     await stopSessionAgent(sessionKey)
     return { ok: true }
   })
-  ipcMain.handle("session:set-model", async (_e, sessionKey: string, model: string, modelParams?: string, resourceId?: string) => {
-    const channel = resolveChannelForSession(sessionKey)
-    if (!channel) return { ok: false, error: "未配置通道" }
-    const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
-    initSessionResourceStore(app.getPath("userData"))
-    const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
-    const current = getAgentResource(effResId)
-    if (!current.id?.trim()) return { ok: false, error: "未配置 Agent 资源" }
-    const targetId = resourceId?.trim() || effResId
-    const target = getAgentResource(targetId)
-    if (!target.id?.trim()) return { ok: false, error: "Agent 资源未找到" }
-    if (target.id !== current.id) {
-      return switchAgentSessionProvider(sessionKey, current, target, { model, modelParams })
-    }
-    return switchAgentSessionModel(current, sessionKey, model, modelParams)
-  })
+  ipcMain.handle("session:set-model", (_e, sessionKey: string, model: string, modelParams?: string, resourceId?: string) =>
+    applySessionModelChange(sessionKey, model, modelParams, resourceId))
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())
   ipcMain.handle("session:dashboard-tree", () => listDashboardTree())
   ipcMain.handle("channel:add-favorite-workspace", (_e, channelId: string, dir: string) => {

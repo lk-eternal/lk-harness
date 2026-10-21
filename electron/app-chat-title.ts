@@ -20,6 +20,12 @@ const MAX_SOURCE_CHARS = 500
 let cache: Record<string, string> | null = null
 /** 正在生成的会话；清空/删除会把它摘掉，迟到的生成结果据此作废 */
 const inflight = new Map<string, symbol>()
+const titleListeners = new Set<(titles: Record<string, string>) => void>()
+
+export function subscribeAppChatTitles(listener: (titles: Record<string, string>) => void): () => void {
+  titleListeners.add(listener)
+  return () => { titleListeners.delete(listener) }
+}
 
 function titlesFile(): string {
   return path.join(app.getPath("userData"), "app-chat-titles.json")
@@ -45,6 +51,9 @@ function persistAndNotify(): void {
   fs.writeFileSync(titlesFile(), JSON.stringify(titles(), null, 2), "utf-8")
   const snapshot = getAppChatTitles()
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send("app-chat:titles", snapshot)
+  for (const fn of titleListeners) {
+    try { fn(snapshot) } catch { /* ignore */ }
+  }
 }
 
 export function getAppChatTitles(): Record<string, string> {

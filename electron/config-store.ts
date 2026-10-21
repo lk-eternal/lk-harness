@@ -62,6 +62,12 @@ export interface AppConfig {
   /** Flow Hub 上传作者昵称 */
   flowHubAuthor: string
 
+  /** 手机端网关：开关、监听端口、鉴权 Token、云服务器公网穿透地址 */
+  mobileEnabled: boolean
+  mobilePort: number
+  mobileToken: string
+  mobilePublicUrl: string
+
   // ── 旧字段（仅用于迁移，新代码不应再读取）──
   allowOthers: boolean
   digitalIdentity: string
@@ -113,6 +119,11 @@ const defaults: AppConfig = {
   flowHubUrl: "",
   flowHubToken: "",
   flowHubAuthor: "",
+
+  mobileEnabled: false,
+  mobilePort: 19529,
+  mobileToken: "",
+  mobilePublicUrl: "",
 
   allowOthers: false,
   digitalIdentity: "",
@@ -226,7 +237,7 @@ export function scrubUndecryptableSecretsInStore(): number {
   }
 
   const patch: Partial<AppConfig> = {}
-  for (const key of ["gitlabToken", "flowHubToken", "larkAppSecret", "wechatToken", "cursorApiKey"] as const) {
+  for (const key of ["gitlabToken", "flowHubToken", "mobileToken", "larkAppSecret", "wechatToken", "cursorApiKey"] as const) {
     const before = raw[key]
     const after = scrubEncField(before)
     bump(before, after)
@@ -308,6 +319,7 @@ function openConfigSecrets(cfg: AppConfig): AppConfig {
     agentResources: mapResourceSecrets(cfg.agentResources, openSecret) ?? [],
     gitlabToken: openSecret(cfg.gitlabToken) ?? "",
     flowHubToken: openSecret(cfg.flowHubToken) ?? "",
+    mobileToken: openSecret(cfg.mobileToken) ?? "",
     larkAppSecret: openSecret(cfg.larkAppSecret) ?? "",
     wechatToken: openSecret(cfg.wechatToken) ?? "",
     cursorApiKey: openSecret(cfg.cursorApiKey) ?? "",
@@ -321,6 +333,7 @@ function sealPartialSecrets(partial: Partial<AppConfig>): Partial<AppConfig> {
   if (out.agentResources) out.agentResources = mapResourceSecrets(out.agentResources, sealSecret)!
   if (out.gitlabToken !== undefined) out.gitlabToken = sealSecret(out.gitlabToken) ?? ""
   if (out.flowHubToken !== undefined) out.flowHubToken = sealSecret(out.flowHubToken) ?? ""
+  if (out.mobileToken !== undefined) out.mobileToken = sealSecret(out.mobileToken) ?? ""
   if (out.larkAppSecret !== undefined) out.larkAppSecret = sealSecret(out.larkAppSecret) ?? ""
   if (out.wechatToken !== undefined) out.wechatToken = sealSecret(out.wechatToken) ?? ""
   if (out.cursorApiKey !== undefined) out.cursorApiKey = sealSecret(out.cursorApiKey) ?? ""

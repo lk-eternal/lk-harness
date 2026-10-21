@@ -51,6 +51,7 @@ import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
 import { initAppChat } from "./app-chat"
+import { initMobileServer, stopMobileServer } from "./mobile-server"
 import { broadcastLog } from "./ui-logger"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
@@ -485,6 +486,7 @@ app.whenReady().then(() => {
   warmModelsDevCatalog()
   initToolbox()
   initAppChat()
+  initMobileServer()
 })
 
 app.on("window-all-closed", () => {
@@ -502,5 +504,6 @@ app.on("activate", () => {
 })
 
 app.on("will-quit", () => {
+  void stopMobileServer()
   destroyTray()
 })

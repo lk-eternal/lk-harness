@@ -115,6 +115,19 @@ declare global {
     workspaceDirChanged?: boolean
   }
 
+  interface MobileServerStatus {
+    enabled: boolean
+    running: boolean
+    port: number
+    token: string
+    publicUrl: string
+    lanUrls: string[]
+    pairUrl: string
+    pairPayload: { v: 1; name: string; token: string; urls: string[] }
+    qrDataUrl: string
+    error?: string
+  }
+
   interface ElectronAPI {
     getAppVersion(): Promise<string>
     checkAppUpdate(): Promise<
@@ -193,6 +206,9 @@ declare global {
     appChatTitles(): Promise<Record<string, string>>
     onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
+    mobileStatus(): Promise<MobileServerStatus>
+    mobileUpdate(patch: { enabled?: boolean; port?: number; publicUrl?: string }): Promise<MobileServerStatus>
+    mobileResetToken(): Promise<MobileServerStatus>
     startDaemon(): Promise<{ ok: boolean; error?: string }>
     stopDaemon(): Promise<void>
     stopAgent(): Promise<{ ok: boolean }>

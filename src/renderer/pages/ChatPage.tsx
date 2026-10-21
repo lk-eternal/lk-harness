@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { GitBranch, Loader2, MessageCircle, MoreHorizontal, Plus, Trash2 } from "lucide-react"
+import { GitBranch, Loader2, MessageCircle, MoreHorizontal, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -402,7 +402,17 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
               {treeError && <p className="px-2 text-[11px] text-yellow-500">{treeError}</p>}
             </div>
             <div className="flex shrink-0 items-center justify-between border-t border-line-subtle px-3 py-2 text-[11px] text-fg-faint">
-              <span title="对话记录占用的本机磁盘空间">{usageBytes == null ? "" : `记录 ${fmtBytes(usageBytes)}`}</span>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => onSettings("mobile")}
+                  title="手机端扫码配对与远程访问"
+                  className="inline-flex items-center gap-1 text-fg-muted transition hover:text-accent"
+                >
+                  <Smartphone size={12} />手机端
+                </button>
+                <span title="对话记录占用的本机磁盘空间">{usageBytes == null ? "" : `记录 ${fmtBytes(usageBytes)}`}</span>
+              </div>
               <button type="button" onClick={() => void clearAll()} className="transition hover:text-danger">清空全部</button>
             </div>
           </aside>

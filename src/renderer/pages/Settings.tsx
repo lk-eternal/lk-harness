@@ -37,6 +37,7 @@ import {
   Info,
   Github,
   MessageSquare,
+  Smartphone,
   Upload,
 } from "lucide-react"
 import SearchableSelect from "../components/SearchableSelect"
@@ -45,6 +46,7 @@ import { FlowHubBrowser } from "../components/FlowHubBrowser"
 import ToolboxPanel from "../components/ToolboxPanel"
 import AgentPanel from "../components/AgentPanel"
 import ChannelPanel from "../components/ChannelPanel"
+import MobilePairPanel from "../components/MobilePairPanel"
 import TaskPanel from "../components/TaskPanel"
 import McpPanel from "../components/McpPanel"
 import RulePanel from "../components/RulePanel"
@@ -61,7 +63,7 @@ import { THEME_OPTIONS, type Theme } from "../theme-options"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
 
-type Tab = "general" | "channel" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
+type Tab = "general" | "channel" | "mobile" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
 type CloseWindowAction = "ask" | "minimize" | "quit"
 
 interface McpEditForm {
@@ -102,6 +104,7 @@ const MASTER_DETAIL_TABS: Tab[] = ["agent", "channel", "rules", "skills", "mcp",
 const TABS: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
   { id: "general", label: "通用", icon: SettingsIcon },
   { id: "proxy", label: "网络", icon: Network },
+  { id: "mobile", label: "手机端", icon: Smartphone },
   { id: "agent", label: "Agent", icon: Bot },
   { id: "channel", label: "消息通道", icon: MessageSquare },
   { id: "rules", label: "规则", icon: FileCode2 },
@@ -1186,6 +1189,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
               </section>
             </>)}
+
+            {/* ═══ Mobile ═══ */}
+            {tab === "mobile" && <MobilePairPanel />}
 
             {/* ═══ MCP ═══ */}
             {tab === "mcp" && (<>

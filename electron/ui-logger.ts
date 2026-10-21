@@ -86,6 +86,12 @@ export type SessionSource = "sdk" | "llm"
 type SessionEntry = { sessionKey: string; pid: number; startedAt: number; lastActivityAt: number; chatType: string; chatName?: string; workspaceDir?: string; source?: SessionSource; model?: string; modelParams?: string; resourceId?: string }
 
 const sessionPartitions = new Map<SessionSource, SessionEntry[]>()
+const sessionListeners = new Set<(entries: SessionEntry[]) => void>()
+
+export function subscribeSessionStatus(listener: (entries: SessionEntry[]) => void): () => void {
+  sessionListeners.add(listener)
+  return () => { sessionListeners.delete(listener) }
+}
 
 export function broadcastSessionStatus(sessionData: SessionEntry[], source?: SessionSource): void {
   sessionPartitions.set(source ?? "sdk", sessionData)
@@ -102,6 +108,9 @@ export function broadcastSessionStatus(sessionData: SessionEntry[], source?: Ses
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send("agent:sessions", merged)
     win.webContents.send("scheduled-tasks:status", taskStatuses)
+  }
+  for (const fn of sessionListeners) {
+    try { fn(merged) } catch { /* ignore */ }
   }
 }
 

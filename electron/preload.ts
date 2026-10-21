@@ -2,8 +2,9 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
+import type { MobileServerStatus } from "./mobile-server"
 
-export type { AgentResource, MessageChannel, ChannelStatusInfo, ScheduledTask }
+export type { AgentResource, MessageChannel, ChannelStatusInfo, ScheduledTask, MobileServerStatus }
 
 export interface AppConfig {
   agentResources: AgentResource[]
@@ -187,6 +188,9 @@ const api = {
     ipcRenderer.on("app-chat:event", handler)
     return () => ipcRenderer.removeListener("app-chat:event", handler)
   },
+  mobileStatus: (): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:status"),
+  mobileUpdate: (patch: { enabled?: boolean; port?: number; publicUrl?: string }): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:update", patch),
+  mobileResetToken: (): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:reset-token"),
   startDaemon: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("daemon:start"),
   stopAgent: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop"),
   getSessionAgents: (): Promise<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]> =>
