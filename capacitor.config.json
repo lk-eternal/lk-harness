@@ -1,0 +1,14 @@
+{
+  "appId": "com.lketernal.harness",
+  "appName": "LK Harness",
+  "webDir": "out/mobile",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#0b0f17"
+  }
+}
