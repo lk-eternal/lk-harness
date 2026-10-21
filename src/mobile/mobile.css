@@ -1,0 +1,74 @@
+@import "../renderer/index.css";
+
+/* 手机端支持手动固定浅色/深色（覆盖媒体查询） */
+:root[data-theme="light"] {
+  --color-page: #ffffff;
+  --color-surface: #f8f9fb;
+  --color-raised: #f0f2f5;
+  --color-strong: #e4e7ec;
+  --color-stronger: #d3d8e0;
+  --color-code: #f6f8fa;
+  --color-code-head: #eef1f5;
+
+  --color-line-subtle: #e9ecf1;
+  --color-line: #dde1e8;
+  --color-line-strong: #c4cbd6;
+
+  --color-fg: #0f172a;
+  --color-fg-soft: #1e293b;
+  --color-fg-2: #334155;
+  --color-fg-3: #475569;
+  --color-fg-muted: #64748b;
+  --color-fg-faint: #8b95a7;
+  --color-fg-ghost: #c4cbd6;
+
+  --color-accent: #2563eb;
+  --color-accent-soft: #1d4ed8;
+  --color-accent-bright: #1e40af;
+  --color-success: #15803d;
+  --color-success-bright: #166534;
+  --color-danger: #dc2626;
+  --color-danger-soft: #b91c1c;
+  --color-danger-bright: #991b1b;
+  --color-warning: #b45309;
+  --color-warning-soft: #92400e;
+  --color-warning-bright: #78350f;
+}
+
+:root[data-theme="dark"] {
+  --color-page: oklch(13% 0.028 261.692);
+  --color-surface: oklch(21% 0.034 264.665);
+  --color-raised: oklch(27.8% 0.033 256.848);
+  --color-strong: oklch(37.3% 0.034 259.733);
+  --color-stronger: oklch(44.6% 0.03 256.802);
+  --color-code: #0d1117;
+  --color-code-head: #161b22;
+
+  --color-line-subtle: oklch(27.8% 0.033 256.848);
+  --color-line: oklch(37.3% 0.034 259.733);
+  --color-line-strong: oklch(44.6% 0.03 256.802);
+
+  --color-fg: oklch(96.7% 0.003 264.542);
+  --color-fg-soft: oklch(92.8% 0.006 264.531);
+  --color-fg-2: oklch(87.2% 0.01 258.338);
+  --color-fg-3: oklch(70.7% 0.022 261.325);
+  --color-fg-muted: oklch(55.1% 0.027 264.364);
+  --color-fg-faint: oklch(44.6% 0.03 256.802);
+  --color-fg-ghost: oklch(37.3% 0.034 259.733);
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top, 0px), 10px);
+}
+
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 10px);
+}
