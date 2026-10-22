@@ -350,6 +350,25 @@ export async function listMobileProviderModels(
   return await callApi(baseUrl, token, "/api/mobile/list-models", payload)
 }
 
+const IMAGE_EXT_BY_MIME: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+  "image/bmp": "bmp",
+}
+
+/**
+ * 上传用的扩展名：安卓相册/相机给的文件名经常没有后缀，或后缀与内容不符，所以以 MIME 类型为准；
+ * 没有类型时才看文件名后缀。返回 null 表示电脑端不支持的格式（HEIC、AVIF 等）
+ */
+export function imageExtOf(file: { type: string; name: string }): string | null {
+  const byMime = IMAGE_EXT_BY_MIME[file.type.toLowerCase()]
+  if (byMime) return byMime
+  if (file.type) return null
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.exec(file.name)?.[1].toLowerCase() ?? null
+}
+
 export async function uploadMobileImage(
   baseUrl: string,
   token: string,

@@ -38,6 +38,7 @@ import {
   deleteMobileSession,
   fetchBootstrap,
   fetchHistory,
+  imageExtOf,
   loadMobileTheme,
   loadPairConfig,
   renameMobileSession,
@@ -594,6 +595,11 @@ export default function MobileApp() {
     setUploadingImage(true)
     setActionError("")
     for (const file of Array.from(files)) {
+      const ext = imageExtOf(file)
+      if (!ext) {
+        setActionError(`不支持的图片格式（${file.type || file.name}），请选 PNG、JPG、GIF、WebP 或 BMP`)
+        continue
+      }
       try {
         const dataUrl = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader()
@@ -601,7 +607,6 @@ export default function MobileApp() {
           reader.onerror = () => reject(new Error("读取图片失败"))
           reader.readAsDataURL(file)
         })
-        const ext = file.name.split(".").pop()?.toLowerCase() || "png"
         const r = await uploadMobileImage(route.activeUrl, pairCfg.token, dataUrl, ext)
         if (r.ok && r.path) {
           setPendingImages((prev) => [...prev, { path: r.path!, previewUrl: dataUrl }])
