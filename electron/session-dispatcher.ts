@@ -986,6 +986,11 @@ function tabModelFor(
   return fallback.model ? { model: fallback.model, modelParams: fallback.modelParams } : {}
 }
 
+/** 草稿会话还没进会话树，按会话键读它的有效模型，口径与会话树里的 tab 一致 */
+export function resolveSessionModels(sessionKeys: string[]): Record<string, ReturnType<typeof tabModelFor>> {
+  return Object.fromEntries(sessionKeys.map((sessionKey) => [sessionKey, tabModelFor(sessionKey)]))
+}
+
 async function buildTabsForChat(chatId: string, port: number): Promise<{ activeKey?: string; tabs: SessionTabItem[] }> {
   const activeKey = (await getCurrentActiveSession(port, chatId)) ?? undefined
   const list = buildSessionListForChat(chatId, activeKey)

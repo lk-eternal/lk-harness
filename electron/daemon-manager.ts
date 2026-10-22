@@ -92,7 +92,7 @@ import {
   dispatchSessionAgents, launchSessionAgent, launchIndependentAgent,
   notifyChatFallback,
   getSessionAgentList, handleChatCommand, clearMessageQueue, getQueueMessages, deleteQueueMessage, formatSessionStatusBlock,
-  listMainSessionTabs, listDashboardTree, switchMainSession, deleteUserSession, leaveProjectSession,
+  listMainSessionTabs, listDashboardTree, resolveSessionModels, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
   formatCurrentSessionBlock,
@@ -1931,6 +1931,7 @@ export function initDaemonManager(): void {
     applySessionModelChange(sessionKey, model, modelParams, resourceId))
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())
   ipcMain.handle("session:dashboard-tree", () => listDashboardTree())
+  ipcMain.handle("session:models", (_e, sessionKeys: string[]) => resolveSessionModels(sessionKeys))
   ipcMain.handle("channel:add-favorite-workspace", (_e, channelId: string, dir: string) => {
     const ch = getChannel(channelId)
     if (!ch) return { ok: false as const, error: "通道不存在" }

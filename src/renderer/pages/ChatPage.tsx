@@ -52,13 +52,15 @@ function isTempTab(t: ChatTab): boolean {
   return isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey))
 }
 
-/** 把草稿会话补进对应通道的会话列表（服务端已经有同一会话时不重复） */
-function withDrafts(views: AppChannelView[], drafts: DraftSession[]): AppChannelView[] {
+type TabModel = Pick<ChatTab, "model" | "modelParams" | "resourceId">
+
+/** 把草稿会话补进对应通道的会话列表（服务端已经有同一会话时不重复）；草稿的模型由服务端提供 */
+function withDrafts(views: AppChannelView[], drafts: DraftSession[], draftModels: Record<string, TabModel>): AppChannelView[] {
   if (drafts.length === 0) return views
   return views.map((v) => {
     const extra = drafts
       .filter((d) => d.channelId === v.channelId && !v.tabs.some((t) => sameChatSession(t.sessionKey, d.sessionKey)))
-      .map((d): ChatTab => ({ sessionKey: d.sessionKey, label: "新会话", kind: "dir", running: false, current: false, removable: true }))
+      .map((d): ChatTab => ({ sessionKey: d.sessionKey, label: "新会话", kind: "dir", running: false, current: false, removable: true, ...draftModels[d.sessionKey] }))
     return extra.length > 0 ? { ...v, tabs: [...extra, ...v.tabs] } : v
   })
 }
@@ -76,6 +78,7 @@ function fmtBytes(n: number): string {
 export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [serverViews, setViews] = useState<AppChannelView[]>([])
   const [drafts, setDrafts] = useState<DraftSession[]>([])
+  const [draftModels, setDraftModels] = useState<Record<string, TabModel>>({})
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
@@ -93,7 +96,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const creatingRef = useRef(false)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
-  const views = useMemo(() => withDrafts(serverViews, drafts), [serverViews, drafts])
+  const views = useMemo(() => withDrafts(serverViews, drafts, draftModels), [serverViews, drafts, draftModels])
   viewsRef.current = views
   const { showConfirm, ModalPortal } = useInlineModal()
 
@@ -131,6 +134,12 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     const r = await window.electronAPI.listQuickModels()
     if (r.ok) setQuickModels(r.models)
   }, [])
+
+  // 草稿会话不在服务端会话树里，它的模型单独向服务端读；草稿增减时重读
+  const refreshDraftModels = useCallback(async () => {
+    setDraftModels(await window.electronAPI.getSessionModels(drafts.map((d) => d.sessionKey)))
+  }, [drafts])
+  useEffect(() => { void refreshDraftModels() }, [refreshDraftModels])
 
   // 可见时：立即刷新 + 定时兜底 + 会话进程变化推送
   useEffect(() => {
@@ -282,6 +291,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       const r = await window.electronAPI.setSessionModel(selected, m.model, m.modelParams, m.resourceId)
       if (!r.ok) setActionError(r.error ?? "切换模型失败")
       await refresh()
+      await refreshDraftModels()
     } finally {
       setModelBusy(false)
     }

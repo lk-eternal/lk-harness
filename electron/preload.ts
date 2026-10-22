@@ -216,6 +216,8 @@ const api = {
     running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
     error?: string
   }> => ipcRenderer.invoke("session:dashboard-tree"),
+  getSessionModels: (sessionKeys: string[]): Promise<Record<string, { model?: string; modelParams?: string; resourceId?: string }>> =>
+    ipcRenderer.invoke("session:models", sessionKeys),
   addChannelFavoriteWorkspace: (channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }> =>
     ipcRenderer.invoke("channel:add-favorite-workspace", channelId, dir),
   switchSession: (sessionKey: string): Promise<{ ok: boolean; error?: string }> =>

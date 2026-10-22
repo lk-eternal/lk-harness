@@ -230,6 +230,7 @@ declare global {
       running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
       error?: string
     }>
+    getSessionModels(sessionKeys: string[]): Promise<Record<string, { model?: string; modelParams?: string; resourceId?: string }>>
     addChannelFavoriteWorkspace(channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }>
     switchSession(sessionKey: string): Promise<{ ok: boolean; error?: string }>
     deleteSession(sessionKey: string): Promise<{ ok: boolean; error?: string; label?: string }>
