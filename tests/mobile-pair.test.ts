@@ -61,7 +61,7 @@ describe("mobile pair input parser", () => {
 describe("desktop pair payload round trip", () => {
   const desktopPairUrl = (name: string, publicUrl: string, lanUrls: string[]) => {
     const payload = buildPairPayload({ name, token: "tok_abc", publicUrl, lanUrls })
-    return `${publicUrl || lanUrls[0]}/?pair=${encodePairPayload(payload)}`
+    return `${publicUrl || lanUrls[0]}/#pair=${encodePairPayload(payload)}`
   }
 
   it("keeps the public path prefix and uses the first LAN url", () => {
@@ -79,6 +79,19 @@ describe("desktop pair payload round trip", () => {
     const parsed = parsePairInput(desktopPairUrl("PC", "", ["http://192.168.1.8:19529"]))
     expect(parsed?.pubUrl).toBe("")
     expect(parsed?.lanUrl).toBe("http://192.168.1.8:19529")
+  })
+
+  it("still understands the legacy ?pair= link", () => {
+    const payload = buildPairPayload({ name: "PC", token: "tok_abc", publicUrl: "https://example.com/m", lanUrls: [] })
+    const parsed = parsePairInput(`https://example.com/m/?pair=${encodePairPayload(payload)}`)
+    expect(parsed?.pubUrl).toBe("https://example.com/m")
+    expect(parsed?.token).toBe("tok_abc")
+  })
+
+  it("never puts the token in the query string of the generated link", () => {
+    const url = new URL(desktopPairUrl("PC", "https://example.com/m", ["http://192.168.1.8:19529"]))
+    expect(url.search).toBe("")
+    expect(url.hash.startsWith("#pair=")).toBe(true)
   })
 
   it("round-trips non-ASCII host names", () => {

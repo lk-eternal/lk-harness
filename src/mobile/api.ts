@@ -1,5 +1,6 @@
 import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
 import type { AgentResource } from "../shared/channel-types"
+import { drainSseFrames } from "./sse-parse"
 
 const PAIR_STORAGE_KEY = "lk-harness:mobile-pair:v1"
 const THEME_STORAGE_KEY = "lk-harness:mobile-theme:v1"
@@ -88,7 +89,7 @@ function decodeBase64UrlUtf8(input: string): string {
 
 /**
  * 解析扫码或粘贴的配对内容：
- * 1. 完整 URL（含 ?pair=base64url）
+ * 1. 完整 URL（#pair=base64url；兼容旧版二维码的 ?pair=base64url）
  * 2. 纯 base64url 字符串
  * 3. JSON 字符串 {"pub":"...","lan":"...","token":"..."}
  */
@@ -98,7 +99,7 @@ export function parsePairInput(raw: string): MobilePairConfig | null {
   try {
     if (/^https?:\/\//i.test(text)) {
       const u = new URL(text)
-      const pairParam = u.searchParams.get("pair")
+      const pairParam = readPairParam(u)
       return pairParam ? toPairConfig(JSON.parse(decodeBase64UrlUtf8(pairParam)), u.origin) : null
     }
     if (text.startsWith("{")) return toPairConfig(JSON.parse(text))
@@ -106,6 +107,10 @@ export function parsePairInput(raw: string): MobilePairConfig | null {
   } catch {
     return null
   }
+}
+
+function readPairParam(u: URL): string | null {
+  return new URLSearchParams(u.hash.replace(/^#/, "")).get("pair") ?? u.searchParams.get("pair")
 }
 
 /** 载荷字段见 src/shared/mobile-pair.ts；pubUrl/lanUrl 是手填 JSON 的别名。两个地址都缺省时，才用打开页面的 origin 当公网地址 */
@@ -124,21 +129,18 @@ function toPairConfig(obj: Record<string, unknown>, originFallback = ""): Mobile
 }
 
 export function loadPairConfig(): MobilePairConfig {
-  // 检查地址栏是否带有 ?pair=...（手机扫码直接打开时自动完成配对）
+  // 地址栏带有 #pair=...（手机扫码直接打开）时自动完成配对，并立刻把令牌从地址栏清掉
   try {
     const u = new URL(window.location.href)
-    const pairParam = u.searchParams.get("pair")
-    if (pairParam) {
+    if (readPairParam(u)) {
       const parsed = parsePairInput(window.location.href)
-      if (parsed && parsed.token) {
-        // 如果当前是从某个网关域名打开的，确保该 origin 保存在配置中
-        const origin = trimUrl(u.origin)
-        if (!parsed.pubUrl && !parsed.lanUrl && /^https?:\/\//i.test(origin)) {
-          parsed.pubUrl = origin
-        }
+      if (parsed) {
         savePairConfig(parsed)
+        const hashParams = new URLSearchParams(u.hash.replace(/^#/, ""))
+        hashParams.delete("pair")
+        u.hash = hashParams.toString()
         u.searchParams.delete("pair")
-        window.history.replaceState({}, "", u.pathname + (u.search ? u.search : "") + u.hash)
+        window.history.replaceState({}, "", u.pathname + u.search + u.hash)
         return parsed
       }
     }
@@ -369,17 +371,27 @@ export async function fetchMobileImageDataUrl(baseUrl: string, token: string, fi
   return null
 }
 
-export function buildMobileFileDownloadUrl(baseUrl: string, token: string, filePath: string, sessionKey?: string): string {
-  const q = new URLSearchParams({
+/** 先带令牌换一张短时下载票据，再返回凭票据下载的链接（令牌不进 URL） */
+export async function requestMobileFileDownloadUrl(
+  baseUrl: string,
+  token: string,
+  filePath: string,
+  sessionKey?: string,
+): Promise<string> {
+  const res = await callApi<{ ok: boolean; ticket?: string; error?: string }>(baseUrl, token, "/api/mobile/file-ticket", {
     path: filePath,
-    token,
     ...(sessionKey ? { sessionKey } : {}),
   })
-  return `${trimUrl(baseUrl)}/api/mobile/file?${q.toString()}`
+  if (!res.ok || !res.ticket) throw new Error(res.error ?? "无法获取下载链接")
+  return `${trimUrl(baseUrl)}/api/mobile/file?ticket=${encodeURIComponent(res.ticket)}`
 }
 
+/** 服务端每 20s 发一次心跳；超过这个时长没收到任何数据，说明链路已静默断开（切网络、休眠） */
+const EVENT_STREAM_STALE_MS = 50_000
+
 /**
- * 建立 SSE 实时事件流，断线后自动重连
+ * 建立 SSE 实时事件流，断线后自动重连。
+ * 不用 EventSource：它带不了 Authorization 头，只能把令牌放进 URL；这里用 fetch 读流。
  */
 export function connectMobileEvents(
   baseUrl: string,
@@ -389,39 +401,59 @@ export function connectMobileEvents(
 ): () => void {
   if (!baseUrl || !token) return () => {}
   let closed = false
-  let es: EventSource | null = null
+  let ctrl: AbortController | null = null
   let retryTimer = 0
 
-  const connect = () => {
+  const run = async () => {
     if (closed) return
-    const url = `${trimUrl(baseUrl)}/api/mobile/events?token=${encodeURIComponent(token)}`
-    es = new EventSource(url)
-    es.onopen = () => {
+    const abort = new AbortController()
+    ctrl = abort
+    let watchdog = 0
+    const arm = () => {
+      window.clearTimeout(watchdog)
+      watchdog = window.setTimeout(() => abort.abort(), EVENT_STREAM_STALE_MS)
+    }
+    try {
+      arm()
+      const res = await fetch(`${trimUrl(baseUrl)}/api/mobile/events`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
+        cache: "no-store",
+        signal: abort.signal,
+      })
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
       onStateChange?.(true)
-    }
-    es.onmessage = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.data) as MobileStreamMessage
-        onMessage(parsed)
-      } catch {
-        // ignore malformed event
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        arm()
+        buffer += decoder.decode(value, { stream: true })
+        const drained = drainSseFrames(buffer)
+        buffer = drained.rest
+        for (const data of drained.payloads) {
+          try {
+            onMessage(JSON.parse(data) as MobileStreamMessage)
+          } catch {
+            // ignore malformed event
+          }
+        }
       }
+    } catch {
+      // 落到下面的重连
     }
-    es.onerror = () => {
-      onStateChange?.(false)
-      es?.close()
-      es = null
-      if (!closed) {
-        retryTimer = window.setTimeout(connect, 2500)
-      }
-    }
+    window.clearTimeout(watchdog)
+    if (closed) return
+    onStateChange?.(false)
+    retryTimer = window.setTimeout(() => void run(), 2500)
   }
 
-  connect()
+  void run()
 
   return () => {
     closed = true
-    if (retryTimer) window.clearTimeout(retryTimer)
-    es?.close()
+    window.clearTimeout(retryTimer)
+    ctrl?.abort()
   }
 }

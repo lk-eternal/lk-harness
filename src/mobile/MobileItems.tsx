@@ -5,7 +5,7 @@ import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/ap
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import { CopyButton } from "../renderer/components/chat/Markdown"
-import { buildMobileFileDownloadUrl, fetchMobileImageDataUrl } from "./api"
+import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
 
 function MobileRemoteImage({
   baseUrl,
@@ -135,7 +135,30 @@ function MobileFileCard({
   token: string
   sessionKey: string
 }) {
-  const downloadUrl = buildMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey)
+  const [downloading, setDownloading] = useState(false)
+  const [error, setError] = useState("")
+
+  const handleDownload = async () => {
+    if (downloading) return
+    setDownloading(true)
+    setError("")
+    try {
+      const url = await requestMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey)
+      // 服务端以 attachment 返回：浏览器会直接下载；App 内 WebView 会交给系统浏览器处理
+      const a = document.createElement("a")
+      a.href = url
+      a.download = item.name
+      a.rel = "noreferrer"
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "下载失败")
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
     <div className="rounded-xl border border-line bg-surface/70 px-3.5 py-2.5">
       <div className="flex items-center gap-3">
@@ -146,16 +169,16 @@ function MobileFileCard({
           <p className="truncate text-sm font-medium text-fg-soft" title={item.name}>{item.name}</p>
           <p className="truncate text-[11px] text-fg-faint" title={item.path}>{item.path}</p>
         </div>
-        <a
-          href={downloadUrl}
-          download={item.name}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95"
+        <button
+          type="button"
+          disabled={downloading}
+          onClick={() => void handleDownload()}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95 disabled:opacity-60"
         >
-          <Download size={13} />下载
-        </a>
+          {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}下载
+        </button>
       </div>
+      {error && <p className="mt-1.5 text-[11px] text-amber-400">{error}</p>}
     </div>
   )
 }

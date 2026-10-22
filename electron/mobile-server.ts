@@ -28,6 +28,7 @@ import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
 import type { AppChatSendPayload } from "../src/shared/app-chat-types"
+import { createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
 import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
 import type { MobilePairPayload } from "../src/shared/mobile-pair.js"
 
@@ -66,6 +67,7 @@ let server: http.Server | null = null
 let activePort = DEFAULT_MOBILE_PORT
 let lastError = ""
 const sseClients = new Set<http.ServerResponse>()
+const fileTickets = createFileTicketStore()
 let unsubEvents: (() => void)[] = []
 
 function ensureToken(): string {
@@ -123,12 +125,13 @@ function checkToken(provided: string | null | undefined): boolean {
   return timingSafeEqual(a, b)
 }
 
-function extractToken(req: http.IncomingMessage, url: URL): string | null {
+/** 令牌只认 Authorization 头：放进 URL 会写进反向代理的访问日志、浏览器历史和 Referer */
+function extractToken(req: http.IncomingMessage): string | null {
   const auth = req.headers.authorization
   if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim()
   }
-  return url.searchParams.get("token")
+  return null
 }
 
 function setCors(res: http.ServerResponse): void {
@@ -269,7 +272,7 @@ function serveStatic(reqPath: string, res: http.ServerResponse): void {
   }
   const clean = reqPath === "/" ? "/index.html" : reqPath
   const target = path.resolve(root, "." + clean)
-  if (!target.toLowerCase().startsWith(path.resolve(root).toLowerCase())) {
+  if (!isPathInside(root, target)) {
     res.writeHead(403)
     res.end("Forbidden")
     return
@@ -304,7 +307,28 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return
   }
 
-  if (!checkToken(extractToken(req, url))) {
+  // 文件下载由浏览器 / 系统下载器直接打开，带不了 Authorization 头：
+  // 凭 POST /api/mobile/file-ticket 换来的短时票据鉴权，令牌本身不出现在 URL 里
+  if (req.method === "GET" && pathname === "/api/mobile/file") {
+    const filePath = fileTickets.resolve(url.searchParams.get("ticket") ?? "")
+    if (!filePath || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+      sendJson(res, 404, { ok: false, error: "下载链接已失效，请回到对话重新点击下载" })
+      return
+    }
+    const stat = fs.statSync(filePath)
+    const fileName = encodeURIComponent(path.basename(filePath))
+    setCors(res)
+    res.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": stat.size,
+      "Content-Disposition": `attachment; filename*=UTF-8''${fileName}`,
+      "Cache-Control": "no-store",
+    })
+    fs.createReadStream(filePath).pipe(res)
+    return
+  }
+
+  if (!checkToken(extractToken(req))) {
     sendJson(res, 401, { ok: false, error: "Token 无效或已过期，请重新扫码配对" })
     return
   }
@@ -341,25 +365,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return
     }
     sendJson(res, 200, readAppChatImage(filePath))
-    return
-  }
-
-  if (req.method === "GET" && pathname === "/api/mobile/file") {
-    const filePath = url.searchParams.get("path") ?? ""
-    const sessionKey = url.searchParams.get("sessionKey") ?? undefined
-    if (!await isAuthorizedMediaPath(filePath, sessionKey) || !fs.existsSync(filePath)) {
-      sendJson(res, 404, { ok: false, error: "文件不存在或无权访问" })
-      return
-    }
-    const stat = fs.statSync(filePath)
-    const fileName = encodeURIComponent(path.basename(filePath))
-    setCors(res)
-    res.writeHead(200, {
-      "Content-Type": "application/octet-stream",
-      "Content-Length": stat.size,
-      "Content-Disposition": `attachment; filename*=UTF-8''${fileName}`,
-    })
-    fs.createReadStream(filePath).pipe(res)
     return
   }
 
@@ -442,6 +447,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 200, r.ok ? { ok: true, models: r.models ?? [] } : { ok: false, models: [], error: r.error })
       return
     }
+    case "/api/mobile/file-ticket": {
+      const filePath = String(body.path ?? "")
+      const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined
+      if (!await isAuthorizedMediaPath(filePath, sessionKey) || !fs.existsSync(filePath)) {
+        sendJson(res, 404, { ok: false, error: "文件不存在或无权访问" })
+        return
+      }
+      sendJson(res, 200, { ok: true, ticket: fileTickets.issue(path.resolve(filePath)) })
+      return
+    }
     case "/api/mobile/upload-image": {
       const base64 = String(body.base64 ?? "").replace(/^data:[^;]+;base64,/, "")
       const ext = String(body.ext ?? "png")
@@ -522,7 +537,8 @@ export async function getMobileServerStatus(): Promise<MobileServerStatus> {
   const lanUrls = listLanUrls(port)
   const pairPayload = buildPairPayload({ name: os.hostname(), token, publicUrl, lanUrls })
   const primary = publicUrl || lanUrls[0] || `http://127.0.0.1:${port}`
-  const pairUrl = `${primary}/?pair=${encodePairPayload(pairPayload)}`
+  // 配对信息放在 #fragment：浏览器不会把它发给服务器，反向代理日志和 Referer 里都不会出现令牌
+  const pairUrl = `${primary}/#pair=${encodePairPayload(pairPayload)}`
   let qrDataUrl = ""
   try {
     // 双地址 + 令牌的链接有 ~300 字符，二维码很密：用低纠错、大尺寸，手机才扫得出来

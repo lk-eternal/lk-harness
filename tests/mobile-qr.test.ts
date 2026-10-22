@@ -37,7 +37,7 @@ describe("scan desktop pair QR", () => {
     publicUrl: "https://example.com/m",
     lanUrls: ["http://192.168.1.100:19529"],
   })
-  const pairUrl = `https://example.com/m/?pair=${encodePairPayload(payload)}`
+  const pairUrl = `https://example.com/m/#pair=${encodePairPayload(payload)}`
 
   it("decodes a dual-address pair link back to the same config", () => {
     const frame = renderQrFrame(pairUrl, 4, "L")

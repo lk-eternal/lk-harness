@@ -781,7 +781,7 @@ export function PairSheet({
                 value={pubUrl}
                 onChange={(e) => {
                   const v = e.target.value
-                  if (v.includes("?pair=")) {
+                  if (v.includes("pair=")) {
                     applyPastedText(v)
                     return
                   }
