@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import {
   Check,
   ChevronDown,
@@ -160,6 +161,7 @@ export default function MobileApp() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const moreButtonRef = useRef<HTMLButtonElement>(null)
 
   const views = useMemo(() => withDrafts(serverViews, drafts), [serverViews, drafts])
   const allTabs = useMemo(() => views.flatMap((v) => v.tabs), [views])
@@ -596,10 +598,12 @@ export default function MobileApp() {
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
+  const moreAnchor = moreMenuOpen ? moreButtonRef.current?.getBoundingClientRect() : undefined
+
   return (
     <div className="flex h-full w-full flex-col bg-page text-fg">
       {/* ═══ 顶部导航栏 ═══ */}
-      <header className="relative z-20 flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface/90 px-3 pb-2.5 pt-safe backdrop-blur">
+      <header className="flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface/90 px-3 pb-2.5 pt-safe backdrop-blur">
         {/* 汉堡菜单按钮（带后台未读绿点 / 后台运行蓝点） */}
         <button
           type="button"
@@ -691,21 +695,26 @@ export default function MobileApp() {
         </button>
 
         {/* 更多操作菜单 */}
-        <div className="relative shrink-0">
+        <div className="shrink-0">
           <button
+            ref={moreButtonRef}
             type="button"
             onClick={() => setMoreMenuOpen((o) => !o)}
             className="flex h-8 w-8 items-center justify-center rounded-xl text-fg-muted active:bg-raised"
           >
             <MoreVertical size={17} />
           </button>
-          {moreMenuOpen && (
+          {/* 挂到 body：顶栏的 backdrop-filter 会把内部 fixed 元素的参照系缩成顶栏大小，遮罩盖不住整屏 */}
+          {moreAnchor && createPortal(
             <>
               <div
                 onClick={() => setMoreMenuOpen(false)}
                 className="fixed inset-0 z-30"
               />
-              <div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-2xl border border-line bg-surface p-1.5 shadow-xl">
+              <div
+                style={{ top: moreAnchor.bottom + 4, right: window.innerWidth - moreAnchor.right }}
+                className="fixed z-40 w-44 rounded-2xl border border-line bg-surface p-1.5 shadow-xl"
+              >
                 {currentTab && (
                   <button
                     type="button"
@@ -742,7 +751,8 @@ export default function MobileApp() {
                   </button>
                 )}
               </div>
-            </>
+            </>,
+            document.body,
           )}
         </div>
       </header>
