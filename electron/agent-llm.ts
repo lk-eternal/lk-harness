@@ -452,7 +452,11 @@ function beginLlmTurn(session: LlmSession): void {
   if (session.streamAgg) session.streamAgg.gateOpen = true
 }
 
-async function sealLlmStream(session: LlmSession): Promise<void> {
+/**
+ * interrupted：会话被摘除时卡片仍未收口，说明回合没跑完，页脚标注「Agent 已中断」（对齐 SDK 的 sealStreamCardForStop）。
+ * 正常回合结束时 agg 早已 finished，不会走到 flush，所以不会误标。
+ */
+async function sealLlmStream(session: LlmSession, opts?: { interrupted?: boolean }): Promise<void> {
   flushLlmLog(session)
   const agg = session.streamAgg
   if (!agg) return
@@ -462,7 +466,7 @@ async function sealLlmStream(session: LlmSession): Promise<void> {
       if (!agg.finished) {
         sealAllThinking(agg)
         sealRunningTools(agg)
-        await flushStreamCard(session, true)
+        await flushStreamCard(session, true, opts)
       }
       await agg.inflight.catch(() => undefined)
     })(),
@@ -492,7 +496,7 @@ export function registerLlmSession(session: LlmSession): void {
 export async function unregisterLlmSession(session: LlmSession, aborted: boolean): Promise<void> {
   session.piUnsubscribe?.()
   session.piUnsubscribe = null
-  await sealLlmStream(session)
+  await sealLlmStream(session, { interrupted: true })
 
   if (!aborted && !session.ledgerRollover) {
     rememberPiResumable(
@@ -678,7 +682,7 @@ export async function stopLlmSession(sessionKey: string): Promise<void> {
   s.abort.abort()
   s.piUnsubscribe?.()
   s.piUnsubscribe = null
-  await sealLlmStream(s)
+  await sealLlmStream(s, { interrupted: true })
   await s.piSession.abort().catch(() => undefined)
   s.piSession.dispose()
   await Promise.race([
@@ -697,7 +701,7 @@ export async function stopAllLlmSessions(): Promise<void> {
     llmSessions.delete(key)
     s.abort.abort()
     s.piUnsubscribe?.()
-    await sealLlmStream(s).catch(() => undefined)
+    await sealLlmStream(s, { interrupted: true }).catch(() => undefined)
     await s.piSession.abort().catch(() => undefined)
     s.piSession.dispose()
   }

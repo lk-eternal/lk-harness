@@ -633,7 +633,7 @@ export function scheduleFlushStreamCard(host: StreamCardHost, immediate = false)
   }, Math.max(0, delay))
 }
 
-export async function flushStreamCard(host: StreamCardHost, finish: boolean): Promise<void> {
+export async function flushStreamCard(host: StreamCardHost, finish: boolean, opts?: { interrupted?: boolean }): Promise<void> {
   const agg = host.streamAgg
   if (!agg || agg.finished) return
   if (agg.timer) {
@@ -704,7 +704,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean): Pr
       if (!agg.cardId) return
       const payload = buildStreamPayload(agg, host.sessionKey)
       agg.dirty = false
-      await postStreamCard(host.sessionKey, "finish", payload, { cardId: agg.cardId, modelLabel: host.modelLabel })
+      await postStreamCard(host.sessionKey, "finish", payload, { cardId: agg.cardId, modelLabel: host.modelLabel, interrupted: opts?.interrupted })
       patchCard(undefined, agg.cardId)
       agg.finished = true
       return
