@@ -33,7 +33,7 @@ function useLocalImage(path: string): { url?: string; failed: boolean } {
 function ImageActions({ path }: { path: string }) {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
-  const buttonClass = "rounded bg-black/60 p-1 text-white transition hover:bg-black/80"
+  const buttonClass = "rounded bg-black/70 p-1 text-white ring-1 ring-white/40 transition hover:bg-black/90"
 
   const copy = async () => {
     const r = await window.electronAPI.appChatCopyImage(path)

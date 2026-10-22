@@ -135,7 +135,9 @@ export function ImageLightbox({ src, onClose, actions }: { src: string; onClose:
 
   const zoomBy = (ratio: number) => apply(scaleAbout(viewRef.current, ratio, ORIGIN, ORIGIN))
 
-  const toolButton = "rounded-full bg-white/15 p-2 text-white transition hover:bg-white/25"
+  // 深色底 + 白描边：控件叠在任何颜色的图片上都看得清（半透明白底遇到浅色图会消失）
+  const chip = "bg-black/70 text-white shadow-lg ring-1 ring-white/40 backdrop-blur-sm"
+  const toolButton = `rounded-full p-2.5 transition hover:bg-black/90 active:scale-95 ${chip}`
   const toolbarTop = "top-[calc(env(safe-area-inset-top)+1rem)]"
 
   return createPortal(
@@ -161,14 +163,14 @@ export function ImageLightbox({ src, onClose, actions }: { src: string; onClose:
         />
       </div>
       <div className={`absolute left-4 flex items-center gap-1.5 ${toolbarTop}`}>
-        <button type="button" onClick={() => zoomBy(1 / BUTTON_STEP)} title="缩小" className={toolButton}><ZoomOut size={16} /></button>
-        <span className="min-w-12 rounded-full bg-white/15 px-2 py-1 text-center text-xs tabular-nums text-white">{Math.round(view.scale * fitRatio * 100)}%</span>
-        <button type="button" onClick={() => zoomBy(BUTTON_STEP)} title="放大" className={toolButton}><ZoomIn size={16} /></button>
-        <button type="button" onClick={() => apply(FIT)} title="适配窗口" className={toolButton}><Maximize size={16} /></button>
+        <button type="button" onClick={() => zoomBy(1 / BUTTON_STEP)} title="缩小" className={toolButton}><ZoomOut size={18} /></button>
+        <span className={`min-w-12 rounded-full px-2.5 py-1.5 text-center text-xs tabular-nums ${chip}`}>{Math.round(view.scale * fitRatio * 100)}%</span>
+        <button type="button" onClick={() => zoomBy(BUTTON_STEP)} title="放大" className={toolButton}><ZoomIn size={18} /></button>
+        <button type="button" onClick={() => apply(FIT)} title="适配窗口" className={toolButton}><Maximize size={18} /></button>
       </div>
       <div className={`absolute right-4 flex items-start gap-2 ${toolbarTop}`}>
         {actions}
-        <button type="button" onClick={onClose} title="关闭" className={toolButton}><X size={16} /></button>
+        <button type="button" onClick={onClose} title="关闭" className={toolButton}><X size={18} /></button>
       </div>
     </div>,
     document.body,
