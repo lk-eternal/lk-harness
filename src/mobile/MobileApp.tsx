@@ -136,6 +136,10 @@ export default function MobileApp() {
   const [selected, setSelected] = useState<string | null>(null)
   const selectedRef = useRef<string | null>(null)
   selectedRef.current = selected
+  // 拉历史期间收到的实时消息：快照可能早于这些消息，整体替换列表时要补回去
+  const liveBufferRef = useRef<Map<string, AppChatItem> | null>(null)
+  // 上一次拉历史对应的「会话+地址+令牌」；没变说明只是实时流重连，不需要清空列表
+  const historyKeyRef = useRef("")
 
   // 会话运行与未读状态
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set())
@@ -270,6 +274,7 @@ export default function MobileApp() {
             return next === cur ? prev : { ...prev, [activityId]: next }
           })
           if (sameChatSession(ev.sessionKey, selectedRef.current)) {
+            liveBufferRef.current?.set(ev.item.id, ev.item)
             setItems((prev) => upsertItems(prev, [ev.item]))
           } else if (ev.item.kind === "assistant" && ev.item.finished) {
             setUnreadIds((prev) => new Set(prev).add(appChatSessionId(ev.sessionKey)))
@@ -340,26 +345,38 @@ export default function MobileApp() {
   useEffect(() => {
     setActionError("")
     if (!selected) {
+      historyKeyRef.current = ""
       setItems([])
       return
     }
     if (!route.connected || !route.activeUrl || !pairCfg.token) return
     const id = appChatSessionId(selected)
+    // 换会话/地址/令牌才清空重载；只是实时流重连（resyncTick）时保留旧列表，
+    // 拉回来后一次性替换，避免网络刚恢复就闪空白、拉取失败时列表被清掉
+    const key = `${selected}\n${route.activeUrl}\n${pairCfg.token}`
+    const fresh = historyKeyRef.current !== key
+    historyKeyRef.current = key
+    const live = new Map<string, AppChatItem>()
+    liveBufferRef.current = live
     let cancelled = false
-    setHistoryLoading(true)
-    setItems([])
+    if (fresh) {
+      setHistoryLoading(true)
+      setItems([])
+    }
     void fetchHistory(route.activeUrl, pairCfg.token, selected).then((r) => {
       if (cancelled) return
+      liveBufferRef.current = null
       setHistoryLoading(false)
       if (!r.ok) {
         setActionError(r.error ?? "读取历史消息失败")
         return
       }
-      setItems((prev) => upsertItems(r.items ?? [], prev))
+      setItems(upsertItems(r.items ?? [], [...live.values()]))
       setActivity((prev) => ({ ...prev, [id]: activityFromItems(r.items ?? []) }))
     })
     return () => {
       cancelled = true
+      if (liveBufferRef.current === live) liveBufferRef.current = null
     }
   }, [selected, route.connected, route.activeUrl, pairCfg.token, resyncTick])
 
