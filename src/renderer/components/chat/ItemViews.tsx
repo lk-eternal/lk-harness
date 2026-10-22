@@ -94,7 +94,7 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
           {item.images.map((p) => <LocalImage key={p} path={p} className="h-24 w-24" />)}
         </div>
       )}
-      {item.text && <div className="whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
+      {item.text && <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
       <div className="flex items-center gap-2 text-[11px] text-fg-faint">
         <MessageTime ts={item.ts} />
         {item.text && <CopyButton text={item.text} />}

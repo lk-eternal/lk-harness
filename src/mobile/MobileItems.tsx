@@ -96,7 +96,7 @@ function MobileUserBubble({
         </div>
       )}
       {item.text && (
-        <div className="whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-[14px] leading-relaxed text-white shadow-sm">
+        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-[14px] leading-relaxed text-white shadow-sm">
           {item.text}
         </div>
       )}
