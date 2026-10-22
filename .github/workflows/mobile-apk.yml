@@ -1,10 +1,9 @@
 name: Build Mobile APK
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
     branches:
       - main
     paths:
@@ -21,8 +20,6 @@ jobs:
   build-apk:
     runs-on: ubuntu-latest
     name: Build Android APK
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout
@@ -81,14 +78,3 @@ jobs:
           name: lk-harness-mobile-apk
           path: lk-harness-mobile.apk
           retention-days: 30
-
-      - name: Attach APK to GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-          else
-            TAG=$(gh release view --json tagName -q .tagName || echo "v1.0.0")
-          fi
-          gh release upload "$TAG" lk-harness-mobile.apk --clobber
