@@ -114,6 +114,7 @@ export default function MobileApp() {
   })
   const [reconnecting, setReconnecting] = useState(false)
   const [sseOnline, setSseOnline] = useState(false)
+  const [resyncTick, setResyncTick] = useState(0)
 
   // 主题状态
   const [theme, setTheme] = useState<MobileTheme>(() => loadMobileTheme())
@@ -285,15 +286,18 @@ export default function MobileApp() {
       }
     }
 
+    let everOnline = false
     const disconnect = connectMobileEvents(
       route.activeUrl,
       pairCfg.token,
       handleStream,
       (online) => {
         setSseOnline(online)
-        if (online) {
-          void refreshBootstrap(route.activeUrl, pairCfg.token)
-        }
+        if (!online) return
+        void refreshBootstrap(route.activeUrl, pairCfg.token)
+        // 断线期间错过的消息只能靠重拉当前会话历史补回；首次连上时历史由下面的 effect 负责
+        if (everOnline) setResyncTick((n) => n + 1)
+        everOnline = true
       },
     )
 
@@ -309,14 +313,10 @@ export default function MobileApp() {
     }
   }, [route.connected, route.activeUrl, pairCfg.token, refreshBootstrap])
 
-  // 选中会话变化：清除未读绿点并拉取历史消息
+  // 选中会话变化：清除未读绿点，收起重命名
   useEffect(() => {
-    setActionError("")
     setRenaming(false)
-    if (!selected) {
-      setItems([])
-      return
-    }
+    if (!selected) return
     const id = appChatSessionId(selected)
     setUnreadIds((prev) => {
       if (!prev.has(id)) return prev
@@ -324,7 +324,17 @@ export default function MobileApp() {
       next.delete(id)
       return next
     })
+  }, [selected])
+
+  // 拉取当前会话历史；实时流重连（resyncTick）后再拉一次，补回断线期间错过的消息
+  useEffect(() => {
+    setActionError("")
+    if (!selected) {
+      setItems([])
+      return
+    }
     if (!route.connected || !route.activeUrl || !pairCfg.token) return
+    const id = appChatSessionId(selected)
     let cancelled = false
     setHistoryLoading(true)
     setItems([])
@@ -341,7 +351,14 @@ export default function MobileApp() {
     return () => {
       cancelled = true
     }
-  }, [selected, route.connected, route.activeUrl, pairCfg.token])
+  }, [selected, route.connected, route.activeUrl, pairCfg.token, resyncTick])
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+  }, [text])
 
   const sessionStatus = useCallback(
     (key: string, running: boolean): "idle" | "working" | "unread" => {
@@ -415,12 +432,11 @@ export default function MobileApp() {
     const imgs = pendingImages.map((i) => i.path)
     if (!msgText && imgs.length === 0) return
 
+    const draftText = text
+    const draftImages = pendingImages
     if (overrideText === undefined) {
       setText("")
       setPendingImages([])
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto"
-      }
     }
     setActionError("")
     const r = await sendMobileMessage(route.activeUrl, pairCfg.token, {
@@ -428,8 +444,12 @@ export default function MobileApp() {
       ...(msgText ? { text: msgText } : {}),
       ...(imgs.length > 0 ? { images: imgs } : {}),
     })
-    if (!r.ok) {
-      setActionError(r.error ?? "发送失败")
+    if (r.ok) return
+    setActionError(r.error ?? "发送失败")
+    if (overrideText === undefined) {
+      // 没发出去的内容放回输入框；期间用户已重新输入的内容优先
+      setText((cur) => cur || draftText)
+      setPendingImages((cur) => (cur.length > 0 ? cur : draftImages))
     }
   }
 
@@ -844,12 +864,7 @@ export default function MobileApp() {
             rows={1}
             value={text}
             disabled={!selected || !route.connected}
-            onChange={(e) => {
-              setText(e.target.value)
-              const el = e.target
-              el.style.height = "auto"
-              el.style.height = `${Math.min(el.scrollHeight, 120)}px`
-            }}
+            onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
