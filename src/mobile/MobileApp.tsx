@@ -39,6 +39,7 @@ import {
   deleteMobileSession,
   fetchBootstrap,
   fetchHistory,
+  fetchSessionModels,
   imageExtOf,
   loadMobileTheme,
   loadPairConfig,
@@ -60,11 +61,7 @@ import {
 import { useBackToClose } from "./back-stack"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
-
-interface DraftSession {
-  channelId: string
-  sessionKey: string
-}
+import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
 
 function upsertItems(prev: AppChatItem[], incoming: AppChatItem[]): AppChatItem[] {
   if (incoming.length === 0) return prev
@@ -80,29 +77,6 @@ function upsertItems(prev: AppChatItem[], incoming: AppChatItem[]): AppChatItem[
     }
   }
   return next
-}
-
-function withDrafts(views: MobileChannelView[], drafts: DraftSession[]): MobileChannelView[] {
-  if (drafts.length === 0) return views
-  return views.map((v) => {
-    const extra = drafts
-      .filter(
-        (d) =>
-          d.channelId === v.channelId &&
-          !v.tabs.some((t) => sameChatSession(t.sessionKey, d.sessionKey)),
-      )
-      .map(
-        (d): MobileChatTab => ({
-          sessionKey: d.sessionKey,
-          label: "新会话",
-          kind: "dir",
-          running: false,
-          current: false,
-          removable: true,
-        }),
-      )
-    return extra.length > 0 ? { ...v, tabs: [...extra, ...v.tabs] } : v
-  })
 }
 
 function dirName(dir: string | undefined): string | undefined {
@@ -130,6 +104,7 @@ export default function MobileApp() {
   const [hostname, setHostname] = useState("")
   const [serverViews, setServerViews] = useState<MobileChannelView[]>([])
   const [drafts, setDrafts] = useState<DraftSession[]>([])
+  const [draftModels, setDraftModels] = useState<Record<string, TabModel>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [quickModels, setQuickModels] = useState<MobileQuickModel[]>([])
@@ -173,7 +148,7 @@ export default function MobileApp() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const moreButtonRef = useRef<HTMLButtonElement>(null)
 
-  const views = useMemo(() => withDrafts(serverViews, drafts), [serverViews, drafts])
+  const views = useMemo(() => withDrafts(serverViews, drafts, draftModels), [serverViews, drafts, draftModels])
   const allTabs = useMemo(() => views.flatMap((v) => v.tabs), [views])
   const currentTab = useMemo(
     () => allTabs.find((t) => sameChatSession(t.sessionKey, selected)) ?? null,
@@ -227,6 +202,22 @@ export default function MobileApp() {
     },
     [],
   )
+
+  // 草稿会话不在服务端会话树里，它的模型单独向服务端读（与桌面端 ChatPage 同口径）；草稿增减时重读。
+  // 用拼接后的字符串当依赖：refreshBootstrap 每次都会产出新的 drafts 数组，按数组引用会反复请求
+  const draftKeysSig = useMemo(() => drafts.map((d) => d.sessionKey).join("\n"), [drafts])
+  const refreshDraftModels = useCallback(async () => {
+    if (!draftKeysSig) {
+      setDraftModels((prev) => (Object.keys(prev).length > 0 ? {} : prev))
+      return
+    }
+    if (!route.activeUrl || !pairCfg.token) return
+    const r = await fetchSessionModels(route.activeUrl, pairCfg.token, draftKeysSig.split("\n"))
+    if (r.ok && r.models) setDraftModels(r.models)
+  }, [draftKeysSig, route.activeUrl, pairCfg.token])
+  useEffect(() => {
+    void refreshDraftModels()
+  }, [refreshDraftModels])
 
   // 连接与线路择优
   const connectWithConfig = useCallback(
@@ -638,6 +629,8 @@ export default function MobileApp() {
       return
     }
     await refreshBootstrap(route.activeUrl, pairCfg.token)
+    // 当前若是草稿会话，它不在上面刷新的会话树里，要单独重读才能看到新模型
+    await refreshDraftModels()
   }
 
   // 选择并上传图片

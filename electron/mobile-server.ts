@@ -12,7 +12,7 @@ import QRCode from "qrcode"
 import { getAgentResource, getConfig, saveConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
 import { applySessionModelChange, clearSessionQueue } from "./daemon-manager"
-import { listDashboardTree, stopSessionAgent } from "./session-dispatcher"
+import { listDashboardTree, resolveSessionModels, stopSessionAgent } from "./session-dispatcher"
 import {
   callAppChatDaemon,
   clearAppChatRecords,
@@ -440,6 +440,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const modelParams = typeof body.modelParams === "string" ? body.modelParams : undefined
       const resourceId = typeof body.resourceId === "string" ? body.resourceId : undefined
       sendJson(res, 200, await applySessionModelChange(sessionKey, model, modelParams, resourceId))
+      return
+    }
+    case "/api/mobile/session-models": {
+      // 草稿会话（还没发过消息）不在会话树里，手机端按会话键单独读它的有效模型；口径与桌面端 session:models 一致
+      const sessionKeys = Array.isArray(body.sessionKeys) ? body.sessionKeys.map(String).slice(0, 50) : []
+      initSessionModelStore(app.getPath("userData"))
+      sendJson(res, 200, { ok: true, models: resolveSessionModels(sessionKeys) })
       return
     }
     case "/api/mobile/list-models": {

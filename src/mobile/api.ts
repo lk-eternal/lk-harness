@@ -372,6 +372,15 @@ export async function setMobileSessionModel(
   return await callApi(baseUrl, token, "/api/mobile/set-model", payload)
 }
 
+/** 草稿会话（还没发过消息）不在会话树里，按会话键单独读它的有效模型 */
+export async function fetchSessionModels(
+  baseUrl: string,
+  token: string,
+  sessionKeys: string[],
+): Promise<{ ok: boolean; models?: Record<string, { model?: string; modelParams?: string; resourceId?: string }>; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/session-models", { sessionKeys })
+}
+
 export async function listMobileProviderModels(
   baseUrl: string,
   token: string,
