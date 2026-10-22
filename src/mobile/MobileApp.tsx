@@ -591,7 +591,7 @@ export default function MobileApp() {
   return (
     <div className="flex h-full w-full flex-col bg-page text-fg">
       {/* ═══ 顶部导航栏 ═══ */}
-      <header className="flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface/90 px-3 pb-2.5 pt-safe backdrop-blur">
+      <header className="relative z-20 flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface/90 px-3 pb-2.5 pt-safe backdrop-blur">
         {/* 汉堡菜单按钮（带后台未读绿点 / 后台运行蓝点） */}
         <button
           type="button"
