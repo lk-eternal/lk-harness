@@ -1,5 +1,9 @@
+import { hmac } from "@noble/hashes/hmac.js"
+import { sha256 } from "@noble/hashes/sha2.js"
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js"
 import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
 import type { AgentResource } from "../shared/channel-types"
+import { challengeMessage } from "../shared/mobile-challenge"
 import { drainSseFrames } from "./sse-parse"
 
 const PAIR_STORAGE_KEY = "lk-harness:mobile-pair:v1"
@@ -202,13 +206,38 @@ export function applyMobileTheme(theme: MobileTheme): void {
   }
 }
 
+const OLD_SERVER_HINT = "电脑端版本过旧，缺少地址身份校验，请把电脑端升级到 1.1.1 或更高版本"
+
+/**
+ * 明文 http 地址：在把令牌发出去之前，先确认对面真是持有同一令牌的电脑端（挑战应答，见 shared/mobile-challenge.ts）。
+ * 换了个 Wi-Fi 后保存的局域网地址可能落在陌生设备上，直接带令牌去探测就等于把令牌送给对方。
+ * https 由证书保证，不做。返回 null 表示通过，否则是拒绝原因；网络层错误直接抛出，由调用方按原有方式处理。
+ */
+async function verifyHost(baseUrl: string, token: string, signal: AbortSignal): Promise<string | null> {
+  if (!/^http:/i.test(baseUrl)) return null
+  const nonce = bytesToHex(crypto.getRandomValues(new Uint8Array(16)))
+  const res = await fetch(`${baseUrl}/api/mobile/challenge?nonce=${nonce}`, { signal, cache: "no-store" })
+  const data = (await res.json().catch(() => null)) as { ok?: boolean; proof?: unknown } | null
+  if (!data?.ok || typeof data.proof !== "string") {
+    // 旧版电脑端没有这个接口，请求会先走令牌校验而返回 401
+    return res.status === 401 ? OLD_SERVER_HINT : "对方不是 LK Harness 电脑端"
+  }
+  const expected = bytesToHex(hmac(sha256, utf8ToBytes(token), utf8ToBytes(challengeMessage(nonce))))
+  return data.proof === expected ? null : "对方没有通过身份校验（地址可能落在了别的设备上），已拒绝发送令牌"
+}
+
 async function pingEndpoint(baseUrl: string, token: string, timeoutMs = 2200): Promise<{ ok: boolean; latencyMs: number; hostname?: string; error?: string }> {
   const url = trimUrl(baseUrl)
   if (!url || !token) return { ok: false, latencyMs: 0, error: "未配置地址或 Token" }
-  const t0 = performance.now()
   const ctrl = new AbortController()
   const timer = window.setTimeout(() => ctrl.abort(), timeoutMs)
   try {
+    const rejected = await verifyHost(url, token, ctrl.signal)
+    if (rejected) {
+      window.clearTimeout(timer)
+      return { ok: false, latencyMs: 0, error: rejected }
+    }
+    const t0 = performance.now()
     const res = await fetch(`${url}/api/mobile/ping`, {
       method: "GET",
       headers: { Authorization: `Bearer ${token}` },
@@ -446,6 +475,9 @@ export function connectMobileEvents(
     }
     try {
       arm()
+      // 重连往往发生在网络切换之后，每次连接前都重新确认对面是谁，通不过就不发令牌
+      const rejected = await verifyHost(trimUrl(baseUrl), token, abort.signal)
+      if (rejected) throw new Error(rejected)
       const res = await fetch(`${trimUrl(baseUrl)}/api/mobile/events`, {
         headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
         cache: "no-store",

@@ -1,5 +1,11 @@
-import { randomBytes } from "node:crypto"
+import { createHmac, randomBytes } from "node:crypto"
 import * as path from "node:path"
+import { challengeMessage } from "./mobile-challenge.js"
+
+/** 电脑端对手机挑战随机数的应答（见 mobile-challenge.ts）；手机端用同样的算法验算 */
+export function computeChallengeProof(token: string, nonce: string): string {
+  return createHmac("sha256", token).update(challengeMessage(nonce)).digest("hex")
+}
 
 /** target 是否位于 root 目录内（含 root 自身）。按路径边界比较，避免 `/a/mobile` 误放行 `/a/mobile-evil` */
 export function isPathInside(root: string, target: string): boolean {

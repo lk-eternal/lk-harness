@@ -28,7 +28,8 @@ import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
 import type { AppChatSendPayload } from "../src/shared/app-chat-types"
-import { createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
+import { computeChallengeProof, createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
+import { MOBILE_NONCE_PATTERN } from "../src/shared/mobile-challenge.js"
 import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
 import type { MobilePairPayload } from "../src/shared/mobile-pair.js"
 
@@ -325,6 +326,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       "Cache-Control": "no-store",
     })
     fs.createReadStream(filePath).pipe(res)
+    return
+  }
+
+  // 挑战应答：手机在把令牌发给明文 http 地址之前，先确认对面是持有同一令牌的电脑端，所以这条不需要令牌。
+  // 应答是令牌的 HMAC，推不出令牌本身
+  if (req.method === "GET" && pathname === "/api/mobile/challenge") {
+    const nonce = url.searchParams.get("nonce") ?? ""
+    if (!MOBILE_NONCE_PATTERN.test(nonce)) {
+      sendJson(res, 400, { ok: false, error: "nonce 格式不对" })
+      return
+    }
+    sendJson(res, 200, { ok: true, proof: computeChallengeProof(ensureToken(), nonce) })
     return
   }
 

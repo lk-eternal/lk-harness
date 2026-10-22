@@ -72,6 +72,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@noble/hashes": "^2.4.0",
     "@tailwindcss/vite": "^4.2.2",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.0.0",
