@@ -51,6 +51,11 @@ export default function ChatItemList({ items, loading, busy, workspaceName, onAn
               case "image": return <LocalImage key={it.id} path={it.path} className="max-h-72 max-w-sm self-start" />
               case "file": return <FileCard key={it.id} item={it} />
               case "notice": return <NoticePill key={it.id} item={it} onCommand={onCommand} />
+              default: {
+                // 新增消息类型漏渲染时在这里编译报错，而不是悄悄丢消息
+                const unhandled: never = it
+                return unhandled
+              }
             }
           })}
           {waiting && <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}

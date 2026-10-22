@@ -4,7 +4,7 @@ import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/ap
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
-import { CopyButton } from "../renderer/components/chat/Markdown"
+import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
 
 function MobileRemoteImage({
@@ -273,8 +273,21 @@ export default function MobileItemList({
                   )
                 case "assistant":
                   return <AssistantTurn key={item.id} item={item} />
+                case "text":
+                  return <Markdown key={item.id} text={item.text} />
                 case "question":
                   return <QuestionCard key={item.id} item={item} onAnswer={onAnswer} />
+                case "image":
+                  return (
+                    <MobileRemoteImage
+                      key={item.id}
+                      baseUrl={baseUrl}
+                      token={token}
+                      sessionKey={sessionKey}
+                      path={item.path}
+                      className="max-h-72 min-h-24 min-w-24 max-w-full self-start"
+                    />
+                  )
                 case "file":
                   return (
                     <MobileFileCard
@@ -287,6 +300,11 @@ export default function MobileItemList({
                   )
                 case "notice":
                   return <NoticePill key={item.id} item={item} onCommand={onCommand} />
+                default: {
+                  // 新增消息类型漏渲染时在这里编译报错，而不是在手机上悄悄丢消息
+                  const unhandled: never = item
+                  return unhandled
+                }
               }
             })}
             {busy && !hasLiveTurn && (
