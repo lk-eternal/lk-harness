@@ -21,7 +21,8 @@ export interface MobilePairConfig {
 export interface MobileChatTab {
   sessionKey: string
   label: string
-  kind: "dir" | "project" | "temp"
+  /** 与桌面端会话树下发的取值一致 */
+  kind: "main" | "dir" | "project" | "temp" | "task" | "other"
   running: boolean
   current: boolean
   removable?: boolean

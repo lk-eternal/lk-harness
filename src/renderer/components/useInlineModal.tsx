@@ -27,6 +27,8 @@ export default function useInlineModal(): {
   showConfirm: (title: string, message: string, ok?: string, cancel?: string) => Promise<boolean>
   /** 未保存三选项：保存 / 丢弃(放弃) / 取消(继续编辑) */
   showUnsavedChoice: (title: string, message: string, labels?: { save?: string; discard?: string; cancel?: string }) => Promise<UnsavedChoice>
+  /** 等同点第一个按钮（确认框里是取消），供返回键等外部手段收起弹窗 */
+  dismiss: () => void
   ModalPortal: ReactNode
 } {
   const [state, setState] = useState<{ opts: ShowOptions; resolve: (idx: number) => void } | null>(null)
@@ -39,6 +41,7 @@ export default function useInlineModal(): {
     state?.resolve(idx)
     setState(null)
   }
+  const dismiss = () => close(0)
 
   const showAlert = useCallback(
     (title: string, message: string) => show({ title, message, buttons: ["确定"] }).then(() => {}),
@@ -85,5 +88,5 @@ export default function useInlineModal(): {
     </ModalShell>
   ) : null
 
-  return { showAlert, showConfirm, showUnsavedChoice, ModalPortal }
+  return { showAlert, showConfirm, showUnsavedChoice, dismiss, ModalPortal }
 }

@@ -29,6 +29,7 @@ import {
 } from "../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../shared/temp-workspace"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
+import useInlineModal from "../renderer/components/useInlineModal"
 import { modelSlug } from "../renderer/model-utils"
 import {
   applyMobileTheme,
@@ -164,6 +165,7 @@ export default function MobileApp() {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [renameDraft, setRenameDraft] = useState("")
+  const { showConfirm, dismiss: dismissConfirm, ModalPortal } = useInlineModal()
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -521,6 +523,15 @@ export default function MobileApp() {
     if (!route.activeUrl || !pairCfg.token) return
     const key = t.sessionKey
     const id = appChatSessionId(key)
+    // 还没发过消息的草稿会话没有什么可丢的，不再确认
+    if (!drafts.some((d) => sameChatSession(d.sessionKey, key))) {
+      const effect = isTempChatWorkspace(workspaceDirFromSessionKey(key))
+        ? "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
+        : t.kind === "main"
+          ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
+          : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
+      if (!await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
+    }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, key)))
     const r = await deleteMobileSession(route.activeUrl, pairCfg.token, key)
     if (!r.ok) {
@@ -552,6 +563,8 @@ export default function MobileApp() {
   const handleClearCurrent = async () => {
     if (!selected || !route.activeUrl || !pairCfg.token) return
     setMoreMenuOpen(false)
+    const name = currentTab ? sessionName(currentTab) : "当前会话"
+    if (!await showConfirm("清空本会话记录", `确定清空「${name}」在应用内的对话记录吗？\n只删除本页记录（会话名随之重置），Agent 的会话上下文不受影响。`, "清空")) return
     await clearMobileSession(route.activeUrl, pairCfg.token, { sessionKey: selected })
     setItems([])
   }
@@ -559,6 +572,7 @@ export default function MobileApp() {
   // 清空全部会话记录
   const handleClearAll = async () => {
     if (!route.activeUrl || !pairCfg.token) return
+    if (!await showConfirm("清空全部对话记录", "确定清空所有应用内会话的对话记录吗？\n只删除本页记录，Agent 的会话上下文不受影响。", "全部清空")) return
     for (const v of views) {
       await clearMobileSession(route.activeUrl, pairCfg.token, { channelId: v.channelId })
     }
@@ -622,6 +636,7 @@ export default function MobileApp() {
   }
 
   useBackToClose(moreMenuOpen, () => setMoreMenuOpen(false))
+  useBackToClose(ModalPortal !== null, dismissConfirm)
   const moreAnchor = moreMenuOpen ? moreButtonRef.current?.getBoundingClientRect() : undefined
 
   return (
@@ -1002,6 +1017,8 @@ export default function MobileApp() {
           void connectWithConfig(next)
         }}
       />
+
+      {ModalPortal}
     </div>
   )
 }
