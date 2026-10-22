@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
-import { createPortal } from "react-dom"
 import { Check, Copy, Download, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
 import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUserItem } from "../../../shared/app-chat-types"
 import { formatFullTime, formatMessageTime } from "../../time-ago"
+import { ImageLightbox } from "./ImageLightbox"
 import { CopyButton } from "./Markdown"
 
 // ── 本地图片：经主进程读成 data URL（渲染层不直接访问文件系统），带小缓存 ──
@@ -58,21 +58,6 @@ function ImageActions({ path }: { path: string }) {
   )
 }
 
-function ImageViewer({ path, url, onClose }: { path: string; url: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose() }
-    window.addEventListener("keydown", onKey)
-    return () => window.removeEventListener("keydown", onKey)
-  }, [onClose])
-  return createPortal(
-    <div onClick={onClose} className="fixed inset-0 z-50 flex cursor-zoom-out items-center justify-center bg-black/80 p-8">
-      <img src={url} alt="" className="max-h-full max-w-full rounded object-contain" />
-      <div className="absolute right-4 top-4"><ImageActions path={path} /></div>
-    </div>,
-    document.body,
-  )
-}
-
 /** 缩略图：点击放大，悬浮出现复制/另存为；加载失败/文件已被清理时给占位，不报错 */
 export function LocalImage({ path, className }: { path: string; className: string }) {
   const { url, failed } = useLocalImage(path)
@@ -89,7 +74,7 @@ export function LocalImage({ path, className }: { path: string; className: strin
         <img src={url} alt="" onClick={() => setZoom(true)} className={`cursor-zoom-in rounded object-cover ${className}`} />
         <div className="absolute inset-x-1.5 top-1.5 hidden justify-end group-hover/img:flex"><ImageActions path={path} /></div>
       </div>
-      {zoom && <ImageViewer path={path} url={url} onClose={() => setZoom(false)} />}
+      {zoom && <ImageLightbox src={url} onClose={() => setZoom(false)} actions={<ImageActions path={path} />} />}
     </>
   )
 }

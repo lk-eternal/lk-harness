@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
-import { ArrowDown, Download, FileText, ImageOff, Loader2, Sparkles, Terminal, X } from "lucide-react"
+import { ArrowDown, Download, FileText, ImageOff, Loader2, Sparkles, Terminal } from "lucide-react"
 import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/app-chat-types"
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
+import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import { CopyButton } from "../renderer/components/chat/Markdown"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
@@ -63,23 +63,7 @@ function MobileRemoteImage({
         onClick={() => setZoom(true)}
         className={`cursor-zoom-in rounded-xl border border-line-subtle object-cover ${className}`}
       />
-      {zoom &&
-        createPortal(
-          <div
-            onClick={() => setZoom(false)}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-          >
-            <button
-              type="button"
-              onClick={() => setZoom(false)}
-              className="absolute right-4 top-6 rounded-full bg-white/15 p-2 text-white"
-            >
-              <X size={18} />
-            </button>
-            <img src={url} alt="" className="max-h-full max-w-full rounded-lg object-contain" />
-          </div>,
-          document.body,
-        )}
+      {zoom && <ImageLightbox src={url} onClose={() => setZoom(false)} />}
     </>
   )
 }
