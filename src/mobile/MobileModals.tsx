@@ -11,6 +11,7 @@ import {
   Monitor,
   Plus,
   RefreshCw,
+  ScanLine,
   Search,
   Server,
   Sparkles,
@@ -33,6 +34,7 @@ import {
   type MobileQuickModel,
   type RouteStatus,
 } from "./api"
+import { QrScanner } from "./QrScanner"
 
 function fmtBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -645,9 +647,11 @@ export function PairSheet({
     config.preferRoute ?? "auto",
   )
   const [pasteHint, setPasteHint] = useState("")
+  const [scanOpen, setScanOpen] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    setScanOpen(false)
     setPubUrl(config.pubUrl)
     setLanUrl(config.lanUrl)
     setToken(config.token)
@@ -657,12 +661,7 @@ export function PairSheet({
 
   if (!open) return null
 
-  const applyPastedText = (raw: string) => {
-    const parsed = parsePairInput(raw)
-    if (!parsed) {
-      setPasteHint("未识别出配对信息，请复制电脑端配对链接或 JSON")
-      return
-    }
+  const applyParsed = (parsed: MobilePairConfig) => {
     setPubUrl(parsed.pubUrl)
     setLanUrl(parsed.lanUrl)
     setToken(parsed.token)
@@ -674,6 +673,23 @@ export function PairSheet({
       hostName: parsed.hostName,
       preferRoute,
     })
+  }
+
+  const applyPastedText = (raw: string) => {
+    const parsed = parsePairInput(raw)
+    if (!parsed) {
+      setPasteHint("未识别出配对信息，请复制电脑端配对链接或 JSON")
+      return
+    }
+    applyParsed(parsed)
+  }
+
+  const handleScanDetect = (text: string): boolean => {
+    const parsed = parsePairInput(text)
+    if (!parsed) return false
+    setScanOpen(false)
+    applyParsed(parsed)
+    return true
   }
 
   const handlePasteFromClipboard = async () => {
@@ -733,12 +749,19 @@ export function PairSheet({
             )}
           </div>
 
-          {/* 一键从剪贴板导入配对链接 */}
-          <div className="flex gap-2">
+          {/* 扫码 / 从剪贴板导入配对信息 */}
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={() => setScanOpen(true)}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99]"
+            >
+              <ScanLine size={16} />扫描电脑端二维码
+            </button>
             <button
               type="button"
               onClick={() => void handlePasteFromClipboard()}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl border border-blue-500/40 bg-blue-600/15 py-2.5 text-xs font-medium text-accent transition active:scale-[0.99]"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-blue-500/40 bg-blue-600/15 py-2.5 text-xs font-medium text-accent transition active:scale-[0.99]"
             >
               <ClipboardPaste size={14} />粘贴电脑端配对链接一键填入
             </button>
@@ -843,6 +866,7 @@ export function PairSheet({
           </button>
         </div>
       </div>
+      <QrScanner open={scanOpen} onClose={() => setScanOpen(false)} onDetect={handleScanDetect} />
     </div>
   )
 }

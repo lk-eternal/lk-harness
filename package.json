@@ -60,6 +60,7 @@
     "diff2html": "^3.4.52",
     "electron-store": "^11.0.2",
     "electron-updater": "^6.8.3",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.577.0",
     "node-cron": "^4.2.1",
     "pi-mcp-adapter": "^2.34.0",

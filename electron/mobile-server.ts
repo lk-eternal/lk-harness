@@ -525,7 +525,8 @@ export async function getMobileServerStatus(): Promise<MobileServerStatus> {
   const pairUrl = `${primary}/?pair=${encodePairPayload(pairPayload)}`
   let qrDataUrl = ""
   try {
-    qrDataUrl = await QRCode.toDataURL(pairUrl, { width: 240, margin: 1 })
+    // 双地址 + 令牌的链接有 ~300 字符，二维码很密：用低纠错、大尺寸，手机才扫得出来
+    qrDataUrl = await QRCode.toDataURL(pairUrl, { width: 640, margin: 2, errorCorrectionLevel: "L" })
   } catch { /* ignore */ }
 
   return {

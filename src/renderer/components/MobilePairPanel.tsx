@@ -180,7 +180,7 @@ export default function MobilePairPanel() {
         <div className="flex flex-col sm:flex-row items-center gap-5 rounded-lg border border-line bg-surface/40 p-4">
           {status.qrDataUrl && (
             <div className="shrink-0 rounded-xl bg-white p-2 shadow">
-              <img src={status.qrDataUrl} alt="手机配对二维码" className="h-40 w-40" />
+              <img src={status.qrDataUrl} alt="手机配对二维码" className="h-56 w-56" />
             </div>
           )}
           <div className="min-w-0 flex-1 space-y-2.5 text-xs">

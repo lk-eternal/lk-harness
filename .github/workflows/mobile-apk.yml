@@ -53,14 +53,22 @@ jobs:
             npx cap add android
           fi
           npx cap sync android
-          # 确保允许局域网 HTTP 与公网 HTTPS 双线路访问 (usesCleartextTraffic)
+          # 1) 允许局域网 HTTP 与公网 HTTPS 双线路访问 (usesCleartextTraffic)
+          # 2) 申请相机权限，App 内扫码配对要用（getUserMedia 经 Capacitor 的 WebChromeClient 转成系统授权弹窗）
           python3 - <<'PY'
           from pathlib import Path
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           text = manifest.read_text(encoding="utf-8")
           if 'usesCleartextTraffic' not in text:
               text = text.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
-              manifest.write_text(text, encoding="utf-8")
+          if 'android.permission.CAMERA' not in text:
+              camera = (
+                  '<uses-permission android:name="android.permission.CAMERA" />\n'
+                  '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n'
+                  '    <application'
+              )
+              text = text.replace("<application", camera, 1)
+          manifest.write_text(text, encoding="utf-8")
           PY
           cd android
           chmod +x gradlew
