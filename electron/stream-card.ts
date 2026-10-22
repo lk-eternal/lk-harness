@@ -572,7 +572,7 @@ export async function postStreamCard(
   sessionKey: string,
   action: "ensure" | "update" | "finish",
   payload: StreamCardPayload,
-  opts?: { cardId?: string; queueBornAt?: number; modelLabel?: string },
+  opts?: { cardId?: string; queueBornAt?: number; modelLabel?: string; interrupted?: boolean },
 ): Promise<{ cardId?: string; gone?: boolean } | undefined> {
   const lock = readLockFile()
   if (!lock?.port) return undefined
@@ -586,6 +586,7 @@ export async function postStreamCard(
         ...(opts?.cardId ? { card_id: opts.cardId } : {}),
         ...(opts?.queueBornAt ? { queue_born_at: opts.queueBornAt } : {}),
         ...(opts?.modelLabel ? { model_label: opts.modelLabel } : {}),
+        ...(opts?.interrupted ? { interrupted: true } : {}),
       },
       15_000,
     ) as { ok?: boolean; skipped?: boolean; error?: string; cardId?: string; gone?: boolean } | null

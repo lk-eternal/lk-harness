@@ -1717,6 +1717,8 @@ interface AgentStreamCardState {
   finished?: boolean;
   /** 页脚用模型名（Electron 随 finish 下发，update 刷新） */
   modelLabel?: string;
+  /** 回合没跑完就被收口（Electron 随 finish 下发），页脚标注「Agent 已中断」 */
+  interrupted?: boolean;
 }
 
 const agentStreamCards = new Map<string, AgentStreamCardState>();
@@ -2136,6 +2138,7 @@ function buildAgentStreamCardJson(
   if (terminal) {
     const parts: string[] = [];
     if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
+    if (state.interrupted) parts.push("Agent 已中断");
     const elapsedMs = Date.now() - (state.createdAt || Date.now());
     if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
     if (parts.length > 0) footer = parts.join(" · ");
@@ -2385,6 +2388,7 @@ async function finishAgentStreamCard(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   expectCardId?: string,
   modelLabel?: string,
+  interrupted?: boolean,
 ): Promise<{ ok: boolean; cardId?: string; messageId?: string; error?: string; skipped?: boolean }> {
   const state = agentStreamCards.get(sessionKey);
   if (!state) {
@@ -2414,6 +2418,7 @@ async function finishAgentStreamCard(
     ensureSegmentPanelIds(state, state.lastSegments, prev);
   }
   if (modelLabel?.trim()) state.modelLabel = modelLabel.trim();
+  if (interrupted) state.interrupted = true;
   // 未决问题：同样 finish 剥块/停 streaming，卡仍存活待点选
   if (hasOpenQuestionBlock(state)) {
     const ok = await refreshAgentStreamCard(sessionKey, state, ch, { finish: true });
@@ -4904,13 +4909,14 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/agent-stream-card") {
     const body = JSON.parse(await readBody(req));
-    const { session_key, action, segments, card_id, queue_born_at, model_label } = body as {
+    const { session_key, action, segments, card_id, queue_born_at, model_label, interrupted } = body as {
       session_key?: string;
       action?: string;
       segments?: AgentStreamSegment[];
       card_id?: string;
       queue_born_at?: number;
       model_label?: string;
+      interrupted?: boolean;
     };
     if (!session_key || !action) {
       json(res, { ok: false, error: "session_key and action required" }, 400);
@@ -4931,7 +4937,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         json(res, { ok: false, error: `unknown action: ${action}` }, 500);
         return true;
       }
-      const r = appChat.streamCard(sk, action, segments, { cardId: card_id, modelLabel: model_label });
+      const r = appChat.streamCard(sk, action, segments, { cardId: card_id, modelLabel: model_label, interrupted });
       if (r.gone) {
         json(res, { ok: true, gone: true, cardId: r.cardId });
         return true;
@@ -4969,7 +4975,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           : action === "update"
             ? updateAgentStreamCard(sk, payload, ch, card_id, model_label)
             : action === "finish"
-              ? finishAgentStreamCard(sk, payload, ch, card_id, model_label)
+              ? finishAgentStreamCard(sk, payload, ch, card_id, model_label, interrupted)
               : { ok: false, error: `unknown action: ${action}` };
       });
       json(res, result, result.ok || (result as { skipped?: boolean }).skipped ? 200 : 500);

@@ -137,6 +137,7 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
       {item.finished && (
         <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
           {item.modelLabel && <><span>{item.modelLabel}</span><span>·</span></>}
+          {item.interrupted && <><span className="text-yellow-500">已中断</span><span>·</span></>}
           {item.finishedAt !== undefined && <><span>耗时 {fmtDuration(Math.max(0, item.finishedAt - item.ts))}</span><span>·</span></>}
           <MessageTime ts={item.ts} />
           {replyText && <CopyButton text={replyText} className="ml-1.5" />}

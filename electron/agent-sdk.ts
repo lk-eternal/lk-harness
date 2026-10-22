@@ -1562,7 +1562,11 @@ async function sealStreamCardForStop(session: SdkSessionAgent): Promise<void> {
   session.streamAgg = null
   try {
     const payload = buildStreamPayload(agg, session.sessionKey)
-    await postStreamCard(session.sessionKey, "finish", payload, { cardId: finishCardId })
+    await postStreamCard(session.sessionKey, "finish", payload, {
+      cardId: finishCardId,
+      modelLabel: session.modelLabel,
+      interrupted: true,
+    })
     patchResumableStreamCard(session.sessionKey, undefined, { onlyIf: finishCardId })
   } catch { /* best-effort */ }
 }

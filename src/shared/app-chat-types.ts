@@ -48,6 +48,8 @@ export interface AppChatAssistantItem extends AppChatItemBase {
   /** 回合收口的时间戳；耗时 = finishedAt - ts。收口前和重启时被判定结束的旧记录没有 */
   finishedAt?: number;
   modelLabel?: string;
+  /** 回合没跑完就被收口（用户停止、切模型、重置、应用退出、worker 异常结束） */
+  interrupted?: boolean;
 }
 
 /** send_text 等独立文本消息 */

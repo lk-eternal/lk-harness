@@ -232,7 +232,7 @@ export class AppChat {
     sessionKey: string,
     action: "ensure" | "update" | "finish",
     rawSegments: unknown,
-    opts: { cardId?: string; modelLabel?: string },
+    opts: { cardId?: string; modelLabel?: string; interrupted?: boolean },
   ): StreamCardResult {
     const entry = this.entry(sessionKey);
     const segments = toAppChatSegments(rawSegments);
@@ -247,6 +247,7 @@ export class AppChat {
         finished: true,
         finishedAt: Date.now(),
         ...(opts.modelLabel?.trim() ? { modelLabel: opts.modelLabel.trim() } : {}),
+        ...(opts.interrupted ? { interrupted: true } : {}),
       };
       this.upsert(entry, next);
       this.closeCard(entry, live.id);
