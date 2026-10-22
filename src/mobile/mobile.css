@@ -1,5 +1,11 @@
 @import "../renderer/index.css";
 
+/*
+ * 手机端复用了 renderer 的聊天组件（图片查看器、确认框等），但 Vite 的 root 是 src/mobile，
+ * Tailwind 默认只扫描 root 之内，这些组件里独有的类（p-4、bg-black/70…）不会生成，界面会缺样式。
+ */
+@source "../renderer/components";
+
 /* 手机端支持手动固定浅色/深色（覆盖媒体查询） */
 :root[data-theme="light"] {
   --color-page: #ffffff;
