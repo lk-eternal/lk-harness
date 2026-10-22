@@ -62,7 +62,7 @@ export interface AppConfig {
   /** Flow Hub 上传作者昵称 */
   flowHubAuthor: string
 
-  /** 手机端网关：开关、监听端口、鉴权 Token、公网穿透地址 */
+  /** 手机端网关：开关、监听端口、鉴权 Token、公网地址 */
   mobileEnabled: boolean
   mobilePort: number
   mobileToken: string

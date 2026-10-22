@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react"
 import { Check, Copy, Eye, EyeOff, RefreshCw, Smartphone } from "lucide-react"
+import QRCode from "qrcode"
+
+/** 手机端 Android 安装包（始终指向 GitHub 最新发布；资产名由 mobile-apk.yml 固定为 lk-harness-mobile.apk） */
+const MOBILE_APK_URL = "https://github.com/lk-eternal/lk-harness/releases/latest/download/lk-harness-mobile.apk"
 
 export default function MobilePairPanel() {
   const [status, setStatus] = useState<MobileServerStatus | null>(null)
@@ -8,7 +12,16 @@ export default function MobilePairPanel() {
   const [busy, setBusy] = useState(false)
   const [showToken, setShowToken] = useState(false)
   const [copiedKey, setCopiedKey] = useState("")
-  const [showFrpGuide, setShowFrpGuide] = useState(false)
+  const [showGuide, setShowGuide] = useState(false)
+  const [apkQr, setApkQr] = useState("")
+
+  useEffect(() => {
+    let alive = true
+    QRCode.toDataURL(MOBILE_APK_URL, { width: 320, margin: 1, errorCorrectionLevel: "M" })
+      .then((url) => { if (alive) setApkQr(url) })
+      .catch(() => { /* 二维码生成失败时仍可复制下方链接 */ })
+    return () => { alive = false }
+  }, [])
 
   const load = useCallback(async () => {
     const s = await window.electronAPI.mobileStatus()
@@ -74,28 +87,6 @@ export default function MobilePairPanel() {
   }
 
   const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
-  const frpcSample = [
-    "# 本机 frpc.toml",
-    'serverAddr = "你的公网服务器地址"',
-    "serverPort = 7000",
-    'auth.method = "token"',
-    'auth.token = "填写你的frp连接密钥"',
-    "",
-    "[[proxies]]",
-    'name = "lk-harness-mobile"',
-    'type = "tcp"',
-    'localIP = "127.0.0.1"',
-    `localPort = ${status.port}`,
-    `remotePort = ${status.port}`,
-  ].join("\n")
-
-  const frpsSample = [
-    "# 公网服务器 frps.toml",
-    "bindPort = 7000",
-    'auth.method = "token"',
-    'auth.token = "填写你的frp连接密钥"',
-  ].join("\n")
-
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -111,7 +102,7 @@ export default function MobilePairPanel() {
               )}
             </div>
             <p className="mt-1 text-xs text-fg-muted">
-              开启后，手机 APP 可通过局域网或公网穿透地址（如 frp）继续桌面端的「应用内对话」，实时同步流式输出与会话状态。
+              开启后，手机 APP 可通过局域网或公网地址继续桌面端的「应用内对话」，实时同步流式输出与会话状态。
             </p>
           </div>
           <button
@@ -129,7 +120,7 @@ export default function MobilePairPanel() {
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium text-fg-2">网络与穿透地址</h3>
+        <h3 className="text-sm font-medium text-fg-2">网络地址</h3>
         <div className="grid grid-cols-3 gap-3">
           <div>
             <label className="mb-1 block text-xs text-fg-muted">本机监听端口</label>
@@ -144,7 +135,7 @@ export default function MobilePairPanel() {
             />
           </div>
           <div className="col-span-2">
-            <label className="mb-1 block text-xs text-fg-muted">公网穿透地址（frp / 反向代理等，选填）</label>
+            <label className="mb-1 block text-xs text-fg-muted">公网地址（选填）</label>
             <input
               type="text"
               value={publicUrlInput}
@@ -172,6 +163,37 @@ export default function MobilePairPanel() {
           ) : (
             <p className="text-fg-faint">未检测到局域网 IPv4 地址</p>
           )}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <h3 className="text-sm font-medium text-fg-2">下载手机端 APP</h3>
+        <div className="flex flex-col sm:flex-row items-center gap-5 rounded-lg border border-line bg-surface/40 p-4">
+          {apkQr && (
+            <div className="shrink-0 rounded-xl bg-white p-2 shadow">
+              <img src={apkQr} alt="Android 安装包下载二维码" className="h-28 w-28" />
+            </div>
+          )}
+          <div className="min-w-0 flex-1 space-y-2.5 text-xs">
+            <p className="text-fg-2 leading-relaxed">
+              <span className="mr-1.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-success">仅 Android</span>
+              用手机浏览器扫码下载并安装 APK。
+            </p>
+            <div className="flex items-center gap-2">
+              <input type="text" readOnly value={MOBILE_APK_URL} className="w-full rounded border border-line bg-page px-2.5 py-1.5 font-mono text-[11px] text-fg-3 outline-none" />
+              <button
+                type="button"
+                onClick={() => void copyText("apkUrl", MOBILE_APK_URL)}
+                className="shrink-0 rounded border border-line px-2.5 py-1.5 text-fg-2 hover:bg-raised"
+                title="复制下载链接"
+              >
+                {copiedKey === "apkUrl" ? <Check size={13} className="text-success" /> : <Copy size={13} />}
+              </button>
+            </div>
+            <p className="text-fg-muted leading-relaxed">
+              iOS 暂无安装包：用 Safari 打开下方「配对链接」，点「分享 → 添加到主屏幕」，即可像 APP 一样使用。
+            </p>
+          </div>
         </div>
       </section>
 
@@ -227,31 +249,30 @@ export default function MobilePairPanel() {
       <section className="space-y-2">
         <button
           type="button"
-          onClick={() => setShowFrpGuide((v) => !v)}
+          onClick={() => setShowGuide((v) => !v)}
           className="text-xs text-accent hover:text-accent-soft"
         >
-          {showFrpGuide ? "▾ 收起 frp 穿透配置模板" : "▸ 查看 frp 穿透配置模板（frps.toml / frpc.toml）"}
+          {showGuide ? "▾ 收起公网访问指南" : "▸ 公网访问指南（手机不在同一 Wi-Fi 时）"}
         </button>
-        {showFrpGuide && (
-          <div className="grid grid-cols-1 gap-3 rounded-lg border border-line-subtle bg-surface/40 p-3 text-xs">
-            <div>
-              <div className="mb-1 flex items-center justify-between text-fg-3">
-                <span>1. 公网服务器配置（<code>frps.toml</code>）</span>
-                <button type="button" onClick={() => void copyText("frps", frpsSample)} className="text-accent hover:text-accent-soft">
-                  {copiedKey === "frps" ? "已复制" : "复制"}
-                </button>
-              </div>
-              <pre className="overflow-x-auto rounded bg-code p-2.5 font-mono text-[11px] text-fg-2">{frpsSample}</pre>
-            </div>
-            <div>
-              <div className="mb-1 flex items-center justify-between text-fg-3">
-                <span>2. 本机配置（<code>frpc.toml</code>）</span>
-                <button type="button" onClick={() => void copyText("frpc", frpcSample)} className="text-accent hover:text-accent-soft">
-                  {copiedKey === "frpc" ? "已复制" : "复制"}
-                </button>
-              </div>
-              <pre className="overflow-x-auto rounded bg-code p-2.5 font-mono text-[11px] text-fg-2">{frpcSample}</pre>
-            </div>
+        {showGuide && (
+          <div className="space-y-2 rounded-lg border border-line-subtle bg-surface/40 p-3 text-xs leading-relaxed text-fg-3">
+            <p>
+              同一 Wi-Fi 下无需任何设置，扫码即可连接。手机要在外网使用时，需自行让电脑的 {status.port} 端口能从外网访问，
+              再把得到的地址填入上方「公网地址」。应用本身不提供网络服务。常见方式：
+            </p>
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                <strong>组网工具</strong>：电脑和手机都登录 Tailscale 等，填电脑的组网 IP，例如 <code>http://100.x.x.x:{status.port}</code>
+              </li>
+              <li>
+                <strong>隧道服务</strong>：如 Cloudflare Tunnel，把本机 {status.port} 端口映射到一个域名，填该域名
+              </li>
+              <li>
+                <strong>自有服务器</strong>：用 Nginx 等反向代理到本机端口，填域名或 <code>http://服务器IP:端口</code>。
+                反向代理需关闭响应缓冲，否则流式输出会卡顿
+              </li>
+            </ul>
+            <p className="text-fg-muted">公网地址会把网关暴露到互联网，请妥善保管 Token；怀疑泄露时点「重置」。</p>
           </div>
         )}
       </section>

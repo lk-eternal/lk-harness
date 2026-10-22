@@ -6,7 +6,7 @@ export interface MobilePairPayload {
   name: string
   /** 鉴权 Token */
   token: string
-  /** 公网穿透地址，未配置时为空串 */
+  /** 公网地址，未配置时为空串 */
   pub: string
   /** 局域网地址，未检测到时为空串 */
   lan: string

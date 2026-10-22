@@ -10,7 +10,7 @@ const PAIR_STORAGE_KEY = "lk-harness:mobile-pair:v1"
 const THEME_STORAGE_KEY = "lk-harness:mobile-theme:v1"
 
 export interface MobilePairConfig {
-  /** 公网穿透地址 */
+  /** 公网地址 */
   pubUrl: string
   /** 局域网地址 */
   lanUrl: string

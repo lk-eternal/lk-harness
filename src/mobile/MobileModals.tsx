@@ -113,7 +113,7 @@ export function SessionDrawer({
                 </div>
                 <p className="truncate text-[11px] text-fg-muted">
                   {route.connected
-                    ? `${route.routeType === "lan" ? "局域网" : "公网穿透"}${
+                    ? `${route.routeType === "lan" ? "局域网" : "公网"}${
                         route.latencyMs ? ` · ${route.latencyMs}ms` : ""
                       }`
                     : route.error || "点击右上角配对电脑"}
@@ -744,7 +744,7 @@ export function PairSheet({
               </div>
               {route.connected && (
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                  {route.routeType === "lan" ? "局域网直连" : "公网穿透"}
+                  {route.routeType === "lan" ? "局域网直连" : "公网连接"}
                   {route.latencyMs ? ` · ${route.latencyMs}ms` : ""}
                 </span>
               )}
