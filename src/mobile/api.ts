@@ -274,16 +274,28 @@ export async function resolveBestRoute(cfg: MobilePairConfig): Promise<RouteStat
   }
 }
 
-async function callApi<T>(baseUrl: string, token: string, path: string, body?: Record<string, unknown>, method: "GET" | "POST" = "POST"): Promise<T> {
-  const res = await fetch(`${trimUrl(baseUrl)}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  })
-  return await res.json() as T
+interface ApiResult { ok: boolean; error?: string }
+
+/** 断网、网关返回非 JSON 等传输层失败也按 `{ ok: false, error }` 返回，调用方只需处理 ok */
+async function callApi<T extends ApiResult>(baseUrl: string, token: string, path: string, body?: Record<string, unknown>, method: "GET" | "POST" = "POST"): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${trimUrl(baseUrl)}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+  } catch {
+    return { ok: false, error: "无法连接到电脑端，请检查网络" } as T
+  }
+  try {
+    return await res.json() as T
+  } catch {
+    return { ok: false, error: `电脑端返回异常（HTTP ${res.status}）` } as T
+  }
 }
 
 export async function fetchBootstrap(baseUrl: string, token: string): Promise<MobileBootstrapData> {
