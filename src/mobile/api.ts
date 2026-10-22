@@ -95,67 +95,32 @@ function decodeBase64UrlUtf8(input: string): string {
 export function parsePairInput(raw: string): MobilePairConfig | null {
   const text = raw.trim()
   if (!text) return null
-
-  // 1. 尝试从 URL 的 ?pair= 参数提取
   try {
     if (/^https?:\/\//i.test(text)) {
       const u = new URL(text)
       const pairParam = u.searchParams.get("pair")
-      if (pairParam) {
-        const decoded = JSON.parse(decodeBase64UrlUtf8(pairParam)) as Record<string, unknown>
-        const token = String(decoded.token ?? "").trim()
-        if (token) {
-          return {
-            pubUrl: trimUrl(String(decoded.pub || u.origin)),
-            lanUrl: trimUrl(String(decoded.lan ?? "")),
-            token,
-            hostName: typeof decoded.name === "string" ? decoded.name : undefined,
-            preferRoute: "auto",
-          }
-        }
-      }
+      return pairParam ? toPairConfig(JSON.parse(decodeBase64UrlUtf8(pairParam)), u.origin) : null
     }
+    if (text.startsWith("{")) return toPairConfig(JSON.parse(text))
+    return toPairConfig(JSON.parse(decodeBase64UrlUtf8(text)))
   } catch {
-    // 继续尝试其他格式
+    return null
   }
+}
 
-  // 2. 尝试直接 JSON 解析
-  try {
-    if (text.startsWith("{")) {
-      const obj = JSON.parse(text) as Record<string, unknown>
-      const token = String(obj.token ?? "").trim()
-      if (token) {
-        return {
-          pubUrl: trimUrl(String(obj.pub ?? obj.pubUrl ?? "")),
-          lanUrl: trimUrl(String(obj.lan ?? obj.lanUrl ?? "")),
-          token,
-          hostName: typeof obj.name === "string" ? obj.name : undefined,
-          preferRoute: "auto",
-        }
-      }
-    }
-  } catch {
-    // 继续尝试 base64url
+/** 载荷字段见 src/shared/mobile-pair.ts；pubUrl/lanUrl 是手填 JSON 的别名。两个地址都缺省时，才用打开页面的 origin 当公网地址 */
+function toPairConfig(obj: Record<string, unknown>, originFallback = ""): MobilePairConfig | null {
+  const token = String(obj.token ?? "").trim()
+  if (!token) return null
+  const pub = trimUrl(String(obj.pub ?? obj.pubUrl ?? ""))
+  const lan = trimUrl(String(obj.lan ?? obj.lanUrl ?? ""))
+  return {
+    pubUrl: pub || (lan ? "" : trimUrl(originFallback)),
+    lanUrl: lan,
+    token,
+    hostName: typeof obj.name === "string" ? obj.name : undefined,
+    preferRoute: "auto",
   }
-
-  // 3. 尝试当作 base64url 解码
-  try {
-    const decoded = JSON.parse(decodeBase64UrlUtf8(text)) as Record<string, unknown>
-    const token = String(decoded.token ?? "").trim()
-    if (token) {
-      return {
-        pubUrl: trimUrl(String(decoded.pub ?? "")),
-        lanUrl: trimUrl(String(decoded.lan ?? "")),
-        token,
-        hostName: typeof decoded.name === "string" ? decoded.name : undefined,
-        preferRoute: "auto",
-      }
-    }
-  } catch {
-    // ignore
-  }
-
-  return null
 }
 
 export function loadPairConfig(): MobilePairConfig {

@@ -123,7 +123,7 @@ declare global {
     publicUrl: string
     lanUrls: string[]
     pairUrl: string
-    pairPayload: { v: 1; name: string; token: string; urls: string[] }
+    pairPayload: { v: 1; name: string; token: string; pub: string; lan: string }
     qrDataUrl: string
     error?: string
   }

@@ -28,6 +28,8 @@ import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
 import type { AppChatSendPayload } from "../src/shared/app-chat-types"
+import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
+import type { MobilePairPayload } from "../src/shared/mobile-pair.js"
 
 const DEFAULT_MOBILE_PORT = 19529
 const MAX_BODY_BYTES = 25 * 1024 * 1024
@@ -45,13 +47,6 @@ const STATIC_MIME: Record<string, string> = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".ico": "image/x-icon",
-}
-
-export interface MobilePairPayload {
-  v: 1
-  name: string
-  token: string
-  urls: string[]
 }
 
 export interface MobileServerStatus {
@@ -525,16 +520,9 @@ export async function getMobileServerStatus(): Promise<MobileServerStatus> {
   const token = ensureToken()
   const publicUrl = normalizeUrl(cfg.mobilePublicUrl ?? "")
   const lanUrls = listLanUrls(port)
-  const urls = [...(publicUrl ? [publicUrl] : []), ...lanUrls]
-  const pairPayload: MobilePairPayload = {
-    v: 1,
-    name: os.hostname(),
-    token,
-    urls,
-  }
-  const encoded = Buffer.from(JSON.stringify(pairPayload), "utf-8").toString("base64url")
-  const primary = urls[0] ?? `http://127.0.0.1:${port}`
-  const pairUrl = `${primary}/?pair=${encoded}`
+  const pairPayload = buildPairPayload({ name: os.hostname(), token, publicUrl, lanUrls })
+  const primary = publicUrl || lanUrls[0] || `http://127.0.0.1:${port}`
+  const pairUrl = `${primary}/?pair=${encodePairPayload(pairPayload)}`
   let qrDataUrl = ""
   try {
     qrDataUrl = await QRCode.toDataURL(pairUrl, { width: 240, margin: 1 })
