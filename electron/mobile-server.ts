@@ -512,6 +512,14 @@ export async function startMobileServer(portInput?: number): Promise<{ ok: boole
   })
 }
 
+/** 令牌只在建立实时流时校验一次：令牌作废后必须主动断开已建立的流，否则旧令牌的持有者还能继续收事件 */
+function closeSseClients(): void {
+  for (const client of sseClients) {
+    try { client.end() } catch { /* ignore */ }
+  }
+  sseClients.clear()
+}
+
 export async function stopMobileServer(): Promise<void> {
   if (keepAliveTimer) {
     clearInterval(keepAliveTimer)
@@ -519,10 +527,7 @@ export async function stopMobileServer(): Promise<void> {
   }
   for (const fn of unsubEvents) fn()
   unsubEvents = []
-  for (const client of sseClients) {
-    try { client.end() } catch { /* ignore */ }
-  }
-  sseClients.clear()
+  closeSseClients()
   if (!server) return
   const closing = server
   server = null
@@ -571,17 +576,19 @@ export function initMobileServer(): void {
       mobilePort: nextPort,
       mobilePublicUrl: nextPublicUrl,
     })
-    if (nextEnabled) {
-      await startMobileServer(nextPort)
-    } else {
+    if (!nextEnabled) {
       await stopMobileServer()
       lastError = ""
+    } else if (server === null || activePort !== nextPort) {
+      // 只有端口变化或还没跑起来才重启；公网地址变化不影响监听，输入框失焦也不该踢掉所有手机连接
+      await startMobileServer(nextPort)
     }
     return getMobileServerStatus()
   })
   ipcMain.handle("mobile:reset-token", async () => {
     const next = randomBytes(24).toString("hex")
     saveConfig({ mobileToken: next })
+    closeSseClients()
     return getMobileServerStatus()
   })
 
