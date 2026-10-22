@@ -6,6 +6,7 @@ import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
+import { useBackToClose } from "./back-stack"
 
 function MobileRemoteImage({
   baseUrl,
@@ -23,6 +24,7 @@ function MobileRemoteImage({
   const [url, setUrl] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [zoom, setZoom] = useState(false)
+  useBackToClose(zoom, () => setZoom(false))
 
   useEffect(() => {
     let cancelled = false

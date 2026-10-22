@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { Image as ImageIcon, X } from "lucide-react"
+import { useBackToClose } from "./back-stack"
 import { decodeQrFrame, decodeQrFromFile } from "./qr-decode"
 
 /** getUserMedia 需要安全上下文：App 内是 http://localhost（视为安全），浏览器里要 HTTPS */
@@ -108,6 +109,7 @@ export function QrScanner({
     }
   }, [open])
 
+  useBackToClose(open, onClose)
   if (!open) return null
 
   const handleFile = async (e: ChangeEvent<HTMLInputElement>) => {

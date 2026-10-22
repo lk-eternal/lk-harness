@@ -55,6 +55,7 @@ import {
   type MobileTheme,
   type RouteStatus,
 } from "./api"
+import { useBackToClose } from "./back-stack"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 
@@ -615,6 +616,7 @@ export default function MobileApp() {
     if (fileInputRef.current) fileInputRef.current.value = ""
   }
 
+  useBackToClose(moreMenuOpen, () => setMoreMenuOpen(false))
   const moreAnchor = moreMenuOpen ? moreButtonRef.current?.getBoundingClientRect() : undefined
 
   return (

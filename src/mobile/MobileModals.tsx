@@ -34,6 +34,7 @@ import {
   type MobileQuickModel,
   type RouteStatus,
 } from "./api"
+import { useBackToClose } from "./back-stack"
 import { QrScanner } from "./QrScanner"
 
 function fmtBytes(n: number): string {
@@ -80,6 +81,7 @@ export function SessionDrawer({
   onOpenPair: () => void
 }) {
   const now = Date.now()
+  useBackToClose(open, onClose)
   if (!open) return null
 
   const defaultChannelId = views[0]?.channelId
@@ -370,6 +372,7 @@ export function ModelSheet({
     )
   }, [models, search])
 
+  useBackToClose(open, onClose)
   if (!open) return null
 
   return (
@@ -563,6 +566,7 @@ export function DirSheet({
   sessionName: (t: MobileChatTab) => string
   onSelect: (sessionKey: string) => void
 }) {
+  useBackToClose(open, onClose)
   if (!open) return null
   const dirTabs = tabs.filter((t) => !isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey)))
 
@@ -659,6 +663,7 @@ export function PairSheet({
     setPasteHint("")
   }, [open, config])
 
+  useBackToClose(open, onClose)
   if (!open) return null
 
   const applyParsed = (parsed: MobilePairConfig) => {
