@@ -175,6 +175,19 @@ export default function MobileApp() {
     [views, selected],
   )
 
+  // 选中项失效（首次进入、会话被删）时回落到通道当前会话或第一个；草稿会话在 views 里，不会被误判失效
+  useEffect(() => {
+    const withTabs = views.filter((v) => v.tabs.length > 0)
+    if (withTabs.length === 0) {
+      if (selected) setSelected(null)
+      return
+    }
+    if (withTabs.flatMap((v) => v.tabs).some((t) => sameChatSession(t.sessionKey, selected))) return
+    const first = withTabs[0]
+    const pick = first.tabs.find((t) => sameChatSession(t.sessionKey, first.activeKey)) ?? first.tabs[0]
+    setSelected(pick.sessionKey)
+  }, [views, selected])
+
   const refreshBootstrap = useCallback(
     async (baseUrl: string, token: string) => {
       if (!baseUrl || !token) return
@@ -196,11 +209,6 @@ export default function MobileApp() {
               ),
           ),
         )
-        setSelected((cur) => {
-          const flat = (data.channels ?? []).flatMap((c) => c.tabs)
-          if (cur && flat.some((t) => sameChatSession(t.sessionKey, cur))) return cur
-          return data.channels?.[0]?.activeKey ?? flat[0]?.sessionKey ?? null
-        })
       } catch {
         // ignore network hiccup
       }
