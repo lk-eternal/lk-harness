@@ -143,6 +143,8 @@ export default function MobileApp() {
   const liveBufferRef = useRef<Map<string, AppChatItem> | null>(null)
   // 上一次拉历史对应的「会话+地址+令牌」；没变说明只是实时流重连，不需要清空列表
   const historyKeyRef = useRef("")
+  // 实时流是否连上过；之后的每次（重）连都要重拉历史补漏
+  const sseEverOnlineRef = useRef(false)
 
   // 会话运行与未读状态
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set())
@@ -248,6 +250,41 @@ export default function MobileApp() {
     void connectWithConfig(pairCfg)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 线路重选：Wi-Fi ↔ 移动网络切换后原地址可能已不通，而实时流只会对着它一直重试
+  const pairCfgRef = useRef(pairCfg)
+  pairCfgRef.current = pairCfg
+  const reselectingRef = useRef(false)
+  const reselectRoute = useCallback(async () => {
+    const cfg = pairCfgRef.current
+    if (!cfg.token || reselectingRef.current) return
+    reselectingRef.current = true
+    try {
+      const best = await resolveBestRoute(cfg)
+      // 两条线路都不通就不动：实时流自己会重试，也不该在后台把配对弹窗弹出来；
+      // 探测期间配置被改过（重新配对）则丢弃本次结果
+      if (best.connected && pairCfgRef.current === cfg) setRoute(best)
+    } finally {
+      reselectingRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!route.connected) return
+    const onOnline = () => void reselectRoute()
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void reselectRoute()
+    }
+    window.addEventListener("online", onOnline)
+    document.addEventListener("visibilitychange", onVisible)
+    // 实时流断着时网络事件可能漏掉，周期性兜底
+    const timer = sseOnline ? 0 : window.setInterval(() => void reselectRoute(), 15000)
+    return () => {
+      window.removeEventListener("online", onOnline)
+      document.removeEventListener("visibilitychange", onVisible)
+      window.clearInterval(timer)
+    }
+  }, [route.connected, sseOnline, reselectRoute])
+
   // 建立 SSE 实时流
   useEffect(() => {
     if (!route.connected || !route.activeUrl || !pairCfg.token) {
@@ -305,7 +342,6 @@ export default function MobileApp() {
       }
     }
 
-    let everOnline = false
     const disconnect = connectMobileEvents(
       route.activeUrl,
       pairCfg.token,
@@ -314,9 +350,10 @@ export default function MobileApp() {
         setSseOnline(online)
         if (!online) return
         void refreshBootstrap(route.activeUrl, pairCfg.token)
-        // 断线期间错过的消息只能靠重拉当前会话历史补回；首次连上时历史由下面的 effect 负责
-        if (everOnline) setResyncTick((n) => n + 1)
-        everOnline = true
+        // 断线期间错过的消息只能靠重拉当前会话历史补回；第一次连上时历史由下面的 effect 负责。
+        // 标记放在组件级：换线路后的新连接同样要补漏
+        if (sseEverOnlineRef.current) setResyncTick((n) => n + 1)
+        sseEverOnlineRef.current = true
       },
     )
 
@@ -355,9 +392,9 @@ export default function MobileApp() {
     }
     if (!route.connected || !route.activeUrl || !pairCfg.token) return
     const id = appChatSessionId(selected)
-    // 换会话/地址/令牌才清空重载；只是实时流重连（resyncTick）时保留旧列表，
+    // 换会话/令牌才清空重载；实时流重连（resyncTick）、线路切换（同一台电脑换条路）时保留旧列表，
     // 拉回来后一次性替换，避免网络刚恢复就闪空白、拉取失败时列表被清掉
-    const key = `${selected}\n${route.activeUrl}\n${pairCfg.token}`
+    const key = `${selected}\n${pairCfg.token}`
     const fresh = historyKeyRef.current !== key
     historyKeyRef.current = key
     const live = new Map<string, AppChatItem>()
