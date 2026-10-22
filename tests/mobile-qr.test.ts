@@ -30,7 +30,7 @@ function renderQrFrame(text: string, scale: number, level: "L" | "M") {
 }
 
 describe("scan desktop pair QR", () => {
-  const token = "aefb32d65b90befe59480d48b6e8236b51ce4d3c4f57b1f4"
+  const token = "0123456789abcdef0123456789abcdef0123456789abcdef"
   const payload = buildPairPayload({
     name: "DESKTOP-PC",
     token,
