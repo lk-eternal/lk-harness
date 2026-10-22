@@ -5,15 +5,15 @@ const PAIR_STORAGE_KEY = "lk-harness:mobile-pair:v1"
 const THEME_STORAGE_KEY = "lk-harness:mobile-theme:v1"
 
 export interface MobilePairConfig {
-  /** 云服务器公网穿透地址 */
+  /** 公网穿透地址 */
   pubUrl: string
-  /** 公司局域网地址 */
+  /** 局域网地址 */
   lanUrl: string
   /** 访问令牌 */
   token: string
   /** 电脑名称 */
   hostName?: string
-  /** 线路偏好：auto=局域网优先自动切换；pub=强制云服务器；lan=强制局域网 */
+  /** 线路偏好：auto=局域网优先自动切换；pub=强制公网；lan=强制局域网 */
   preferRoute?: "auto" | "pub" | "lan"
 }
 
@@ -262,7 +262,7 @@ async function pingEndpoint(baseUrl: string, token: string, timeoutMs = 2200): P
 
 /**
  * 双线路自动择优：
- * - auto：先用 1.6s 探测公司局域网地址（若配置了），通则走局域网；不通则走云服务器公网地址
+ * - auto：先用 1.6s 探测局域网地址（若配置了），通则走局域网；不通则走公网地址
  * - lan / pub：按指定线路连接，失败时自动回退另一条可用线路
  */
 export async function resolveBestRoute(cfg: MobilePairConfig): Promise<RouteStatus> {
@@ -273,7 +273,7 @@ export async function resolveBestRoute(cfg: MobilePairConfig): Promise<RouteStat
   const lan = trimUrl(cfg.lanUrl)
   const pub = trimUrl(cfg.pubUrl)
   if (!lan && !pub) {
-    return { connected: false, activeUrl: "", routeType: "none", error: "请配置云服务器或局域网连接地址" }
+    return { connected: false, activeUrl: "", routeType: "none", error: "请配置公网或局域网连接地址" }
   }
 
   const order: { url: string; type: "lan" | "pub"; timeout: number }[] = []

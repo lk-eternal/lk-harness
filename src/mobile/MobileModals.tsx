@@ -109,7 +109,7 @@ export function SessionDrawer({
                 </div>
                 <p className="truncate text-[11px] text-fg-muted">
                   {route.connected
-                    ? `${route.routeType === "lan" ? "公司局域网" : "云服务器穿透"}${
+                    ? `${route.routeType === "lan" ? "局域网" : "公网穿透"}${
                         route.latencyMs ? ` · ${route.latencyMs}ms` : ""
                       }`
                     : route.error || "点击右上角配对电脑"}
@@ -723,7 +723,7 @@ export function PairSheet({
               </div>
               {route.connected && (
                 <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                  {route.routeType === "lan" ? "局域网直连" : "云服务器穿透"}
+                  {route.routeType === "lan" ? "局域网直连" : "公网穿透"}
                   {route.latencyMs ? ` · ${route.latencyMs}ms` : ""}
                 </span>
               )}
@@ -751,7 +751,7 @@ export function PairSheet({
           <div className="space-y-2.5">
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs text-fg-2">
-                <Cloud size={12} className="text-accent" />云服务器公网穿透地址（外网/移动网络）
+                <Cloud size={12} className="text-accent" />公网地址（离开局域网时使用）
               </label>
               <input
                 type="url"
@@ -771,7 +771,7 @@ export function PairSheet({
 
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs text-fg-2">
-                <Wifi size={12} className="text-emerald-400" />公司局域网地址（同一 Wi-Fi 自动低延迟直连）
+                <Wifi size={12} className="text-emerald-400" />局域网地址（同一 Wi-Fi 下自动直连）
               </label>
               <input
                 type="url"
@@ -803,7 +803,7 @@ export function PairSheet({
               {[
                 { id: "auto", label: "智能择优(推荐)" },
                 { id: "lan", label: "优先局域网" },
-                { id: "pub", label: "优先云服务器" },
+                { id: "pub", label: "优先公网" },
               ].map((opt) => (
                 <button
                   key={opt.id}

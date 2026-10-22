@@ -671,7 +671,7 @@ export default function MobileApp() {
           />
           <span>
             {route.connected
-              ? `${route.routeType === "lan" ? "局域网" : "云服务器"}${
+              ? `${route.routeType === "lan" ? "局域网" : "公网"}${
                   route.latencyMs ? ` · ${route.latencyMs}ms` : ""
                 }`
               : "未连接"}

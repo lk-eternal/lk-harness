@@ -75,8 +75,8 @@ export default function MobilePairPanel() {
 
   const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
   const frpcSample = [
-    "# 公司电脑 frpc.toml",
-    'serverAddr = "你的云服务器公网IP"',
+    "# 本机 frpc.toml",
+    'serverAddr = "你的公网服务器地址"',
     "serverPort = 7000",
     'auth.method = "token"',
     'auth.token = "填写你的frp连接密钥"',
@@ -90,7 +90,7 @@ export default function MobilePairPanel() {
   ].join("\n")
 
   const frpsSample = [
-    "# 云服务器 frps.toml",
+    "# 公网服务器 frps.toml",
     "bindPort = 7000",
     'auth.method = "token"',
     'auth.token = "填写你的frp连接密钥"',
@@ -111,7 +111,7 @@ export default function MobilePairPanel() {
               )}
             </div>
             <p className="mt-1 text-xs text-fg-muted">
-              开启后，手机 APP 可通过局域网或云服务器（frp）继续桌面端的「应用内对话」，实时同步流式输出与会话状态。
+              开启后，手机 APP 可通过局域网或公网穿透地址（如 frp）继续桌面端的「应用内对话」，实时同步流式输出与会话状态。
             </p>
           </div>
           <button
@@ -144,13 +144,13 @@ export default function MobilePairPanel() {
             />
           </div>
           <div className="col-span-2">
-            <label className="mb-1 block text-xs text-fg-muted">云服务器公网穿透地址（frp / 反向代理，选填）</label>
+            <label className="mb-1 block text-xs text-fg-muted">公网穿透地址（frp / 反向代理等，选填）</label>
             <input
               type="text"
               value={publicUrlInput}
               onChange={(e) => setPublicUrlInput(e.target.value)}
               onBlur={() => void saveEndpoints()}
-              placeholder={`例如 http://你的云服务器IP:${status.port} 或 https://lk.example.com`}
+              placeholder={`例如 http://你的公网IP:${status.port} 或 https://lk.example.com`}
               className={inputCls}
             />
           </div>
@@ -176,7 +176,7 @@ export default function MobilePairPanel() {
       </section>
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium text-fg-2">扫码配对（Redmi K70 Pro）</h3>
+        <h3 className="text-sm font-medium text-fg-2">扫码配对</h3>
         <div className="flex flex-col sm:flex-row items-center gap-5 rounded-lg border border-line bg-surface/40 p-4">
           {status.qrDataUrl && (
             <div className="shrink-0 rounded-xl bg-white p-2 shadow">
@@ -185,7 +185,7 @@ export default function MobilePairPanel() {
           )}
           <div className="min-w-0 flex-1 space-y-2.5 text-xs">
             <p className="text-fg-2 leading-relaxed">
-              用 <strong>LK Harness 手机端 APP</strong> 扫码即可保存连接（同时写入云服务器地址、公司局域网地址与鉴权密钥，出门/在公司自动择优切换）。
+              用 <strong>LK Harness 手机端 APP</strong> 扫码即可保存连接（同时写入公网地址、局域网地址与鉴权密钥，在局域网内自动直连，离开后自动切换到公网地址）。
             </p>
             <div>
               <label className="mb-1 block text-fg-muted">配对链接（也可直接发到手机浏览器打开）</label>
@@ -230,13 +230,13 @@ export default function MobilePairPanel() {
           onClick={() => setShowFrpGuide((v) => !v)}
           className="text-xs text-accent hover:text-accent-soft"
         >
-          {showFrpGuide ? "▾ 收起云服务器 frp 穿透配置模板" : "▸ 查看云服务器 frp 穿透配置模板（frps.toml / frpc.toml）"}
+          {showFrpGuide ? "▾ 收起 frp 穿透配置模板" : "▸ 查看 frp 穿透配置模板（frps.toml / frpc.toml）"}
         </button>
         {showFrpGuide && (
           <div className="grid grid-cols-1 gap-3 rounded-lg border border-line-subtle bg-surface/40 p-3 text-xs">
             <div>
               <div className="mb-1 flex items-center justify-between text-fg-3">
-                <span>1. 云服务器配置（<code>frps.toml</code>）</span>
+                <span>1. 公网服务器配置（<code>frps.toml</code>）</span>
                 <button type="button" onClick={() => void copyText("frps", frpsSample)} className="text-accent hover:text-accent-soft">
                   {copiedKey === "frps" ? "已复制" : "复制"}
                 </button>
@@ -245,7 +245,7 @@ export default function MobilePairPanel() {
             </div>
             <div>
               <div className="mb-1 flex items-center justify-between text-fg-3">
-                <span>2. 公司电脑配置（<code>frpc.toml</code>）</span>
+                <span>2. 本机配置（<code>frpc.toml</code>）</span>
                 <button type="button" onClick={() => void copyText("frpc", frpcSample)} className="text-accent hover:text-accent-soft">
                   {copiedKey === "frpc" ? "已复制" : "复制"}
                 </button>

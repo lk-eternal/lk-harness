@@ -20,7 +20,7 @@ concurrency:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    name: Build Android APK (Redmi K70 Pro)
+    name: Build Android APK
     permissions:
       contents: write
 
