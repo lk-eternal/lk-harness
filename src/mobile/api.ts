@@ -57,7 +57,6 @@ export interface MobileBootstrapData {
   quickModels: MobileQuickModel[]
   resources: AgentResource[]
   usageBytes: number
-  runningSessions: string[]
 }
 
 export interface RouteStatus {
@@ -73,7 +72,7 @@ export type MobileStreamMessage =
   | { type: "ready"; ts: number }
   | { type: "chat"; event: AppChatEvent }
   | { type: "titles"; titles: Record<string, string> }
-  | { type: "session-status"; status: Record<string, string> }
+  | { type: "sessions" }
 
 function trimUrl(raw: string): string {
   return raw.trim().replace(/\/+$/, "")

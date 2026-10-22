@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react"
 import { appChatSessionId, type AppChatItem } from "../shared/app-chat-types"
+import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
   APP_CHANNEL_CHAT_ID,
   channelIdFromSessionKey,
@@ -135,8 +136,8 @@ export default function MobileApp() {
   selectedRef.current = selected
 
   // 会话运行与未读状态
-  const [workingIds, setWorkingIds] = useState<Set<string>>(new Set())
   const [unreadIds, setUnreadIds] = useState<Set<string>>(new Set())
+  const [activity, setActivity] = useState<Record<string, SessionActivity>>({})
 
   // 当前会话消息与输入状态
   const [items, setItems] = useState<AppChatItem[]>([])
@@ -186,9 +187,6 @@ export default function MobileApp() {
         setQuickModels(data.quickModels ?? [])
         setResources(data.resources ?? [])
         setUsageBytes(data.usageBytes ?? null)
-        if (Array.isArray(data.runningSessions)) {
-          setWorkingIds(new Set(data.runningSessions.map(appChatSessionId)))
-        }
         setDrafts((prev) =>
           prev.filter(
             (d) =>
@@ -237,53 +235,29 @@ export default function MobileApp() {
       setSseOnline(false)
       return
     }
+    let refreshTimer = 0
     const handleStream = (msg: MobileStreamMessage) => {
       if (msg.type === "titles") {
         setTitles(msg.titles ?? {})
         return
       }
-      if (msg.type === "session-status") {
-        const statusMap = msg.status ?? {}
-        const now = Date.now()
-        setWorkingIds((prev) => {
-          const next = new Set(prev)
-          for (const [k, s] of Object.entries(statusMap)) {
-            const id = appChatSessionId(k)
-            if (s === "starting" || s === "running" || s === "compacting") {
-              next.add(id)
-            } else if (s === "idle" || s === "stopped" || s === "failed") {
-              next.delete(id)
-            }
-          }
-          return next
-        })
-        setUnreadIds((prev) => {
-          const next = new Set(prev)
-          const curId = selectedRef.current ? appChatSessionId(selectedRef.current) : ""
-          for (const [k, s] of Object.entries(statusMap)) {
-            const id = appChatSessionId(k)
-            if ((s === "idle" || s === "stopped" || s === "failed") && id && id !== curId) {
-              next.add(id)
-            }
-          }
-          return next
-        })
-        setLastActive((prev) => {
-          let changed = false
-          const next = { ...prev }
-          for (const [k, s] of Object.entries(statusMap)) {
-            if (s === "starting" || s === "running" || s === "compacting") {
-              next[appChatSessionId(k)] = now
-              changed = true
-            }
-          }
-          return changed ? next : prev
-        })
+      if (msg.type === "sessions") {
+        // 电脑端会话进程有启停：稍等片刻合并连续事件，再拉一次会话树刷新「回复中」状态
+        window.clearTimeout(refreshTimer)
+        refreshTimer = window.setTimeout(() => {
+          void refreshBootstrap(route.activeUrl, pairCfg.token)
+        }, 400)
         return
       }
       if (msg.type === "chat") {
         const ev = msg.event
         if (ev.type === "item") {
+          const activityId = appChatSessionId(ev.sessionKey)
+          setActivity((prev) => {
+            const cur = prev[activityId]
+            const next = applyActivityItem(cur, ev.item)
+            return next === cur ? prev : { ...prev, [activityId]: next }
+          })
           if (sameChatSession(ev.sessionKey, selectedRef.current)) {
             setItems((prev) => upsertItems(prev, [ev.item]))
           } else if (ev.item.kind === "assistant" && ev.item.finished) {
@@ -296,6 +270,13 @@ export default function MobileApp() {
           return
         }
         // cleared 事件
+        setActivity((prev) => {
+          if (!ev.sessionKey) return {}
+          const clearedId = appChatSessionId(ev.sessionKey)
+          if (!(clearedId in prev)) return prev
+          const { [clearedId]: _dropped, ...rest } = prev
+          return rest
+        })
         const cur = selectedRef.current
         const hit = ev.sessionKey
           ? sameChatSession(ev.sessionKey, cur)
@@ -324,6 +305,7 @@ export default function MobileApp() {
     return () => {
       disconnect()
       window.clearInterval(timer)
+      window.clearTimeout(refreshTimer)
     }
   }, [route.connected, route.activeUrl, pairCfg.token, refreshBootstrap])
 
@@ -354,6 +336,7 @@ export default function MobileApp() {
         return
       }
       setItems((prev) => upsertItems(r.items ?? [], prev))
+      setActivity((prev) => ({ ...prev, [id]: activityFromItems(r.items ?? []) }))
     })
     return () => {
       cancelled = true
@@ -363,11 +346,12 @@ export default function MobileApp() {
   const sessionStatus = useCallback(
     (key: string, running: boolean): "idle" | "working" | "unread" => {
       const id = appChatSessionId(key)
-      if (running || workingIds.has(id)) return "working"
+      // 进程在线只是前提，还要有未收口的回合或待回应的用户消息才算「回复中」
+      if (running && isActivityBusy(activity[id])) return "working"
       if (unreadIds.has(id) && !sameChatSession(key, selected)) return "unread"
       return "idle"
     },
-    [workingIds, unreadIds, selected],
+    [activity, unreadIds, selected],
   )
 
   const sessionName = useCallback(
