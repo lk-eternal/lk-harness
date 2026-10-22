@@ -344,9 +344,11 @@ function appendLlmLog(session: LlmSession, kind: "thinking" | "text", delta: str
   if (agg.buf.length >= LOG_FLUSH_LEN) flushLlmLog(session)
 }
 
-/** 用户可见阶段结束：assistant 正常收束且无后续 toolCall（Pi stopReason=stop） */
+/** 用户可见阶段结束：assistant 正常收束且不再调用工具；部分网关带 toolCall 时也返回 finish_reason=stop，不能只看 stopReason */
 function isAssistantVisibleComplete(message: AgentMessage): boolean {
-  return message.role === "assistant" && message.stopReason === "stop"
+  return message.role === "assistant"
+    && message.stopReason === "stop"
+    && !message.content.some((block) => block.type === "toolCall")
 }
 
 function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): void {
