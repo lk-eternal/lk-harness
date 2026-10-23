@@ -28,14 +28,20 @@ export function useStickToBottom(
     return () => io.disconnect()
   }, [containerRef])
 
+  // 滚到容器真正的底部。不能用 sentinel.scrollIntoView({ block: "end" })：它只把哨兵对齐到可视区下沿，
+  // 哨兵之后还有容器的底内边距，于是每次自动滚动都停在离真底部一个内边距的位置，
+  // 用户明明已经在最底部，内容一刷新就被往回拽一小段（视觉上就是「整体往上滚了一点」）
+  const scrollToEnd = () => {
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
+
   useLayoutEffect(() => {
     if (!stickRef.current) return
-    sentinelRef.current?.scrollIntoView({ block: "end" })
-  }, contentDeps)
+    scrollToEnd()
+  }, contentDeps) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const scrollToBottom = () => {
-    sentinelRef.current?.scrollIntoView({ block: "end" })
-  }
+  const scrollToBottom = scrollToEnd
 
   return { sentinelRef, atBottom, stickRef, scrollToBottom }
 }
