@@ -57,12 +57,25 @@ export function getSdkWorkerPhase(sessionKey: string): SdkWorkerPhase | null {
   return findWorkerState(sessionKey)?.phase ?? null
 }
 
+/** 取消会话当前的 run（best-effort，不等待结果；没有进行中的 run 就什么都不做） */
+export function cancelRunQuietly(session: { run: { cancel(): Promise<unknown> } | null }): void {
+  const run = session.run
+  if (!run) return
+  try {
+    void Promise.resolve(run.cancel()).catch(() => undefined)
+  } catch { /* cancel 同步抛错也不影响停止流程 */ }
+}
+
 export async function stopSdkWorker(sessionKey: string): Promise<void> {
   const w = findWorkerState(sessionKey)
   if (!w) return
   w.phase = "stopping"
   w.abort.abort()
   w.session.abortController.abort()
+  // 事件流只会在下一个事件到来或 run 结束时才发现 abort：Agent 正卡在长工具调用（等 shell、等网络）时
+  // 不会有事件，worker 要一直挂到下面的超时才退出——「停止」「立即发送」都白等 5 秒。
+  // 所以这里直接 cancel 当前 run，让事件流立刻收尾
+  cancelRunQuietly(w.session)
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
     await Promise.race([

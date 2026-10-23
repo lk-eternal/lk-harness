@@ -1240,6 +1240,9 @@ export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): 
   openStreamForSdkTurn(session)
   pushUiLog("SDK", "INFO", `[${session.sessionKey}] worker 回合 Prompt:\n${prompt}`)
   const run = await sendSdkPrompt(session, prompt)
+  // 发送途中被停止：那时 session.run 还没登记，stopSdkWorker 没有 run 可取消；这里补一刀，
+  // 否则事件流要等到下一个事件才发现已 abort
+  if (session.abortController.signal.aborted) void run.cancel().catch(() => undefined)
   return startRunLifecycle(session, run, { workerHosted: true })
 }
 
