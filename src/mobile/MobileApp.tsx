@@ -18,7 +18,8 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { appChatSessionId, type AppChatItem } from "../shared/app-chat-types"
+import { appChatSessionId, chatStreamItems, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
   APP_CHANNEL_CHAT_ID,
@@ -28,6 +29,7 @@ import {
   type AgentResource,
 } from "../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../shared/temp-workspace"
+import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import useInlineModal from "../renderer/components/useInlineModal"
 import { modelSlug } from "../renderer/model-utils"
@@ -40,6 +42,7 @@ import {
   fetchBootstrap,
   fetchHistory,
   fetchSessionModels,
+  fetchUpdateInfo,
   imageExtOf,
   loadMobileTheme,
   loadPairConfig,
@@ -58,26 +61,14 @@ import {
   type MobileTheme,
   type RouteStatus,
 } from "./api"
+import { APP_VERSION } from "./app-version"
 import { useBackToClose } from "./back-stack"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
+import { isNativeShell, openInSystemBrowser } from "./native-browser"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
-
-function upsertItems(prev: AppChatItem[], incoming: AppChatItem[]): AppChatItem[] {
-  if (incoming.length === 0) return prev
-  const next = prev.slice()
-  const index = new Map(next.map((it, i) => [it.id, i]))
-  for (const it of incoming) {
-    const at = index.get(it.id)
-    if (at === undefined) {
-      index.set(it.id, next.length)
-      next.push(it)
-    } else {
-      next[at] = it
-    }
-  }
-  return next
-}
+import UpdateBanner from "./UpdateBanner"
+import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
 
 function dirName(dir: string | undefined): string | undefined {
   return dir?.split(/[\\/]/).filter(Boolean).pop()
@@ -129,8 +120,12 @@ export default function MobileApp() {
   const [items, setItems] = useState<AppChatItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [actionError, setActionError] = useState("")
+  /** App（APK）有新版本时的提示；网页版由电脑端直接提供，版本天然一致，不查 */
+  const [update, setUpdate] = useState<PendingUpdate | null>(null)
   const [text, setText] = useState("")
   const [pendingImages, setPendingImages] = useState<{ path: string; previewUrl: string }[]>([])
+  /** 正在放大查看的待发送图片 */
+  const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
   const [modelBusy, setModelBusy] = useState(false)
 
@@ -147,6 +142,8 @@ export default function MobileApp() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const moreButtonRef = useRef<HTMLButtonElement>(null)
+  /** 刚删除的会话：删除前发出的那次刷新可能晚返回，带着已删会话盖掉列表，命中这里的先不显示 */
+  const deletedRef = useRef<DeletedSessions>(new Map())
 
   const views = useMemo(() => withDrafts(serverViews, drafts, draftModels), [serverViews, drafts, draftModels])
   const allTabs = useMemo(() => views.flatMap((v) => v.tabs), [views])
@@ -182,7 +179,7 @@ export default function MobileApp() {
         const data = await fetchBootstrap(baseUrl, token)
         if (!data.ok) return
         setHostname(data.hostname || "")
-        setServerViews(data.channels ?? [])
+        setServerViews(hideDeletedTabs(data.channels ?? [], deletedRef.current))
         setTitles(data.titles ?? {})
         setLastActive((prev) => ({ ...prev, ...(data.lastActive ?? {}) }))
         setQuickModels(data.quickModels ?? [])
@@ -240,6 +237,31 @@ export default function MobileApp() {
   useEffect(() => {
     void connectWithConfig(pairCfg)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 打开 App 连上电脑端后查一次有没有新版（只在 APK 里查）。
+  // 电脑端没查到时不算查过，下次线路变化再试；失败一律静默，不打扰对话
+  const updateCheckedRef = useRef(false)
+  useEffect(() => {
+    if (updateCheckedRef.current || !route.connected || !route.activeUrl || !pairCfg.token) return
+    if (!isNativeShell()) return
+    void fetchUpdateInfo(route.activeUrl, pairCfg.token).then((info) => {
+      if (!info.ok) return
+      updateCheckedRef.current = true
+      setUpdate(pendingUpdate(info, APP_VERSION, loadDismissedUpdate()))
+    })
+  }, [route.connected, route.activeUrl, pairCfg.token])
+
+  const startUpdate = useCallback(async () => {
+    if (!update) return
+    // 交给系统浏览器下载 APK，下完点开即由系统安装器接手；签名一致才能覆盖安装
+    if (!(await openInSystemBrowser(update.apkUrl))) {
+      setActionError(`无法调起系统浏览器，请手动打开下载：${update.releaseUrl}`)
+    }
+  }, [update])
+  const dismissUpdate = useCallback(() => {
+    if (update) saveDismissedUpdate(update.version)
+    setUpdate(null)
+  }, [update])
 
   // 线路重选：Wi-Fi ↔ 移动网络切换后原地址可能已不通，而实时流只会对着它一直重试
   const pairCfgRef = useRef(pairCfg)
@@ -315,6 +337,14 @@ export default function MobileApp() {
             ...prev,
             [appChatSessionId(ev.sessionKey)]: Date.now(),
           }))
+          return
+        }
+        if (ev.type === "remove") {
+          // 电脑端暂存区里撤回了一条排队消息
+          if (sameChatSession(ev.sessionKey, selectedRef.current)) {
+            liveBufferRef.current?.delete(ev.itemId)
+            setItems((prev) => (prev.some((it) => it.id === ev.itemId) ? prev.filter((it) => it.id !== ev.itemId) : prev))
+          }
           return
         }
         // cleared 事件
@@ -472,6 +502,8 @@ export default function MobileApp() {
   const busy =
     (!!selected && sessionStatus(selected, !!currentTab?.running) === "working") ||
     items.some((it) => it.kind === "assistant" && !it.finished)
+  // 电脑端暂存区里排队中的消息（Agent 还没收到）不进聊天流，投递后才出现
+  const streamItems = useMemo(() => chatStreamItems(items), [items])
 
   const workspaceDir = selected ? workspaceDirFromSessionKey(selected) : undefined
   const isTemp = isTempChatWorkspace(workspaceDir)
@@ -571,6 +603,9 @@ export default function MobileApp() {
       delete next[id]
       return next
     })
+    // 先从列表里拿掉，再刷新：正在进行中的刷新可能是删除前发出的，晚到时不能让它把会话带回来
+    markSessionDeleted(deletedRef.current, key)
+    setServerViews((prev) => hideDeletedTabs(prev, deletedRef.current))
     await refreshBootstrap(route.activeUrl, pairCfg.token)
   }
 
@@ -667,6 +702,7 @@ export default function MobileApp() {
 
   useBackToClose(moreMenuOpen, () => setMoreMenuOpen(false))
   useBackToClose(ModalPortal !== null, dismissConfirm)
+  useBackToClose(previewImage !== null, () => setPreviewImage(null))
   const moreAnchor = moreMenuOpen ? moreButtonRef.current?.getBoundingClientRect() : undefined
 
   return (
@@ -826,11 +862,21 @@ export default function MobileApp() {
         </div>
       </header>
 
+      {/* 新版本提示条（仅 App 内出现） */}
+      {update && (
+        <UpdateBanner
+          update={update}
+          currentVersion={APP_VERSION}
+          onUpdate={() => void startUpdate()}
+          onDismiss={dismissUpdate}
+        />
+      )}
+
       {/* ═══ 中间对话消息区 ═══ */}
       {selected && route.connected ? (
         <MobileItemList
           key={selected}
-          items={items}
+          items={streamItems}
           loading={historyLoading}
           busy={busy}
           workspaceName={workspaceLabel}
@@ -879,6 +925,7 @@ export default function MobileApp() {
                 <img
                   src={img.previewUrl}
                   alt=""
+                  onClick={() => setPreviewImage(img.previewUrl)}
                   className="h-14 w-14 rounded-xl border border-line object-cover"
                 />
                 <button
@@ -1049,6 +1096,7 @@ export default function MobileApp() {
       />
 
       {ModalPortal}
+      {previewImage && <ImageLightbox src={previewImage} onClose={() => setPreviewImage(null)} />}
     </div>
   )
 }

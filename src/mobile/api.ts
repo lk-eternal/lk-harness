@@ -2,6 +2,7 @@ import { hmac } from "@noble/hashes/hmac.js"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js"
 import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
+import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
 import { challengeMessage } from "../shared/mobile-challenge"
 import { drainSseFrames } from "./sse-parse"
@@ -330,6 +331,11 @@ async function callApi<T extends ApiResult>(baseUrl: string, token: string, path
 
 export async function fetchBootstrap(baseUrl: string, token: string): Promise<MobileBootstrapData> {
   return await callApi<MobileBootstrapData>(baseUrl, token, "/api/mobile/bootstrap", undefined, "GET")
+}
+
+/** 向电脑端问最新发布的版本（电脑端负责去查并缓存） */
+export async function fetchUpdateInfo(baseUrl: string, token: string): Promise<MobileUpdateInfo> {
+  return await callApi<MobileUpdateInfo>(baseUrl, token, "/api/mobile/update-info", undefined, "GET")
 }
 
 export async function fetchHistory(baseUrl: string, token: string, sessionKey: string): Promise<{ ok: boolean; items?: AppChatItem[]; error?: string }> {

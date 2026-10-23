@@ -83,6 +83,8 @@ jobs:
   mobile-apk:
     if: startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/mobile-apk.yml
+    # APK 要用 Secrets 里的固定签名密钥，被调用的工作流默认拿不到
+    secrets: inherit
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

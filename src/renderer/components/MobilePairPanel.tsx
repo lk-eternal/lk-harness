@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { Check, Copy, Eye, EyeOff, RefreshCw, Smartphone } from "lucide-react"
 import QRCode from "qrcode"
-
-/** 手机端 Android 安装包（始终指向 GitHub 最新发布；资产名由 mobile-apk.yml 固定为 lk-harness-mobile.apk） */
-const MOBILE_APK_URL = "https://github.com/lk-eternal/lk-harness/releases/latest/download/lk-harness-mobile.apk"
+// 手机端 Android 安装包地址（始终指向 GitHub 最新发布；资产名由 mobile-apk.yml 固定为 lk-harness-mobile.apk）
+import { MOBILE_APK_URL } from "../../shared/app-update"
 
 export default function MobilePairPanel() {
   const [status, setStatus] = useState<MobileServerStatus | null>(null)

@@ -30,6 +30,8 @@ import { initSessionModelStore, listQuickModels } from "../src/shared/session-mo
 import type { AppChatSendPayload } from "../src/shared/app-chat-types"
 import { computeChallengeProof, createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
 import { MOBILE_NONCE_PATTERN } from "../src/shared/mobile-challenge.js"
+import { createMobileUpdateInfoProvider } from "./mobile-update-info"
+import { fetchLatestRelease } from "./updater"
 import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
 import type { MobilePairPayload } from "../src/shared/mobile-pair.js"
 
@@ -69,6 +71,7 @@ let activePort = DEFAULT_MOBILE_PORT
 let lastError = ""
 const sseClients = new Set<http.ServerResponse>()
 const fileTickets = createFileTicketStore()
+const getMobileUpdateInfo = createMobileUpdateInfoProvider({ fetchLatest: fetchLatestRelease })
 let unsubEvents: (() => void)[] = []
 
 function ensureToken(): string {
@@ -353,6 +356,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
 
   if (req.method === "GET" && pathname === "/api/mobile/bootstrap") {
     sendJson(res, 200, await buildBootstrap())
+    return
+  }
+
+  // 手机 App 的「有没有新版」：由电脑端去查并缓存，手机自己不用能访问 GitHub
+  if (req.method === "GET" && pathname === "/api/mobile/update-info") {
+    sendJson(res, 200, await getMobileUpdateInfo())
     return
   }
 

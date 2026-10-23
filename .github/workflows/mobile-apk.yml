@@ -10,6 +10,7 @@ on:
       - "src/mobile/**"
       - "capacitor.config.json"
       - "vite.mobile.config.ts"
+      - "resources/icon.png"
       - ".github/workflows/mobile-apk.yml"
 
 concurrency:
@@ -45,11 +46,17 @@ jobs:
 
       - name: Generate Capacitor Android Project & Build APK
         run: |
-          npm install --no-save @capacitor/core@^7.0.0 @capacitor/cli@^7.0.0 @capacitor/android@^7.0.0 @capacitor/browser@^7.0.0
+          # 不能加 --no-save：cap sync 靠 package.json 的依赖清单识别原生插件，--no-save 装的包不会被登记，
+          # APK 里就缺插件（之前发布的 APK 里 capacitor.plugins.json 是空数组，「下载文件」交给系统浏览器因此一直没反应）。
+          # 这里只改 CI 工作区里的 package.json / lock，不会提交
+          npm install @capacitor/core@^7.0.0 @capacitor/cli@^7.0.0 @capacitor/android@^7.0.0 @capacitor/browser@^7.0.0 @capacitor/assets@^3.0.5
           if [ ! -d "android" ]; then
             npx cap add android
           fi
           npx cap sync android
+          # 守卫：App 代码依赖 Browser 插件，没登记上就让构建失败，别再发出一个下载不了文件的 APK
+          grep -q '"@capacitor/browser"' android/app/src/main/assets/capacitor.plugins.json \
+            || { echo "::error::cap sync 没有登记 @capacitor/browser，APK 内文件下载会失效"; exit 1; }
           # 1) 允许局域网 HTTP 与公网 HTTPS 双线路访问 (usesCleartextTraffic)
           # 2) 申请相机权限，App 内扫码配对要用（getUserMedia 经 Capacitor 的 WebChromeClient 转成系统授权弹窗）
           python3 - <<'PY'
@@ -67,10 +74,127 @@ jobs:
               text = text.replace("<application", camera, 1)
           manifest.write_text(text, encoding="utf-8")
           PY
+          # 3) 桌面端同款图标：cap add 生成的是 Capacitor 自带的默认图标，用 resources/icon.png 覆盖。
+          #    自适应图标 = 原图当前景 + 纯白底（与图标自身的白底融为一体，圆形/圆角方形遮罩下都不会露边）。
+          #    背景图必须给：不给的话生成的 XML 仍会引用 @mipmap/ic_launcher_background，打包会找不到资源。
+          mkdir -p .icon-assets
+          cp resources/icon.png .icon-assets/icon-only.png
+          cp resources/icon.png .icon-assets/icon-foreground.png
+          python3 - <<'PY'
+          import struct, zlib
+          from pathlib import Path
+
+          def solid_png(path, size, rgb):
+              raw = (b"\x00" + bytes(rgb) * size) * size
+              def chunk(tag, data):
+                  body = tag + data
+                  return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+              ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
+              Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+          solid_png(".icon-assets/icon-background.png", 1024, (255, 255, 255))
+          PY
+          # 只给图标源图、不给启动图源图：不会改动默认启动画面
+          npx capacitor-assets generate --android --assetPath .icon-assets --iconBackgroundColor '#ffffff'
+
+      # 版本号 + 固定签名。
+      # Android 只允许「同一把签名密钥」的包覆盖安装；之前每次构建都现生成一把调试密钥，所以每个包都互相装不上。
+      # 现在用存在 GitHub Secrets 里的固定密钥（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS，
+      # PKCS12 格式，密钥口令与库口令相同）签 release 包。
+      # 没配密钥时：打 tag 的正式发布直接失败（不能发出一个装不上的包）；其他构建退回调试签名并给出警告。
+      # versionCode 也必须随版本递增，系统安装器靠它判断是不是「更新」；Capacitor 模板里写死的是 1。
+      - name: Set version and signing config
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          SIGNED=0
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ] && [ -n "$ANDROID_KEYSTORE_PASSWORD" ] && [ -n "$ANDROID_KEY_ALIAS" ]; then
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/lk-harness-release.p12"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/lk-harness-release.p12" >> "$GITHUB_ENV"
+            SIGNED=1
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "::error::正式发布必须用固定密钥签名，但没有配置 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS。用调试密钥签的包装不上，请先到仓库 Settings → Secrets 配好"
+            exit 1
+          else
+            echo "::warning::没有配置签名密钥，本次产物用临时调试签名，不能覆盖安装已有版本，仅供临时测试"
+          fi
+          echo "SIGNED=$SIGNED" >> "$GITHUB_ENV"
+          export SIGNED
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+
+          version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          m = re.match(r"^(\d+)\.(\d+)\.(\d+)", version)
+          if not m:
+              raise SystemExit(f"package.json 的 version 不是 x.y.z: {version}")
+          major, minor, patch = (int(x) for x in m.groups())
+          if minor > 99 or patch > 99:
+              raise SystemExit("minor/patch 超过 99，versionCode 的换算规则会错位，需要先调整规则")
+          code = major * 10000 + minor * 100 + patch
+
+          gradle = Path("android/app/build.gradle")
+          text = gradle.read_text(encoding="utf-8")
+          text, n_code = re.subn(r"versionCode\s+\d+", f"versionCode {code}", text, count=1)
+          text, n_name = re.subn(r'versionName\s+"[^"]*"', f'versionName "{version}"', text, count=1)
+          if n_code != 1 or n_name != 1:
+              raise SystemExit("android/app/build.gradle 里没找到 versionCode / versionName，Capacitor 模板可能变了")
+
+          if os.environ["SIGNED"] == "1":
+              anchor = "    buildTypes {\n        release {\n"
+              if anchor not in text:
+                  raise SystemExit("android/app/build.gradle 里没找到 buildTypes.release，Capacitor 模板可能变了")
+              signing = (
+                  "    signingConfigs {\n"
+                  "        release {\n"
+                  '            storeFile file(System.getenv("ANDROID_KEYSTORE_FILE"))\n'
+                  '            storeType "pkcs12"\n'
+                  '            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n'
+                  '            keyAlias System.getenv("ANDROID_KEY_ALIAS")\n'
+                  '            keyPassword System.getenv("ANDROID_KEYSTORE_PASSWORD")\n'
+                  "        }\n"
+                  "    }\n"
+                  + anchor
+                  + "            signingConfig signingConfigs.release\n"
+              )
+              text = text.replace(anchor, signing, 1)
+
+          gradle.write_text(text, encoding="utf-8")
+          print(f"versionName={version} versionCode={code} signed={os.environ['SIGNED']}")
+          PY
+
+      - name: Build APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../lk-harness-mobile.apk
+          if [ "$SIGNED" = "1" ]; then
+            ./gradlew assembleRelease
+            cp app/build/outputs/apk/release/app-release.apk ../lk-harness-mobile.apk
+          else
+            ./gradlew assembleDebug
+            cp app/build/outputs/apk/debug/app-debug.apk ../lk-harness-mobile.apk
+          fi
+
+      # 签名自检：证书必须是约定的那把，换了就让构建失败，而不是发出一个用户装不上的包。
+      # EXPECTED_CERT_SHA256 是证书指纹，公开信息，不是密钥；换密钥时要同步改它，并告知用户需卸载重装一次。
+      - name: Verify APK signature and version
+        env:
+          EXPECTED_CERT_SHA256: 9f7230c9ea5044bed5779e5f176f3cbbad02bbbec48ccbf68a16b0024997a7c1
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs lk-harness-mobile.apk | tee /tmp/apk-certs.txt
+          ACTUAL=$(grep -m1 'certificate SHA-256 digest' /tmp/apk-certs.txt | awk '{print $NF}')
+          echo "APK 签名证书 SHA-256: $ACTUAL"
+          "$BT/aapt2" dump badging lk-harness-mobile.apk | head -1
+          if [ "$SIGNED" = "1" ] && [ -n "$EXPECTED_CERT_SHA256" ] && [ "$ACTUAL" != "$EXPECTED_CERT_SHA256" ]; then
+            echo "::error::APK 的签名证书（$ACTUAL）不是约定的那把（$EXPECTED_CERT_SHA256）。检查 ANDROID_KEYSTORE_* 这几个 Secrets 是否填对"
+            exit 1
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4

@@ -7,7 +7,7 @@ import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/ch
 import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
 import { useBackToClose } from "./back-stack"
-import { openInSystemBrowser } from "./native-browser"
+import { startFileDownload } from "./native-browser"
 
 function MobileRemoteImage({
   baseUrl,
@@ -131,16 +131,7 @@ function MobileFileCard({
     setError("")
     try {
       const url = await requestMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey)
-      // 服务端以 attachment 返回。App 内的 WebView 没有下载监听，<a download> 不会真的下载，
-      // 所以交给系统浏览器（由系统下载器处理）；普通浏览器里直接触发下载
-      if (await openInSystemBrowser(url)) return
-      const a = document.createElement("a")
-      a.href = url
-      a.download = item.name
-      a.rel = "noreferrer"
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
+      await startFileDownload(url, item.name)
     } catch (err) {
       setError(err instanceof Error ? err.message : "下载失败")
     } finally {
