@@ -168,6 +168,8 @@ const api = {
   appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
   appChatDeleteSession: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:delete-session", sessionKey),
   appChatRenameSession: (sessionKey: string, name: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:rename-session", sessionKey, name),
+  appChatQueueEdit: (sessionKey: string, messageId: string, text: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:queue-edit", sessionKey, messageId, text),
+  appChatQueueRemove: (sessionKey: string, messageId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:queue-remove", sessionKey, messageId),
   appChatNewTempSession: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:new-temp-session", channelId),
   appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
   appChatLastActive: (sessionKeys: string[]): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:last-active", sessionKeys),
@@ -200,6 +202,7 @@ const api = {
   exportDiagnostics: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("diagnostics:export"),
   stopSessionAgent: (sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey, clearQueue),
+  sendQueuedNow: (sessionKey: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("agent:send-queued-now", sessionKey),
   setSessionModel: (sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
     ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams, resourceId),
   listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }> =>

@@ -8,12 +8,14 @@ import SessionTitle from "../components/SessionTitle"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
+import QueuedStrip from "../components/chat/QueuedStrip"
 import DirPicker from "../components/chat/DirPicker"
 import ModelPicker, { type ModelChoice, type QuickModel } from "../components/chat/ModelPicker"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
-import { appChatSessionId } from "../../shared/app-chat-types"
+import { appChatSessionId, chatStreamItems, isQueuedUserItem } from "../../shared/app-chat-types"
+import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
@@ -96,6 +98,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const creatingRef = useRef(false)
   const moreMenuRef = useRef<HTMLDivElement>(null)
   const viewsRef = useRef<AppChannelView[]>([])
+  /** 刚删除的会话：删除前发出的那次刷新可能晚返回，带着已删会话盖掉列表，命中这里的先不显示 */
+  const deletedRef = useRef<DeletedSessions>(new Map())
   const views = useMemo(() => withDrafts(serverViews, drafts, draftModels), [serverViews, drafts, draftModels])
   viewsRef.current = views
   const { showConfirm, ModalPortal } = useInlineModal()
@@ -114,13 +118,13 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       if (active.ok) setLastActive(active.times ?? {})
       setNow(Date.now())
       setResources(cfg.agentResources ?? [])
-      setViews(appChannels.map((c) => ({
+      setViews(hideDeletedTabs(appChannels.map((c) => ({
         channelId: c.channelId,
         name: appCfgs.get(c.channelId)?.name ?? c.name,
         agentResourceId: appCfgs.get(c.channelId)?.agentResourceId,
         tabs: c.mainTabs,
         activeKey: c.activeKey,
-      })))
+      })), deletedRef.current))
       setTreeError(tree.ok ? "" : (tree.error ?? "读取会话失败"))
     } catch (e: unknown) {
       setTreeError(e instanceof Error ? e.message : String(e))
@@ -194,7 +198,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     return () => window.clearTimeout(t)
   }, [actionError])
 
-  const { items, loading, error: historyError } = useAppChatItems(selected)
+  const { items: allItems, loading, error: historyError } = useAppChatItems(selected)
+  /** 排队中的消息（Agent 还没收到）只在输入框上方的暂存区出现，投递后才进聊天流 */
+  const items = useMemo(() => chatStreamItems(allItems), [allItems])
+  const queuedItems = useMemo(() => allItems.filter(isQueuedUserItem), [allItems])
   const sessionStatus = useSessionActivity(active ? selected : null)
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
@@ -258,6 +265,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
+    // 先从列表里拿掉，再刷新：正在进行中的刷新可能是删除前发出的，晚到时不能让它把会话带回来
+    markSessionDeleted(deletedRef.current, t.sessionKey)
+    setViews((prev) => hideDeletedTabs(prev, deletedRef.current))
     await refresh()
     void refreshUsage()
   }
@@ -275,6 +285,28 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (!selected) return
     const r = await window.electronAPI.appChatSend({ sessionKey: selected, questionId, option })
     if (!r.ok) setActionError(r.error ?? "提交选择失败")
+  }
+
+  /** 暂存区：改排队中的消息；没改成（已被 Agent 收走等）返回 false，让编辑框保持打开 */
+  const editQueued = async (id: string, text: string): Promise<boolean> => {
+    if (!selected) return false
+    const r = await window.electronAPI.appChatQueueEdit(selected, id, text)
+    if (!r.ok) setActionError(r.error ?? "修改失败")
+    return r.ok
+  }
+
+  const removeQueued = async (id: string) => {
+    if (!selected) return
+    const r = await window.electronAPI.appChatQueueRemove(selected, id)
+    if (!r.ok) setActionError(r.error ?? "删除失败")
+  }
+
+  /** 暂存区「立即发送」：打断当前回合，排队的消息交给重新拉起的 Agent */
+  const sendQueuedNow = async () => {
+    if (!selected) return
+    const r = await window.electronAPI.sendQueuedNow(selected)
+    if (!r.ok) setActionError(r.error ?? "发送失败")
+    window.setTimeout(() => { void refresh() }, 600)
   }
 
   /** 停止并清空本会话排队消息，等价于 /x -c */
@@ -329,8 +361,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (!dir) return
     const r = await window.electronAPI.addChannelFavoriteWorkspace(channelId, dir)
     if (!r.ok) { setActionError(r.error ?? "添加目录失败"); return }
-    await refresh()
     const target = `${appChatSessionId(makeChatKey(channelId, APP_CHANNEL_CHAT_ID))}::${dir.replace(/[\\/]+/g, "/").toLowerCase()}`
+    deletedRef.current.delete(target) // 刚删掉的目录会话被重新打开：刷新前就要撤掉墓碑，不然新会话会被藏着
+    await refresh()
     const fresh = (await window.electronAPI.listDashboardTree()).channels
       .find((c) => c.channelId === channelId)?.mainTabs
       .find((t) => appChatSessionId(t.sessionKey) === target)
@@ -450,6 +483,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 <Composer
                   disabled={!selected}
                   busy={busy}
+                  top={<QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />}
                   footer={
                     <>
                       <DirPicker

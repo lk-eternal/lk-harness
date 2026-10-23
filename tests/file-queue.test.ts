@@ -16,6 +16,10 @@ import {
   deleteQueueMessage,
   deleteQueueMessagesByMessageId,
   clearAllQueueMessages,
+  hasClaimedMessage,
+  listPendingMessageIds,
+  removePendingMessage,
+  rewritePendingMessage,
 } from "../src/file-queue.js"
 
 const SESSION_A = "ch_a|oc_111::D:\\ws\\a"
@@ -306,5 +310,89 @@ describe("查询与删除", () => {
     expect(getQueueLength()).toBe(2)
     expect(clearAllQueueMessages()).toBe(2)
     expect(getQueueLength()).toBe(0)
+  })
+})
+
+describe("排队中消息的暂存区操作", () => {
+  it("hasClaimedMessage：消息被领取后、Agent 确认处理完之前为 true", () => {
+    expect(hasClaimedMessage(SESSION_A)).toBe(false)
+    pushToFileQueue("第一条", "m1", "test", SESSION_A)
+    expect(hasClaimedMessage(SESSION_A)).toBe(false) // 还在排队，没人领取
+    claimSessionMessages(SESSION_A)
+    expect(hasClaimedMessage(SESSION_A)).toBe(true)
+    // 领取之后又来的新消息仍是排队状态，不影响判断
+    pushToFileQueue("第二条", "m2", "test", SESSION_A)
+    expect(hasClaimedMessage(SESSION_A)).toBe(true)
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(hasClaimedMessage(SESSION_A)).toBe(false)
+  })
+
+  it("hasClaimedMessage 只看本会话，且不认空会话", () => {
+    pushToFileQueue("A 的消息", "m1", "test", SESSION_A)
+    claimSessionMessages(SESSION_A)
+    expect(hasClaimedMessage(SESSION_B)).toBe(false)
+    expect(hasClaimedMessage("")).toBe(false)
+  })
+
+  it("listPendingMessageIds 只列还没投递的，已领取的不算", () => {
+    pushToFileQueue("排队的", "m1", "test", SESSION_A)
+    pushToFileQueue("也排队", "m2", "test", SESSION_A)
+    claimSessionMessages(SESSION_A)
+    pushToFileQueue("新来的", "m3", "test", SESSION_A)
+    expect([...listPendingMessageIds(SESSION_A)]).toEqual(["m3"])
+    expect(listPendingMessageIds(SESSION_B).size).toBe(0)
+  })
+
+  it("removePendingMessage 撤回排队中的消息，别的消息不受影响", () => {
+    pushToFileQueue("要撤回", "m1", "test", SESSION_A)
+    pushToFileQueue("留着", "m2", "test", SESSION_A)
+    expect(removePendingMessage(SESSION_A, "m1")).toBe(true)
+    expect(claimSessionMessages(SESSION_A).map((m) => m.messageId)).toEqual(["m2"])
+  })
+
+  it("removePendingMessage 撤不回已被领取的消息", () => {
+    pushToFileQueue("已经投递", "m1", "test", SESSION_A)
+    claimSessionMessages(SESSION_A)
+    expect(removePendingMessage(SESSION_A, "m1")).toBe(false)
+    expect(getQueueLength(SESSION_A)).toBe(1)
+  })
+
+  it("removePendingMessage 按 messageId 精确匹配，不误删前缀相同的", () => {
+    pushToFileQueue("a", "app_1", "test", SESSION_A)
+    pushToFileQueue("b", "app_12", "test", SESSION_A)
+    expect(removePendingMessage(SESSION_A, "app_1")).toBe(true)
+    expect([...listPendingMessageIds(SESSION_A)]).toEqual(["app_12"])
+  })
+
+  it("rewritePendingMessage 改正文，messageId、排队顺序和元信息都保留", () => {
+    pushToFileQueue("第一条", "m1", "test", SESSION_A, false, { chatType: "p2p", senderType: "user" })
+    pushToFileQueue("第二条", "m2", "test", SESSION_A)
+    expect(rewritePendingMessage(SESSION_A, "m1", "改过的第一条")).toBe(true)
+    const msgs = claimSessionMessages(SESSION_A)
+    expect(msgs.map((m) => m.text)).toEqual(["改过的第一条", "第二条"])
+    expect(msgs[0].messageId).toBe("m1")
+    expect(msgs[0].meta?.senderType).toBe("user")
+  })
+
+  it("rewritePendingMessage 改不了已被领取的消息，也不会让它重新排队", () => {
+    pushToFileQueue("已经投递", "m1", "test", SESSION_A)
+    claimSessionMessages(SESSION_A)
+    expect(rewritePendingMessage(SESSION_A, "m1", "晚了")).toBe(false)
+    expect(listPendingMessageIds(SESSION_A).size).toBe(0)
+    expect(claimSessionMessages(SESSION_A)[0].text).toBe("已经投递")
+  })
+
+  it("rewritePendingMessage 拒绝空正文，原消息保持不变", () => {
+    pushToFileQueue("原文", "m1", "test", SESSION_A)
+    expect(rewritePendingMessage(SESSION_A, "m1", "   ")).toBe(false)
+    expect(claimSessionMessages(SESSION_A)[0].text).toBe("原文")
+  })
+
+  it("rewritePendingMessage 改完不留 .editing 残留文件", () => {
+    pushToFileQueue("原文", "m1", "test", SESSION_A)
+    rewritePendingMessage(SESSION_A, "m1", "新文")
+    const dirs = fs.readdirSync(path.join(dataDir, "sessions")).map((d) => path.join(dataDir, "sessions", d, "queue"))
+    const leftovers = dirs.flatMap((d) => (fs.existsSync(d) ? fs.readdirSync(d) : [])).filter((f) => f.endsWith(".editing"))
+    expect(leftovers).toEqual([])
   })
 })

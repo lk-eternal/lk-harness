@@ -1148,6 +1148,26 @@ export async function clearSessionQueue(sessionKey: string): Promise<number> {
   return cleared
 }
 
+/**
+ * 暂存区「立即发送」：打断当前回合，把排队中的消息交给重新拉起的 Agent。
+ * 排队的消息本来就在队列里，只要停掉当前 Agent、再触发一次调度，新拉起的 Agent 一上来就会领到它们
+ */
+export async function sendQueuedNow(sessionKey: string): Promise<{ ok: boolean; error?: string }> {
+  const target = normalizeSessionKey(sessionKey) || sessionKey
+  const mine = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
+  if (!mine.some((m) => m.status !== "processing")) return { ok: false, error: "没有排队中的消息" }
+  // 被打断的那一回合的消息（已投递、待确认）要先确认掉，否则重新拉起后会被当成没做完的活再投递一遍
+  for (const m of mine) {
+    if (m.status !== "processing") continue
+    try { await deleteQueueMessage(m.fileId) } catch { /* ignore */ }
+  }
+  if (isSessionAgentRunning(sessionKey)) await stopSessionAgent(sessionKey)
+  await dispatchSessionAgents()
+  // 调度正好在进行中时上面那次会直接返回；稍后补一次，避免消息等到下一轮轮询
+  setTimeout(() => { void dispatchSessionAgents().catch(() => {}) }, 1500)
+  return { ok: true }
+}
+
 export async function applySessionModelChange(
   sessionKey: string,
   model: string,
@@ -1927,6 +1947,7 @@ export function initDaemonManager(): void {
     await stopSessionAgent(sessionKey)
     return { ok: true }
   })
+  ipcMain.handle("agent:send-queued-now", (_e, sessionKey: string) => sendQueuedNow(sessionKey))
   ipcMain.handle("session:set-model", (_e, sessionKey: string, model: string, modelParams?: string, resourceId?: string) =>
     applySessionModelChange(sessionKey, model, modelParams, resourceId))
   ipcMain.handle("session:list-tabs", () => listMainSessionTabs())

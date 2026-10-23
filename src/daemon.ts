@@ -28,6 +28,10 @@ import {
   getQueueMessages as getFileQueueMessages,
   deleteQueueMessage as deleteFileQueueMessage,
   deleteQueueMessagesByMessageId,
+  hasClaimedMessage,
+  listPendingMessageIds,
+  removePendingMessage,
+  rewritePendingMessage,
   getDistinctSessions,
   hasSessionQueueDir,
   cleanupStaleMessages,
@@ -769,25 +773,39 @@ function loadRoutingMaps(): void {
   } catch (e: any) { log("WARN", `[Routing] 路由映射恢复失败: ${e?.message ?? e}`); }
 }
 
+function writeRoutingFile(): void {
+  try {
+    const data = {
+      messageSession: Object.fromEntries(messageSessionMap),
+      activeSession: Object.fromEntries(activeSessionMap),
+      sessionToChat: Object.fromEntries(sessionToChatMap),
+      chatType: Object.fromEntries(chatTypeByChatKey),
+      explicitActive: [...explicitActiveChats],
+    };
+    const routingFile = routingFilePath();
+    fs.mkdirSync(path.dirname(routingFile), { recursive: true });
+    fs.writeFileSync(routingFile + ".tmp", JSON.stringify(data));
+    fs.renameSync(routingFile + ".tmp", routingFile);
+  } catch { /* ignore */ }
+}
+
 function scheduleRoutingSave(): void {
   if (!APP_DATA_DIR || routingSaveTimer) return;
   routingSaveTimer = setTimeout(() => {
     routingSaveTimer = null;
-    try {
-      const data = {
-        messageSession: Object.fromEntries(messageSessionMap),
-        activeSession: Object.fromEntries(activeSessionMap),
-        sessionToChat: Object.fromEntries(sessionToChatMap),
-        chatType: Object.fromEntries(chatTypeByChatKey),
-        explicitActive: [...explicitActiveChats],
-      };
-      const routingFile = routingFilePath();
-      fs.mkdirSync(path.dirname(routingFile), { recursive: true });
-      fs.writeFileSync(routingFile + ".tmp", JSON.stringify(data));
-      fs.renameSync(routingFile + ".tmp", routingFile);
-    } catch { /* ignore */ }
+    writeRoutingFile();
   }, 1000);
   routingSaveTimer.unref?.();
+}
+
+/** 立即落盘并取消待写的防抖：Electron 侧读的是磁盘上的 routing.json，删会话后必须马上生效 */
+function flushRoutingSave(): void {
+  if (!APP_DATA_DIR) return;
+  if (routingSaveTimer) {
+    clearTimeout(routingSaveTimer);
+    routingSaveTimer = null;
+  }
+  writeRoutingFile();
 }
 
 function routingKeyMatches(sessionKey: string, stored: string): boolean {
@@ -816,7 +834,8 @@ function purgeSessionFromRouting(sessionKey: string): void {
       changed = true;
     }
   }
-  if (changed) scheduleRoutingSave();
+  // 不能走 1s 防抖：删除返回后界面马上刷新会话树，那时磁盘上的路由还登记着已删会话，它会以「新会话」的样子多留几秒
+  if (changed) flushRoutingSave();
 }
 
 // ── 完成确认 ────────────────────────────────────────────
@@ -1195,6 +1214,10 @@ function collectFreshAndTrack(messages: QueueMessage[], sessionKey: string): str
       }
     }
     trackMessageSession(m.messageId, sessionKey);
+  }
+  // 应用内对话：投递给 Agent 的消息离开暂存区，进入聊天流
+  if (appChannelOfSession(sessionKey)) {
+    appChat.markDelivered(sessionKey, messages.map((m) => m.messageId).filter(Boolean));
   }
   return fresh;
 }
@@ -3722,7 +3745,9 @@ function startHttpServer(): Promise<number> {
           const body = JSON.parse(await readBody(req));
           const { fileId } = body as { fileId?: string };
           if (!fileId) { json(res, { ok: false, error: "fileId required" }, 400); return; }
+          const view = getFileQueueMessages().find((v) => v.fileId === fileId);
           const ok = deleteFileQueueMessage(fileId);
+          if (ok && view?.messageId && view.sessionKey) dropQueuedAppItems(view.sessionKey, [view.messageId]);
           json(res, { ok, queueLength: getFileQueueLength() });
           return;
         }
@@ -3862,7 +3887,10 @@ function startHttpServer(): Promise<number> {
         }
 
         if (method === "POST" && pathname === "/clear-queue") {
-          json(res, { ok: true, cleared: clearFileQueue() });
+          const pending = getFileQueueMessages().filter((v) => v.status === "pending" && v.messageId && v.sessionKey);
+          const cleared = clearFileQueue();
+          for (const v of pending) dropQueuedAppItems(v.sessionKey!, [v.messageId!]);
+          json(res, { ok: true, cleared });
           return;
         }
 
@@ -4441,9 +4469,15 @@ function appChannelOfSession(sessionKey: string): ChannelRuntime | undefined {
   return chatIdFromSessionKey(sessionKey) === makeChatKey(rt.cfg.id, APP_CHANNEL_CHAT_ID) ? rt : undefined;
 }
 
+/** 排队的消息被别处丢弃（队列面板删除、停止并清空队列）时，应用内对话暂存区里的对应记录一并移除 */
+function dropQueuedAppItems(sessionKey: string, messageIds: string[]): void {
+  const key = normalizeSessionKey(sessionKey);
+  if (key && appChannelOfSession(key)) appChat.dropQueued(key, messageIds);
+}
+
 async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const body = JSON.parse(await readBody(req)) as {
-    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string;
+    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string; messageId?: string;
   };
   const sessionKey = normalizeSessionKey(body.sessionKey);
 
@@ -4476,7 +4510,42 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   if (!rt) { json(res, { ok: false, error: "会话不属于应用内对话通道" }, 400); return true; }
 
   if (pathname === "/api/app-chat/history") {
+    // 暂存区与真实队列对账，再把历史交出去
+    if (appChat.hasQueued(sessionKey)) appChat.reconcileQueued(sessionKey, listPendingMessageIds(sessionKey));
     json(res, { ok: true, items: appChat.list(sessionKey) });
+    return true;
+  }
+
+  // 暂存区：撤回一条还在排队的消息。已被 Agent 领取就撤不回了，同步清掉排队标记让界面收敛
+  if (pathname === "/api/app-chat/queue-remove") {
+    const messageId = body.messageId?.trim() ?? "";
+    if (!appChat.queuedItem(sessionKey, messageId)) { json(res, { ok: false, error: "这条消息已送达 Agent" }, 409); return true; }
+    if (!removePendingMessage(sessionKey, messageId)) {
+      appChat.markDelivered(sessionKey, [messageId]);
+      json(res, { ok: false, error: "这条消息已送达 Agent" }, 409);
+      return true;
+    }
+    appChat.removeItem(sessionKey, messageId);
+    json(res, { ok: true });
+    return true;
+  }
+
+  // 暂存区：改一条还在排队的消息的正文（图片保持不变），排队顺序不变
+  if (pathname === "/api/app-chat/queue-edit") {
+    const messageId = body.messageId?.trim() ?? "";
+    const text = (body.text ?? "").trim();
+    const item = appChat.queuedItem(sessionKey, messageId);
+    if (!item) { json(res, { ok: false, error: "这条消息已送达 Agent" }, 409); return true; }
+    const images = (item.images ?? []).filter((p) => fs.existsSync(p));
+    if (!text && images.length === 0) { json(res, { ok: false, error: "消息不能为空，不要的话请删除它" }, 400); return true; }
+    const content = [...images.map((p) => `[图片已保存: ${p}]`), text].filter(Boolean).join("\n");
+    if (!rewritePendingMessage(sessionKey, messageId, content)) {
+      appChat.markDelivered(sessionKey, [messageId]);
+      json(res, { ok: false, error: "这条消息已送达 Agent" }, 409);
+      return true;
+    }
+    appChat.editQueuedText(sessionKey, messageId, text);
+    json(res, { ok: true });
     return true;
   }
 
@@ -4511,9 +4580,14 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
 
   const messageId = `app_${randomUUID()}`;
   trackMessageSession(messageId, sessionKey);
-  appChat.addUser(sessionKey, messageId, text, images);
+  const asCommand = images.length === 0 && isCommand(text);
+  // Agent 正在干活时发来的普通消息要排队，界面放进暂存区；指令和项目草稿填写即时处理，不排队。
+  // 「在干活」= 有未收口的回合卡，或有已领取未确认的消息：后者覆盖领取之后、第一段输出之前回合卡还没出现的空窗
+  const agentBusy = appChat.hasLiveTurn(sessionKey) || hasClaimedMessage(sessionKey);
+  const queued = !asCommand && !hasProjectNewDraft(chatKey) && agentBusy;
+  appChat.addUser(sessionKey, messageId, text, images, queued);
 
-  if (images.length === 0 && isCommand(text)) {
+  if (asCommand) {
     handleCommand(text, messageId, chatKey, "p2p").catch((e: unknown) =>
       log("ERROR", `[${rt.cfg.name}] 指令处理失败: ${e instanceof Error ? e.message : String(e)}`),
     );

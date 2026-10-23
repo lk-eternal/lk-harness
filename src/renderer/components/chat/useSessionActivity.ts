@@ -17,6 +17,8 @@ interface Entry {
 function applyItem(cur: Entry, item: AppChatItem, viewed: boolean): Entry {
   switch (item.kind) {
     case "user":
+      // 排队中的消息还在暂存区，Agent 没收到，谈不上「等待回应」；投递后（queued 清掉）才算
+      if (item.queued) return cur
       return cur.awaiting ? cur : { ...cur, awaiting: true }
     case "assistant":
       if (!item.finished) {
@@ -55,6 +57,7 @@ export function useSessionActivity(viewing: string | null): (sessionKey: string,
         setEntries((prev) => dropCleared(prev, ev))
         return
       }
+      if (ev.type === "remove") return
       const id = appChatSessionId(ev.sessionKey)
       setEntries((prev) => {
         const cur = prev[id] ?? { sessionKey: ev.sessionKey, awaiting: false, unread: false }

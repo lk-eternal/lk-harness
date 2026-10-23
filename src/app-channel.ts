@@ -8,6 +8,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { channelIdFromSessionKey } from "./shared/channel-types.js";
 import {
   appChatSessionId,
+  chatItemInsertIndex,
+  isQueuedUserItem,
   type AppChatAssistantItem,
   type AppChatButton,
   type AppChatEvent,
@@ -15,6 +17,7 @@ import {
   type AppChatQuestionItem,
   type AppChatSegment,
   type AppChatTool,
+  type AppChatUserItem,
 } from "./shared/app-chat-types.js";
 
 const MAX_ITEMS_PER_SESSION = 1000;
@@ -153,7 +156,7 @@ export class AppChat {
   private upsert(entry: SessionEntry, item: AppChatItem): AppChatItem {
     const idx = entry.items.findIndex((i) => i.id === item.id);
     if (idx >= 0) entry.items[idx] = item;
-    else entry.items.push(item);
+    else entry.items.splice(chatItemInsertIndex(entry.items, item.ts), 0, item);
     if (entry.items.length > MAX_ITEMS_PER_SESSION) entry.items.splice(0, entry.items.length - MAX_ITEMS_PER_SESSION);
     this.schedulePersist(entry);
     this.emit({ type: "item", sessionKey: entry.sessionKey, item });
@@ -169,8 +172,81 @@ export class AppChat {
     return this.entry(sessionKey).items.at(-1)?.ts;
   }
 
-  addUser(sessionKey: string, id: string, text: string, images?: string[]): void {
-    this.upsert(this.entry(sessionKey), { kind: "user", id, ts: Date.now(), text, ...(images?.length ? { images } : {}) });
+  /** queued=true：Agent 正在干活，这条消息要排队，界面放进暂存区而不是聊天流 */
+  addUser(sessionKey: string, id: string, text: string, images?: string[], queued?: boolean): void {
+    this.upsert(this.entry(sessionKey), {
+      kind: "user", id, ts: Date.now(), text,
+      ...(images?.length ? { images } : {}),
+      ...(queued ? { queued: true } : {}),
+    });
+  }
+
+  /** Agent 正在干活：有还没收口的回合卡。此时发来的消息要排队，等这一回合结束再投递 */
+  hasLiveTurn(sessionKey: string): boolean {
+    return this.entry(sessionKey).liveCardId !== undefined;
+  }
+
+  /** 暂存区里的某条消息；已投递（或不存在）返回 undefined */
+  queuedItem(sessionKey: string, id: string): AppChatUserItem | undefined {
+    const hit = this.entry(sessionKey).items.find((i) => i.id === id);
+    return hit && isQueuedUserItem(hit) ? hit : undefined;
+  }
+
+  hasQueued(sessionKey: string): boolean {
+    return this.entry(sessionKey).items.some(isQueuedUserItem);
+  }
+
+  /** 已投递给 Agent：清掉排队标记，消息按它原来的位置进入聊天流（它本来就排在当前回合之后、下一回合之前） */
+  markDelivered(sessionKey: string, ids: string[]): void {
+    if (ids.length === 0) return;
+    const entry = this.entry(sessionKey);
+    const wanted = new Set(ids);
+    for (const item of [...entry.items]) {
+      if (!isQueuedUserItem(item) || !wanted.has(item.id)) continue;
+      const { queued: _queued, ...delivered } = item;
+      this.upsert(entry, delivered);
+    }
+  }
+
+  /** 暂存区里编辑一条排队消息的正文；已投递返回 false */
+  editQueuedText(sessionKey: string, id: string, text: string): boolean {
+    const hit = this.queuedItem(sessionKey, id);
+    if (!hit) return false;
+    this.upsert(this.entry(sessionKey), { ...hit, text });
+    return true;
+  }
+
+  /** 移除一条记录并通知界面 */
+  removeItem(sessionKey: string, id: string): boolean {
+    const entry = this.entry(sessionKey);
+    const idx = entry.items.findIndex((i) => i.id === id);
+    if (idx < 0) return false;
+    entry.items.splice(idx, 1);
+    this.schedulePersist(entry);
+    this.emit({ type: "remove", sessionKey: entry.sessionKey, itemId: id });
+    return true;
+  }
+
+  /** 排队的消息被丢弃（停止并清空队列等）：暂存区里的对应记录一并移除；ids 缺省为全部排队消息 */
+  dropQueued(sessionKey: string, ids?: string[]): number {
+    const entry = this.entry(sessionKey);
+    const wanted = ids ? new Set(ids) : undefined;
+    let dropped = 0;
+    for (const item of [...entry.items]) {
+      if (!isQueuedUserItem(item) || (wanted && !wanted.has(item.id))) continue;
+      if (this.removeItem(sessionKey, item.id)) dropped++;
+    }
+    return dropped;
+  }
+
+  /**
+   * 与真实队列对账：标着排队、但队列里已经没有这条待投递消息的，当作已投递处理。
+   * 兜底「投递后 1 秒内崩溃没落盘」「队列被别处清掉」等情况，免得暂存区里留着永远不会出去的消息。
+   */
+  reconcileQueued(sessionKey: string, pendingIds: Set<string>): void {
+    const entry = this.entry(sessionKey);
+    const stale = entry.items.filter((i) => isQueuedUserItem(i) && !pendingIds.has(i.id)).map((i) => i.id);
+    this.markDelivered(sessionKey, stale);
   }
 
   addText(sessionKey: string, text: string): void {
@@ -222,6 +298,24 @@ export class AppChat {
     return hit?.kind === "assistant" ? hit : undefined;
   }
 
+  /**
+   * 新回合卡的时间戳。卡要等 Agent 的第一段输出才创建，而这之前用户可能已经在暂存区排了消息；
+   * 那些消息属于下一回合，卡必须落在它们之前，否则「立即发送」后上一回合的回复会夹在它们中间。
+   * 只看末尾那一段连续的排队消息：再往前的是已经投递过的，旧的残留标记不该把新卡顶到很早的位置。
+   */
+  private newCardTs(entry: SessionEntry): number {
+    const now = Date.now();
+    let firstQueued: AppChatUserItem | undefined;
+    for (let i = entry.items.length - 1; i >= 0; i--) {
+      const it = entry.items[i];
+      if (it.kind === "assistant") break;
+      if (it.kind !== "user") continue;
+      if (!isQueuedUserItem(it)) break;
+      firstQueued = it;
+    }
+    return firstQueued ? Math.min(now, firstQueued.ts - 1) : now;
+  }
+
   private closeCard(entry: SessionEntry, cardId: string): void {
     if (entry.liveCardId === cardId) entry.liveCardId = undefined;
     entry.closedCardIds = [...entry.closedCardIds, cardId].slice(-CLOSED_CARD_MEMORY);
@@ -262,7 +356,7 @@ export class AppChat {
     const live = entry.liveCardId ? this.findAssistant(entry, entry.liveCardId) : undefined;
     const next: AppChatAssistantItem = live
       ? { ...live, segments: segments.length ? segments : live.segments }
-      : { kind: "assistant", id: randomUUID(), ts: Date.now(), segments, finished: false };
+      : { kind: "assistant", id: randomUUID(), ts: this.newCardTs(entry), segments, finished: false };
     entry.liveCardId = next.id;
     this.upsert(entry, next);
     return { cardId: next.id, hasReply: hasReplyText(next.segments) };

@@ -15,6 +15,8 @@ export function applyActivityItem(cur: SessionActivity | undefined, item: AppCha
   const base: SessionActivity = cur ?? { awaiting: false }
   switch (item.kind) {
     case "user":
+      // 排队中的消息 Agent 还没收到，谈不上「等待回应」；投递后（queued 清掉）才算
+      if (item.queued) return base
       return base.awaiting ? base : { ...base, awaiting: true }
     case "assistant":
       if (!item.finished) {

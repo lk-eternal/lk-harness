@@ -33,6 +33,17 @@ describe("session activity", () => {
     expect(isActivityBusy(applyActivityItem(activityFromItems([user("u1")]), notice("n1")))).toBe(false)
   })
 
+  it("a queued message (still in the staging area) does not count as awaiting a reply", () => {
+    const queued: AppChatItem = { id: "u2", kind: "user", ts: 1, text: "later", queued: true }
+    const cur = activityFromItems([user("u1"), assistant("a1", false), assistant("a1", true)])
+    expect(isActivityBusy(applyActivityItem(cur, queued))).toBe(false)
+  })
+
+  it("once the queued message is delivered it counts as awaiting a reply", () => {
+    const cur = activityFromItems([user("u1"), assistant("a1", false), assistant("a1", true)])
+    expect(isActivityBusy(applyActivityItem(cur, user("u2")))).toBe(true)
+  })
+
   it("keeps the same object when nothing changes", () => {
     const cur = activityFromItems([user("u1"), assistant("a1", false)])
     expect(applyActivityItem(cur, assistant("a1", false))).toBe(cur)

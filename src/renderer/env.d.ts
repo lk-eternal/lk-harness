@@ -194,6 +194,8 @@ declare global {
     appChatClear(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResultType>
     appChatDeleteSession(sessionKey: string): Promise<AppChatResultType>
     appChatRenameSession(sessionKey: string, name: string): Promise<AppChatResultType>
+    appChatQueueEdit(sessionKey: string, messageId: string, text: string): Promise<AppChatResultType>
+    appChatQueueRemove(sessionKey: string, messageId: string): Promise<AppChatResultType>
     appChatNewTempSession(channelId: string): Promise<AppChatResultType>
     appChatUsage(channelId: string): Promise<AppChatResultType>
     appChatLastActive(sessionKeys: string[]): Promise<AppChatResultType>
@@ -216,6 +218,7 @@ declare global {
     getSessionDiagnostics(sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>
     exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }>
     stopSessionAgent(sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }>
+    sendQueuedNow(sessionKey: string): Promise<{ ok: boolean; error?: string }>
     setSessionModel(sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
     listSessionTabs(): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }>
     listDashboardTree(): Promise<{

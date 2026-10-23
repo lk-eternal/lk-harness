@@ -38,6 +38,11 @@ export interface AppChatUserItem extends AppChatItemBase {
   text: string;
   /** 本地图片绝对路径 */
   images?: string[];
+  /**
+   * 排队中：Agent 正在干活时发出、还没投递给 Agent 的消息。
+   * 界面把它放在输入框上方的暂存区（可编辑/删除/立即发送），不进聊天流；投递后该字段清掉，才按原位置进入聊天流。
+   */
+  queued?: boolean;
 }
 
 /** 一个回合的流式输出；segments 每次更新整体替换 */
@@ -96,7 +101,44 @@ export type AppChatItem =
 
 export type AppChatEvent =
   | { type: "item"; sessionKey: string; item: AppChatItem }
+  /** 某条记录被移除（暂存区里删除了排队消息） */
+  | { type: "remove"; sessionKey: string; itemId: string }
   | { type: "clear"; sessionKey?: string; channelId?: string };
+
+/** 暂存区里的消息：排队中、还没投递给 Agent 的用户消息 */
+export function isQueuedUserItem(item: AppChatItem): item is AppChatUserItem {
+  return item.kind === "user" && item.queued === true;
+}
+
+/** 聊天流里要显示的条目：排队中的消息只出现在暂存区 */
+export function chatStreamItems(items: AppChatItem[]): AppChatItem[] {
+  return items.some(isQueuedUserItem) ? items.filter((it) => !isQueuedUserItem(it)) : items;
+}
+
+/**
+ * 新记录在列表里的落点：自尾部向前跳过 ts 比它大的记录。
+ * 记录几乎总是按时间到达，落点就是末尾；唯一的例外是回合卡——它到 Agent 第一段输出时才创建，
+ * 而这时暂存区里可能已经排了消息，卡的 ts 取在这些消息之前（见 AppChat.streamCard），让它落在它们前面。
+ * 服务端落盘、桌面端、手机端都用这一条规则，顺序才不会各算各的。
+ */
+export function chatItemInsertIndex(items: readonly AppChatItem[], ts: number): number {
+  let at = items.length;
+  while (at > 0 && items[at - 1].ts > ts) at--;
+  return at;
+}
+
+/** 把一批记录并入列表（不改原数组）：同 id 的原位替换（流式快照、状态变更），新的按 ts 就位 */
+export function upsertChatItems(prev: readonly AppChatItem[], incoming: readonly AppChatItem[]): AppChatItem[] {
+  if (incoming.length === 0) return prev as AppChatItem[];
+  const next = prev.slice();
+  for (const item of incoming) {
+    let at = next.length - 1;
+    while (at >= 0 && next[at].id !== item.id) at--;
+    if (at >= 0) next[at] = item;
+    else next.splice(chatItemInsertIndex(next, item.ts), 0, item);
+  }
+  return next;
+}
 
 /** 界面 → 主进程的发送载荷：普通消息，或对某个问题的选择（questionId + option） */
 export interface AppChatSendPayload {

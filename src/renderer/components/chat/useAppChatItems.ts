@@ -1,23 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { appChatSessionId, type AppChatItem } from "../../../shared/app-chat-types"
+import { appChatSessionId, upsertChatItems as upsertItems, type AppChatItem } from "../../../shared/app-chat-types"
 import { channelIdFromSessionKey } from "../../../shared/channel-types"
-
-/** 按 id 合并：已有的原位替换（流式快照），新的追加到末尾 */
-function upsertItems(prev: AppChatItem[], incoming: AppChatItem[]): AppChatItem[] {
-  if (incoming.length === 0) return prev
-  const next = prev.slice()
-  const index = new Map(next.map((it, i) => [it.id, i]))
-  for (const it of incoming) {
-    const at = index.get(it.id)
-    if (at === undefined) {
-      index.set(it.id, next.length)
-      next.push(it)
-    } else {
-      next[at] = it
-    }
-  }
-  return next
-}
 
 export function sameChatSession(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false
@@ -58,6 +41,13 @@ export function useAppChatItems(sessionKey: string | null): { items: AppChatItem
         if (!sameChatSession(ev.sessionKey, sessionKey)) return
         pendingRef.current.push(ev.item)
         if (!rafRef.current) rafRef.current = requestAnimationFrame(flush)
+        return
+      }
+      if (ev.type === "remove") {
+        if (!sameChatSession(ev.sessionKey, sessionKey)) return
+        // 还没合并进列表的同 id 快照也要丢掉，否则下一帧会把它带回来
+        pendingRef.current = pendingRef.current.filter((it) => it.id !== ev.itemId)
+        setItems((prev) => (prev.some((it) => it.id === ev.itemId) ? prev.filter((it) => it.id !== ev.itemId) : prev))
         return
       }
       const hit = ev.sessionKey

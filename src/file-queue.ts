@@ -492,6 +492,95 @@ export function deleteQueueMessage(fileId: string, filterSessionKey?: string): b
   return false;
 }
 
+/** 会话里「排队中、还没投递给 Agent」的 .qmsg 文件名；已被领取的 .claimed 不算 */
+function findPendingFile(dir: string, messageId: string): string | undefined {
+  const safeId = messageId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  try {
+    return fs.readdirSync(dir).find((f) => f.endsWith(".qmsg") && matchesSafeId(f, safeId));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 会话里有没有「已投递给 Agent、还没确认处理完」的消息（.claimed）。
+ * Agent 挂阻塞 poll 才会确认删除 .claimed，所以有 .claimed = 这个会话的 Agent 手头还有活。
+ * 它比「是否出现回合卡」早：领取之后、第一段输出之前（冷启动、长时间思考）回合卡还不存在，Agent 却已经在忙。
+ */
+export function hasClaimedMessage(sessionKey: string): boolean {
+  if (!queueDir || !sessionKey) return false;
+  try {
+    return fs.readdirSync(getSessionDir(sessionKey)).some((f) => f.endsWith(".claimed"));
+  } catch {
+    return false;
+  }
+}
+
+/** 会话里还在排队、没投递给 Agent 的消息 id（应用内对话的暂存区据此对账） */
+export function listPendingMessageIds(sessionKey: string): Set<string> {
+  const ids = new Set<string>();
+  if (!queueDir || !sessionKey) return ids;
+  const dir = getSessionDir(sessionKey);
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".qmsg"));
+  } catch {
+    return ids;
+  }
+  for (const f of files) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(path.join(dir, f), "utf-8"));
+      if (typeof parsed.messageId === "string" && parsed.messageId) ids.add(parsed.messageId);
+    } catch { /* 写入中或损坏，跳过 */ }
+  }
+  return ids;
+}
+
+/**
+ * 撤回一条还在排队的消息。已被 Agent 领取（.claimed）返回 false——
+ * 领取是 rename，删除是 unlink，两者竞争时只会有一方成功，不会出现「撤回成功却又投递」。
+ */
+export function removePendingMessage(sessionKey: string, messageId: string): boolean {
+  if (!queueDir || !sessionKey || !messageId) return false;
+  const dir = getSessionDir(sessionKey);
+  const file = findPendingFile(dir, messageId);
+  if (!file) return false;
+  try {
+    fs.unlinkSync(path.join(dir, file));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 改写一条还在排队的消息的正文（排队顺序不变）。已被 Agent 领取返回 false。
+ * 先 rename 成 .editing 把它从投递队列里摘出来（领取只认 .qmsg，改写期间不会被领走），写完再 rename 回去。
+ */
+export function rewritePendingMessage(sessionKey: string, messageId: string, text: string): boolean {
+  if (!queueDir || !sessionKey || !messageId || !text.trim()) return false;
+  const dir = getSessionDir(sessionKey);
+  const file = findPendingFile(dir, messageId);
+  if (!file) return false;
+  const src = path.join(dir, file);
+  const editing = src.replace(/\.qmsg$/, ".editing");
+  try {
+    fs.renameSync(src, editing);
+  } catch {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(editing, "utf-8"));
+    parsed.text = text;
+    fs.writeFileSync(editing, JSON.stringify(parsed), "utf-8");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { fs.renameSync(editing, src); } catch { /* 极端情况下留在 .editing，不影响其它消息 */ }
+  }
+}
+
 export interface DeletedQueueMessages {
   removed: number;
   sessionKeys: string[];

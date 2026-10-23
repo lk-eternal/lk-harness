@@ -116,6 +116,16 @@ export async function deleteAppChatSession(sessionKey: string): Promise<AppChatR
   return clearAppChatRecords({ sessionKey })
 }
 
+/** 暂存区：编辑一条还在排队的消息的正文 */
+export function editQueuedAppChatMessage(sessionKey: string, messageId: string, text: string): Promise<AppChatResult> {
+  return callAppChatDaemon("queue-edit", { sessionKey, messageId, text })
+}
+
+/** 暂存区：撤回一条还在排队的消息 */
+export function removeQueuedAppChatMessage(sessionKey: string, messageId: string): Promise<AppChatResult> {
+  return callAppChatDaemon("queue-remove", { sessionKey, messageId })
+}
+
 const appChatEventListeners = new Set<(event: AppChatEvent) => void>()
 
 export function subscribeAppChatEvent(listener: (event: AppChatEvent) => void): () => void {
@@ -191,6 +201,8 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteAppChatSession(sessionKey))
   ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameAppChatSession(sessionKey, name))
+  ipcMain.handle("app-chat:queue-edit", (_e, sessionKey: string, messageId: string, text: string) => editQueuedAppChatMessage(sessionKey, messageId, text))
+  ipcMain.handle("app-chat:queue-remove", (_e, sessionKey: string, messageId: string) => removeQueuedAppChatMessage(sessionKey, messageId))
   ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createAppChatTempSession(channelId))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callAppChatDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callAppChatDaemon("last-active", { sessionKeys }))
