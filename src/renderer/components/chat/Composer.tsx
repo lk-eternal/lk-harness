@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowUp, ImagePlus, Square, X } from "lucide-react"
 import { primaryCommands } from "../../../shared/command-catalog"
+import { ImageLightbox } from "./ImageLightbox"
 
 interface Props {
   disabled: boolean
   /** AI 正在工作：输入为空时显示停止按钮 */
   busy: boolean
+  /** 输入框正上方的内容（排队消息的暂存区） */
+  top?: ReactNode
   /** 底部一行左侧的会话设置（目录、分支、模型等） */
   footer?: ReactNode
   onSend: (text: string, images: string[]) => void
@@ -31,9 +34,11 @@ const EXT_BY_MIME: Record<string, string> = {
 const MAX_TEXTAREA_PX = 200
 
 /** 输入区：Enter 发送、Shift+Enter 换行；粘贴/拖入/选择图片；`/` 唤起指令菜单 */
-export default function Composer({ disabled, busy, footer, onSend, onStop, onError }: Props) {
+export default function Composer({ disabled, busy, top, footer, onSend, onStop, onError }: Props) {
   const [text, setText] = useState("")
   const [images, setImages] = useState<PendingImage[]>([])
+  /** 正在放大查看的待发送图片（blob URL） */
+  const [previewSrc, setPreviewSrc] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [menuIndex, setMenuIndex] = useState(0)
   const [menuClosed, setMenuClosed] = useState(false)
@@ -134,6 +139,8 @@ export default function Composer({ disabled, busy, footer, onSend, onStop, onErr
           </div>
         )}
 
+        {top}
+
         <div
           onDragOver={(e) => { if (!disabled && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDragging(true) } }}
           onDragLeave={() => setDragging(false)}
@@ -149,7 +156,7 @@ export default function Composer({ disabled, busy, footer, onSend, onStop, onErr
             <div className="flex flex-wrap gap-2 px-3 pt-3">
               {images.map((i) => (
                 <div key={i.path} className="group relative">
-                  <img src={i.preview} alt="" className="h-16 w-16 rounded object-cover" />
+                  <img src={i.preview} alt="" title="点击预览" onClick={() => setPreviewSrc(i.preview)} className="h-16 w-16 cursor-zoom-in rounded object-cover" />
                   <button
                     type="button"
                     onClick={() => removeImage(i.path)}
@@ -209,6 +216,12 @@ export default function Composer({ disabled, busy, footer, onSend, onStop, onErr
           </div>
         </div>
       </div>
+      {previewSrc && (
+        <ImageLightbox
+          src={previewSrc}
+          onClose={() => { setPreviewSrc(null); textareaRef.current?.focus() }}
+        />
+      )}
     </div>
   )
 }

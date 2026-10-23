@@ -1,8 +1,9 @@
-import { useState } from "react"
-import { Brain, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, ListChecks, Loader2, Wrench, XCircle } from "lucide-react"
+import { useState, type ReactNode } from "react"
+import { Brain, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Layers, ListChecks, Loader2, Wrench, XCircle } from "lucide-react"
 import type { AppChatAssistantItem, AppChatSegment, AppChatTodo, AppChatTool } from "../../../shared/app-chat-types"
 import { MessageTime } from "./ItemViews"
 import Markdown, { CopyButton } from "./Markdown"
+import { groupSegments, summarizeGroup, type GroupSummary, type ProcessSegment } from "./segment-groups"
 
 function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
@@ -50,6 +51,7 @@ function ThinkingBlock({ text, ms, live, expanded }: { text: string; ms?: number
 function ToolIcon({ status }: { status: string }) {
   if (status === "running") return <Loader2 size={12} className="shrink-0 animate-spin text-accent" />
   if (status === "error") return <XCircle size={12} className="shrink-0 text-danger" />
+  if (status === "interrupted") return <Circle size={12} className="shrink-0 text-fg-faint" />
   return <Check size={12} className="shrink-0 text-success" />
 }
 
@@ -79,6 +81,48 @@ function ToolsBlock({ tools, live, expanded }: { tools: AppChatTool[]; live: boo
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+/** 折叠时那一行的后半截：只展示最后一条具体的操作 */
+function GroupTail({ summary, live }: { summary: GroupSummary; live: boolean }) {
+  const tail = "min-w-0 flex-1 truncate text-fg-faint"
+  if (live && summary.endsWithThinking) return <span className={tail}>思考中…</span>
+  const tool = summary.lastTool
+  if (!tool) return <span className={tail}>思考{summary.lastThinkingMs != null ? ` ${fmtMs(summary.lastThinkingMs)}` : ""}</span>
+  // 回合已结束工具却还停在 running：是被中断了，不要一直转圈
+  const status = !live && tool.status === "running" ? "interrupted" : tool.status
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+      <ToolIcon status={status} />
+      <span className="shrink-0 font-mono text-fg-3">{tool.name}</span>
+      {tool.summary && <span className="min-w-0 truncate text-fg-faint" title={tool.summary}>{tool.summary}</span>}
+    </span>
+  )
+}
+
+/**
+ * 连续的多个思考/工具块折成一行：折叠时只显示"思考 N · 工具 M"和最后一条操作，点开才看到每个块。
+ * 回合进行中同样默认折叠，那一行会随最新动作刷新
+ */
+function ProcessGroup({ segs, live, renderSegment }: { segs: ProcessSegment[]; live: boolean; renderSegment: (seg: ProcessSegment, offset: number) => ReactNode }) {
+  const [open, toggle] = useAutoOpen(false)
+  const summary = summarizeGroup(segs)
+  const counts = [
+    summary.thinkings > 0 ? `思考 ${summary.thinkings}` : "",
+    summary.toolCalls > 0 ? `工具 ${summary.toolCalls}` : "",
+  ].filter(Boolean).join(" · ")
+  return (
+    <div>
+      <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 text-left text-xs text-fg-muted transition hover:text-fg-2">
+        {open ? <ChevronDown size={13} className="shrink-0" /> : <ChevronRight size={13} className="shrink-0" />}
+        {live ? <Loader2 size={12} className="shrink-0 animate-spin" /> : <Layers size={12} className="shrink-0" />}
+        <span className="shrink-0">{counts}</span>
+        {summary.failed > 0 && <span className="shrink-0 text-danger">{summary.failed} 失败</span>}
+        {!open && <><span className="shrink-0 text-fg-faint">·</span><GroupTail summary={summary} live={live} /></>}
+      </button>
+      {open && <div className="mt-1 space-y-1 pl-4">{segs.map((seg, j) => renderSegment(seg, j))}</div>}
     </div>
   )
 }
@@ -120,16 +164,28 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
   const lastThinking = lastIndexOfType(item.segments, "thinking")
   const lastTools = lastIndexOfType(item.segments, "tools")
   const replyText = item.segments.flatMap((s) => (s.type === "reply" ? [s.text] : [])).join("\n\n")
+  const renderSegment = (seg: AppChatSegment, i: number): ReactNode => {
+    const live = !item.finished && i === last
+    switch (seg.type) {
+      case "thinking": return <ThinkingBlock key={i} text={seg.text} ms={seg.ms} live={live} expanded={!item.finished && i === lastThinking} />
+      case "tools": return <ToolsBlock key={i} tools={seg.tools} live={live} expanded={!item.finished && i === lastTools} />
+      case "todos": return <TodosBlock key={i} items={seg.items} />
+      case "reply": return <Markdown key={i} text={seg.text} />
+    }
+  }
   return (
     <div className="space-y-2">
-      {item.segments.map((seg, i) => {
-        const live = !item.finished && i === last
-        switch (seg.type) {
-          case "thinking": return <ThinkingBlock key={i} text={seg.text} ms={seg.ms} live={live} expanded={!item.finished && i === lastThinking} />
-          case "tools": return <ToolsBlock key={i} tools={seg.tools} live={live} expanded={!item.finished && i === lastTools} />
-          case "todos": return <TodosBlock key={i} items={seg.items} />
-          case "reply": return <Markdown key={i} text={seg.text} />
-        }
+      {groupSegments(item.segments).map((block) => {
+        if (block.kind === "single") return renderSegment(block.seg, block.index)
+        const end = block.start + block.segs.length - 1
+        return (
+          <ProcessGroup
+            key={`group-${block.start}`}
+            segs={block.segs}
+            live={!item.finished && end === last}
+            renderSegment={(seg, offset) => renderSegment(seg, block.start + offset)}
+          />
+        )
       })}
       {!item.finished && item.segments.length === 0 && (
         <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>
