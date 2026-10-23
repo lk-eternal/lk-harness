@@ -8,6 +8,7 @@ import SessionTitle from "../components/SessionTitle"
 import useInlineModal from "../components/useInlineModal"
 import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
+import { composerDraftKey, discardComposerDraft } from "../components/chat/composer-drafts"
 import QueuedStrip from "../components/chat/QueuedStrip"
 import DirPicker from "../components/chat/DirPicker"
 import ModelPicker, { type ModelChoice, type QuickModel } from "../components/chat/ModelPicker"
@@ -265,6 +266,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
+    discardComposerDraft(t.sessionKey)
     // 先从列表里拿掉，再刷新：正在进行中的刷新可能是删除前发出的，晚到时不能让它把会话带回来
     markSessionDeleted(deletedRef.current, t.sessionKey)
     setViews((prev) => hideDeletedTabs(prev, deletedRef.current))
@@ -481,6 +483,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 <ChatItemList key={selected} items={items} loading={loading} busy={busy} workspaceName={dirName(workspaceDir)} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer
+                  draftKey={composerDraftKey(selected)}
                   disabled={!selected}
                   busy={busy}
                   top={<QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />}

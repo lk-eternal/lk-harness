@@ -1,9 +1,12 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { ArrowUp, ImagePlus, Square, X } from "lucide-react"
 import { primaryCommands } from "../../../shared/command-catalog"
+import { composerDrafts } from "./composer-drafts"
 import { ImageLightbox } from "./ImageLightbox"
 
 interface Props {
+  /** 当前会话的草稿键（composerDraftKey）；没选中会话时为 null。没发送的文字和图片按它分会话存放，切会话不会带过去 */
+  draftKey: string | null
   disabled: boolean
   /** AI 正在工作：输入为空时显示停止按钮 */
   busy: boolean
@@ -14,13 +17,6 @@ interface Props {
   onSend: (text: string, images: string[]) => void
   onStop: () => void
   onError: (message: string) => void
-}
-
-interface PendingImage {
-  /** 主进程落盘后的绝对路径（随消息发给 Agent） */
-  path: string
-  /** 仅用于输入框内预览的 blob URL */
-  preview: string
 }
 
 const MAX_IMAGES = 6
@@ -34,9 +30,10 @@ const EXT_BY_MIME: Record<string, string> = {
 const MAX_TEXTAREA_PX = 200
 
 /** 输入区：Enter 发送、Shift+Enter 换行；粘贴/拖入/选择图片；`/` 唤起指令菜单 */
-export default function Composer({ disabled, busy, top, footer, onSend, onStop, onError }: Props) {
-  const [text, setText] = useState("")
-  const [images, setImages] = useState<PendingImage[]>([])
+export default function Composer({ draftKey, disabled, busy, top, footer, onSend, onStop, onError }: Props) {
+  const getDraft = () => composerDrafts.get(draftKey)
+  const { text, images } = useSyncExternalStore(composerDrafts.subscribe, getDraft, getDraft)
+  const setText = (value: string) => composerDrafts.update(draftKey, (d) => ({ ...d, text: value }))
   /** 正在放大查看的待发送图片（blob URL） */
   const [previewSrc, setPreviewSrc] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -44,8 +41,6 @@ export default function Composer({ disabled, busy, top, footer, onSend, onStop, 
   const [menuClosed, setMenuClosed] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const imagesRef = useRef(images)
-  imagesRef.current = images
 
   const hasContent = text.trim().length > 0 || images.length > 0
 
@@ -62,37 +57,39 @@ export default function Composer({ disabled, busy, top, footer, onSend, onStop, 
   }, [text])
 
   useEffect(() => { setMenuIndex(0) }, [slashQuery])
-
-  // 卸载时释放预览 blob
-  useEffect(() => () => { imagesRef.current.forEach((i) => URL.revokeObjectURL(i.preview)) }, [])
+  // 换了会话：上一个会话里按 Esc 关掉的指令菜单不该带到这个会话
+  useEffect(() => { setMenuClosed(false) }, [draftKey])
 
   const addImageFiles = async (files: File[]) => {
+    // 保存图片是异步的：期间用户可能已经切到别的会话，图片要落到发起它的那个会话的草稿里
+    const key = draftKey
     const picked = files.filter((f) => f.type.startsWith("image/"))
     if (picked.length === 0) return
     for (const f of picked) {
-      if (imagesRef.current.length >= MAX_IMAGES) { onError(`一次最多附带 ${MAX_IMAGES} 张图片`); break }
+      if (composerDrafts.get(key).images.length >= MAX_IMAGES) { onError(`一次最多附带 ${MAX_IMAGES} 张图片`); break }
       const ext = EXT_BY_MIME[f.type]
       if (!ext) { onError(`不支持的图片格式：${f.type}`); continue }
       const r = await window.electronAPI.appChatSaveImage(await f.arrayBuffer(), ext)
       if (!r.ok) { onError(r.error); continue }
-      const next = [...imagesRef.current, { path: r.path, preview: URL.createObjectURL(f) }]
-      imagesRef.current = next
-      setImages(next)
+      const preview = URL.createObjectURL(f)
+      let added = false
+      composerDrafts.update(key, (d) => {
+        if (d.images.length >= MAX_IMAGES) return d
+        added = true
+        return { ...d, images: [...d.images, { path: r.path, preview }] }
+      })
+      if (!added) URL.revokeObjectURL(preview)
     }
   }
 
   const removeImage = (path: string) => {
-    const hit = images.find((i) => i.path === path)
-    if (hit) URL.revokeObjectURL(hit.preview)
-    setImages(images.filter((i) => i.path !== path))
+    composerDrafts.update(draftKey, (d) => ({ ...d, images: d.images.filter((i) => i.path !== path) }))
   }
 
   const submit = () => {
     if (!hasContent || disabled) return
     onSend(text.trim(), images.map((i) => i.path))
-    images.forEach((i) => URL.revokeObjectURL(i.preview))
-    setImages([])
-    setText("")
+    composerDrafts.discard(draftKey)
     setMenuClosed(false)
   }
 

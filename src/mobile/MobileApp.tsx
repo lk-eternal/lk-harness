@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { createPortal } from "react-dom"
 import {
   Check,
@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react"
 import { appChatSessionId, chatStreamItems, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
@@ -122,8 +123,12 @@ export default function MobileApp() {
   const [actionError, setActionError] = useState("")
   /** App（APK）有新版本时的提示；网页版由电脑端直接提供，版本天然一致，不查 */
   const [update, setUpdate] = useState<PendingUpdate | null>(null)
-  const [text, setText] = useState("")
-  const [pendingImages, setPendingImages] = useState<{ path: string; previewUrl: string }[]>([])
+  // 输入框草稿按会话分开存：A 会话没发出去的字和图，切到/新建 B 会话时不会带过去，切回来还在
+  const [draftStore] = useState(() => createDraftStore<{ path: string; previewUrl: string }>())
+  const draftKey = selected ? appChatSessionId(selected) : null
+  const getDraft = () => draftStore.get(draftKey)
+  const { text, images: pendingImages } = useSyncExternalStore(draftStore.subscribe, getDraft, getDraft)
+  const setText = (value: string) => draftStore.update(draftKey, (d) => ({ ...d, text: value }))
   /** 正在放大查看的待发送图片 */
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
@@ -526,10 +531,9 @@ export default function MobileApp() {
 
     const draftText = text
     const draftImages = pendingImages
-    if (overrideText === undefined) {
-      setText("")
-      setPendingImages([])
-    }
+    // 发送是异步的，期间用户可能已经切到别的会话：失败要放回发出消息的那个会话，不是当前会话
+    const sendKey = draftKey
+    if (overrideText === undefined) draftStore.discard(sendKey)
     setActionError("")
     const r = await sendMobileMessage(route.activeUrl, pairCfg.token, {
       sessionKey: selected,
@@ -540,8 +544,10 @@ export default function MobileApp() {
     setActionError(r.error ?? "发送失败")
     if (overrideText === undefined) {
       // 没发出去的内容放回输入框；期间用户已重新输入的内容优先
-      setText((cur) => cur || draftText)
-      setPendingImages((cur) => (cur.length > 0 ? cur : draftImages))
+      draftStore.update(sendKey, (d) => ({
+        text: d.text || draftText,
+        images: d.images.length > 0 ? d.images : draftImages,
+      }))
     }
   }
 
@@ -599,6 +605,7 @@ export default function MobileApp() {
       setActionError(r.error ?? "删除会话失败")
       return
     }
+    draftStore.discard(id)
     setTitles((prev) => {
       const next = { ...prev }
       delete next[id]
@@ -672,6 +679,8 @@ export default function MobileApp() {
   // 选择并上传图片
   const handlePickImages = async (files: FileList | null) => {
     if (!files || files.length === 0 || !route.activeUrl || !pairCfg.token) return
+    // 上传是异步的：期间切了会话，图片也要落到选图时的那个会话的草稿里
+    const key = draftKey
     setUploadingImage(true)
     setActionError("")
     for (const file of Array.from(files)) {
@@ -689,7 +698,8 @@ export default function MobileApp() {
         })
         const r = await uploadMobileImage(route.activeUrl, pairCfg.token, dataUrl, ext)
         if (r.ok && r.path) {
-          setPendingImages((prev) => [...prev, { path: r.path!, previewUrl: dataUrl }])
+          const image = { path: r.path, previewUrl: dataUrl }
+          draftStore.update(key, (d) => ({ ...d, images: [...d.images, image] }))
         } else {
           setActionError(r.error ?? "图片上传失败")
         }
@@ -932,7 +942,7 @@ export default function MobileApp() {
                 <button
                   type="button"
                   onClick={() =>
-                    setPendingImages((prev) => prev.filter((_, i) => i !== idx))
+                    draftStore.update(draftKey, (d) => ({ ...d, images: d.images.filter((_, i) => i !== idx) }))
                   }
                   className="absolute -right-1 -top-1 rounded-full bg-black/80 p-0.5 text-white"
                 >
