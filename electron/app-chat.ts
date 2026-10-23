@@ -8,10 +8,11 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { randomUUID } from "node:crypto"
 import { readLockFile } from "./daemon-client"
-import { getChannel } from "./config-store"
+import { getAgentResource, getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
-import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
+import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
+import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
 import { createTempChatSession } from "../src/shared/temp-chat-session"
 import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
@@ -83,11 +84,27 @@ export async function sendAppChatMessage(payload: AppChatSendPayload): Promise<A
   return r
 }
 
+/**
+ * 新会话的默认模型用「这个通道里我上一次用的模型」，不是通道设置里的默认模型。
+ * 供应商取会话启动时实际生效的那个（通道没绑供应商时启动会回落到默认供应商），
+ * 写进去的 override 要与它一致才会在启动时生效，界面显示和实际用的才不会对不上。
+ */
+function seedNewSessionDefaultModel(channelId: string, sessionKey: string): void {
+  try {
+    const channel = getChannel(channelId)
+    const resource = getAgentResource(resolveChannelResourceId(channel, "main"))
+    if (resource.id === "unset") return
+    initSessionModelStore(app.getPath("userData"))
+    seedNewSessionModel(sessionKey, channelId, resource.id)
+  } catch { /* 记录读写失败就退回通道默认模型，不影响新建会话 */ }
+}
+
 /** 新建应用内临时会话：只建好临时目录并返回会话键，会话在第一条消息发出时才真正建立 */
 export function createAppChatTempSession(channelId: string): AppChatResult {
   if (getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的通道" }
   try {
     const { sessionKey } = createTempChatSession(app.getPath("userData"), makeChatKey(channelId, APP_CHANNEL_CHAT_ID))
+    seedNewSessionDefaultModel(channelId, sessionKey)
     return { ok: true, sessionKey }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }

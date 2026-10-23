@@ -4,6 +4,7 @@ import { ensureSessionLayoutMigrated } from "./session-layout-migrate.js"
 import {
   STATE_FILE,
   ensureSessionEntry,
+  globalLastModelsPath,
   globalRecentPath,
   listSessionEntryDirPaths,
   readSessionKeyFromEntryDir,
@@ -254,6 +255,40 @@ export function getRecentModelsFromStore(): RecentModelEntry[] {
 
 export function setRecentModelsInStore(recent: RecentModelEntry[]): void {
   saveRecent(recent)
+}
+
+function loadLastModels(): Record<string, RecentModelEntry> {
+  const root = resolveDataDir()
+  ensureSessionLayoutMigrated(root)
+  try {
+    const raw = JSON.parse(fs.readFileSync(globalLastModelsPath(root), "utf8")) as unknown
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, RecentModelEntry>) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 通道里「我自己」上一次用的模型；没有记录返回 undefined */
+export function getLastModelFromStore(channelId: string): RecentModelEntry | undefined {
+  const e = loadLastModels()[channelId]
+  if (!e || typeof e.model !== "string" || !e.model.trim()) return undefined
+  return {
+    model: e.model,
+    modelParams: e.modelParams ?? "",
+    ...(e.resourceId ? { resourceId: e.resourceId } : {}),
+    usedAt: e.usedAt,
+  }
+}
+
+export function setLastModelInStore(channelId: string, entry: RecentModelEntry): void {
+  const root = resolveDataDir()
+  const target = globalLastModelsPath(root)
+  const all = loadLastModels()
+  all[channelId] = entry
+  fs.mkdirSync(path.dirname(target), { recursive: true })
+  const tmp = target + ".tmp"
+  fs.writeFileSync(tmp, JSON.stringify(all), "utf8")
+  fs.renameSync(tmp, target)
 }
 
 function readJsonFile<T>(filePath: string): T | undefined {

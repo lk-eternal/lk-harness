@@ -13,7 +13,7 @@ import {
   resolveModelForSession,
   initSessionModelStore,
   setSessionOverride,
-  pushRecentModel,
+  recordModelUse,
 } from "../src/shared/session-model-store.js"
 import { initSessionResourceStore, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
@@ -804,7 +804,7 @@ export async function switchLlmSessionModel(
   const live0 = llmSessions.get(sessionKey)
   const rid0 = resourceId?.trim() || live0?.resource.id
   setSessionOverride(sessionKey, { model: mid, modelParams: params, ...(rid0 ? { resourceId: rid0 } : {}) })
-  pushRecentModel({ model: mid, modelParams: params, ...(rid0 ? { resourceId: rid0 } : {}) })
+  recordModelUse(sessionKey, { model: mid, modelParams: params, ...(rid0 ? { resourceId: rid0 } : {}) })
 
   const live = llmSessions.get(sessionKey)
   if (live) {
@@ -946,8 +946,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     const history = piSession.messages.length
     broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} worker (${llmProviderId(resource)} / ${model.id}, history=${history})`)
     try {
-      const { pushRecentModel: pushRecent } = await import("../src/shared/session-model-store.js")
-      pushRecent({ model: model.id, modelParams, ...(resource.id ? { resourceId: resource.id } : {}) })
+      recordModelUse(sessionKey, { model: model.id, modelParams, ...(resource.id ? { resourceId: resource.id } : {}) })
     } catch { /* 最近使用写入失败不阻断 */ }
     return { ok: true }
   } catch (e: unknown) {

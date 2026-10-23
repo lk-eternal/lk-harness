@@ -53,7 +53,7 @@ import {
   setSessionOverride,
   getSessionOverride,
   clearSessionOverride,
-  pushRecentModel,
+  recordModelUse,
 } from "../src/shared/session-model-store.js"
 import {
   patchSessionRecord,
@@ -1461,7 +1461,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     }
     broadcastLog(`[SDK] 会话 ${sessionKey} 已${resumed ? "恢复" : "创建"}, agentId=${agent.agentId}, model=${JSON.stringify(modelSelection)}`)
     broadcastSdkSessionStatus()
-    pushRecentModel({ model: modelId, modelParams, ...(opts.resourceId ? { resourceId: opts.resourceId } : {}) })
+    recordModelUse(sessionKey, { model: modelId, modelParams, ...(opts.resourceId ? { resourceId: opts.resourceId } : {}) })
 
     // Resume 会话的规则是创建时快照：规则文件变过则在唤醒 prompt 里硬指令重读
     const currentDaemonPort = resolveDaemonPortForPrompt()
@@ -1623,7 +1623,7 @@ export async function switchSdkSessionModel(
   const live = findSdkSessionLoose(sessionKey)
   const rid = resourceId?.trim() || live?.resourceId
   setSessionOverride(sessionKey, { model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
-  pushRecentModel({ model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
+  recordModelUse(sessionKey, { model: mid, modelParams: params, ...(rid ? { resourceId: rid } : {}) })
 
   const effectiveKey = live?.sessionKey ?? sessionKey
   if (effectiveKey !== sessionKey && !sessionKeyEquals(effectiveKey, sessionKey)) {

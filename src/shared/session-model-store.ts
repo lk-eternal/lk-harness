@@ -1,5 +1,5 @@
 import { modelSlug } from "./model-utils.js"
-import { chatIdFromSessionKey } from "./channel-types.js"
+import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, parseChatKey } from "./channel-types.js"
 import {
   initSessionOverridesStore,
   resetSessionOverridesStoreForTests,
@@ -7,6 +7,8 @@ import {
   getSessionRecord,
   getRecentModelsFromStore,
   setRecentModelsInStore,
+  getLastModelFromStore,
+  setLastModelInStore,
   readOverridesSnapshot,
 } from "./session-overrides-store.js"
 
@@ -152,6 +154,50 @@ export function pushRecentModel(ref: ModelRef, cap = DEFAULT_RECENT_CAP): void {
     ? next.filter((r, i) => i === 0 || !(r.model === ref.model && (r.modelParams ?? "") === (ref.modelParams ?? "") && !r.resourceId))
     : next
   setRecentModelsInStore(cleaned.slice(0, Math.max(1, cap)))
+}
+
+/**
+ * 会话属于哪个应用通道的「我自己」；不是的返回 undefined。
+ * 飞书里的其他人、定时任务、没有通道前缀的裸会话都不算：它们用什么模型，不该决定我下一个新会话用什么。
+ */
+function appMainChannelOf(sessionKey: string): string | undefined {
+  const { channelId, chatId } = parseChatKey(chatIdFromSessionKey(sessionKey))
+  return channelId && chatId === APP_CHANNEL_CHAT_ID ? channelId : undefined
+}
+
+/**
+ * 一个会话用上了某个模型（Agent 启动、或手动换模）：记入「最近使用」，
+ * 并且若是应用通道里「我自己」的会话，再记成该通道上一次用的模型，供新会话当默认。
+ */
+export function recordModelUse(sessionKey: string, ref: ModelRef): void {
+  pushRecentModel(ref)
+  const channelId = appMainChannelOf(sessionKey)
+  if (!channelId || !ref.model?.trim()) return
+  setLastModelInStore(channelId, {
+    model: ref.model,
+    modelParams: ref.modelParams ?? "",
+    ...(ref.resourceId ? { resourceId: ref.resourceId } : {}),
+    usedAt: Date.now(),
+  })
+}
+
+/**
+ * 新会话的默认模型 = 该通道里我上一次用的模型，写成这个新会话自己的 override。
+ * - 只在创建时写一次，不是每次解析都取「最近」：否则已有会话会在别处换模后跟着变，界面显示和实际启动也可能对不上；
+ * - resourceId 必须是新会话启动时实际生效的供应商：override 与当前供应商不一致就不会生效（防 LLM 模型串到 SDK），
+ *   所以上次用的模型属于别的供应商（换过供应商）时不写，退回通道默认模型；
+ * - 会话已有自己的模型就不动。
+ * 返回写入的模型，没写返回 undefined。
+ */
+export function seedNewSessionModel(sessionKey: string, channelId: string, resourceId: string): ModelRef | undefined {
+  const rid = resourceId.trim()
+  if (!rid) return undefined
+  if (getSessionRecord(sessionKey)?.model) return undefined
+  const last = getLastModelFromStore(channelId)
+  if (!last || last.resourceId !== rid) return undefined
+  const ref: ModelRef = { model: last.model, modelParams: last.modelParams ?? "", resourceId: rid }
+  setSessionOverride(sessionKey, ref)
+  return ref
 }
 
 export function removeRecentModel(ref: ModelRef): void {

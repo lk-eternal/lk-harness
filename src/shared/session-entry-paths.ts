@@ -16,6 +16,8 @@ export const LAYOUT_MARKER = ".layout-v2"
 
 export const GLOBAL_ROUTING_FILE = "routing.json"
 export const GLOBAL_RECENT_FILE = "recent.json"
+/** 每个通道里「我自己」上一次用的模型，新建会话时拿来当默认模型 */
+export const GLOBAL_LAST_MODELS_FILE = "last-models.json"
 export const GLOBAL_CARD_QUESTIONS_FILE = "card-questions.json"
 export const GLOBAL_COMMANDS_SUBDIR = "commands"
 
@@ -54,6 +56,10 @@ export function globalRoutingPath(root: string): string {
 
 export function globalRecentPath(root: string): string {
   return path.join(sessionGlobalDir(root), GLOBAL_RECENT_FILE)
+}
+
+export function globalLastModelsPath(root: string): string {
+  return path.join(sessionGlobalDir(root), GLOBAL_LAST_MODELS_FILE)
 }
 
 export function globalCardQuestionsPath(root: string): string {
