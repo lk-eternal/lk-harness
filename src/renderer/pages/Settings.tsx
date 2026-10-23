@@ -270,6 +270,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setUpdateDownloadPct(null)
         setUpdateMsg("正在下载更新…")
       }
+      if (s.kind === "retrying") {
+        // 下载中断后在自动重试/续传；数据重新流动后下一次进度事件会把文案改回「正在下载更新… N%」
+        setUpdateDownloading(true)
+        setUpdateMsg(s.message)
+      }
       if (s.kind === "downloaded") {
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)

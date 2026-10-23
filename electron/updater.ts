@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, net, session } from "electron"
 import electronUpdater from "electron-updater"
-import type { AppUpdater } from "electron-updater"
+import type { AppUpdater, UpdateInfo } from "electron-updater"
 import { randomUUID } from "node:crypto"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
@@ -9,6 +9,8 @@ import * as path from "node:path"
 import semver from "semver"
 import { getConfig } from "./config-store"
 import { syncMainProcessProxyEnv } from "./agent-env"
+import { DownloadRetryExhausted, errorMessage as downloadErrorMessage } from "./resumable-download"
+import { createRotatingFetch, formatRetryNotice, pickWindowsInstaller, prefetchInstaller } from "./update-prefetch"
 
 const execFileAsync = promisify(execFile)
 
@@ -16,6 +18,7 @@ const autoUpdater: AppUpdater = (electronUpdater as { autoUpdater: AppUpdater })
 
 const GITHUB_OWNER = "lk-eternal"
 const GITHUB_REPO = "lk-harness"
+const RELEASES_BASE = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`
 const HOMEBREW_TAP = "lk-eternal/homebrew-tap"
 const HOMEBREW_CASK = "lk-harness"
 
@@ -255,16 +258,16 @@ function normalizeReleaseVersion(tagName: string): string {
 }
 
 /** 把设置里的代理同步到主进程 env + Chromium session（更新检查/下载走这条路径） */
-export async function applyAppNetworkProxy(): Promise<void> {
+export async function applyAppNetworkProxy(target: Electron.Session = session.defaultSession): Promise<void> {
   const config = getConfig()
   syncMainProcessProxyEnv(config)
   const proxy = (config.httpsProxy || config.httpProxy || "").trim()
   const bypass = (config.noProxy || "localhost,127.0.0.1,<local>").trim()
   try {
     if (proxy) {
-      await session.defaultSession.setProxy({ proxyRules: proxy, proxyBypassRules: bypass })
+      await target.setProxy({ proxyRules: proxy, proxyBypassRules: bypass })
     } else {
-      await session.defaultSession.setProxy({ mode: "system" })
+      await target.setProxy({ mode: "system" })
     }
   } catch {
     /* best-effort */
@@ -625,8 +628,20 @@ async function showWinDownloadFallback(reason: unknown): Promise<void> {
   const errMsg =
     reason instanceof Error ? reason.message : typeof reason === "string" ? reason : String(reason)
   const downloadUrl = ver ? manualUpdateUrl(ver) : (lastKnownRemote?.htmlUrl ?? "")
+  // 自动重试用尽：说明试过多少次，并告诉用户已下载的部分还在、再点更新会接着下
+  const retryLines =
+    reason instanceof DownloadRetryExhausted
+      ? [
+          `已自动重试 ${reason.attempts} 次，连续 ${reason.maxConsecutiveFailures} 次没有拿到新数据。`,
+          reason.receivedBytes > 0
+            ? "已下载的部分会保留，网络恢复后再点「更新」会从断点继续。"
+            : "",
+          "",
+        ]
+      : []
   const detail = [
-    `错误: ${errMsg}`,
+    `错误: ${reason instanceof DownloadRetryExhausted ? downloadErrorMessage(reason.lastError) : errMsg}`,
+    ...retryLines,
     "",
     "可能原因: 安装包托管在 GitHub，直接访问可能被墙。",
     "",
@@ -659,6 +674,103 @@ function clearUpdaterCache(): void {
   } catch { /* best-effort */ }
 }
 
+/**
+ * electron-updater 自己用的缓存目录（pending）。用的是它的内部方法 getOrCreateDownloadHelper，
+ * 取不到（版本升级改了内部实现）就返回 null，调用方退回它自带的下载；tests/update-prefetch.test.ts 里有守卫测试。
+ */
+async function resolveUpdaterPendingDir(): Promise<string | null> {
+  const getter = (
+    autoUpdater as unknown as {
+      getOrCreateDownloadHelper?: () => Promise<{ cacheDirForPendingUpdate?: unknown }>
+    }
+  ).getOrCreateDownloadHelper
+  if (typeof getter !== "function") return null
+  try {
+    const helper = await getter.call(autoUpdater)
+    return typeof helper?.cacheDirForPendingUpdate === "string" ? helper.cacheDirForPendingUpdate : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 先用「可续传 + 自动重试」的方式把安装包下到 electron-updater 的缓存里。
+ * 失败（重试用尽、404 等）会抛出；缺少条件（找不到安装包条目/缓存目录）时直接返回，由它自带的下载接手。
+ */
+async function prefetchWinInstaller(info: UpdateInfo): Promise<void> {
+  const entry = pickWindowsInstaller(info, RELEASES_BASE)
+  const pendingDir = await resolveUpdaterPendingDir()
+  if (!entry || !pendingDir) {
+    console.warn("[updater] 无法预取安装包（没找到安装包条目或缓存目录），退回 electron-updater 自带的下载")
+    return
+  }
+  await applyAppNetworkProxy()
+  let lastSentPct = -1
+  let sessionSeq = 0
+  // 第一次走默认 session；之后每次重连前换一个新的内存 session（网络服务进程崩过之后，默认 session 会一直失败）
+  const downloadFetch = createRotatingFetch({
+    initial: session.defaultSession,
+    createSession: async () => {
+      const fresh = session.fromPartition(`lk-update-download-${Date.now()}-${++sessionSeq}`)
+      await applyAppNetworkProxy(fresh)
+      return fresh
+    },
+  })
+  const result = await prefetchInstaller({
+    pendingDir,
+    entry,
+    fetchImpl: downloadFetch.fetch,
+    headers: { "User-Agent": "lk-harness-desktop-updater" },
+    onProgress: ({ received, total }) => {
+      if (!total) return
+      const pct = (received / total) * 100
+      if (pct < 100 && pct - lastSentPct < 0.5) return
+      lastSentPct = pct
+      getMainWindow()?.webContents.send("updater:progress", pct)
+    },
+    onRetry: (r) => {
+      downloadFetch.rotate()
+      console.warn(
+        `[updater] 下载中断（第 ${r.attempt} 次连接，连续无进展 ${r.failures}/${r.maxFailures}，已收 ${r.receivedBytes} 字节）：${downloadErrorMessage(r.error)}`,
+      )
+      getMainWindow()?.webContents.send("updater:status", { kind: "retrying" as const, message: formatRetryNotice(r) })
+    },
+  })
+  console.info(
+    result.reusedExisting
+      ? "[updater] 缓存里已有校验通过的安装包"
+      : `[updater] 安装包下载完成（共连接 ${result.attempts} 次）`,
+  )
+}
+
+let activeWinDownload: Promise<void> | null = null
+
+/** Windows 下载更新：续传下载安装包 → 交给 electron-updater 校验缓存并发出 update-downloaded */
+function startWinDownload(info: UpdateInfo): void {
+  getMainWindow()?.webContents.send("updater:status", { kind: "downloading" as const })
+  // 已经在下了：别再起第二路，否则两路会写同一个 .part
+  if (activeWinDownload) return
+  activeWinDownload = (async () => {
+    try {
+      await prefetchWinInstaller(info)
+    } catch (err) {
+      // 重试用尽或不可重试的失败：通知界面结束「下载中」状态，再弹手动下载的提示
+      getMainWindow()?.webContents.send("updater:error", downloadErrorMessage(err))
+      void showWinDownloadFallback(err)
+      return
+    }
+    try {
+      // 缓存已就位时它直接触发 update-downloaded；万一校验没通过，它会按自己的方式下载
+      await autoUpdater.downloadUpdate()
+    } catch (err) {
+      // 它的 error 事件已经通知过界面
+      void showWinDownloadFallback(err)
+    }
+  })().finally(() => {
+    activeWinDownload = null
+  })
+}
+
 function wireAutoUpdater(): void {
   if (autoUpdaterWired || !app.isPackaged) {
     return
@@ -667,14 +779,11 @@ function wireAutoUpdater(): void {
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
 
-  autoUpdater.on("update-available", () => {
+  autoUpdater.on("update-available", (info: UpdateInfo) => {
     getMainWindow()?.webContents.send("updater:status", { kind: "available" as const })
     if (winDownloadRequested && process.platform === "win32") {
       winDownloadRequested = false
-      getMainWindow()?.webContents.send("updater:status", { kind: "downloading" as const })
-      void autoUpdater.downloadUpdate().catch((err: unknown) => {
-        void showWinDownloadFallback(err)
-      })
+      startWinDownload(info)
     }
   })
 

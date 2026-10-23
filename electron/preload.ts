@@ -101,6 +101,8 @@ export type UpdaterStatusPayload =
   | { kind: "available" }
   | { kind: "downloaded"; version: string }
   | { kind: "downloading" }
+  /** 下载中断，正在自动重试/续传；message 是给界面看的提示 */
+  | { kind: "retrying"; message: string }
 
 export interface AppModalRequestPayload {
   requestId: string

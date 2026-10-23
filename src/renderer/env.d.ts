@@ -154,7 +154,7 @@ declare global {
     applyAppUpdate(): Promise<{ ok: boolean; error?: string; message?: string }>
     onUpdaterProgress(cb: (percent: number) => void): () => void
     onUpdaterError(cb: (message: string) => void): () => void
-    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string } | { kind: "downloading" }) => void): () => void
+    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
     getConfig(): Promise<AppConfig>
     getProjectNodeGroups(): Promise<{ id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string; defaultPrompt?: string }[] }[]>
     saveProjectNodeGroups(groups: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }[]): Promise<{ ok: boolean }>
