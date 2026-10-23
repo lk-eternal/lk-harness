@@ -65,7 +65,7 @@ import { APP_VERSION } from "./app-version"
 import { useBackToClose } from "./back-stack"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
-import { isNativeShell, openInSystemBrowser } from "./native-browser"
+import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
 import UpdateBanner from "./UpdateBanner"
 import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
@@ -254,8 +254,9 @@ export default function MobileApp() {
   const startUpdate = useCallback(async () => {
     if (!update) return
     // 交给系统浏览器下载 APK，下完点开即由系统安装器接手；签名一致才能覆盖安装
-    if (!(await openInSystemBrowser(update.apkUrl))) {
-      setActionError(`无法调起系统浏览器，请手动打开下载：${update.releaseUrl}`)
+    const opened = await tryOpenInSystemBrowser(update.apkUrl)
+    if (!opened.ok) {
+      setActionError(`无法调起系统浏览器（${opened.reason}），请手动打开下载：${update.releaseUrl}`)
     }
   }, [update])
   const dismissUpdate = useCallback(() => {
