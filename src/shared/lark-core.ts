@@ -95,6 +95,31 @@ export interface CardInput {
   value: unknown;
 }
 
+/**
+ * 流式卡里一段连续的思考/工具块（≥2 个）：折成一个面板，折叠时只有一行汇总。
+ * 汇总在裁剪（只留最近 N 块）之前按整段统计，所以数字只增不减，不会随旧块被丢而回退。
+ */
+export interface StreamProcessRun {
+  /** 取首个成员的 panelId，没有就用它在时间线里的下标；拼进 element_id */
+  id: string;
+  thinkings: number;
+  toolCalls: number;
+  failed: number;
+  /** 整段里最后一次工具调用：折叠时展示的「最后一条具体的操作」 */
+  lastTool?: { title: string; status: string; detail?: string };
+  /** 最后一个成员是思考（卡还在流式且这一组在末尾时，意味着「思考中…」） */
+  endsWithThinking: boolean;
+}
+
+/** buildProcessRuns 用到的最小分段形状；真正的分段类型更宽，这里只读需要的字段 */
+interface ProcessSegmentLike {
+  type: string;
+  panelId?: string;
+  steps?: Array<{ title: string; status: string; detail?: string }>;
+  /** 工具步骤被截断前的真实调用数 / 失败数；缺省按 steps 数 */
+  stats?: { calls: number; failed: number };
+}
+
 export interface LarkSenderOptions {
   client: Lark.Client;
   chatId: string;
@@ -867,22 +892,26 @@ export class LarkSender {
     return el;
   }
 
-  /** MCP/内置工具名 → 飞书卡片标题（下划线在 lark_md 中会被吞，先拆词） */
-  static formatToolStepTitle(raw: string): string {
+  /**
+   * MCP/内置工具名 → 飞书卡片标题（下划线在 lark_md 中会被吞，先拆词）。
+   * plain：用在 plain_text 里（不解析 markdown），保留 `*` `_` 原样，工具名才完整
+   */
+  static formatToolStepTitle(raw: string, opts?: { plain?: boolean }): string {
+    const clean = (s: string) => (opts?.plain ? s : s.replace(/[*_`]/g, ""))
     const name = (raw || "tool").trim()
-    if (name.includes(" · ")) return name.replace(/[*_`]/g, "")
+    if (name.includes(" · ")) return clean(name)
     const knownServers = ["lk-harness-admin", "lk-harness", "cursor-claw", "cursor-claw-admin"]
     for (const srv of knownServers.sort((a, b) => b.length - a.length)) {
       const prefix = `${srv}_`
       if (name.startsWith(prefix)) {
-        return `${srv} · ${name.slice(prefix.length)}`.replace(/[*_`]/g, "")
+        return clean(`${srv} · ${name.slice(prefix.length)}`)
       }
     }
     const idx = name.indexOf("_")
     if (idx > 0 && idx < name.length - 1) {
-      return `${name.slice(0, idx)} · ${name.slice(idx + 1)}`.replace(/[*_`]/g, "")
+      return clean(`${name.slice(0, idx)} · ${name.slice(idx + 1)}`)
     }
-    return name.replace(/[*_`]/g, "")
+    return clean(name)
   }
 
   /** 单步工具行：div + standard_icon + lark_md（对齐 hermes _build_tool_step_*） */
@@ -1170,6 +1199,129 @@ export class LarkSender {
     return src.filter((_, i) => !drop.has(i));
   }
 
+  /** 连续的思考/工具块至少这么多才折成一组；单个块保持原样 */
+  static readonly PROCESS_GROUP_MIN = 2;
+  /** 折叠组标题的显示宽度上限（中文按 2 计）：只有一行，超出的工具参数截断，不让标题换行 */
+  private static readonly PROCESS_GROUP_TITLE_WIDTH = 64;
+
+  private static isProcessSegment(seg: { type: string }): boolean {
+    return seg.type === "thinking" || seg.type === "tools";
+  }
+
+  private static summarizeProcessRun(members: ProcessSegmentLike[], startIndex: number): StreamProcessRun {
+    const rawId = members[0].panelId || `r${startIndex}`;
+    const run: StreamProcessRun = {
+      id: rawId.replace(/[^A-Za-z0-9_]/g, "_"),
+      thinkings: 0,
+      toolCalls: 0,
+      failed: 0,
+      endsWithThinking: members[members.length - 1].type === "thinking",
+    };
+    for (const m of members) {
+      if (m.type === "thinking") {
+        run.thinkings++;
+        continue;
+      }
+      const steps = m.steps ?? [];
+      run.toolCalls += m.stats?.calls ?? steps.length;
+      run.failed += m.stats?.failed ?? steps.filter((s) => s.status === "error").length;
+      const last = steps[steps.length - 1];
+      if (last) run.lastTool = { title: last.title, status: last.status, detail: last.detail };
+    }
+    return run;
+  }
+
+  /**
+   * 给每段连续（≥2 个）的思考/工具分段挂上同一个 run，渲染时据此折成一组。
+   * 必须在裁剪之前调用：run 里的统计覆盖整段，裁剪只影响组内还展示哪些块。
+   * 不改入参：返回的成员是浅拷贝。
+   */
+  static annotateProcessRuns<T extends { type: string }>(segments: T[]): Array<T & { run?: StreamProcessRun }> {
+    const out = segments.slice() as Array<T & { run?: StreamProcessRun }>;
+    let i = 0;
+    while (i < segments.length) {
+      if (!LarkSender.isProcessSegment(segments[i])) { i++; continue; }
+      let j = i;
+      while (j < segments.length && LarkSender.isProcessSegment(segments[j])) j++;
+      if (j - i >= LarkSender.PROCESS_GROUP_MIN) {
+        const run = LarkSender.summarizeProcessRun(segments.slice(i, j) as unknown as ProcessSegmentLike[], i);
+        for (let k = i; k < j; k++) out[k] = { ...segments[k], run };
+      }
+      i = j;
+    }
+    return out;
+  }
+
+  /** 按显示宽度截断（中文按 2 计），超出时末尾补省略号 */
+  private static clipToWidth(s: string, maxWidth: number): string {
+    if (LarkSender.displayWidth(s) <= maxWidth) return s;
+    let out = "";
+    let w = 0;
+    for (const ch of s) {
+      const cw = (ch.codePointAt(0) ?? 0) > 0xff ? 2 : 1;
+      if (w + cw > maxWidth - 1) break;
+      out += ch;
+      w += cw;
+    }
+    return `${out}…`;
+  }
+
+  /**
+   * 折叠组的标题（一行）：「⚙️ 思考 8 · 工具 11 · ✓ shell  参数」。
+   * live（卡还在流式且这一组在最末）且最后一步是思考时，尾部写「思考中…」，否则写最后一次工具调用。
+   */
+  static formatProcessRunTitle(run: StreamProcessRun, live: boolean): string {
+    const counts = [
+      run.thinkings > 0 ? `思考 ${run.thinkings}` : "",
+      run.toolCalls > 0 ? `工具 ${run.toolCalls}` : "",
+    ].filter(Boolean).join(" · ");
+    const head = [`⚙️ ${counts || "过程"}`];
+    if (run.failed > 0) head.push(`⚠️ ${run.failed} 失败`);
+    const headText = head.join(" · ");
+
+    let tail = "";
+    if (live && run.endsWithThinking) {
+      tail = "思考中…";
+    } else if (run.lastTool) {
+      const t = run.lastTool;
+      const mark = t.status === "running" ? "⏳" : t.status === "error" ? "✗" : "✓";
+      const detail = t.detail?.replace(/\s+/g, " ").trim();
+      tail = `${mark} ${LarkSender.formatToolStepTitle(t.title, { plain: true })}${detail ? `  ${detail}` : ""}`;
+    }
+    if (!tail) return headText;
+    const room = Math.max(12, LarkSender.PROCESS_GROUP_TITLE_WIDTH - LarkSender.displayWidth(headText) - 3);
+    return `${headText} · ${LarkSender.clipToWidth(tail, room)}`;
+  }
+
+  /** 折叠组面板：标题一行汇总，默认折叠，展开后是组内原来的每个思考/工具面板（各自仍可再展开） */
+  static buildProcessGroupPanel(
+    title: string,
+    children: Record<string, unknown>[],
+    elementId: string,
+  ): Record<string, unknown> {
+    return {
+      tag: "collapsible_panel",
+      element_id: elementId,
+      expanded: false,
+      header: {
+        title: {
+          tag: "plain_text",
+          content: title,
+          text_color: "grey",
+          text_size: "notation",
+        },
+        vertical_align: "center",
+        icon: { tag: "standard_icon", token: "down-small-ccm_outlined", size: "16px 16px", color: "grey" },
+        icon_position: "right",
+        icon_expanded_angle: -180,
+      },
+      border: { color: "grey", corner_radius: "5px" },
+      vertical_spacing: "4px",
+      padding: "8px 8px 8px 8px",
+      elements: children,
+    };
+  }
+
   /** 构建流式卡 JSON；会话色条 + 时间线 segments */
   static buildStreamingCardJson(opts?: {
     status?: "streaming" | "completed" | "error";
@@ -1179,7 +1331,7 @@ export class LarkSender {
     sessionTemplate?: string;
     segments?: Array<
       | { type: "thinking"; text: string; title?: string; panelId?: string; expanded?: boolean }
-      | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
+      | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }
@@ -1226,7 +1378,8 @@ export class LarkSender {
     }
 
 
-    type BodySegment = NonNullable<typeof segments>[number] | { type: "omitted"; text: string };
+    /** run：裁剪前挂上的「所属连续过程」，渲染时同一个 run 的相邻块折成一组 */
+    type BodySegment = (NonNullable<typeof segments>[number] | { type: "omitted"; text: string }) & { run?: StreamProcessRun };
 
     const buildBodyElements = (segs: BodySegment[]): Record<string, unknown>[] => {
       const els: Record<string, unknown>[] = [];
@@ -1240,7 +1393,35 @@ export class LarkSender {
       const replyCount = segs.filter((s) => s.type === "reply" && s.text.trim()).length;
       const hasQuestion = !!opts?.questionText?.trim()
         || segs.some((s) => s.type === "question");
-      for (const seg of segs) {
+
+      // 同一个 run 的相邻思考/工具面板先攒着，遇到别的内容（或换了 run）再折成一组。
+      // 裁剪后组内只剩一个块时不折，原样输出
+      const open: { run?: StreamProcessRun; panels: Record<string, unknown>[]; endIdx: number } = { panels: [], endIdx: -1 };
+      const flushRun = () => {
+        const { run, panels, endIdx } = open;
+        open.run = undefined;
+        open.panels = [];
+        if (!run) return;
+        if (panels.length < LarkSender.PROCESS_GROUP_MIN) { els.push(...panels); return; }
+        // 还在流式、且这一组就是时间线末尾：后面没有回复，说明过程仍在进行
+        const live = status === "streaming" && endIdx === segs.length - 1;
+        els.push(LarkSender.buildProcessGroupPanel(
+          LarkSender.formatProcessRunTitle(run, live),
+          panels,
+          `grp_${run.id}`.slice(0, 20),
+        ));
+      };
+      const pushProcessPanel = (panel: Record<string, unknown>, run: StreamProcessRun | undefined, idx: number) => {
+        if (!run) { els.push(panel); return; }
+        open.run = run;
+        open.panels.push(panel);
+        open.endIdx = idx;
+      };
+
+      for (let segIdx = 0; segIdx < segs.length; segIdx++) {
+        const seg = segs[segIdx];
+        const segRun = seg.type === "thinking" || seg.type === "tools" ? seg.run : undefined;
+        if (open.run && open.run.id !== segRun?.id) flushRun();
         if (seg.type === "omitted") {
           els.push({ tag: "markdown", content: seg.text, element_id: "omitted_notice" });
         } else if (seg.type === "question") {
@@ -1253,18 +1434,18 @@ export class LarkSender {
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
           const thinkEid = seg.panelId ? `think_${seg.panelId}` : `think_${thinkIdx++}`;
-          els.push(LarkSender.buildThinkPanelElement(seg.text || "_（暂无）_", {
+          pushProcessPanel(LarkSender.buildThinkPanelElement(seg.text || "_（暂无）_", {
             title: seg.title || (status === "streaming" ? "💭 思考中…" : "💭 思考完成"),
             expanded: seg.expanded ?? (status === "streaming"),
             elementId: thinkEid,
-          }));
+          }), segRun, segIdx);
         } else if (seg.type === "tools") {
           const toolEid = seg.panelId ? `tool_${seg.panelId}` : `tool_${toolIdx++}`;
-          els.push(LarkSender.buildToolPanelElement(seg.steps || [], {
+          pushProcessPanel(LarkSender.buildToolPanelElement(seg.steps || [], {
             title: seg.title || `🛠️ 工具执行 · ${(seg.steps || []).length} 步`,
             expanded: seg.expanded ?? true,
             elementId: toolEid,
-          }));
+          }), segRun, segIdx);
         } else if (seg.type === "todos") {
           if (!seg.items?.length) continue;
           els.push(LarkSender.buildTodoPanelElement(seg.items, { elementId: `todos_${todoIdx++}` }));
@@ -1278,6 +1459,7 @@ export class LarkSender {
           replyIdx++;
         }
       }
+      flushRun();
       const buttons = opts?.buttons ?? [];
       const input = opts?.input;
       const foot = opts?.footer?.replace(/^\s+|\s+$/gu, "");
@@ -1318,8 +1500,11 @@ export class LarkSender {
 
     // 飞书 300305：单卡组件/元素合计 ≤200。
     // 收敛原则：思考/工具各留最近 N 块；reply 与 todos 永不丢；不插「已省略」占位（避免卡顶跳动）。
+    // 折叠分组要在裁剪之前划定：组头的汇总统计覆盖整段连续过程，裁剪只决定展开后还看得到哪些块。
+    // 先滤掉隐藏的思考，这样「工具、（被隐藏的思考）、工具」也会并成一段
+    const visibleSegments = showThinking ? segments : segments.filter((s) => s.type !== "thinking");
     let segs: BodySegment[] = LarkSender.keepRecentStreamSegments(
-      segments as BodySegment[],
+      LarkSender.annotateProcessRuns(visibleSegments) as BodySegment[],
       keepPerKind,
       showThinking,
     );
@@ -1414,8 +1599,8 @@ export class LarkSender {
     sessionTitle?: CardTitle;
     sessionTemplate?: string;
     segments?: Array<
-      | { type: "thinking"; text: string; title?: string; expanded?: boolean }
-      | { type: "tools"; title?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
+      | { type: "thinking"; text: string; title?: string; panelId?: string; expanded?: boolean }
+      | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }

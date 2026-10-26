@@ -1950,7 +1950,7 @@ function ensureSegmentPanelIds(
 
 type CardBodySegment =
   | { type: "thinking"; text: string; title?: string; panelId?: string; expanded?: boolean }
-  | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }> }
+  | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
   | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string };
@@ -1963,7 +1963,7 @@ function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfi
 const FEISHU_THINKING_TAIL_CHARS = 1500;
 const FEISHU_MAX_TOOL_STEPS = 40;
 
-function buildCardSegmentsFromPayload(
+export function buildCardSegmentsFromPayload(
   payload: AgentStreamCardPayload,
   opts: { finish: boolean; showThinking: boolean; hideThinkingOnFinish?: boolean; skipThinkingOnlyPlaceholder?: boolean },
   panelState?: StreamPanelState,
@@ -2007,6 +2007,8 @@ function buildCardSegmentsFromPayload(
         panelId: seg.panelId,
         expanded: false,
         steps,
+        // 折叠组头要的是整段的真实调用数：上面按体积截掉的旧步骤也得算进去
+        stats: { calls: seg.tools.length, failed: seg.tools.filter((t) => t.status === "error").length },
       });
     } else if (seg.type === "todos") {
       if (stripFoldables) continue;
