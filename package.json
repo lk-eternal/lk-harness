@@ -23,6 +23,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "test": "vitest run",
+    "test:e2e": "vitest run -c vitest.e2e.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
     "build:mcp": "tsc",

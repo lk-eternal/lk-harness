@@ -1,0 +1,60 @@
+name: CI
+
+# 直接推 main 时的快速检查。
+# build.yml 只在打 tag 和 PR 时跑测试，直接推 main 的回归要等到打 tag 发版才暴露；
+# 这里只跑测试和类型检查（不打安装包），几分钟内给出结果。
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Test & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # 与 build.yml 一致：产线 Electron 41 内核（Node 24）
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Typecheck (electron + renderer)
+        run: npm run typecheck
+
+  e2e:
+    name: E2E (isolated daemon)
+    runs-on: ubuntu-latest
+    # 端到端测试在 Windows 上验证过，还没在 GitHub 的 Linux 上跑过。
+    # 先不让它把 main 标红；看到连续几次绿了，就把下面这行删掉，让它和 check 一样成为硬检查。
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run e2e tests
+        run: npm run test:e2e
