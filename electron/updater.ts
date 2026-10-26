@@ -91,6 +91,27 @@ let autoUpdaterWired = false
 let updaterIpcRegistered = false
 let downloadedUpdateVersion: string | null = null
 
+/**
+ * 注意：这个路径**不是** electron-updater 的缓存目录。
+ *
+ * electron-updater 用 `<baseCachePath>/<updaterCacheDirName>`（Windows 是 `%LOCALAPPDATA%\lk-harness-updater`，
+ * macOS 是 `~/Library/Caches`，Linux 是 `$XDG_CACHE_HOME`），而这里拼的是 `<userData>/../…`（Windows 的 `%APPDATA%`），
+ * 目录并不存在。结果是下面三个函数实际上都不起作用：
+ * - readCachedDownloadVersion 恒为 null（即便路径对了也一样：update-info.json 里只有 fileName/sha512/
+ *   isAdminRightsRequired，没有 version 字段）
+ * - clearUpdaterCache 是空操作
+ *
+ * 这恰好保护了两件事，**所以不要只把路径「改对」**：
+ * 1. 下载前的 clearUpdaterCache 一旦真的生效，会把 pending 里的 `.part`（断点续传）和已下好的安装包一起删掉，
+ *    重启后续传、重复点下载秒过校验都会失效；缓存根目录里的 installer.exe 是 NSIS 留给差分更新的底包，也会被删。
+ * 2. 一旦「已下载」被识别，重启后会直接 quitAndInstall；但 electron-updater 的下载状态在内存里，
+ *    新进程里没走过 downloadUpdate 就会报「No update filepath provided」。现在每次都走 checkForUpdates → 秒过校验的缓存，
+ *    才触发 update-downloaded 再安装。
+ *
+ * 想让「已下载」跨重启生效，需要同时做：用 electron-updater 的真实 pending 目录（resolveUpdaterPendingDir）、
+ * 从 fileName 解析版本、只清 pending 里过期的内容、并在新进程里先让 electron-updater 载入缓存再 quitAndInstall。
+ * 这条链路只能在打包后的真实安装包里验证，所以先保持现状。
+ */
 function getUpdaterCacheDir(): string {
   return path.join(app.getPath("userData"), "..", `${app.getName()}-updater`)
 }
