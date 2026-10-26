@@ -20,6 +20,7 @@ import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeL
 import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
+import { redactDeep, redactedTail } from "../src/shared/redact.js"
 import { migrateDataLayout } from "../src/shared/data-paths.js"
 import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
 import {
@@ -2432,19 +2433,21 @@ export function initDaemonManager(): void {
 
 // ── 诊断包导出 ───────────────────────────────────────────
 
-function maskSecret(v?: string): string {
-  return v ? `${v.slice(0, 4)}***(len=${v.length})` : ""
-}
-
-function tailOfFile(p: string, lines = 400): string {
+/** 读日志尾部并脱敏（Authorization/令牌/URL 口令/系统用户名等），读不到时给占位 */
+function redactedTailOfFile(p: string, lines = 400): string {
   try {
-    return fs.readFileSync(p, "utf-8").split(/\r?\n/).slice(-lines).join("\n")
+    return redactedTail(fs.readFileSync(p, "utf-8"), lines)
   } catch {
     return "(不存在或读取失败)"
   }
 }
 
-/** 汇总日志、脱敏配置、会话/队列快照到单个文本文件，供远程排障（凭据不落盘） */
+/**
+ * 汇总日志、脱敏配置、会话/队列快照到单个文本文件，供远程排障。
+ *
+ * 脱敏规则见 src/shared/redact.ts：配置按**键名**递归遮（xxxToken/xxxSecret/xxxKey… 新增字段默认也安全），
+ * 日志按模式遮。这是尽力而为：日志和队列快照里可能有消息片段，文件头已提醒使用者发出去之前自己看一眼。
+ */
 async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }> {
   try {
     const dir = path.join(app.getPath("userData"), "diagnostics")
@@ -2454,15 +2457,7 @@ async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?
     const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
     const file = path.join(dir, `diagnostics-${stamp}.txt`)
 
-    const config = getConfig()
-    const sanitized = {
-      ...config,
-      larkAppSecret: maskSecret(config.larkAppSecret),
-      wechatToken: maskSecret(config.wechatToken),
-      cursorApiKey: maskSecret(config.cursorApiKey),
-      agentResources: (config.agentResources ?? []).map((r) => ({ ...r, apiKey: maskSecret(r.apiKey) })),
-      channels: (config.channels ?? []).map((c) => ({ ...c, larkAppSecret: maskSecret(c.larkAppSecret), wechatToken: maskSecret(c.wechatToken) })),
-    }
+    const sanitized = redactDeep(getConfig())
 
     const lock = readLockFile()
     let daemonHealth: unknown = null
@@ -2477,30 +2472,31 @@ async function exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?
       "# LK Harness 诊断包",
       `生成时间: ${now.toISOString()}`,
       `应用版本: ${app.getVersion()}  平台: ${process.platform} ${os.release()}  Electron: ${process.versions.electron}`,
+      "注意：令牌/口令/密钥与系统用户名已脱敏，但队列快照和日志里可能有消息片段，发给别人之前请自己看一眼。",
       "",
       "## 配置（凭据已脱敏）",
       JSON.stringify(sanitized, null, 2),
       "",
       "## Daemon 状态",
-      JSON.stringify(daemonHealth, null, 2),
+      JSON.stringify(redactDeep(daemonHealth), null, 2),
       "",
       "## 活跃会话",
-      JSON.stringify(getSessionAgentList(), null, 2),
+      JSON.stringify(redactDeep(getSessionAgentList()), null, 2),
       "",
       "## Resume 映射",
-      JSON.stringify(getAgentResumableSummary(), null, 2),
+      JSON.stringify(redactDeep(getAgentResumableSummary()), null, 2),
       "",
       "## 主进程性能（10s 采样，loopLagMs 持续>1000 即主循环被闷）",
       JSON.stringify(getMainPerfStats(), null, 2),
       "",
       "## 消息队列快照",
-      JSON.stringify(queueSnapshot, null, 2),
+      JSON.stringify(redactDeep(queueSnapshot), null, 2),
       "",
       "## app.log（尾部 400 行）",
-      tailOfFile(path.join(logsDir, "app.log")),
+      redactedTailOfFile(path.join(logsDir, "app.log")),
       "",
       "## daemon.log（尾部 400 行）",
-      tailOfFile(path.join(logsDir, "daemon.log")),
+      redactedTailOfFile(path.join(logsDir, "daemon.log")),
       "",
     ]
     fs.writeFileSync(file, sections.join("\n"), "utf-8")
