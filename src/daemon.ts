@@ -13,6 +13,7 @@ import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessag
 import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
+import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
   initFileQueue,
@@ -1815,14 +1816,7 @@ function hasOpenQuestionBlock(state: AgentStreamCardState): boolean {
 }
 
 function formatStreamQuestionBatchSummary(blocks: StreamQuestionBlock[]): string {
-  const lines: string[] = [];
-  let n = 0;
-  for (const b of blocks) {
-    if (!b.answered) continue;
-    n++;
-    lines.push(`${n}. ${questionDisplayBody(b.text)} → ${b.answered}`);
-  }
-  return lines.length ? `【点选汇总】\n${lines.join("\n")}` : "";
+  return formatQuestionBatchSummary(blocks.map((b) => ({ text: questionDisplayBody(b.text), answered: b.answered })));
 }
 
 function resolveStreamCardChrome(ch: Extract<ResolvedChannel, { type: "feishu" }>, sessionKey: string): {
@@ -4565,14 +4559,18 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   if (body.questionId) {
     const option = body.option?.trim();
     if (!option) { json(res, { ok: false, error: "option 必填" }, 400); return true; }
-    if (!appChat.answerQuestion(sessionKey, body.questionId, option)) {
+    const answered = appChat.answerQuestion(sessionKey, body.questionId, option);
+    if (!answered.ok) {
       json(res, { ok: false, error: "该问题已关闭或已作答" }, 409);
       return true;
     }
-    const internalId = `internal_app_${randomUUID()}`;
-    trackInternalMsgChat(internalId, chatKey);
-    pushMessage(option, internalId, chatKey, "p2p", undefined, body.questionId, { senderType: "user" });
-    json(res, { ok: true });
+    // 同一轮有多个问题时，选完最后一个才有 deliver：之前的选择只记下，不打扰 Agent
+    if (answered.deliver !== undefined) {
+      const internalId = `internal_app_${randomUUID()}`;
+      trackInternalMsgChat(internalId, chatKey);
+      pushMessage(answered.deliver, internalId, chatKey, "p2p", undefined, body.questionId, { senderType: "user" });
+    }
+    json(res, { ok: true, delivered: answered.deliver !== undefined });
     return true;
   }
 
@@ -4596,6 +4594,13 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   } else if (hasProjectNewDraft(chatKey)) {
     process.stdout.write(`__PROJECT_NEW_FILL__:${JSON.stringify({ chatId: chatKey, messageId, text })}\n`);
   } else {
+    // 问题没选完就直接发消息：已选的答案先交给 Agent（独立一条，用户之后编辑/撤回自己的消息不会连带丢掉它），没选的关掉
+    const heldAnswers = appChat.releaseHeldAnswers(sessionKey);
+    if (heldAnswers) {
+      const heldId = `internal_app_${randomUUID()}`;
+      trackInternalMsgChat(heldId, chatKey);
+      pushMessage(heldAnswers, heldId, chatKey, "p2p", undefined, undefined, { senderType: "user" });
+    }
     appChat.closeOpenQuestions(sessionKey, "问题已关闭");
     const content = [...images.map((p) => `[图片已保存: ${p}]`), text].filter(Boolean).join("\n");
     pushMessage(content, messageId, chatKey, "p2p", undefined, undefined, { senderType: "user" });

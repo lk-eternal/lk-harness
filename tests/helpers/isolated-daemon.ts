@@ -22,6 +22,10 @@ export interface ChatItem {
   queued?: boolean
   interrupted?: boolean
   segments?: Array<{ type: string; text?: string }>
+  /** 问题卡：用户选的选项、是否已选但还没交给 Agent、关闭原因 */
+  answered?: string
+  held?: boolean
+  closedNote?: string
 }
 
 export interface IsolatedDaemon {

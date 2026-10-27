@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { channelIdFromSessionKey } from "./shared/channel-types.js";
+import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import {
   appChatSessionId,
   chatItemInsertIndex,
@@ -85,6 +86,23 @@ function hasReplyText(segments: AppChatSegment[]): boolean {
 function isOpenQuestion(item: AppChatItem): item is AppChatQuestionItem {
   return item.kind === "question" && !item.answered && !item.closedNote;
 }
+
+/** 还没交给 Agent 的问题：没选的，和已选但在等其余问题的 */
+function isUndeliveredQuestion(item: AppChatItem): item is AppChatQuestionItem {
+  return item.kind === "question" && !item.closedNote && (!item.answered || item.held === true);
+}
+
+function withoutHeld(item: AppChatQuestionItem): AppChatQuestionItem {
+  const next = { ...item };
+  delete next.held;
+  return next;
+}
+
+/**
+ * answerQuestion 的结果。deliver 有值 = 这一组问题全选完了，要把这段文本交给 Agent；
+ * 没有 = 先记下这个选择，还在等其余问题。
+ */
+export type AnswerQuestionResult = { ok: false } | { ok: true; deliver?: string };
 
 /** 重启后内存里没有活卡：未收口的回合一律视为已结束 */
 function readItems(file: string): AppChatItem[] {
@@ -277,13 +295,37 @@ export class AppChat {
     return messageId;
   }
 
-  /** 选中一个选项；问题不存在或已作答/已关闭返回 false */
-  answerQuestion(sessionKey: string, messageId: string, option: string): boolean {
+  /**
+   * 选中一个选项。同一会话里还有没选的问题时，这个选择先记下（held）、不交给 Agent，
+   * 等全部选完才一次交出去；选完之前可以改选。问题不存在、已交出或已关闭返回 ok:false。
+   *
+   * 「同一组」就是这个会话里所有还没交出的问题：用户发消息会关掉没选的问题（并先交出已选的），
+   * 所以不会有很久以前的残留问题把新一轮的答案卡住。
+   * 只有一个问题时交出的是选项本身（和之前一致）；多个问题交出的是带题干的汇总，否则 Agent 对不上哪个答案属于哪个问题。
+   */
+  answerQuestion(sessionKey: string, messageId: string, option: string): AnswerQuestionResult {
     const entry = this.entry(sessionKey);
     const hit = entry.items.find((i) => i.id === messageId);
-    if (!hit || !isOpenQuestion(hit)) return false;
-    this.upsert(entry, { ...hit, answered: option });
-    return true;
+    if (!hit || !isUndeliveredQuestion(hit)) return { ok: false };
+    this.upsert(entry, { ...hit, answered: option, held: true });
+
+    const group = entry.items.filter(isUndeliveredQuestion);
+    if (group.some((q) => !q.answered)) return { ok: true };
+
+    for (const q of group) this.upsert(entry, withoutHeld(q));
+    return { ok: true, deliver: group.length === 1 ? option : formatQuestionBatchSummary(group) };
+  }
+
+  /**
+   * 用户没有把问题选完、而是直接发了消息：已选但还没交出的答案不能丢，取出来先交给 Agent。
+   * 返回带题干的汇总文本；没有这样的答案返回 undefined。要在 closeOpenQuestions 之前调用。
+   */
+  releaseHeldAnswers(sessionKey: string): string | undefined {
+    const entry = this.entry(sessionKey);
+    const held = entry.items.filter((i): i is AppChatQuestionItem => i.kind === "question" && i.held === true && !i.closedNote);
+    if (held.length === 0) return undefined;
+    for (const q of held) this.upsert(entry, withoutHeld(q));
+    return formatQuestionBatchSummary(held);
   }
 
   closeOpenQuestions(sessionKey: string, note: string): void {

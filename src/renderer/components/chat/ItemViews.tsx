@@ -104,7 +104,9 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
 }
 
 export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; onAnswer: (questionId: string, option: string) => void }) {
-  const locked = !!item.answered || !!item.closedNote
+  // 同一轮有多个问题时，选了还不会发给 Agent（要全部选完才一起发）：这期间可以改选，发出去或被关闭之后才锁定
+  const waiting = !!item.answered && item.held === true && !item.closedNote
+  const locked = (!!item.answered && !waiting) || !!item.closedNote
   return (
     <div className="rounded-lg border border-line bg-surface/60 p-3">
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>
@@ -116,7 +118,7 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
               key={`${i}-${o}`}
               type="button"
               disabled={locked}
-              onClick={() => onAnswer(item.messageId, o)}
+              onClick={() => { if (!picked) onAnswer(item.messageId, o) }}
               className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-left text-sm transition ${
                 picked
                   ? "border-blue-500 bg-blue-600/20 text-accent-bright"
@@ -132,6 +134,7 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
           )
         })}
       </div>
+      {waiting && <p className="mt-2 text-xs text-fg-muted">已选择，等其余问题都选完后一起发给 Agent；也可以直接发消息说明</p>}
       {item.closedNote && !item.answered && <p className="mt-2 text-xs text-fg-muted">{item.closedNote}</p>}
     </div>
   )

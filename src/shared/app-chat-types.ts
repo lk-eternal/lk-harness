@@ -69,7 +69,13 @@ export interface AppChatQuestionItem extends AppChatItemBase {
   messageId: string;
   text: string;
   options: string[];
+  /** 用户选的选项 */
   answered?: string;
+  /**
+   * 已选，但还没交给 Agent：同一轮有多个问题时，要全部选完才一起交出去。
+   * 此时可以改选；交出去之后清掉这个标记，选择才锁定。没有这个字段的旧记录一律视为已交出。
+   */
+  held?: boolean;
   closedNote?: string;
 }
 
