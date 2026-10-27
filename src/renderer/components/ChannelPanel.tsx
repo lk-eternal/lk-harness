@@ -796,7 +796,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             {draft.type === "feishu" && (draft.showThinkingMain ?? true) && (
               <>
               <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
-                <p className="text-xs text-fg-3">思考/工具块保留数</p>
+                <p className="text-xs text-fg-3" title="一组连续的思考/工具或一个单独的块算一段，更早的整段一起隐藏">思考/工具保留段数</p>
                 <input
                   type="number"
                   min={1}
@@ -889,7 +889,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             {draft.type === "feishu" && (draft.showThinkingOthers ?? false) && (
               <>
               <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
-                <p className="text-xs text-fg-3">思考/工具块保留数</p>
+                <p className="text-xs text-fg-3" title="一组连续的思考/工具或一个单独的块算一段，更早的整段一起隐藏">思考/工具保留段数</p>
                 <input
                   type="number"
                   min={1}

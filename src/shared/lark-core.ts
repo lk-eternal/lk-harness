@@ -97,7 +97,7 @@ export interface CardInput {
 
 /**
  * 流式卡里一段连续的思考/工具块（≥2 个）：折成一个面板，折叠时只有一行汇总。
- * 汇总在裁剪（只留最近 N 块）之前按整段统计，所以数字只增不减，不会随旧块被丢而回退。
+ * 汇总在裁剪（只留最近 N 段，段内每类最近 N 块）之前按整段统计，所以数字只增不减，不会随组内旧块被丢而回退。
  */
 export interface StreamProcessRun {
   /** 取首个成员的 panelId，没有就用它在时间线里的下标；拼进 element_id */
@@ -1134,7 +1134,11 @@ export class LarkSender {
 
   /** 飞书 CardKit JSON 2.0：单卡组件/元素合计 ≤200（含嵌套 tag） */
   static readonly STREAM_ELEMENT_BUDGET = 180;
-  /** 思考块 / 工具块各保留最近 N 个；reply 与 todos 永不丢 */
+  /**
+   * 保留最近 N 个「过程段」：连续的思考/工具块算一段（一个折叠组或一个单独的块都是一段），
+   * 更早的整段一起丢；每段内部每类也最多留最近 N 个。reply 与 todos 永不丢。
+   * 名字沿用旧的 per-kind，是因为它已经落进用户配置（streamKeepPerKind*）。
+   */
   static readonly STREAM_KEEP_PER_KIND = 5;
 
   static normalizeStreamKeepPerKind(n?: number): number {
@@ -1179,23 +1183,34 @@ export class LarkSender {
     return [{ type: "reply", text: LarkSender.THINKING_ONLY_PLACEHOLDER } as T];
   }
 
-  /** 按类型保留最近 keep 个 thinking/tools；reply、todos、question 全留 */
+  /**
+   * 保留最近 keep 个过程段，更早的整段丢；reply、todos、question 全留。
+   * 过程段 = 被回复/清单隔开的一串连续思考/工具（一个折叠组或一个单独的块都算一段）。
+   * 整段一起丢，是为了不让一个组被拆散：之前思考和工具各自按类型清理，工具先被挤掉，
+   * 组里就剩一个孤零零的思考。留下来的段内部，每类仍只留最近 keep 个，避免一段超长的连续过程撑爆卡片。
+   */
   static keepRecentStreamSegments<T extends { type: string }>(
     segments: T[],
     keep = LarkSender.STREAM_KEEP_PER_KIND,
     showThinking = true,
   ): T[] {
     const src = showThinking ? segments : segments.filter((s) => s.type !== "thinking");
-    const thinkIdxs: number[] = [];
-    const toolIdxs: number[] = [];
-    for (let i = 0; i < src.length; i++) {
-      if (src[i].type === "thinking") thinkIdxs.push(i);
-      else if (src[i].type === "tools") toolIdxs.push(i);
+    const units = LarkSender.processUnitRanges(src);
+    const cut = Math.max(0, units.length - keep);
+    const drop = new Set<number>();
+    for (const [start, end] of units.slice(0, cut)) {
+      for (let i = start; i <= end; i++) drop.add(i);
     }
-    const drop = new Set<number>([
-      ...thinkIdxs.slice(0, Math.max(0, thinkIdxs.length - keep)),
-      ...toolIdxs.slice(0, Math.max(0, toolIdxs.length - keep)),
-    ]);
+    for (const [start, end] of units.slice(cut)) {
+      const thinkIdxs: number[] = [];
+      const toolIdxs: number[] = [];
+      for (let i = start; i <= end; i++) {
+        if (src[i].type === "thinking") thinkIdxs.push(i);
+        else toolIdxs.push(i);
+      }
+      for (const i of thinkIdxs.slice(0, Math.max(0, thinkIdxs.length - keep))) drop.add(i);
+      for (const i of toolIdxs.slice(0, Math.max(0, toolIdxs.length - keep))) drop.add(i);
+    }
     return src.filter((_, i) => !drop.has(i));
   }
 
@@ -1206,6 +1221,20 @@ export class LarkSender {
 
   private static isProcessSegment(seg: { type: string }): boolean {
     return seg.type === "thinking" || seg.type === "tools";
+  }
+
+  /** 每个过程段（连续的思考/工具）在数组里的下标区间 [start, end]，含两端 */
+  private static processUnitRanges(segs: Array<{ type: string }>): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    let i = 0;
+    while (i < segs.length) {
+      if (!LarkSender.isProcessSegment(segs[i])) { i++; continue; }
+      let j = i;
+      while (j + 1 < segs.length && LarkSender.isProcessSegment(segs[j + 1])) j++;
+      out.push([i, j]);
+      i = j + 1;
+    }
+    return out;
   }
 
   private static summarizeProcessRun(members: ProcessSegmentLike[], startIndex: number): StreamProcessRun {
@@ -1499,7 +1528,8 @@ export class LarkSender {
     };
 
     // 飞书 300305：单卡组件/元素合计 ≤200。
-    // 收敛原则：思考/工具各留最近 N 块；reply 与 todos 永不丢；不插「已省略」占位（避免卡顶跳动）。
+    // 收敛原则：只留最近 N 个过程段（一个组或一个单独的块算一段），更早的整段丢；reply 与 todos 永不丢；
+    // 不插「已省略」占位（避免卡顶跳动）。
     // 折叠分组要在裁剪之前划定：组头的汇总统计覆盖整段连续过程，裁剪只决定展开后还看得到哪些块。
     // 先滤掉隐藏的思考，这样「工具、（被隐藏的思考）、工具」也会并成一段
     const visibleSegments = showThinking ? segments : segments.filter((s) => s.type !== "thinking");
@@ -1535,12 +1565,27 @@ export class LarkSender {
       );
       elements = buildBodyElements(segs);
 
-      // 2) 仍超限：继续丢掉最早的思考/非最新工具（无省略文案）
+      // 2) 仍超限：按时间从早到晚继续丢（无省略文案）。
+      //    过程段整段丢（组里的思考和工具一起走，不留孤零零的思考）；
+      //    只有含最新工具块的那一段受保护，只能从它内部丢最早的思考/非最新工具。
       while (overBudget()) {
         const lt = LarkSender.lastToolsIndex(segs);
-        const idx = segs.findIndex((s, i) => s.type === "thinking" || (s.type === "tools" && i !== lt));
-        if (idx < 0) break;
-        segs.splice(idx, 1);
+        let dropped = false;
+        for (const [start, end] of LarkSender.processUnitRanges(segs)) {
+          if (lt >= start && lt <= end) {
+            let idx = -1;
+            for (let i = start; i <= end; i++) {
+              if (segs[i].type === "thinking" || (segs[i].type === "tools" && i !== lt)) { idx = i; break; }
+            }
+            if (idx < 0) continue;
+            segs.splice(idx, 1);
+          } else {
+            segs.splice(start, end - start + 1);
+          }
+          dropped = true;
+          break;
+        }
+        if (!dropped) break;
         elements = buildBodyElements(segs);
       }
 

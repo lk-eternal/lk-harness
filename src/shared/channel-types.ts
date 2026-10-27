@@ -78,7 +78,7 @@ export interface MessageChannel {
   /** 是否展示流式进度卡（默认 true；关闭后仅推送最终回复消息）
    * @deprecated 同上 */
   showThinking?: boolean;
-  /** 流式卡思考/工具块各保留最近 N 个（默认 5；仅 showThinking 开启时生效）
+  /** 流式卡保留最近 N 个思考/工具过程段（一个折叠组或一个单独的块算一段，默认 5；仅 showThinking 开启时生效）
    * @deprecated 同上 */
   streamKeepPerKind?: number;
   /** 完整回复后隐藏思考/工具/todos 折叠块，仅保留正文（默认 true）
@@ -122,7 +122,7 @@ export interface DaemonChannelConfig {
   /** 是否展示流式进度卡（默认 true）
    * @deprecated 同上 */
   showThinking?: boolean;
-  /** 流式卡思考/工具块各保留最近 N 个（默认 5）
+  /** 流式卡保留最近 N 个思考/工具过程段（一个折叠组或一个单独的块算一段，默认 5）
    * @deprecated 同上 */
   streamKeepPerKind?: number;
   /** 完整回复后隐藏思考/工具/todos 折叠块（默认 true）

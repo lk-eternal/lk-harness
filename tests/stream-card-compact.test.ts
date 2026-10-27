@@ -25,7 +25,7 @@ function buildCard(segments: Segment[], showThinking = true): { json: string; co
   return { json: JSON.stringify(card), count: LarkSender.countCardElements(card.body.elements) }
 }
 
-describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
+describe("流式卡压缩（留最近 N 个过程段，段内每类留最近 N，无省略占位）", () => {
   it("不超限且未超 N 时原样保留：detail 不剥、无省略占位", () => {
     const { json, count } = buildCard([mkThink("s"), mkTools(5, "S"), mkReply("s")])
     expect(count).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
@@ -33,7 +33,7 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(json).not.toContain("已省略")
   })
 
-  it("思考/工具各只留最近 5；reply 与 todos 全保留；无省略文案", () => {
+  it("只留最近 5 个过程段（最老的整段丢）；reply 与 todos 全保留；无省略文案", () => {
     const segments: Segment[] = []
     for (let i = 0; i < 12; i++) {
       segments.push(mkThink(`t${i}`))
@@ -62,7 +62,7 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(json).toContain("LATEST-step0")
   })
 
-  it("keepPerKind 可配置（非默认 5）", () => {
+  it("keepPerKind 可配置（非默认 5）：一段内每类留最近 3 块", () => {
     const segments: Segment[] = []
     for (let i = 0; i < 10; i++) {
       segments.push(mkThink(`t${i}`))
@@ -75,7 +75,7 @@ describe("流式卡压缩（各类型留最近 N，无省略占位）", () => {
     expect(LarkSender.normalizeStreamKeepPerKind(99)).toBe(20)
   })
 
-  it("keepRecentStreamSegments 精确保留各类型最近 N 块", () => {
+  it("keepRecentStreamSegments：一整段连续过程里，每类精确保留最近 N 块", () => {
     const segments: Segment[] = []
     for (let i = 0; i < 8; i++) {
       segments.push(mkThink(`t${i}`))

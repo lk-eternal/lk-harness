@@ -124,7 +124,7 @@ describe("飞书流式卡：连续的思考/工具块折成一组", () => {
     const els = build(segments)
     expect(els).toHaveLength(1)
     expect(titleOf(els[0])).toContain("思考 12 · 工具 24")
-    // 默认每类只留最近 5 块：5 个思考 + 5 个工具
+    // 这是一整段连续过程；段内默认每类只留最近 5 块：5 个思考 + 5 个工具
     expect(els[0].elements).toHaveLength(10)
     const json = JSON.stringify(els)
     expect(json).toContain("思考内容t11")
@@ -208,6 +208,92 @@ describe("飞书流式卡：连续的思考/工具块折成一组", () => {
     expect("run" in input[0]).toBe(false)
     expect((out[0] as { run?: unknown }).run).toBeDefined()
     expect(out[2]).toBe(input[2])
+  })
+})
+
+describe("飞书流式卡：旧的过程段整段丢，不把折叠组拆散", () => {
+  /** 用户截图里的会话：每轮「回复 → 思考+工具（一组）」，偶数轮再来一个没有思考的单独工具块 */
+  function timeline(rounds: number): Seg[] {
+    const segs: Seg[] = []
+    let n = 0
+    for (let r = 1; r <= rounds; r++) {
+      segs.push(reply(`回复${r}`))
+      segs.push(think(`${r}`, `p${n++}`), tools([["shell", `组${r}`]], `p${n++}`))
+      if (r % 2 === 0) segs.push(reply(`回复${r}b`), tools([["shell", `单${r}`]], `p${n++}`))
+    }
+    return segs
+  }
+  const replyTexts = (els: El[]) => els.filter((e) => e.tag === "markdown").map((e) => e.content)
+
+  it("每多一轮，最老的一整段一起消失：任何时候都不会出现孤零零的思考，也没有被拆残的组", () => {
+    for (let rounds = 1; rounds <= 9; rounds++) {
+      const els = build(timeline(rounds), { keepPerKind: 3 })
+      const panels = panelsOf(els)
+      // 一个组或一个单独的块算一段，只留最近 3 段
+      expect(panels.length, `第 ${rounds} 轮`).toBeLessThanOrEqual(3)
+      // 这个会话里思考永远和工具成组出现；顶层有单独的思考，说明组被拆散了
+      expect(panels.filter((p) => String(p.element_id).startsWith("think_")), `第 ${rounds} 轮`).toHaveLength(0)
+      // 留下来的组都是完整的：一个思考 + 一个工具
+      for (const g of groupsOf(els)) expect(g.elements, `第 ${rounds} 轮`).toHaveLength(2)
+    }
+  })
+
+  it("留下的是最近 3 段，回复一条都不少", () => {
+    const els = build(timeline(9), { keepPerKind: 3 })
+    // 时间线末尾依次是：组8、单8、组9
+    const panels = panelsOf(els)
+    expect(panels).toHaveLength(3)
+    expect(groupsOf(els)).toHaveLength(2)
+    expect(titleOf(panels[0])).toContain("组8")
+    expect(JSON.stringify(panels[1])).toContain("单8")
+    expect(titleOf(panels[2])).toContain("组9")
+    const json = JSON.stringify(els)
+    for (const gone of ["组7", "单6", "组6", "组1"]) expect(json).not.toContain(gone)
+    expect(replyTexts(els)).toEqual(["回复1", "回复2", "回复2b", "回复3", "回复4", "回复4b", "回复5", "回复6", "回复6b", "回复7", "回复8", "回复8b", "回复9"])
+  })
+
+  it("单独的一个块也算一段：只留最近 N 个", () => {
+    const els = build([
+      think("a"), reply("1"), think("b"), reply("2"), think("c"),
+    ], { keepPerKind: 2 })
+    const json = JSON.stringify(els)
+    expect(json).not.toContain("思考内容a")
+    expect(json).toContain("思考内容b")
+    expect(json).toContain("思考内容c")
+    expect(replyTexts(els)).toEqual(["1", "2"])
+  })
+
+  it("段数没超过 N 时一段都不丢", () => {
+    const els = build(timeline(2), { keepPerKind: 3 })
+    // 组1、组2、单2：刚好 3 段
+    expect(panelsOf(els)).toHaveLength(3)
+  })
+
+  it("元素预算不够时也按整段丢，最老的组不会只剩下半截", () => {
+    // 每段：思考 + 6 步工具，6 段；段数没超过 N=20，只能靠元素预算来丢。
+    // 6 步是实测挑的：旧的「按时间逐块丢」在这个规模上会停在「只丢了最老那组的思考」，留下一个孤零零的工具块
+    const segs: Seg[] = []
+    for (let i = 0; i < 6; i++) {
+      segs.push(reply(`回复${i}`))
+      segs.push(
+        think(`段${i}`, `a${i}`),
+        tools(Array.from({ length: 6 }, (_, k) => [`s${i}-${k}`, `detail ${i}-${k}`] as [string, string]), `b${i}`),
+      )
+    }
+    const els = build(segs, { keepPerKind: 20 })
+    expect(LarkSender.countCardElements(els)).toBeLessThanOrEqual(LarkSender.STREAM_ELEMENT_BUDGET)
+    const panels = panelsOf(els)
+    // 确实丢了东西，否则这条测试没在测预算路径
+    expect(JSON.stringify(els)).not.toContain("思考内容段0")
+    expect(panels.length).toBeLessThan(6)
+    // 最后一段含最新工具块，受保护；它之前留下的每一段都得是完整的组
+    for (const p of panels.slice(0, -1)) {
+      expect(String(p.element_id), "非末段必须是完整的组").toMatch(/^grp_/)
+      expect(p.elements).toHaveLength(2)
+    }
+    // 最新工具块的最后一步一定还在
+    expect(JSON.stringify(els)).toContain("detail 5-5")
+    expect(replyTexts(els)).toHaveLength(6)
   })
 })
 
