@@ -1,17 +1,12 @@
 name: Build Mobile APK
 
+# 只在两种情况下构建：
+#  - 打 tag 发版时，由 build.yml 调用（workflow_call）
+#  - 需要临时测试包时，到 Actions 页手动运行（workflow_dispatch）
+# 不因为推送 main 自动构建：main 上随时可能有提交，而这个 APK 不发布，白占 Actions 额度。
 on:
   workflow_call:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "src/mobile/**"
-      - "capacitor.config.json"
-      - "vite.mobile.config.ts"
-      - "resources/icon.png"
-      - ".github/workflows/mobile-apk.yml"
 
 concurrency:
   group: mobile-apk-${{ github.ref }}
