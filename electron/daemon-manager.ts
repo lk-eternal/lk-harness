@@ -99,6 +99,10 @@ import {
   formatCurrentSessionBlock, currentResourceIdForSession,
 } from "./session-dispatcher"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
+import {
+  listSessionsForManager, restoreSessionDefault, resetManagedSession, deleteManagedSession,
+  previewSessionCleanup, runSessionCleanup,
+} from "./session-manager"
 
 export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
 export { getLogBuffer } from "./ui-logger"
@@ -1965,6 +1969,13 @@ export function initDaemonManager(): void {
   })
   ipcMain.handle("session:switch", (_e, sessionKey: string) => switchMainSession(sessionKey))
   ipcMain.handle("session:delete", async (_e, sessionKey: string) => deleteUserSession(sessionKey))
+  // 会话管理页（别人的会话）：换模型、停止沿用上面的 session:set-model / agent:stop-session
+  ipcMain.handle("session-manager:list", () => listSessionsForManager())
+  ipcMain.handle("session-manager:restore-default", (_e, sessionKey: string) => restoreSessionDefault(sessionKey))
+  ipcMain.handle("session-manager:reset", (_e, sessionKey: string) => resetManagedSession(sessionKey))
+  ipcMain.handle("session-manager:delete", (_e, sessionKey: string) => deleteManagedSession(sessionKey))
+  ipcMain.handle("session-manager:cleanup-preview", (_e, opts: { olderThanDays?: number; channelId?: string }) => previewSessionCleanup(opts ?? {}))
+  ipcMain.handle("session-manager:cleanup-run", (_e, opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }) => runSessionCleanup(opts))
   ipcMain.handle("project:list", () => {
     initProjectStore(app.getPath("userData"))
     return listProjects().map((p) => ({

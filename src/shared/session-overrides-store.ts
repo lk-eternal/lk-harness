@@ -112,7 +112,33 @@ function writeStateFile(statePath: string, rec: SessionOverrideRecord): void {
   fs.renameSync(tmp, statePath)
 }
 
+/** withOverridesSnapshot 作用域内复用的同一份快照；作用域外为 null */
+let scopedSnapshot: OverrideFile | null = null
+
+/**
+ * 在 fn 执行期间所有读取（getSessionRecord / 模型 / 供应商覆盖的解析）共用同一份快照，只读一遍磁盘。
+ *
+ * 不用的话，每次 getSessionRecord 都会把全部会话的 state.json 读一遍，
+ * 给 N 个会话各解析一次有效模型就是 N×N 次读文件（会话管理页一次列几百个会话就明显卡）。
+ * 只读用：作用域内写会话记录会抛错（写了也读不到新值，悄悄读到旧值比报错更糟）。
+ * fn 必须是同步的：快照只在 fn 返回前有效。
+ */
+export function withOverridesSnapshot<T>(fn: () => T): T {
+  if (scopedSnapshot) return fn()
+  scopedSnapshot = readOverridesSnapshot()
+  try {
+    return fn()
+  } finally {
+    scopedSnapshot = null
+  }
+}
+
+function assertNotInSnapshotScope(op: string): void {
+  if (scopedSnapshot) throw new Error(`session-overrides-store: ${op} 不能在 withOverridesSnapshot 的只读作用域内调用`)
+}
+
 export function readOverridesSnapshot(): OverrideFile {
+  if (scopedSnapshot) return scopedSnapshot
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
   const sessions: Record<string, SessionOverrideRecord> = {}
@@ -175,6 +201,7 @@ function isRecordEmpty(r: SessionOverrideRecord): boolean {
 }
 
 function resolveEntryDirForKey(sessionKey: string): { root: string; entryDir: string; canonicalKey: string } {
+  assertNotInSnapshotScope("patchSessionRecord")
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
   const snap = readOverridesSnapshot()
@@ -213,6 +240,7 @@ export function getSessionRecord(sessionKey: string): SessionOverrideRecord | un
 }
 
 export function deleteSessionRecord(sessionKey: string): void {
+  assertNotInSnapshotScope("deleteSessionRecord")
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
   const snap = readOverridesSnapshot()
@@ -225,6 +253,7 @@ export function deleteSessionRecord(sessionKey: string): void {
 }
 
 export function clearSessionRecordFields(sessionKey: string, fields: (keyof SessionOverrideRecord)[]): void {
+  assertNotInSnapshotScope("clearSessionRecordFields")
   const root = resolveDataDir()
   const statePath = sessionStatePath(root, sessionKey)
   const prev = readStateFile(statePath)

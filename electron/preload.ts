@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
+import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
 import type { MobileServerStatus } from "./mobile-server"
 
 export type { AgentResource, MessageChannel, ChannelStatusInfo, ScheduledTask, MobileServerStatus }
@@ -229,6 +230,14 @@ const api = {
     ipcRenderer.invoke("session:switch", sessionKey),
   deleteSession: (sessionKey: string): Promise<{ ok: boolean; error?: string; label?: string }> =>
     ipcRenderer.invoke("session:delete", sessionKey),
+  listManagedSessions: (): Promise<ManagerListResult> => ipcRenderer.invoke("session-manager:list"),
+  restoreSessionDefault: (sessionKey: string): Promise<ManagerOpResult> => ipcRenderer.invoke("session-manager:restore-default", sessionKey),
+  resetManagedSession: (sessionKey: string): Promise<ManagerOpResult> => ipcRenderer.invoke("session-manager:reset", sessionKey),
+  deleteManagedSession: (sessionKey: string): Promise<ManagerOpResult> => ipcRenderer.invoke("session-manager:delete", sessionKey),
+  previewSessionCleanup: (opts: { olderThanDays?: number; channelId?: string }): Promise<CleanupPreviewResult> =>
+    ipcRenderer.invoke("session-manager:cleanup-preview", opts),
+  runSessionCleanup: (opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }): Promise<CleanupRunResult> =>
+    ipcRenderer.invoke("session-manager:cleanup-run", opts),
   listProjects: (): Promise<{
     id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
     featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string

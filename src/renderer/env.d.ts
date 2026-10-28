@@ -1,6 +1,12 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
 import type {
+  CleanupPreviewResult as CleanupPreviewResultType,
+  CleanupRunResult as CleanupRunResultType,
+  ManagerListResult as ManagerListResultType,
+  ManagerOpResult as ManagerOpResultType,
+} from "../shared/managed-sessions"
+import type {
   AppChatEvent as AppChatEventType,
   AppChatResult as AppChatResultType,
   AppChatSendPayload as AppChatSendPayloadType,
@@ -237,6 +243,12 @@ declare global {
     addChannelFavoriteWorkspace(channelId: string, dir: string): Promise<{ ok: boolean; favoriteWorkspaces?: string[]; error?: string }>
     switchSession(sessionKey: string): Promise<{ ok: boolean; error?: string }>
     deleteSession(sessionKey: string): Promise<{ ok: boolean; error?: string; label?: string }>
+    listManagedSessions(): Promise<ManagerListResultType>
+    restoreSessionDefault(sessionKey: string): Promise<ManagerOpResultType>
+    resetManagedSession(sessionKey: string): Promise<ManagerOpResultType>
+    deleteManagedSession(sessionKey: string): Promise<ManagerOpResultType>
+    previewSessionCleanup(opts: { olderThanDays?: number; channelId?: string }): Promise<CleanupPreviewResultType>
+    runSessionCleanup(opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }): Promise<CleanupRunResultType>
     listProjects(): Promise<{
       id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
       featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string
