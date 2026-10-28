@@ -22,6 +22,15 @@ import {
 
 export type { ModelChoice, QuickModel } from "./model-picker-logic"
 
+/** 同一页面里挂多个选择器（列表的每一行）时，共用的那份数据和回调：供应商列表、常用 / 收藏、★ 回调 */
+export interface ModelPickerSource {
+  resources: AgentResource[]
+  quickModels: QuickModel[]
+  favorites: FavoriteModel[]
+  onToggleFavorite: (choice: ModelChoice & { label: string }, starred: boolean) => Promise<string | void> | void
+  onOpen: () => void
+}
+
 type ProviderModels =
   | { status: "loading" }
   | { status: "ok"; models: ProviderModel[] }
@@ -53,8 +62,8 @@ interface Props {
   /** 正在切换：按钮显示转圈并禁用 */
   switching?: boolean
   disabled?: boolean
-  /** chip = 输入框旁的小按钮；field = 表单里整行的选择框 */
-  variant?: "chip" | "field"
+  /** chip = 输入框旁的小按钮；field = 表单里整行的选择框；compact = 列表行里的紧凑小标签（只显示模型名） */
+  variant?: "chip" | "field" | "compact"
   /** 面板相对按钮向上还是向下展开（放不下会自动翻面，仅 portal 模式） */
   placement?: "up" | "down"
   /** 面板挂到 body 上，不被带滚动 / overflow 的祖先裁掉 */
@@ -263,9 +272,14 @@ export default function ModelPicker({
     followResourceId,
     followModelLabel: followModel,
     autoLabel,
-    hideProvider: lockProvider,
+    hideProvider: lockProvider || variant === "compact",
     placeholder,
   })
+  /** 紧凑标签上不显示供应商，悬停时补在提示里 */
+  const providerName = entries.find((e) => e.id === (currentResourceId ?? ""))?.name
+  const triggerTitle = variant === "compact"
+    ? (providerName && !text.empty ? `${providerName} / ${text.model}（点击切换）` : "切换本会话模型")
+    : "切换供应商 / 模型"
 
   const renderRow = (row: PickerRow) => {
     const cur = shownIsCurrent && isCurrentRow(row, current)
@@ -379,7 +393,9 @@ export default function ModelPicker({
 
   const triggerCls = variant === "field"
     ? `flex h-[34px] w-full items-center gap-1.5 rounded-md border bg-raised px-3 text-left text-sm outline-none transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-blue-500" : "border-line hover:border-line-strong"}`
-    : `inline-flex max-w-[22rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] text-fg-2 transition ${open ? "border-accent bg-raised" : "border-line hover:border-line-strong"}`
+    : variant === "compact"
+      ? `inline-flex max-w-[10rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-violet transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-violet-500" : "border-line hover:border-violet-500"}`
+      : `inline-flex max-w-[22rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] text-fg-2 transition ${open ? "border-accent bg-raised" : "border-line hover:border-line-strong"}`
 
   return (
     <div className={variant === "field" ? "relative w-full" : "relative"} ref={rootRef}>
@@ -388,10 +404,10 @@ export default function ModelPicker({
         type="button"
         disabled={disabled || switching}
         onClick={toggle}
-        title="切换供应商 / 模型"
+        title={triggerTitle}
         className={triggerCls}
       >
-        {switching && <Loader2 size={12} className="shrink-0 animate-spin" />}
+        {switching && <Loader2 size={variant === "compact" ? 10 : 12} className="shrink-0 animate-spin" />}
         {text.provider && (
           <>
             <span className="shrink-0 text-fg-muted">{text.provider}</span>
@@ -399,7 +415,7 @@ export default function ModelPicker({
           </>
         )}
         <span className={`min-w-0 truncate ${variant === "field" ? (text.empty ? "flex-1 text-fg-muted" : "flex-1 text-fg") : ""}`}>{text.model}</span>
-        <ChevronDown size={variant === "field" ? 14 : 12} className={`shrink-0 text-fg-faint ${variant === "field" ? "text-fg-muted" : ""}`} />
+        <ChevronDown size={variant === "field" ? 14 : variant === "compact" ? 10 : 12} className={`shrink-0 text-fg-faint ${variant === "field" ? "text-fg-muted" : ""}`} />
       </button>
       {portal ? (panel ? createPortal(panel, document.body) : null) : panel}
     </div>

@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react"
-import { createPortal } from "react-dom"
 import {
   Play,
   Square,
@@ -33,12 +32,13 @@ import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
 import ChannelTree from "../components/dashboard/ChannelTree"
 import PanelShell from "../components/dashboard/PanelShell"
-import { modelSlug } from "../model-utils"
 import { disambiguatePathLabel } from "../../shared/path-label"
 import { formatLogLineForUi, cardLabelFromSessionTab } from "../../shared/log-format"
 import { useStickToBottom } from "../hooks/useStickToBottom"
 import { buildDashboardTree, GROUP_IDS, type DashboardChannelNode, type DashboardSessionNode } from "../../shared/dashboard-tree"
 import SessionRow from "../components/dashboard/SessionRow"
+import type { ModelChoice, ModelPickerSource } from "../components/chat/ModelPicker"
+import { useModelFavorites } from "../hooks/useModelFavorites"
 import { makeChatKey } from "../../shared/channel-types"
 
 interface Props {
@@ -164,17 +164,20 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
 
   const [activeSessionKey, setActiveSessionKey] = useState("")
   const [sessionSwitching, setSessionSwitching] = useState("")
-  const [modelTabs, setModelTabs] = useState<{ model: string; modelParams?: string; label?: string; resourceId?: string }[]>([])
+  /** 正在切换模型的会话 key；同一时刻只允许切一个 */
   const [modelSwitching, setModelSwitching] = useState("")
-  const [activeSessionModel, setActiveSessionModel] = useState<{ model: string; modelParams?: string; resourceId?: string } | null>(null)
-  const [modelFavPickerOpen, setModelFavPickerOpen] = useState(false)
-  const [modelFavLoading, setModelFavLoading] = useState(false)
-  const [modelFavOptions, setModelFavOptions] = useState<{ model: string; modelParams?: string; label?: string; resourceId?: string; used?: boolean }[]>([])
-  const [modelFavQuery, setModelFavQuery] = useState("")
+  const { quickModels, favorites: favoriteModels, refresh: refreshModels, toggleFavorite } = useModelFavorites()
+  /** 会话行上的模型选择器要列的供应商（跟着通道配置走，5 秒轮询里顺带更新） */
+  const [agentResources, setAgentResources] = useState<AgentResource[]>([])
+  const modelPicker = useMemo<ModelPickerSource>(() => ({
+    resources: agentResources,
+    quickModels,
+    favorites: favoriteModels,
+    onToggleFavorite: toggleFavorite,
+    onOpen: () => void refreshModels(),
+  }), [agentResources, quickModels, favoriteModels, toggleFavorite, refreshModels])
   const [sessionList, setSessionList] = useState<{ sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]>([])
   const [sessionDiag, setSessionDiag] = useState<Record<string, { running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>>({})
-  /** 切模后短暂锁住高亮，避免旧 sessionList 把 UI 刷回上一模型 */
-  const modelPickHoldRef = useRef<{ sk: string; model: string; modelParams?: string; resourceId?: string; until: number } | null>(null)
   /** 走 ref 读 sessionList：让 refreshDashboardTree 引用恒定，否则会与 refreshOnboard 的 effect 互相触发成刷新风暴 */
   const sessionListRef = useRef(sessionList)
   sessionListRef.current = sessionList
@@ -214,11 +217,6 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     return () => window.clearTimeout(t)
   }, [actionError])
 
-  const refreshModelTabs = useCallback(async () => {
-    const r = await window.electronAPI.listQuickModels()
-    if (r.ok) setModelTabs(r.models)
-  }, [])
-
   const refreshDashboardTree = useCallback(async () => {
     // 定时器与 onSessionAgents 推送都会触发；同一时刻只跑一轮，丢弃的由 5s 定时器兜底
     if (treeBusyRef.current) return
@@ -231,6 +229,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         window.electronAPI.getConfig(),
       ])
       setQueueMessages(queue)
+      setAgentResources(cfg.agentResources ?? [])
       const connected = new Map((st.channels ?? []).map((c) => [c.id, !!c.connected]))
       const cfgChannels = (cfg.channels ?? []).filter((c) => c.enabled !== false)
 
@@ -242,7 +241,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
               channelId: c.id,
               name: c.name,
               mainUserChatId: raw ? makeChatKey(c.id, raw) : undefined,
-              mainTabs: [] as { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string }[],
+              mainTabs: [] as { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[],
               activeKey: undefined as string | undefined,
             }
           })
@@ -256,6 +255,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         removable?: boolean
         model?: string
         modelParams?: string
+        resourceId?: string
       }[] = []
       const labelByKey = new Map<string, string>()
       const removable = new Set<string>()
@@ -273,6 +273,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
               removable: t.removable,
               model: t.model,
               modelParams: t.modelParams,
+              resourceId: t.resourceId,
             })
           }
         }
@@ -290,6 +291,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
           || s.sessionKey,
         model: s.model,
         modelParams: s.modelParams,
+        resourceId: s.resourceId,
         workspaceDir: s.workspaceDir,
         chatName: s.chatName,
       }))
@@ -299,6 +301,8 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
           name: c.name,
           connected: connected.get(c.channelId) ?? false,
           mainUserChatId: c.mainUserChatId,
+          agentResourceId: cfgChannels.find((x) => x.id === c.channelId)?.agentResourceId,
+          othersAgentResourceId: cfgChannels.find((x) => x.id === c.channelId)?.othersAgentResourceId,
         })),
         running,
         mainSwitchable,
@@ -351,8 +355,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
       if (f?.trim() && !favorites.some((x) => sameDir(x, f))) favorites.push(f)
     }
     setWsTabs({ current, favorites })
-    await refreshModelTabs()
-  }, [refreshModelTabs])
+  }, [])
 
   // 从设置页返回时立即刷新清单状态
   useEffect(() => {
@@ -434,10 +437,9 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     return null
   }, [activeSessionKey])
 
-  const switchSessionModel = async (sk: string, m: { model: string; modelParams?: string; label?: string; resourceId?: string }) => {
-    const key = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
+  const switchSessionModel = async (sk: string, m: ModelChoice) => {
     if (modelSwitching || !sk) return
-    setModelSwitching(key)
+    setModelSwitching(sk)
     try {
       const r = await window.electronAPI.setSessionModel(sk, m.model, m.modelParams, m.resourceId)
       if (!r.ok) {
@@ -445,125 +447,12 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         return
       }
       setActionError("")
-      modelPickHoldRef.current = { sk, model: m.model, modelParams: m.modelParams, resourceId: m.resourceId, until: Date.now() + 12_000 }
-      setActiveSessionModel({ model: m.model, modelParams: m.modelParams, ...(m.resourceId ? { resourceId: m.resourceId } : {}) })
-      await refreshModelTabs()
+      await refreshModels()
       await refreshDashboardTree()
     } finally {
       setModelSwitching("")
     }
   }
-
-  const addFavoriteModel = async () => {
-    setActionError("")
-    if (modelFavPickerOpen) {
-      setModelFavPickerOpen(false)
-      setModelFavQuery("")
-      return
-    }
-    setModelFavPickerOpen(true)
-    setModelFavQuery("")
-    setModelFavLoading(true)
-    try {
-      const cfg = await window.electronAPI.getConfig()
-      const favs = cfg.favoriteModels ?? []
-      const favKeys = new Set(favs.map((f) => `${f.model}\0${f.modelParams ?? ""}\0${f.resourceId ?? ""}`))
-      const out: { model: string; modelParams?: string; label?: string; resourceId?: string; used?: boolean }[] = []
-      const seen = new Set<string>()
-      const push = (m: { model: string; modelParams?: string; label?: string; resourceId?: string }, used?: boolean) => {
-        if (!m.model) return
-        const k = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
-        if (favKeys.has(k) || seen.has(k)) return
-        seen.add(k)
-        out.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), resourceId: m.resourceId, used })
-      }
-
-      const quick = await window.electronAPI.listQuickModels()
-      if (quick.ok) {
-        for (const m of quick.models) push(m, true)
-      }
-      for (const s of sessionList) {
-        if (s.model) push({ model: s.model, modelParams: s.modelParams, label: modelSlug(s.model, s.modelParams), ...(s.resourceId ? { resourceId: s.resourceId } : {}) }, true)
-      }
-      if (activeSessionModel?.model) {
-        push({ ...activeSessionModel, label: modelSlug(activeSessionModel.model, activeSessionModel.modelParams) }, true)
-      }
-
-      const sdkRes = (cfg.agentResources ?? []).find((r) => r.type === "sdk" && r.apiKey?.trim())
-      if (sdkRes?.apiKey) {
-        const r = await window.electronAPI.listSdkModels(sdkRes.apiKey, activeSessionModel?.model, activeSessionModel?.modelParams)
-        if (r.ok) {
-          for (const m of r.models) {
-            push({ model: m.id, modelParams: m.params, label: m.label, resourceId: sdkRes.id }, false)
-          }
-        }
-      } else {
-        const r = await window.electronAPI.listModels()
-        if (r.ok) {
-          for (const m of r.models) push({ model: m.id, modelParams: "", label: m.label || m.id }, false)
-        }
-      }
-
-      // 用过的置顶
-      out.sort((a, b) => Number(!!b.used) - Number(!!a.used))
-      setModelFavOptions(out)
-      if (out.length === 0) {
-        setModelFavPickerOpen(false)
-        setActionError(favs.length > 0 ? "可用模型均已在常用中" : "暂无模型可收藏：请先配置 Agent SDK Key 或产生过会话")
-      }
-    } finally {
-      setModelFavLoading(false)
-    }
-  }
-
-  const pickFavoriteModel = async (m: { model: string; modelParams?: string; label?: string; resourceId?: string }) => {
-    setActionError("")
-    if (!m.resourceId) {
-      setActionError("该模型未绑定供应商，请从供应商模型列表里重选")
-      return
-    }
-    const cfg = await window.electronAPI.getConfig()
-    const favs = [...(cfg.favoriteModels ?? [])]
-    if (favs.some((f) => f.model === m.model && (f.modelParams ?? "") === (m.modelParams ?? "") && (f.resourceId ?? "") === (m.resourceId ?? ""))) {
-      setActionError("该模型已在常用列表中")
-      setModelFavPickerOpen(false)
-      setModelFavQuery("")
-      return
-    }
-    favs.push({ model: m.model, modelParams: m.modelParams, label: m.label || modelSlug(m.model, m.modelParams), resourceId: m.resourceId })
-    await window.electronAPI.saveConfig({ favoriteModels: favs })
-    setModelFavPickerOpen(false)
-    setModelFavQuery("")
-    await refreshModelTabs()
-  }
-
-  const removeFavoriteModel = async (m: { model: string; modelParams?: string; resourceId?: string }) => {
-    const cfg = await window.electronAPI.getConfig()
-    const key = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
-    const favs = (cfg.favoriteModels ?? []).filter(
-      (f) => `${f.model}\0${f.modelParams ?? ""}\0${f.resourceId ?? ""}` !== key,
-    )
-    await window.electronAPI.saveConfig({ favoriteModels: favs })
-    // 快捷栏 = 收藏 ∪ 最近；只删收藏会从「最近」补回来，看起来像 ❌ 无效
-    await window.electronAPI.forgetQuickModel(m.model, m.modelParams, m.resourceId)
-    await refreshModelTabs()
-  }
-
-  useEffect(() => {
-    const hold = modelPickHoldRef.current
-    if (hold && Date.now() < hold.until && (!activeSessionKey || activeSessionKey === hold.sk)) {
-      setActiveSessionModel({ model: hold.model, modelParams: hold.modelParams, ...(hold.resourceId ? { resourceId: hold.resourceId } : {}) })
-      const live = sessionList.find((s) => s.sessionKey === hold.sk)
-      if (live?.model === hold.model && (live.modelParams ?? "") === (hold.modelParams ?? "")) {
-        modelPickHoldRef.current = null
-      }
-      return
-    }
-    if (hold && Date.now() >= hold.until) modelPickHoldRef.current = null
-    const hit = (activeSessionKey && sessionList.find((s) => s.sessionKey === activeSessionKey && s.model))
-      || [...sessionList.filter((s) => s.model)].sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0))[0]
-    if (hit?.model) setActiveSessionModel({ model: hit.model, modelParams: hit.modelParams, ...(hit.resourceId ? { resourceId: hit.resourceId } : {}) })
-  }, [sessionList, activeSessionKey])
 
   const [exportingDiag, setExportingDiag] = useState(false)
   const [logFilter, setLogFilter] = useState("")
@@ -946,13 +835,11 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
                 key={node.sessionKey}
                 node={node}
                 channelName={channelName}
-                quickModels={modelTabs}
-                modelSwitching={modelSwitching}
+                modelPicker={modelPicker}
+                modelSwitching={modelSwitching === node.sessionKey}
                 expanded={expandedActive === node.sessionKey}
                 onToggle={() => setExpandedActive((k) => k === node.sessionKey ? null : node.sessionKey)}
                 onSwitchModel={(m) => void switchSessionModel(node.sessionKey, m)}
-                onAddFavoriteModel={() => void addFavoriteModel()}
-                onRemoveFavoriteModel={(m) => void removeFavoriteModel(m)}
                 onStop={() => { void window.electronAPI.stopSessionAgent(node.sessionKey); void refreshDashboardTree() }}
                 onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
               />
@@ -1010,12 +897,10 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         >
         <ChannelTree
           channels={treeChannels}
-          quickModels={modelTabs}
+          modelPicker={modelPicker}
           modelSwitching={modelSwitching}
           onAddFavorite={(channelId) => void addFavoriteWorkspace(channelId)}
           onSwitchModel={(sk, m) => void switchSessionModel(sk, m)}
-          onAddFavoriteModel={() => void addFavoriteModel()}
-          onRemoveFavoriteModel={(m) => void removeFavoriteModel(m)}
           onStopSession={(sk) => { void window.electronAPI.stopSessionAgent(sk); void refreshDashboardTree() }}
           onDeleteSession={(node) => void deleteSessionTab(node.sessionKey, node.kind, node.label)}
           onActivateSession={(sk) => void switchSessionTab(sk)}
@@ -1149,76 +1034,6 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
           )}
         </div>
       </div>
-      {modelFavPickerOpen && createPortal(
-        <div
-          className="fixed inset-0 z-[60] flex items-start justify-center bg-black/50 pt-24"
-          onClick={() => { setModelFavPickerOpen(false); setModelFavQuery("") }}
-        >
-          <div
-            className="flex max-h-[60vh] w-96 flex-col overflow-hidden rounded-lg border border-line bg-surface shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="border-b border-line-subtle p-2">
-              <div className="relative flex items-center">
-                <Search size={12} className="pointer-events-none absolute left-2 text-fg-faint" />
-                <input
-                  autoFocus
-                  value={modelFavQuery}
-                  onChange={(e) => setModelFavQuery(e.target.value)}
-                  placeholder="搜索模型…"
-                  className="w-full rounded border border-line bg-page py-1.5 pl-7 pr-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-violet-500"
-                />
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto py-1">
-              {modelFavLoading && (
-                <div className="flex items-center gap-2 px-3 py-2 text-xs text-fg-muted">
-                  <Loader2 size={12} className="animate-spin" />加载模型列表…
-                </div>
-              )}
-              {!modelFavLoading && (() => {
-                const q = modelFavQuery.trim().toLowerCase()
-                const filtered = q
-                  ? modelFavOptions.filter((m) =>
-                      (m.label || "").toLowerCase().includes(q)
-                      || m.model.toLowerCase().includes(q)
-                      || (m.modelParams || "").toLowerCase().includes(q))
-                  : modelFavOptions
-                if (filtered.length === 0) {
-                  return <div className="px-3 py-2 text-xs text-fg-muted">{modelFavOptions.length === 0 ? "暂无可添加的模型" : "无匹配模型"}</div>
-                }
-                const used = filtered.filter((m) => m.used)
-                const rest = filtered.filter((m) => !m.used)
-                return (
-                  <>
-                    {used.length > 0 && (
-                      <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-fg-faint">用过的</div>
-                    )}
-                    {used.map((m) => (
-                      <button key={`u:${m.model}\0${m.modelParams ?? ""}`} type="button"
-                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-violet hover:bg-raised"
-                        onClick={() => void pickFavoriteModel(m)}>
-                        {m.label || m.model}
-                      </button>
-                    ))}
-                    {rest.length > 0 && (
-                      <div className={`px-3 py-1 text-[10px] uppercase tracking-wide text-fg-faint ${used.length ? "mt-1 border-t border-line-subtle" : ""}`}>全部模型</div>
-                    )}
-                    {rest.map((m) => (
-                      <button key={`a:${m.model}\0${m.modelParams ?? ""}`} type="button"
-                        className="block w-full truncate px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"
-                        onClick={() => void pickFavoriteModel(m)}>
-                        {m.label || m.model}
-                      </button>
-                    ))}
-                  </>
-                )
-              })()}
-            </div>
-          </div>
-        </div>,
-        document.body,
-      )}
       {ModalPortal}
     </div>
   )

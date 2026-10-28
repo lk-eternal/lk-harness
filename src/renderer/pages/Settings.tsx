@@ -21,7 +21,6 @@ import {
   Sparkles,
   Bot,
   Download,
-  Play,
   ChevronDown,
   ChevronRight,
   Wrench,
@@ -40,7 +39,6 @@ import {
   Smartphone,
   Upload,
 } from "lucide-react"
-import SearchableSelect from "../components/SearchableSelect"
 import SortableList from "../components/SortableList"
 import { FlowHubBrowser } from "../components/FlowHubBrowser"
 import ToolboxPanel from "../components/ToolboxPanel"
@@ -58,7 +56,6 @@ import TitleBar from "../components/TitleBar"
 import useInlineModal from "../components/useInlineModal"
 import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
-import { modelSlug } from "../model-utils"
 import { THEME_OPTIONS, type Theme } from "../theme-options"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
@@ -70,10 +67,6 @@ interface McpEditForm {
   json: string; jsonError?: string
 }
 interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
-interface TaskItem {
-  id: string; name: string; cron: string; content: string; enabled: boolean; independent?: boolean
-  channelId?: string; model?: string; modelParams?: string; notifyChatId?: string
-}
 interface ProjectListItem {
   id: string
   name: string
@@ -135,8 +128,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
   /** 帮助引导页飞书控制台链接用 */
   const [firstFeishuAppId, setFirstFeishuAppId] = useState("")
-  const [taskChannels, setTaskChannels] = useState<ChannelConfig[]>([])
-  const [agentResources, setAgentResources] = useState<AgentResource[]>([])
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
 
   const [appVersion, setAppVersion] = useState("")
@@ -169,9 +160,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const updateDownloadingRef = useRef(false)
 
   const [saved, setSaved] = useState(false)
-  /** 任务编辑弹窗的模型选项（按所选通道的 Agent 资源拉取） */
-  const [taskModelOptions, setTaskModelOptions] = useState<{ id: string; label: string; params: string }[]>([])
-  const [loadingTaskModels, setLoadingTaskModels] = useState(false)
 
   const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([])
   const [mcpLoading, setMcpLoading] = useState<Record<string, boolean>>({})
@@ -203,15 +191,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [skillPrompt, setSkillPrompt] = useState<{ rootId: string; skillPath: string; parentPath: string; kind: "file" | "folder"; value: string } | null>(null)
   const [skillDeleteConfirm, setSkillDeleteConfirm] = useState<{ rootId: string; skillPath: string; relativePath: string } | null>(null)
 
-  const [tasks, setTasks] = useState<TaskItem[]>([])
-  const [taskEditing, setTaskEditing] = useState<TaskItem | null>(null)
-  const [taskCronValid, setTaskCronValid] = useState(true)
-  const [cronPreviewRuns, setCronPreviewRuns] = useState<string[] | null>(null)
-  const [cronPreviewErr, setCronPreviewErr] = useState<string | null>(null)
-  const [cronPreviewLoading, setCronPreviewLoading] = useState(false)
-  const cronPreviewReq = useRef(0)
-  const cronPreviewTaskIdRef = useRef("")
-  const [taskStatuses, setTaskStatuses] = useState<Record<string, { running: boolean; pid?: number; startedAt?: number }>>({})
 
   const loaded = useRef(false)
   const projectsLoaded = useRef(false)
@@ -247,9 +226,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     window.electronAPI.getSkills(skillRootId).then(setSkills)
     window.electronAPI.getSkillTree(skillRootId).then(setSkillTree)
   }, [skillRootId])
-  const refreshTasks = useCallback(() => {
-    window.electronAPI.getScheduledTasks().then(setTasks)
-  }, [])
   const refreshProjectList = useCallback(() => {
     void window.electronAPI.listProjects().then(setProjectList).catch(() => setProjectList([]))
   }, [])
@@ -333,8 +309,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     const unsub1 = window.electronAPI.onMcpLoginComplete(({ serverName, ok }) => {
       if (ok) setMcpServers((prev) => prev.map((s) => s.name === serverName ? { ...s, authenticated: true } : s))
     })
-    const unsub2 = window.electronAPI.onScheduledTaskStatus(setTaskStatuses)
-    return () => { unsub1(); unsub2() }
+    return () => { unsub1() }
   }, [])
 
   useEffect(() => {
@@ -349,14 +324,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     })
     if (tab === "mcp") refreshMcpServers()
     if (tab === "skills") { refreshSkillRoots(); refreshSkills() }
-    if (tab === "tasks") {
-      refreshTasks()
-      window.electronAPI.getScheduledTaskStatus().then(setTaskStatuses)
-      window.electronAPI.getConfig().then((cfg) => {
-        setTaskChannels(cfg.channels ?? [])
-        setAgentResources(cfg.agentResources ?? [])
-      })
-    }
     if (tab === "about") {
       window.electronAPI.getConfig().then((config) => {
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
@@ -383,7 +350,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
       }).catch(() => {})
     }
-  }, [tab, refreshMcpServers, refreshSkillRoots, refreshSkills, refreshTasks, refreshProjectList])
+  }, [tab, refreshMcpServers, refreshSkillRoots, refreshSkills, refreshProjectList])
 
   useEffect(() => {
     if (tab !== "skills") return
@@ -496,81 +463,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       setUpdateBusy(false)
     }
   }
-
-  const taskModalOpen = taskEditing !== null
-  const taskIdForCronPreview = taskEditing?.id ?? ""
-  const taskCronForPreview = taskEditing?.cron ?? ""
-
-  useEffect(() => {
-    if (!taskModalOpen) {
-      cronPreviewTaskIdRef.current = ""
-      setCronPreviewRuns(null)
-      setCronPreviewErr(null)
-      setCronPreviewLoading(false)
-      return
-    }
-    const cron = taskCronForPreview.trim()
-    if (!cron) {
-      setCronPreviewRuns(null)
-      setCronPreviewErr(null)
-      setCronPreviewLoading(false)
-      return
-    }
-    if (cronPreviewTaskIdRef.current !== taskIdForCronPreview) {
-      cronPreviewTaskIdRef.current = taskIdForCronPreview
-      setCronPreviewRuns(null)
-      setCronPreviewErr(null)
-    }
-    const req = ++cronPreviewReq.current
-    const t = setTimeout(async () => {
-      if (req !== cronPreviewReq.current) return
-      setCronPreviewLoading(true)
-      setCronPreviewErr(null)
-      try {
-        const r = await window.electronAPI.previewCronNextRuns(cron)
-        if (req !== cronPreviewReq.current) return
-        if (r.ok) {
-          setCronPreviewRuns(r.runs)
-        } else {
-          setCronPreviewRuns(null)
-          setCronPreviewErr(r.error)
-        }
-      } finally {
-        if (req === cronPreviewReq.current) setCronPreviewLoading(false)
-      }
-    }, 320)
-    return () => clearTimeout(t)
-  }, [taskModalOpen, taskIdForCronPreview, taskCronForPreview])
-
-  /** 按任务所选通道的 Agent 资源拉取模型列表 */
-  const fetchTaskModels = async (channelId?: string, silent = false) => {
-    const channel = taskChannels.find((c) => c.id === channelId) ?? taskChannels[0]
-    const resource = agentResources.find((r) => r.id === channel?.agentResourceId)
-    setLoadingTaskModels(true)
-    try {
-      if (resource?.type === "sdk") {
-        const r = await window.electronAPI.listSdkModels(resource.apiKey ?? "")
-        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models)
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      } else {
-        const r = await window.electronAPI.listModels()
-        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      }
-    } finally {
-      setLoadingTaskModels(false)
-    }
-  }
-
-  // 任务弹窗打开与切换通道时自动加载模型列表（静默失败，按钮可手动重试）
-  const taskModalVisible = taskEditing !== null
-  const taskModelChannelId = taskEditing?.channelId
-  useEffect(() => {
-    if (!taskModalVisible) return
-    setTaskModelOptions([])
-    void fetchTaskModels(taskModelChannelId, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskModalVisible, taskModelChannelId])
 
   const handleAutoLaunchToggle = async () => {
     const next = !autoLaunch
@@ -724,38 +616,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     if (!skillDeleteConfirm) return
     await window.electronAPI.deleteSkillFile(skillDeleteConfirm.rootId, skillDeleteConfirm.skillPath, skillDeleteConfirm.relativePath)
     setSkillDeleteConfirm(null); refreshSkills()
-  }
-
-  // ── Tasks ──
-  const openTaskAdd = () => {
-    setTaskEditing({
-      id: crypto.randomUUID(), name: "", cron: "", content: "", enabled: true, independent: true,
-      channelId: taskChannels.find((c) => c.enabled)?.id ?? taskChannels[0]?.id,
-    })
-    setTaskCronValid(true)
-    setTaskModelOptions([])
-  }
-  const openTaskEdit = (t: TaskItem) => { setTaskEditing({ ...t }); setTaskCronValid(true); setTaskModelOptions([]) }
-  const handleTaskDelete = async (id: string) => {
-    const updated = tasks.filter((t) => t.id !== id)
-    await window.electronAPI.saveScheduledTasks(updated); refreshTasks()
-  }
-  const handleTaskToggle = async (id: string) => {
-    const updated = tasks.map((t) => t.id === id ? { ...t, enabled: !t.enabled } : t)
-    await window.electronAPI.saveScheduledTasks(updated); refreshTasks()
-  }
-  const handleTaskTrigger = async (id: string) => {
-    await window.electronAPI.triggerScheduledTask(id)
-  }
-  const handleTaskSave = async () => {
-    if (!taskEditing || !taskEditing.name.trim() || !taskEditing.cron.trim()) return
-    const valid = await window.electronAPI.validateCron(taskEditing.cron.trim())
-    setTaskCronValid(valid)
-    if (!valid) return
-    const exists = tasks.find((t) => t.id === taskEditing.id)
-    const updated = exists ? tasks.map((t) => t.id === taskEditing.id ? taskEditing : t) : [...tasks, taskEditing]
-    await window.electronAPI.saveScheduledTasks(updated)
-    setTaskEditing(null); refreshTasks()
   }
 
   const activeGroup = nodeGroups.find((g) => g.id === activeGroupId) ?? nodeGroups[0]
@@ -1276,49 +1136,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     </div>
                   )})}
                   {mcpServers.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无 MCP 服务器配置</p>}
-                </div>
-              </section>
-            </>)}
-
-            {/* ═══ Tasks ═══ */}
-            {tab === "tasks" && (<>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-fg-2">定时任务</h3>
-                  <button onClick={refreshTasks} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"><RefreshCw size={12} />刷新</button>
-                  <div className="flex-1" />
-                  <button onClick={openTaskAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
-                </div>
-                <div className="space-y-2">
-                  {tasks.map((t) => {
-                    const status = taskStatuses[t.id]
-                    const isRunning = !!status?.running
-                    return (
-                    <div key={t.id} className={`flex items-center justify-between rounded-lg border px-4 py-3 ${isRunning ? "border-green-700/50 bg-success-tint/20" : "border-line"}`}>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className={`truncate text-sm font-medium ${t.enabled ? "" : "text-fg-faint line-through"}`}>{t.name}</p>
-                          <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">{t.cron}</span>
-                          {t.channelId && <span className="shrink-0 rounded bg-accent-tint-strong/40 px-1.5 py-0.5 text-[10px] text-accent">{taskChannels.find((c) => c.id === t.channelId)?.name ?? "通道已删除"}</span>}
-                          {t.model && <span className="shrink-0 rounded bg-purple-tint/40 px-1.5 py-0.5 text-[10px] text-purple">{modelSlug(t.model, t.modelParams)}</span>}
-                          {t.independent !== false && <span className="shrink-0 rounded bg-indigo-tint/40 px-1.5 py-0.5 text-[10px] text-indigo">独立</span>}
-                          {t.notifyChatId && <span className="shrink-0 rounded bg-warning-tint-strong/40 px-1.5 py-0.5 text-[10px] text-warning/90" title={t.notifyChatId}>会话</span>}
-                          {isRunning && <span className="inline-flex items-center gap-1 shrink-0 rounded bg-success-tint-strong/40 px-1.5 py-0.5 text-[10px] text-success"><span className="inline-block h-1.5 w-1.5 rounded-full bg-success animate-pulse" />运行中</span>}
-                        </div>
-                        <p className="truncate text-xs text-fg-muted">{t.content.slice(0, 80)}{t.content.length > 80 ? "..." : ""}</p>
-                      </div>
-                      <div className="ml-3 flex shrink-0 items-center gap-2">
-                        <button onClick={() => handleTaskTrigger(t.id)} title="立即执行" className="rounded p-1 text-fg-muted transition hover:bg-blue-600/20 hover:text-accent"><Play size={13} /></button>
-                        <button onClick={() => handleTaskToggle(t.id)} className={`rounded px-2 py-0.5 text-xs transition ${t.enabled ? "text-success hover:bg-green-600/20" : "text-fg-muted hover:bg-raised"}`}>
-                          {t.enabled ? "启用" : "禁用"}
-                        </button>
-                        <button onClick={() => openTaskEdit(t)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg"><Pencil size={13} /></button>
-                        <button onClick={() => handleTaskDelete(t.id)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger"><Trash2 size={13} /></button>
-                      </div>
-                    </div>
-                    )
-                  })}
-                  {tasks.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无定时任务</p>}
                 </div>
               </section>
             </>)}
@@ -1868,122 +1685,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-3">
               <button onClick={() => setSkillDeleteConfirm(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
               <button onClick={() => void handleDeleteFileConfirm()} className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500">删除</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Task Edit Modal ═══ */}
-      {taskEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <h3 className="text-sm font-semibold text-fg-soft">{tasks.find((t) => t.id === taskEditing.id) ? "编辑定时任务" : "新增定时任务"}</h3>
-              <button onClick={() => setTaskEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-fg-muted">任务名称</label><input type="text" value={taskEditing.name} onChange={(e) => setTaskEditing({ ...taskEditing, name: e.target.value })} className={inputCls} placeholder="日报推送" /></div>
-              <div>
-                <label className="mb-1 block text-xs text-fg-muted">Cron 表达式</label>
-                <input type="text" value={taskEditing.cron} onChange={(e) => { setTaskEditing({ ...taskEditing, cron: e.target.value }); setTaskCronValid(true) }} className={inputCls + (!taskCronValid ? " border-red-500" : "")} placeholder="0 9 * * 1-5" />
-                {!taskCronValid && <p className="mt-1 text-xs text-danger">Cron 表达式无效</p>}
-                <p className="mt-1 text-xs text-fg-faint">
-                  五段：分 时 日 月 周（如 0 9 * * 1-5 = 工作日 9:00）。六段时在前面加「秒」：秒 分 时 日 月 周。
-                  每 5 秒请用 <code className="rounded bg-raised px-1">*/5 * * * * *</code>，勿用 <code className="rounded bg-raised px-1">0/5</code>（在 node-cron 里会变成每分钟一次）。
-                </p>
-                <div className="mt-2 rounded-lg border border-line-subtle bg-surface/80 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-xs font-medium text-fg-muted">最近 5 次触发（本地时间）</p>
-                    {cronPreviewLoading && cronPreviewRuns && cronPreviewRuns.length > 0 && (
-                      <span className="flex items-center gap-1 text-[11px] text-fg-muted">
-                        <Loader2 size={11} className="animate-spin shrink-0" />
-                        更新中…
-                      </span>
-                    )}
-                  </div>
-                  {cronPreviewLoading && (!cronPreviewRuns || cronPreviewRuns.length === 0) && (
-                    <p className="mt-1 flex items-center gap-1.5 text-xs text-fg-muted">
-                      <Loader2 size={12} className="animate-spin" />计算中…
-                    </p>
-                  )}
-                  {!cronPreviewLoading && cronPreviewErr && (
-                    <p className="mt-1 text-xs text-warning/90">{cronPreviewErr}</p>
-                  )}
-                  {cronPreviewRuns && cronPreviewRuns.length > 0 && (
-                    <ol className={`mt-1.5 list-decimal space-y-0.5 pl-4 font-mono text-[11px] leading-relaxed text-fg-3 ${cronPreviewLoading ? "opacity-70" : ""}`}>
-                      {cronPreviewRuns.map((line, i) => (
-                        <li key={`${line}-${i}`}>{line}</li>
-                      ))}
-                    </ol>
-                  )}
-                  <p className="mt-1.5 text-[10px] text-fg-faint">由解析库推算，与 node-cron 在少数写法上可能略有差异，以实际日志为准。</p>
-                </div>
-              </div>
-              <div><label className="mb-1 block text-xs text-fg-muted">消息内容</label><textarea value={taskEditing.content} onChange={(e) => setTaskEditing({ ...taskEditing, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="要发送给 Agent 的消息..." /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs text-fg-muted">消息通道</label>
-                  <select
-                    value={taskEditing.channelId ?? ""}
-                    onChange={(e) => { setTaskEditing({ ...taskEditing, channelId: e.target.value || undefined }); setTaskModelOptions([]) }}
-                    className={inputCls}
-                  >
-                    <option value="">默认（第一个可用通道）</option>
-                    {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}{c.enabled ? "" : "（已停用）"}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <div className="mb-1 flex items-center gap-2">
-                    <label className="block text-xs text-fg-muted">模型</label>
-                    <button onClick={() => void fetchTaskModels(taskEditing.channelId)} disabled={loadingTaskModels} className="flex items-center gap-1 rounded px-1.5 py-0 text-[10px] text-fg-muted transition hover:bg-raised hover:text-fg disabled:opacity-50">
-                      {loadingTaskModels ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}{loadingTaskModels ? "加载中" : "刷新"}
-                    </button>
-                  </div>
-                  {taskModelOptions.length > 0
-                    ? <SearchableSelect
-                        value={taskEditing.model ? taskEditing.model + (taskEditing.modelParams ? "\0" + taskEditing.modelParams : "") : ""}
-                        onChange={(key) => {
-                          if (!key) { setTaskEditing({ ...taskEditing, model: undefined, modelParams: undefined }); return }
-                          const sep = key.indexOf("\0")
-                          setTaskEditing(sep >= 0
-                            ? { ...taskEditing, model: key.slice(0, sep), modelParams: key.slice(sep + 1) }
-                            : { ...taskEditing, model: key, modelParams: undefined })
-                        }}
-                        options={[{ id: "", label: "跟随通道主模型" }, ...taskModelOptions.map((o) => ({ id: o.id + (o.params ? "\0" + o.params : ""), label: o.label }))]}
-                        placeholder="跟随通道主模型"
-                        fallbackLabel={modelSlug(taskEditing.model, taskEditing.modelParams)}
-                      />
-                    : <input type="text" value={modelSlug(taskEditing.model, taskEditing.modelParams)} onChange={(e) => setTaskEditing({ ...taskEditing, model: e.target.value || undefined, modelParams: undefined })} placeholder="留空跟随通道主模型" className={inputCls} />}
-                </div>
-              </div>
-              <div>
-                <div className="mb-1 flex items-center gap-2 text-xs text-fg-muted">
-                  <span>会话 ID（可选）</span>
-                  <span
-                    className="cursor-help text-accent/90 underline decoration-dotted underline-offset-2"
-                    title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
-                  >
-                    如何获取?
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={taskEditing.notifyChatId ?? ""}
-                  onChange={(e) => setTaskEditing({ ...taskEditing, notifyChatId: e.target.value.trim() || undefined })}
-                  className={inputCls + " font-mono text-xs"}
-                  placeholder="不填则默认通知到主用户私聊会话"
-                />
-                <p className="mt-1 text-[10px] text-fg-faint">独立任务仅通过 MCP 投递到该会话；不填时使用通道主用户私聊。</p>
-              </div>
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={taskEditing.enabled} onChange={(e) => setTaskEditing({ ...taskEditing, enabled: e.target.checked })} className="rounded border-line-strong" />启用</label>
-                <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={taskEditing.independent !== false} onChange={(e) => setTaskEditing({ ...taskEditing, independent: e.target.checked })} className="rounded border-line-strong" />独立运行</label>
-              </div>
-              <p className="text-[10px] text-fg-faint">独立运行：触发时直接启动新 Agent 会话，不进入消息队列</p>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
-              <button onClick={() => setTaskEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={handleTaskSave} disabled={!taskEditing.name.trim() || !taskEditing.cron.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
             </div>
           </div>
         </div>

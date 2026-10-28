@@ -1,87 +1,44 @@
-import { useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
-import { ChevronDown, ChevronRight, Loader2, Plus, Square, Trash2, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Square, Trash2, X } from "lucide-react"
 import { modelSlug } from "../../model-utils"
 import type { DashboardSessionNode } from "../../../shared/dashboard-tree"
-
-const MENU_W = 224
-const MENU_MAX_H = 192
+import ModelPicker, { type ModelChoice, type ModelPickerSource } from "../chat/ModelPicker"
 
 export default function SessionRow({
   node,
-  quickModels,
+  modelPicker,
   modelSwitching,
   expanded,
   channelName,
   onToggle,
   onSwitchModel,
-  onAddFavoriteModel,
-  onRemoveFavoriteModel,
   onStop,
   onDelete,
   onActivate,
   onDeleteQueueItem,
 }: {
   node: DashboardSessionNode
-  quickModels: { model: string; modelParams?: string; label?: string; resourceId?: string }[]
-  modelSwitching?: string
+  /** 模型选择器用的数据（供应商 / 常用 / 收藏），整页共用一份 */
+  modelPicker: ModelPickerSource
+  /** 这一行的模型正在切换 */
+  modelSwitching?: boolean
   expanded: boolean
   /** 扁平列表（活跃会话）里用来标记会话属于哪个通道 */
   channelName?: string
   onToggle: () => void
-  onSwitchModel: (m: { model: string; modelParams?: string; resourceId?: string }) => void
-  onAddFavoriteModel?: () => void
-  onRemoveFavoriteModel?: (m: { model: string; modelParams?: string; resourceId?: string }) => void
+  onSwitchModel: (m: ModelChoice) => void
   onStop?: () => void
   onDelete?: () => void
   onActivate?: () => void
   onDeleteQueueItem?: (fileId: string) => void
 }) {
-  // 会话行在滚动容器内，菜单用 fixed 挂到 body，否则靠底部的行会被容器裁掉
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
-  const btnRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!menuPos) return
-    const close = () => setMenuPos(null)
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (!menuRef.current?.contains(t) && !btnRef.current?.contains(t)) close()
-    }
-    const onScroll = (e: Event) => {
-      if (menuRef.current?.contains(e.target as Node)) return
-      close()
-    }
-    window.addEventListener("scroll", onScroll, true)
-    window.addEventListener("resize", close)
-    document.addEventListener("mousedown", onDoc)
-    return () => {
-      window.removeEventListener("scroll", onScroll, true)
-      window.removeEventListener("resize", close)
-      document.removeEventListener("mousedown", onDoc)
-    }
-  }, [menuPos])
-
-  const toggleMenu = () => {
-    if (menuPos) { setMenuPos(null); return }
-    const r = btnRef.current?.getBoundingClientRect()
-    if (!r) return
-    const spaceBelow = window.innerHeight - r.bottom
-    setMenuPos({
-      top: spaceBelow >= MENU_MAX_H + 8 ? r.bottom + 4 : Math.max(8, r.top - MENU_MAX_H - 4),
-      left: Math.max(8, Math.min(r.right - MENU_W, window.innerWidth - MENU_W - 8)),
-    })
-  }
-
   const isProject = node.group === "project" || node.kind === "project"
   const queueProcessing = node.queue.filter((q) => q.status === "processing").length
   const queuePending = node.queue.length - queueProcessing
+  /** 常用里给这个模型起过名就用它，否则按模型名 + 参数现算 */
   const modelLabel = node.model
-    ? (quickModels.find((m) => m.model === node.model && (m.modelParams ?? "") === (node.modelParams ?? ""))?.label
-      || modelSlug(node.model, node.modelParams))
-    : "选择模型"
-  const switchKey = node.model ? `${node.model}\0${node.modelParams ?? ""}` : ""
+    ? modelPicker.quickModels.find((m) => m.model === node.model && (m.modelParams ?? "") === (node.modelParams ?? ""))?.label
+      || modelSlug(node.model, node.modelParams)
+    : undefined
 
   return (
     <div className={`border-b border-line-subtle/80 last:border-b-0 ${node.current ? "bg-accent-tint/20" : ""}`}>
@@ -125,66 +82,25 @@ export default function SessionRow({
             排队 {queuePending}
           </span>
         )}
+        {/* 选择器的面板挂在 body 上，React 事件仍会冒泡到这里，所以这层要拦住，免得点面板也触发整行展开 */}
         <div className="ml-auto" onClick={(e) => e.stopPropagation()}>
-          <button
-            ref={btnRef}
-            type="button"
-            onClick={toggleMenu}
-            className="inline-flex max-w-[10rem] items-center gap-1 rounded border border-line px-1.5 py-0.5 text-[11px] text-violet hover:border-violet-500"
-            title="切换本会话模型"
-          >
-            {!!switchKey && modelSwitching === switchKey && <Loader2 size={10} className="animate-spin" />}
-            <span className="truncate">{modelLabel}</span>
-            <ChevronDown size={10} />
-          </button>
-          {menuPos && createPortal(
-            <div
-              ref={menuRef}
-              style={{ position: "fixed", top: menuPos.top, left: menuPos.left, width: MENU_W, maxHeight: MENU_MAX_H }}
-              className="z-50 overflow-auto overscroll-contain rounded border border-line bg-page py-1 shadow-lg"
-              onMouseDown={(e) => e.stopPropagation()}
-              onWheel={(e) => e.stopPropagation()}
-            >
-              {quickModels.length === 0 && (
-                <div className="px-2 py-1 text-[11px] text-fg-faint">暂无常用模型</div>
-              )}
-              {quickModels.map((m) => {
-                const k = `${m.model}\0${m.modelParams ?? ""}\0${m.resourceId ?? ""}`
-                const cur = node.model === m.model && (node.modelParams ?? "") === (m.modelParams ?? "")
-                return (
-                  <div key={k} className="group flex items-center hover:bg-violet-tint/50">
-                    <button
-                      type="button"
-                      className={`min-w-0 flex-1 truncate px-2 py-1 text-left text-[11px] ${cur ? "text-violet" : "text-fg-2"}`}
-                      onClick={() => { setMenuPos(null); onSwitchModel(m) }}
-                    >
-                      {m.label || modelSlug(m.model, m.modelParams)}
-                    </button>
-                    {onRemoveFavoriteModel && (
-                      <button
-                        type="button"
-                        className="hidden shrink-0 px-1.5 text-fg-faint hover:text-danger group-hover:block"
-                        onClick={(e) => { e.stopPropagation(); onRemoveFavoriteModel(m) }}
-                        title="从常用模型中移除"
-                      >
-                        <X size={10} />
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-              {onAddFavoriteModel && (
-                <button
-                  type="button"
-                  className="mt-1 flex w-full items-center gap-1 border-t border-line-subtle px-2 py-1.5 text-[11px] text-fg-3 hover:bg-surface hover:text-violet"
-                  onClick={() => { setMenuPos(null); onAddFavoriteModel() }}
-                >
-                  <Plus size={11} />添加常用模型
-                </button>
-              )}
-            </div>,
-            document.body,
-          )}
+          <ModelPicker
+            variant="compact"
+            placement="down"
+            portal
+            resources={modelPicker.resources}
+            currentResourceId={node.resourceId}
+            currentModel={node.model ?? ""}
+            currentParams={node.modelParams}
+            currentLabel={modelLabel}
+            placeholder="选择模型"
+            quickModels={modelPicker.quickModels}
+            favorites={modelPicker.favorites}
+            onToggleFavorite={modelPicker.onToggleFavorite}
+            onOpen={modelPicker.onOpen}
+            switching={modelSwitching}
+            onSelect={onSwitchModel}
+          />
         </div>
         {node.running && onStop && (
           <button

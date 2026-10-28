@@ -7,27 +7,25 @@ import {
   type DashboardSessionNode,
 } from "../../../shared/dashboard-tree"
 import SessionRow from "./SessionRow"
+import type { ModelChoice, ModelPickerSource } from "../chat/ModelPicker"
 
 export default function ChannelTree({
   channels,
-  quickModels,
+  modelPicker,
   modelSwitching,
   onAddFavorite,
   onSwitchModel,
-  onAddFavoriteModel,
-  onRemoveFavoriteModel,
   onStopSession,
   onDeleteSession,
   onActivateSession,
   onDeleteQueueItem,
 }: {
   channels: DashboardChannelNode[]
-  quickModels: { model: string; modelParams?: string; label?: string }[]
+  modelPicker: ModelPickerSource
+  /** 正在切换模型的会话 */
   modelSwitching?: string
   onAddFavorite?: (channelId: string) => void
-  onSwitchModel: (sessionKey: string, m: { model: string; modelParams?: string }) => void
-  onAddFavoriteModel?: () => void
-  onRemoveFavoriteModel?: (m: { model: string; modelParams?: string }) => void
+  onSwitchModel: (sessionKey: string, m: ModelChoice) => void
   onStopSession: (sessionKey: string) => void
   onDeleteSession: (node: DashboardSessionNode) => void
   onActivateSession: (sessionKey: string) => void
@@ -82,13 +80,11 @@ export default function ChannelTree({
                         <SessionRow
                           key={node.sessionKey}
                           node={node}
-                          quickModels={quickModels}
-                          modelSwitching={modelSwitching}
+                          modelPicker={modelPicker}
+                          modelSwitching={modelSwitching === node.sessionKey}
                           expanded={expandedSession === node.sessionKey}
                           onToggle={() => setExpandedSession((k) => k === node.sessionKey ? null : node.sessionKey)}
                           onSwitchModel={(m) => onSwitchModel(node.sessionKey, m)}
-                          onAddFavoriteModel={onAddFavoriteModel}
-                          onRemoveFavoriteModel={onRemoveFavoriteModel}
                           onStop={node.running ? () => onStopSession(node.sessionKey) : undefined}
                           onDelete={node.removable ? () => onDeleteSession(node) : undefined}
                           onActivate={!node.running ? () => onActivateSession(node.sessionKey) : undefined}

@@ -1,4 +1,4 @@
-import { channelIdFromSessionKey } from "./channel-types.js"
+import { channelIdFromSessionKey, resolveChannelResourceId } from "./channel-types.js"
 
 export type SessionGroupId = "main" | "other_p2p" | "group" | "project" | "task"
 
@@ -19,6 +19,8 @@ export interface DashboardSessionNode {
   chatType?: string
   model?: string
   modelParams?: string
+  /** 会话实际用的供应商：会话自己的（运行中 / 已存的）优先，没有就是所属通道按人群取的默认 */
+  resourceId?: string
   workspaceDir?: string
   queue: DashboardQueueItem[]
 }
@@ -37,6 +39,9 @@ export interface BuildDashboardTreeInput {
     name: string
     connected: boolean
     mainUserChatId?: string
+    /** 通道默认供应商：会话自己没存供应商时，行上的供应商按它补 */
+    agentResourceId?: string
+    othersAgentResourceId?: string
   }[]
   running: {
     sessionKey: string
@@ -44,6 +49,7 @@ export interface BuildDashboardTreeInput {
     label?: string
     model?: string
     modelParams?: string
+    resourceId?: string
     workspaceDir?: string
     chatName?: string
     /** 独立定时任务等无 chatKey 前缀时的所属通道 */
@@ -57,6 +63,7 @@ export interface BuildDashboardTreeInput {
     removable?: boolean
     model?: string
     modelParams?: string
+    resourceId?: string
   }[]
   activeKeyByChat: Record<string, string | undefined>
   queue: {
@@ -133,7 +140,19 @@ function resolveChannelId(
   return hit?.id ?? channels[0]?.id
 }
 
+/** 会话自己没存供应商时，行上显示的供应商：所属通道按人群取的默认（私聊他人和群是「其他人」，其余是主用户） */
+function channelDefaultResourceId(
+  channel: BuildDashboardTreeInput["channels"][number] | undefined,
+  group: SessionGroupId,
+): string | undefined {
+  const audience = group === "other_p2p" || group === "group" ? "others" : "main"
+  if (!channel) return undefined
+  const fields = { agentResourceId: channel.agentResourceId ?? "", othersAgentResourceId: channel.othersAgentResourceId }
+  return resolveChannelResourceId(fields, audience) || undefined
+}
+
 export function buildDashboardTree(input: BuildDashboardTreeInput): { channels: DashboardChannelNode[] } {
+  const channelCfgById = new Map(input.channels.map((c) => [c.id, c]))
   const nodes = input.channels.map((c) => ({
     channelId: c.id,
     name: c.name,
@@ -150,6 +169,8 @@ export function buildDashboardTree(input: BuildDashboardTreeInput): { channels: 
     if (node.group !== "main" && !node.running && !opts?.keepIdle) return
     const list = ch.groups[node.group].sessions
     if (list.some((s) => sameSessionKey(s.sessionKey, node.sessionKey))) return
+    const resourceId = node.resourceId || channelDefaultResourceId(channelCfgById.get(ch.channelId), node.group)
+    if (resourceId) node.resourceId = resourceId
     list.push(node)
   }
 
@@ -170,6 +191,7 @@ export function buildDashboardTree(input: BuildDashboardTreeInput): { channels: 
       chatType: r.chatType,
       model: r.model,
       modelParams: r.modelParams,
+      resourceId: r.resourceId,
       workspaceDir: r.workspaceDir,
       queue: queueFor(r.sessionKey, input.queue),
     })
@@ -190,6 +212,7 @@ export function buildDashboardTree(input: BuildDashboardTreeInput): { channels: 
       kind: sw.kind,
       model: sw.model,
       modelParams: sw.modelParams,
+      resourceId: sw.resourceId,
       queue: queueFor(sw.sessionKey, input.queue),
     }, { keepIdle: true })
   }

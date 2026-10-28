@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { Plus, Loader2, RefreshCw, Play, Trash2 } from "lucide-react"
-import SearchableSelect from "./SearchableSelect"
+import { Plus, Loader2, Play, Trash2 } from "lucide-react"
+import ModelPicker from "./chat/ModelPicker"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
-import { modelSlug } from "../model-utils"
+import { applyTaskChannel, applyTaskModel, resolveTaskResourceId } from "./task-model"
+import { useModelFavorites } from "../hooks/useModelFavorites"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -21,8 +22,9 @@ function emptyTask(channels: ChannelConfig[]): TaskItem {
 }
 
 export default function TaskPanel() {
-  const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
+  const { showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
+  const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [tasks, setTasks] = useState<TaskItem[]>([])
   const [taskChannels, setTaskChannels] = useState<ChannelConfig[]>([])
   const [agentResources, setAgentResources] = useState<AgentResource[]>([])
@@ -32,8 +34,6 @@ export default function TaskPanel() {
   const [savedSnapshot, setSavedSnapshot] = useState("")
   const [isNew, setIsNew] = useState(false)
   const [taskCronValid, setTaskCronValid] = useState(true)
-  const [taskModelOptions, setTaskModelOptions] = useState<{ id: string; label: string; params: string }[]>([])
-  const [loadingTaskModels, setLoadingTaskModels] = useState(false)
   const [cronPreviewRuns, setCronPreviewRuns] = useState<string[] | null>(null)
   const [cronPreviewErr, setCronPreviewErr] = useState<string | null>(null)
   const [cronPreviewLoading, setCronPreviewLoading] = useState(false)
@@ -66,7 +66,6 @@ export default function TaskPanel() {
     setSavedSnapshot(JSON.stringify(t))
     setIsNew(asNew)
     setTaskCronValid(true)
-    setTaskModelOptions([])
   }
 
   const selectTask = async (t: TaskItem) => {
@@ -78,35 +77,7 @@ export default function TaskPanel() {
     openDraft(t, false)
   }
 
-  const fetchTaskModels = async (channelId?: string, silent = false) => {
-    const channel = taskChannels.find((c) => c.id === channelId) ?? taskChannels[0]
-    const resource = agentResources.find((r) => r.id === channel?.agentResourceId)
-    setLoadingTaskModels(true)
-    try {
-      if (resource?.type === "sdk") {
-        const r = await window.electronAPI.listSdkModels(resource.apiKey ?? "")
-        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models)
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      } else if (resource?.type === "llm-builtin" || resource?.type === "llm-custom") {
-        const r = await window.electronAPI.listLlmModels(resource)
-        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      } else {
-        const r = await window.electronAPI.listModels()
-        if (r.ok && r.models.length > 0) setTaskModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
-        else if (!r.ok && !silent) void showAlert("错误", r.error || "获取模型列表失败")
-      }
-    } finally {
-      setLoadingTaskModels(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!draft) return
-    setTaskModelOptions([])
-    void fetchTaskModels(draft.channelId, true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft?.id, draft?.channelId])
+  const draftResourceId = draft ? resolveTaskResourceId(taskChannels, agentResources, draft.channelId) : undefined
 
   useEffect(() => {
     if (!draft) {
@@ -258,33 +229,33 @@ export default function TaskPanel() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="mb-1 block text-xs text-fg-muted">消息通道</label>
-                    <select value={draft.channelId ?? ""} onChange={(e) => { setDraft({ ...draft, channelId: e.target.value || undefined }); setTaskModelOptions([]) }} className={inputCls}>
+                    <select value={draft.channelId ?? ""} onChange={(e) => setDraft(applyTaskChannel(draft, e.target.value || undefined, taskChannels, agentResources))} className={inputCls}>
                       <option value="">默认</option>
                       {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </div>
                   <div>
-                    <div className="mb-1 flex items-center gap-2">
-                      <label className="text-xs text-fg-muted">模型</label>
-                      <button onClick={() => void fetchTaskModels(draft.channelId)} disabled={loadingTaskModels} className="text-[10px] text-fg-muted hover:text-fg">
-                        {loadingTaskModels ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
-                      </button>
-                    </div>
-                    {taskModelOptions.length > 0 ? (
-                      <SearchableSelect
-                        value={draft.model ? draft.model + (draft.modelParams ? "\0" + draft.modelParams : "") : ""}
-                        onChange={(key) => {
-                          if (!key) { setDraft({ ...draft, model: undefined, modelParams: undefined }); return }
-                          const sep = key.indexOf("\0")
-                          setDraft(sep >= 0 ? { ...draft, model: key.slice(0, sep), modelParams: key.slice(sep + 1) } : { ...draft, model: key, modelParams: undefined })
-                        }}
-                        options={[{ id: "", label: "跟随通道主模型" }, ...taskModelOptions.map((o) => ({ id: o.id + (o.params ? "\0" + o.params : ""), label: o.label }))]}
-                        placeholder="跟随通道主模型"
-                        fallbackLabel={modelSlug(draft.model, draft.modelParams)}
-                      />
-                    ) : (
-                      <input type="text" value={modelSlug(draft.model, draft.modelParams)} onChange={(e) => setDraft({ ...draft, model: e.target.value || undefined, modelParams: undefined })} placeholder="留空跟随通道主模型" className={inputCls} />
-                    )}
+                    <label className="mb-1 block text-xs text-fg-muted">模型</label>
+                    <ModelPicker
+                      variant="field"
+                      placement="down"
+                      portal
+                      lockProvider
+                      resources={agentResources}
+                      currentResourceId={draftResourceId}
+                      currentModel={draft.model ?? ""}
+                      currentParams={draft.modelParams}
+                      followResourceId={draftResourceId}
+                      followModel="跟随通道主模型"
+                      allowManual
+                      disabled={!draftResourceId}
+                      placeholder={draftResourceId ? "跟随通道主模型" : "该通道还没有配置供应商"}
+                      quickModels={quickModels}
+                      favorites={favorites}
+                      onToggleFavorite={toggleFavorite}
+                      onOpen={() => void refreshModels()}
+                      onSelect={(c) => setDraft(applyTaskModel(draft, c))}
+                    />
                   </div>
                 </div>
                 <div>
