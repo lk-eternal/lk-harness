@@ -36,10 +36,13 @@ describe("IPC 接线", () => {
     expect(invoked.filter((c) => !handled.has(c))).toEqual([])
   })
 
-  it("会话管理页的 6 个通道：preload 和主进程一一对应", () => {
+  it("会话管理页的 9 个通道：preload 和主进程一一对应", () => {
     const pre = invoked.filter((c) => c.startsWith("session-manager:")).sort()
     const main = [...handled].filter((c) => c.startsWith("session-manager:")).sort()
     expect(pre).toEqual([
+      "session-manager:channel-impact-clear",
+      "session-manager:channel-impact-preview",
+      "session-manager:channel-impact-stop",
       "session-manager:cleanup-preview",
       "session-manager:cleanup-run",
       "session-manager:delete",
@@ -52,7 +55,7 @@ describe("IPC 接线", () => {
 
   it("会话管理页的方法在 preload 和界面类型声明里都有，且名字一致", () => {
     const envDts = read("src/renderer/env.d.ts")
-    for (const name of ["listManagedSessions", "restoreSessionDefault", "resetManagedSession", "deleteManagedSession", "previewSessionCleanup", "runSessionCleanup"]) {
+    for (const name of ["listManagedSessions", "restoreSessionDefault", "resetManagedSession", "deleteManagedSession", "previewSessionCleanup", "runSessionCleanup", "previewChannelModelImpact", "clearOthersModelOverrides", "stopOthersFollowingDefault"]) {
       expect(preload, `preload 缺 ${name}`).toMatch(new RegExp(`\\b${name}:\\s*\\(`))
       expect(envDts, `env.d.ts 缺 ${name}`).toMatch(new RegExp(`\\b${name}\\(`))
     }
@@ -66,6 +69,9 @@ describe("IPC 接线", () => {
       deleteManagedSession: "session-manager:delete",
       previewSessionCleanup: "session-manager:cleanup-preview",
       runSessionCleanup: "session-manager:cleanup-run",
+      previewChannelModelImpact: "session-manager:channel-impact-preview",
+      clearOthersModelOverrides: "session-manager:channel-impact-clear",
+      stopOthersFollowingDefault: "session-manager:channel-impact-stop",
     }
     for (const [method, channel] of Object.entries(expectChannel)) {
       // 取这个方法自己的那一段（到下一个顶层属性为止），再看它调用的通道

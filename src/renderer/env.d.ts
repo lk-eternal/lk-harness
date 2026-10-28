@@ -1,6 +1,11 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
 import type {
+  ChannelImpactClearResult as ChannelImpactClearResultType,
+  ChannelImpactPreviewResult as ChannelImpactPreviewResultType,
+  ChannelImpactStopResult as ChannelImpactStopResultType,
+} from "../shared/channel-model-impact"
+import type {
   CleanupPreviewResult as CleanupPreviewResultType,
   CleanupRunResult as CleanupRunResultType,
   ManagerListResult as ManagerListResultType,
@@ -249,6 +254,9 @@ declare global {
     deleteManagedSession(sessionKey: string): Promise<ManagerOpResultType>
     previewSessionCleanup(opts: { olderThanDays?: number; channelId?: string }): Promise<CleanupPreviewResultType>
     runSessionCleanup(opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }): Promise<CleanupRunResultType>
+    previewChannelModelImpact(channelId: string, draft: unknown): Promise<ChannelImpactPreviewResultType>
+    clearOthersModelOverrides(channelId: string): Promise<ChannelImpactClearResultType>
+    stopOthersFollowingDefault(channelId: string): Promise<ChannelImpactStopResultType>
     listProjects(): Promise<{
       id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
       featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string

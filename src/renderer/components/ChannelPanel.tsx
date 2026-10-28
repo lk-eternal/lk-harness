@@ -4,7 +4,15 @@ import {
   LogIn, MessageSquare, Bird, FolderOpen, ExternalLink, MonitorSmartphone,
 } from "lucide-react"
 import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
+import {
+  holdBackModelEdits,
+  impactOutcomeLines,
+  needsImpactPrompt,
+  type ChannelModelImpact,
+  type ImpactOutcome,
+} from "../../shared/channel-model-impact"
 import { emptyChannel } from "../channel-defaults"
+import ChannelModelImpactDialog, { type ImpactChoice } from "./ChannelModelImpactDialog"
 import ModelPicker from "./chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
@@ -16,6 +24,18 @@ const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text
 const sectionCls = "mt-5 space-y-3 border-t border-line-subtle pt-5 pb-5"
 /** tab 内首个分组：去顶部隔线，保留间隙 */
 const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
+
+/** 保存前后的清除 / 停止：抛异常也不拦保存，折成一个失败结果，保存完一并告诉用户 */
+async function runImpactStep<T extends { ok: boolean; error?: string; failed: unknown[] }>(
+  call: () => Promise<T>,
+  empty: Omit<T, "ok" | "error" | "failed">,
+): Promise<T> {
+  try {
+    return await call()
+  } catch (e) {
+    return { ...empty, ok: false, error: e instanceof Error ? e.message : String(e), failed: [] } as unknown as T
+  }
+}
 
 export default function ChannelPanel() {
   const [channels, setChannels] = useState<ChannelConfig[]>([])
@@ -29,6 +49,8 @@ export default function ChannelPanel() {
   const addMenuRef = useRef<HTMLDivElement>(null)
   const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
+  /** 保存时「其他人的默认模型要变了」的确认框；resolve 之前保存流程一直停在这里 */
+  const [impactAsk, setImpactAsk] = useState<{ channelName: string; impact: ChannelModelImpact; resolve: (c: ImpactChoice | null) => void } | null>(null)
 
   const reload = useCallback(async () => {
     const cfg = await window.electronAPI.getConfig()
@@ -104,11 +126,37 @@ export default function ChannelPanel() {
     else { setSelectedId(null); setDraft(null) }
   }
 
-  const persistDraft = async (c: ChannelConfig) => {
-    const exists = channels.some((x) => x.id === c.id)
-    const updated = exists ? channels.map((x) => x.id === c.id ? c : x) : [...channels, c]
+  /**
+   * 落库。withModels = 点「保存」时才带上模型相关的改动；绑定 / 测试这类「先落库」的途径不带
+   * （已存在的通道里，模型字段保持已保存的值，这样模型改动没法绕过保存时的影响提示；界面上仍显示未保存）。
+   */
+  const persistDraft = async (c: ChannelConfig, withModels = false) => {
+    const saved = channels.find((x) => x.id === c.id)
+    const toSave = saved && !withModels ? holdBackModelEdits(c, saved) : c
+    const updated = saved ? channels.map((x) => x.id === c.id ? toSave : x) : [...channels, toSave]
     await persistChannels(updated)
-    setSavedSnapshot(JSON.stringify(c))
+    setSavedSnapshot(JSON.stringify(toSave))
+  }
+
+  /**
+   * 保存前问一句：这次改动会不会让其他人的默认模型 / 供应商变掉，已有的别人的会话怎么处理。
+   * 返回 null = 用户取消；检查失败不拦保存（记在 outcome 里，保存后告诉用户）。
+   */
+  const askModelImpact = async (next: ChannelConfig, outcome: ImpactOutcome): Promise<ImpactChoice | null> => {
+    const none: ImpactChoice = { clear: false, stop: false }
+    try {
+      const r = await window.electronAPI.previewChannelModelImpact(next.id, next)
+      if (!r.ok) {
+        outcome.previewError = r.error ?? "未知错误"
+        return none
+      }
+      if (!r.impact || !needsImpactPrompt(r.impact)) return none
+      const impact = r.impact
+      return await new Promise<ImpactChoice | null>((resolve) => setImpactAsk({ channelName: next.name, impact, resolve }))
+    } catch (e) {
+      outcome.previewError = e instanceof Error ? e.message : String(e)
+      return none
+    }
   }
 
   const handleSave = async (next: ChannelConfig) => {
@@ -119,10 +167,19 @@ export default function ChannelPanel() {
         return false
       }
     }
-    await persistDraft(next)
+    const outcome: ImpactOutcome = {}
+    const choice = await askModelImpact(next, outcome)
+    if (!choice) return false
+    // 清除要在保存之前、按旧的通道配置做（保存后再清就认不出换模型时顺带存下的旧供应商了）
+    if (choice.clear) outcome.clear = await runImpactStep(() => window.electronAPI.clearOthersModelOverrides(next.id), { cleared: 0 })
+    await persistDraft(next, true)
     markSaved()
     openDraft(next, false)
     setIsNewChannel(false)
+    // 停止要在保存之后：它们下一条消息才会按新默认拉起
+    if (choice.stop) outcome.stop = await runImpactStep(() => window.electronAPI.stopOthersFollowingDefault(next.id), { stopped: 0 })
+    const lines = impactOutcomeLines(outcome)
+    if (lines.length > 0) void showAlert("设置已保存", lines.join("\n"))
     return true
   }
 
@@ -213,7 +270,7 @@ export default function ChannelPanel() {
                 isNew={isNewChannel}
                 resources={resources}
                 onChange={setDraft}
-                onSaveDraft={persistDraft}
+                onSaveDraft={(c) => persistDraft(c)}
                 showAlert={showAlert}
                 showConfirm={showConfirm}
               />
@@ -249,6 +306,16 @@ export default function ChannelPanel() {
         </div>
       </div>
       {ModalPortal}
+      {impactAsk && (
+        <ChannelModelImpactDialog
+          channelName={impactAsk.channelName}
+          impact={impactAsk.impact}
+          onDone={(choice) => {
+            impactAsk.resolve(choice)
+            setImpactAsk(null)
+          }}
+        />
+      )}
     </>
   )
 }

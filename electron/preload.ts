@@ -3,6 +3,7 @@ import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/sh
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
+import type { ChannelImpactClearResult, ChannelImpactPreviewResult, ChannelImpactStopResult } from "../src/shared/channel-model-impact"
 import type { MobileServerStatus } from "./mobile-server"
 
 export type { AgentResource, MessageChannel, ChannelStatusInfo, ScheduledTask, MobileServerStatus }
@@ -238,6 +239,12 @@ const api = {
     ipcRenderer.invoke("session-manager:cleanup-preview", opts),
   runSessionCleanup: (opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }): Promise<CleanupRunResult> =>
     ipcRenderer.invoke("session-manager:cleanup-run", opts),
+  previewChannelModelImpact: (channelId: string, draft: unknown): Promise<ChannelImpactPreviewResult> =>
+    ipcRenderer.invoke("session-manager:channel-impact-preview", channelId, draft),
+  clearOthersModelOverrides: (channelId: string): Promise<ChannelImpactClearResult> =>
+    ipcRenderer.invoke("session-manager:channel-impact-clear", channelId),
+  stopOthersFollowingDefault: (channelId: string): Promise<ChannelImpactStopResult> =>
+    ipcRenderer.invoke("session-manager:channel-impact-stop", channelId),
   listProjects: (): Promise<{
     id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
     featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string

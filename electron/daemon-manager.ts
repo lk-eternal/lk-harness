@@ -102,6 +102,7 @@ import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import {
   listSessionsForManager, restoreSessionDefault, resetManagedSession, deleteManagedSession,
   previewSessionCleanup, runSessionCleanup,
+  previewChannelModelImpact, clearOthersModelOverrides, stopOthersFollowingDefault,
 } from "./session-manager"
 
 export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
@@ -1976,6 +1977,10 @@ export function initDaemonManager(): void {
   ipcMain.handle("session-manager:delete", (_e, sessionKey: string) => deleteManagedSession(sessionKey))
   ipcMain.handle("session-manager:cleanup-preview", (_e, opts: { olderThanDays?: number; channelId?: string }) => previewSessionCleanup(opts ?? {}))
   ipcMain.handle("session-manager:cleanup-run", (_e, opts: { olderThanDays?: number; channelId?: string; sessionKeys: string[] }) => runSessionCleanup(opts))
+  // 保存通道里「其他人」的默认模型时：保存前预览影响、清除单独改过的模型；保存后停掉跟随默认的运行中会话
+  ipcMain.handle("session-manager:channel-impact-preview", (_e, channelId: string, draft: unknown) => previewChannelModelImpact(channelId, draft))
+  ipcMain.handle("session-manager:channel-impact-clear", (_e, channelId: string) => clearOthersModelOverrides(channelId))
+  ipcMain.handle("session-manager:channel-impact-stop", (_e, channelId: string) => stopOthersFollowingDefault(channelId))
   ipcMain.handle("project:list", () => {
     initProjectStore(app.getPath("userData"))
     return listProjects().map((p) => ({

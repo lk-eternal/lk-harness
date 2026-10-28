@@ -1,6 +1,17 @@
 import { app } from "electron"
 import { normalizeSessionKey, type MessageChannel } from "../src/shared/channel-types"
 import {
+  CHANNEL_MODEL_FIELDS,
+  bucketOthers,
+  clearTargets,
+  followingRunningKeys,
+  type ChannelImpactClearResult,
+  type ChannelImpactPreviewResult,
+  type ChannelImpactStopResult,
+  type ImpactDefault,
+} from "../src/shared/channel-model-impact"
+import { othersDefaultChanged, othersDefaultOf } from "../src/shared/launch-model"
+import {
   listManagedSessions,
   planCleanup,
   readRoutingSnapshot,
@@ -223,5 +234,107 @@ export async function runSessionCleanup(opts: {
     return result
   } catch (e) {
     return { ...result, ok: false, error: errorText(e) }
+  }
+}
+
+// ── 保存通道里「其他人」的默认模型之后，对已有的别人的会话的影响 ─────────────────────
+//
+// 其他人的会话每次拉起都按通道当前的默认解析（没单独设置过的）：改了默认，下一条消息起自动生效，
+// 但正在运行的会话是按旧默认拉起的，要等它结束；单独改过模型的会话则一直不跟着变。
+// 保存时先让用户看到这些，再由用户决定要不要停掉运行中的、要不要把单独改过的清掉。
+// 只动其他人的会话；主用户自己的会话、项目 / 任务 / 临时会话不在 collect 出的「可管理的其他人会话」里，碰不到。
+
+/** 界面传来的未保存的草稿里，只认会影响其他人默认模型的字段和 allowOthers，其余一律忽略 */
+function applyModelDraft(saved: MessageChannel, draft: unknown): MessageChannel {
+  const d = (draft && typeof draft === "object" ? draft : {}) as Record<string, unknown>
+  const next: MessageChannel = { ...saved }
+  for (const f of CHANNEL_MODEL_FIELDS) {
+    if (f in d) next[f] = typeof d[f] === "string" ? (d[f] as string) : ""
+  }
+  if (typeof d.allowOthers === "boolean") next.allowOthers = d.allowOthers
+  return next
+}
+
+function describeDefault(channel: MessageChannel): ImpactDefault {
+  const d = othersDefaultOf(channel)
+  return { ...d, resourceName: d.resourceId ? (getAgentResource(d.resourceId).name ?? "") : "" }
+}
+
+const NO_BUCKET = { total: 0, running: 0 }
+
+/** 保存前预览：按已保存的通道配置 + 界面上还没保存的模型字段，算出其他人的默认会不会变、影响到几个会话 */
+export async function previewChannelModelImpact(channelId: string, draft: unknown): Promise<ChannelImpactPreviewResult> {
+  try {
+    const saved = getChannels().find((c) => c.id === channelId)
+    if (!saved) return { ok: true }
+    const after = applyModelDraft(saved, draft)
+    const oldDefault = describeDefault(saved)
+    const newDefault = describeDefault(after)
+    const base = { oldDefault, newDefault, providerChanged: oldDefault.resourceId !== newDefault.resourceId }
+    // 保存后不允许其他人使用：别人的会话拉不起来，默认怎么变都不影响谁，不用问
+    if (!after.allowOthers || !othersDefaultChanged(saved, after)) {
+      return { ok: true, impact: { ...base, changed: false, total: 0, following: NO_BUCKET, modelPinned: NO_BUCKET, providerPinned: NO_BUCKET } }
+    }
+    const { sessions } = await collect()
+    return { ok: true, impact: { ...base, changed: true, ...bucketOthers(sessions, channelId) } }
+  } catch (e) {
+    return { ok: false, error: errorText(e) }
+  }
+}
+
+/**
+ * 清除其他人会话「单独改过的模型」，让它们重新跟随通道默认。必须在保存通道之前调用：
+ * 要按当时的通道配置判断「这个会话存的供应商和通道默认一致」才能清得干净；保存之后默认变了，
+ * 那份遗留的供应商就会被当成会话单独指定的而清不掉。
+ * 单独指定了供应商的会话不动。不停止会话（停止在保存之后由 stopOthersFollowingDefault 做）。
+ */
+export async function clearOthersModelOverrides(channelId: string): Promise<ChannelImpactClearResult> {
+  const out: ChannelImpactClearResult = { ok: true, cleared: 0, failed: [] }
+  try {
+    const channel = getChannels().find((c) => c.id === channelId)
+    if (!channel) return { ...out, ok: false, error: "通道不存在" }
+    const { sessions } = await collect()
+    for (const s of clearTargets(sessions, channelId)) {
+      try {
+        const r = restoreModelDefault({
+          sessionKey: s.sessionKey,
+          channel,
+          audience: s.audience,
+          resolveResource: (id) => {
+            const res = getAgentResource(id)
+            return { id: res.id, name: res.name }
+          },
+        })
+        if (r.ok) out.cleared++
+        else out.failed.push({ sessionKey: s.sessionKey, error: r.error })
+      } catch (e) {
+        out.failed.push({ sessionKey: s.sessionKey, error: errorText(e) })
+      }
+    }
+    return { ...out, ok: out.failed.length === 0 }
+  } catch (e) {
+    return { ...out, ok: false, error: errorText(e) }
+  }
+}
+
+/** 保存之后调用：停掉其他人的、正在运行的、跟随默认的会话，它们的下一条消息会按新默认重新拉起 */
+export async function stopOthersFollowingDefault(channelId: string): Promise<ChannelImpactStopResult> {
+  const out: ChannelImpactStopResult = { ok: true, stopped: 0, failed: [] }
+  try {
+    if (!getChannels().some((c) => c.id === channelId)) return { ...out, ok: false, error: "通道不存在" }
+    const { sessions } = await collect()
+    for (const key of followingRunningKeys(sessions, channelId)) {
+      try {
+        // 收集之后、逐个停之前，这个会话可能刚好自己结束了
+        if (!isSessionAgentRunning(key)) continue
+        await stopSessionAgent(key)
+        out.stopped++
+      } catch (e) {
+        out.failed.push({ sessionKey: key, error: errorText(e) })
+      }
+    }
+    return { ...out, ok: out.failed.length === 0 }
+  } catch (e) {
+    return { ...out, ok: false, error: errorText(e) }
   }
 }

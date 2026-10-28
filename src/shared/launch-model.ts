@@ -26,6 +26,33 @@ export function resolveChannelDefaultModel(
   return { model: channel.model ?? "", modelParams: channel.modelParams ?? "" }
 }
 
+/** 通道里「其他人」没有单独配置时实际会用的供应商和模型（留空的跟随主用户 / 主模型） */
+export interface OthersDefault {
+  resourceId: string
+  model: string
+  modelParams: string
+}
+
+export function othersDefaultOf(channel: ChannelModelFields): OthersDefault {
+  const { model, modelParams } = resolveChannelDefaultModel(channel, "others")
+  return {
+    resourceId: resolveChannelResourceId(channel, "others").trim(),
+    model: model.trim(),
+    modelParams: modelParams.trim(),
+  }
+}
+
+/**
+ * 通道配置改动后，其他人的默认供应商 / 模型有没有变。
+ * 比的是「实际生效的」：其他人留空时跟随主用户，所以改主用户的模型也算（只要其他人没单独配）；
+ * 其他人单独配了的，改主用户的不算。
+ */
+export function othersDefaultChanged(before: ChannelModelFields, after: ChannelModelFields): boolean {
+  const a = othersDefaultOf(before)
+  const b = othersDefaultOf(after)
+  return a.resourceId !== b.resourceId || a.model !== b.model || a.modelParams !== b.modelParams
+}
+
 export interface LaunchModelInput {
   sessionKey: string
   channel: ChannelModelFields | undefined

@@ -112,17 +112,6 @@ export function applySessionProviderSwitch(
   patchSessionRecord(sessionKey, patch)
 }
 
-/** 通道保存新模型时清掉该通道下所有会话 override，避免仍用旧 /m 或历史模型 */
-export function clearSessionOverridesForChannel(channelId: string): void {
-  const s = readOverridesSnapshot()
-  const prefix = `${channelId}|`
-  for (const key of Object.keys(s.sessions)) {
-    if (key.startsWith(prefix) && s.sessions[key]?.model) {
-      patchSessionRecord(key, { model: undefined, modelParams: undefined })
-    }
-  }
-}
-
 /** 解析会话有效模型：session override > fallback */
 export function resolveModelForSession(sessionKey: string, fallback: ModelRef): ModelRef {
   const resourceId = fallback.resourceId
