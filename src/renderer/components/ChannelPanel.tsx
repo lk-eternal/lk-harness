@@ -5,19 +5,17 @@ import {
 } from "lucide-react"
 import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
 import { emptyChannel } from "../channel-defaults"
-import SearchableSelect from "./SearchableSelect"
+import ModelPicker from "./chat/ModelPicker"
+import { useModelFavorites } from "../hooks/useModelFavorites"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
 import PanelAddMenu from "./PanelAddMenu"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
-import { modelSlug } from "../model-utils"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 const sectionCls = "mt-5 space-y-3 border-t border-line-subtle pt-5 pb-5"
 /** tab 内首个分组：去顶部隔线，保留间隙 */
 const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
-
-interface ModelOption { id: string; label: string; params: string }
 
 export default function ChannelPanel() {
   const [channels, setChannels] = useState<ChannelConfig[]>([])
@@ -273,127 +271,6 @@ function isDefaultChannelName(name: string): boolean {
   return !name.trim() || /^飞书( \d+)?$/.test(name.trim()) || /^微信( \d+)?$/.test(name.trim())
 }
 
-/** 模型列表加载失败提示 + 重试（失败不再静默吞掉） */
-function ModelLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
-  return (
-    <div className="mt-1 flex items-center gap-2 text-xs text-danger">
-      <span className="min-w-0 flex-1 truncate" title={error}>⚠️ 模型列表加载失败：{error}</span>
-      <button type="button" onClick={onRetry} className="shrink-0 rounded border border-line px-2 py-0.5 text-fg-2 hover:bg-strong">重试</button>
-    </div>
-  )
-}
-
-const modelKey = (id: string, params: string) => id + (params ? "\0" + params : "")
-const parseModelKey = (key: string): { id: string; params: string } => {
-  const sep = key.indexOf("\0")
-  return sep >= 0 ? { id: key.slice(0, sep), params: key.slice(sep + 1) } : { id: key, params: "" }
-}
-
-/** 随 Agent 资源变化加载对应模型列表；取消过时请求避免错序覆盖 */
-function useModelOptions(resource: AgentResource | undefined, model: string, modelParams: string) {
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [modelError, setModelError] = useState("")
-  const [reloadSeq, setReloadSeq] = useState(0)
-  useEffect(() => {
-    if (!resource) {
-      setModelOptions([])
-      setModelError("")
-      setLoadingModels(false)
-      return
-    }
-    let cancelled = false
-    const load = async () => {
-      setLoadingModels(true)
-      setModelError("")
-      try {
-        if (resource.type === "sdk") {
-          if (!resource.apiKey?.trim()) {
-            if (!cancelled) { setModelOptions([]); setModelError("该资源未填 API Key") }
-            return
-          }
-          const r = await window.electronAPI.listSdkModels(resource.apiKey.trim(), model, modelParams)
-          if (cancelled) return
-          if (r.ok && r.models.length > 0) setModelOptions(r.models)
-          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
-        } else if (resource.type === "llm-builtin" || resource.type === "llm-custom") {
-          const r = await window.electronAPI.listLlmModels(resource, model, modelParams)
-          if (cancelled) return
-          if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ id: m.id, label: m.label, params: "" })))
-          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
-        } else {
-          const r = await window.electronAPI.listModels()
-          if (cancelled) return
-          if (r.ok && r.models.length > 0) setModelOptions(r.models.map((m) => ({ ...m, label: m.id, params: "" })))
-          else if (!cancelled) { setModelOptions([]); setModelError(r.error || "模型列表为空") }
-        }
-      } catch (e: unknown) {
-        if (!cancelled) { setModelOptions([]); setModelError(e instanceof Error ? e.message : String(e)) }
-      } finally {
-        if (!cancelled) setLoadingModels(false)
-      }
-    }
-    setModelOptions([])
-    void load()
-    return () => { cancelled = true }
-  }, [resource, model, modelParams, reloadSeq])
-  return { modelOptions, loadingModels, modelError, reloadModels: () => setReloadSeq((s) => s + 1) }
-}
-
-function ResourceModelBlock({ resources, resourceId, onResourceChange, followResourceLabel, modelValue, modelParams, onModelChange, followModelLabel, modelPlaceholder, emptyModelPlaceholder, models }: {
-  resources: AgentResource[]
-  resourceId: string
-  onResourceChange: (id: string) => void
-  followResourceLabel?: string
-  modelValue: string
-  modelParams: string
-  onModelChange: (id: string, params: string) => void
-  followModelLabel?: string
-  modelPlaceholder: string
-  emptyModelPlaceholder: string
-  models: { modelOptions: ModelOption[]; loadingModels: boolean; modelError: string; reloadModels: () => void }
-}) {
-  const { modelOptions, loadingModels, modelError, reloadModels } = models
-  const modelOptLabel = (id?: string, params?: string) =>
-    modelOptions.find((o) => o.id === id && o.params === (params ?? ""))?.label
-    || modelSlug(id, params)
-  return (
-    <>
-      <div>
-        <label className="mb-1 block text-xs text-fg-muted">Agent 资源</label>
-        <select value={resourceId} onChange={(e) => onResourceChange(e.target.value)} className={inputCls}>
-          {followResourceLabel
-            ? <>
-                <option value="">{followResourceLabel}</option>
-                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
-              </>
-            : <>
-                <option value="">请选择 Agent 资源</option>
-                {resources.map((r) => <option key={r.id} value={r.id}>{r.name}{r.type === "sdk" && r.email ? ` (${r.email})` : ""}</option>)}
-              </>}
-        </select>
-      </div>
-      <div>
-        <label className="mb-1 block text-xs text-fg-muted">模型</label>
-        {loadingModels
-          ? <div className={inputCls + " flex cursor-not-allowed items-center gap-2 text-fg-muted"}><Loader2 size={13} className="animate-spin" />模型列表加载中...</div>
-          : modelOptions.length > 0
-            ? <SearchableSelect
-                value={modelValue ? modelKey(modelValue, modelParams) : ""}
-                onChange={(key) => { if (!key) { onModelChange("", ""); return } const { id, params } = parseModelKey(key); onModelChange(id, params) }}
-                options={followModelLabel ? [{ id: "", label: followModelLabel }, ...modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))] : modelOptions.map((o) => ({ id: modelKey(o.id, o.params), label: o.label }))}
-                placeholder={followModelLabel ?? modelPlaceholder}
-                fallbackLabel={modelOptLabel(modelValue, modelParams)}
-              />
-            : <>
-                <input type="text" value={modelOptLabel(modelValue, modelParams)} onChange={(e) => onModelChange(e.target.value, "")} placeholder={emptyModelPlaceholder} className={inputCls} />
-                {modelError && <ModelLoadError error={modelError} onRetry={reloadModels} />}
-              </>}
-      </div>
-    </>
-  )
-}
-
 function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, showAlert, showConfirm }: DetailProps) {
   const draft = channel
   const set = (p: Partial<ChannelConfig>) => onChange({ ...draft, ...p })
@@ -413,13 +290,10 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const wechatQrBusy = useRef(false)
 
   const [activeTab, setActiveTab] = useState<"main" | "others">("main")
-  const resourceMain = resources.find((r) => r.id === draft.agentResourceId)
   const othersResourceId = draft.othersAgentResourceId?.trim() || draft.agentResourceId
-  const resourceOthers = resources.find((r) => r.id === othersResourceId)
   /** 其他人模型"跟随"仅同源时成立 */
   const sameResource = othersResourceId === draft.agentResourceId
-  const mainModels = useModelOptions(resourceMain, draft.model, draft.modelParams)
-  const othersModels = useModelOptions(resourceOthers, draft.othersModel, draft.othersModelParams)
+  const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
 
   // 飞书一键创建应用
   useEffect(() => {
@@ -751,16 +625,22 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
           {activeTab === "main" && (
           <section className={sectionCls}>
             <h4 className="text-xs font-medium text-fg-3">Agent 资源与模型</h4>
-            <ResourceModelBlock
+            <ModelPicker
+              variant="field"
+              placement="down"
+              portal
               resources={resources}
-              resourceId={draft.agentResourceId}
-              onResourceChange={(id) => { if (id !== draft.agentResourceId) set({ agentResourceId: id, model: "auto", modelParams: "" }) }}
-              modelValue={draft.model}
-              modelParams={draft.modelParams}
-              onModelChange={(id, params) => set({ model: id, modelParams: params })}
-              modelPlaceholder="选择模型..."
-              emptyModelPlaceholder="auto"
-              models={mainModels}
+              currentResourceId={draft.agentResourceId}
+              currentModel={draft.agentResourceId ? draft.model : ""}
+              currentParams={draft.modelParams}
+              autoLabel="自动（auto）"
+              allowManual
+              quickModels={quickModels}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+              onOpen={() => void refreshModels()}
+              placeholder="选择供应商 / 模型"
+              onSelect={(c) => set({ agentResourceId: c.resourceId, model: c.model || "auto", modelParams: c.modelParams ?? "" })}
             />
           </section>
           )}
@@ -840,18 +720,24 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
           {activeTab === "others" && draft.allowOthers && (
           <section className={sectionCls}>
             <h4 className="text-xs font-medium text-fg-3">Agent 资源与模型</h4>
-            <ResourceModelBlock
+            <ModelPicker
+              variant="field"
+              placement="down"
+              portal
               resources={resources}
-              resourceId={draft.othersAgentResourceId ?? ""}
-              onResourceChange={(id) => { if ((id ?? "") !== (draft.othersAgentResourceId ?? "")) set({ othersAgentResourceId: id, othersModel: "", othersModelParams: "" }) }}
-              followResourceLabel="跟随主用户"
-              modelValue={draft.othersModel}
-              modelParams={draft.othersModelParams}
-              onModelChange={(id, params) => set({ othersModel: id, othersModelParams: params })}
-              followModelLabel={sameResource ? "跟随主模型" : undefined}
-              modelPlaceholder="选择模型..."
-              emptyModelPlaceholder={sameResource ? "留空则跟随主模型" : "请选择模型"}
-              models={othersModels}
+              currentResourceId={draft.othersAgentResourceId ?? ""}
+              currentModel={draft.othersModel}
+              currentParams={draft.othersModelParams}
+              followProvider="跟随主用户"
+              followResourceId={draft.agentResourceId}
+              followModel="跟随主模型"
+              allowManual
+              quickModels={quickModels}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
+              onOpen={() => void refreshModels()}
+              placeholder="选择供应商 / 模型"
+              onSelect={(c) => set({ othersAgentResourceId: c.resourceId, othersModel: c.model, othersModelParams: c.modelParams ?? "" })}
             />
             {!sameResource && !draft.othersModel?.trim() && (
               <p className="text-xs text-yellow-500">其他人资源与主用户不同，请显式选择模型（不可跟随）。</p>

@@ -11,7 +11,8 @@ import Composer from "../components/chat/Composer"
 import { composerDraftKey, discardComposerDraft } from "../components/chat/composer-drafts"
 import QueuedStrip from "../components/chat/QueuedStrip"
 import DirPicker from "../components/chat/DirPicker"
-import ModelPicker, { type ModelChoice, type QuickModel } from "../components/chat/ModelPicker"
+import ModelPicker, { type ModelChoice } from "../components/chat/ModelPicker"
+import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
@@ -85,7 +86,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
-  const [quickModels, setQuickModels] = useState<QuickModel[]>([])
+  const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [resources, setResources] = useState<AgentResource[]>([])
   const [modelBusy, setModelBusy] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
@@ -133,11 +134,6 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       busyRef.current = false
       setLoaded(true)
     }
-  }, [])
-
-  const refreshModels = useCallback(async () => {
-    const r = await window.electronAPI.listQuickModels()
-    if (r.ok) setQuickModels(r.models)
   }, [])
 
   // 草稿会话不在服务端会话树里，它的模型单独向服务端读；草稿增减时重读
@@ -506,6 +502,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                         currentParams={tab.modelParams}
                         currentLabel={modelLabel}
                         quickModels={quickModels}
+                        favorites={favorites}
+                        onToggleFavorite={toggleFavorite}
+                        onOpen={() => void refreshModels()}
+                        placeholder="默认模型"
                         switching={modelBusy}
                         onSelect={(m) => void switchModel(m)}
                       />
