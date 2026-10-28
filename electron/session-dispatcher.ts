@@ -41,6 +41,7 @@ import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
+import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, resolveTaskOutboundChatKey } from "../src/shared/scheduled-task"
@@ -899,6 +900,15 @@ export async function formatCurrentSessionBlock(
   })
 }
 
+/** 界面按会话键管理（激活 / 删除）时，会话所属通道的主用户聊天；口径见 resolveManageChatId */
+function manageChatIdFor(sessionKey: string): ManageChatResolution {
+  return resolveManageChatId(
+    sessionKey,
+    getChannels().filter((c) => c.enabled !== false),
+    getSessionRecord(sessionKey)?.chatId,
+  )
+}
+
 /** 删除会话：停止 Agent、清 Resume、移出常用目录；若当前活跃则回主会话。项目会话请用 /p del。 */
 export async function deleteUserSession(
   sessionKey: string,
@@ -910,8 +920,13 @@ export async function deleteUserSession(
   const lock = cachedLock()
   if (!lock?.port) return { ok: false, error: "服务未运行" }
 
-  const resolvedChatId = chatId || await resolveMainChatId(lock.port)
-  if (!resolvedChatId) return { ok: false, error: "未绑定主用户" }
+  // 没指定聊天时（界面直接发来会话键）按会话自己所属的通道解析，不能取「第一个绑了主用户的通道」
+  let resolvedChatId = chatId
+  if (!resolvedChatId) {
+    const owner = manageChatIdFor(key)
+    if (!owner.ok) return { ok: false, error: owner.error }
+    resolvedChatId = owner.chatId
+  }
 
   // 项目会话由项目表派生，只清上下文的话列表项不会消失，反而像是没生效
   if (projectIdFromSessionKey(key)) {
@@ -1113,8 +1128,10 @@ export async function switchMainSession(sessionKey: string): Promise<{ ok: boole
   if (!key) return { ok: false, error: "sessionKey 不能为空" }
   const lock = cachedLock()
   if (!lock?.port) return { ok: false, error: "服务未运行" }
-  const chatId = await resolveMainChatId(lock.port)
-  if (!chatId) return { ok: false, error: "未绑定主用户" }
+  // 按会话自己所属的通道找主用户聊天：多个通道时，不能把第一个通道的当前会话指针指到别的通道的会话上
+  const owner = manageChatIdFor(key)
+  if (!owner.ok) return { ok: false, error: owner.error }
+  const chatId = owner.chatId
   const pid = projectIdFromSessionKey(key)
   if (pid) {
     const proj = getProject(pid)
