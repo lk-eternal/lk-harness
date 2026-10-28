@@ -67,6 +67,7 @@ import { useBackToClose } from "./back-stack"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
+import { installExternalLinkHandler } from "./external-links"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
 import UpdateBanner from "./UpdateBanner"
 import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
@@ -255,6 +256,10 @@ export default function MobileApp() {
       setUpdate(pendingUpdate(info, APP_VERSION, loadDismissedUpdate()))
     })
   }, [route.connected, route.activeUrl, pairCfg.token])
+
+  // APK 里点聊天中的链接：交给系统浏览器，不让 WebView 自己跳走。
+  // 跳走后聊天界面被目标页替换，而 APK 里没人处理返回键，按返回会直接退出应用、回不到会话
+  useEffect(() => installExternalLinkHandler(setActionError), [])
 
   const startUpdate = useCallback(async () => {
     if (!update) return
