@@ -153,9 +153,15 @@ export function readMirrorTurns(sessionKey: string): TranscriptTurn[] {
   } catch { return [] }
 }
 
+/**
+ * 清空镜像。只删文件，不为会话建目录：删除会话时 resetSdkSessionContext 会异步调到这里，
+ * 此时会话目录刚被清掉，要是在这里把目录建回来，已删除的会话就会以一个空目录的样子留在列表里。
+ */
 export function clearMirror(sessionKey: string): void {
   try {
-    const p = mirrorPath(sessionKey)
+    const root = resolveDataDir()
+    ensureSessionLayoutMigrated(root)
+    const p = sessionMirrorPath(root, sessionKey)
     if (fs.existsSync(p)) fs.unlinkSync(p)
   } catch { /* ignore */ }
 }

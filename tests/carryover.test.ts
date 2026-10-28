@@ -17,6 +17,7 @@ import {
   consumeCarryover,
   pendingHistoryTurns,
 } from "../electron/carryover.js"
+import { sessionEntryDir } from "../src/shared/session-entry-paths.js"
 import {
   initSessionResourceStore,
   resetSessionResourceStoreForTests,
@@ -108,6 +109,23 @@ describe("mirror", () => {
     ])
     clearMirror("sk")
     expect(readMirrorTurns("sk")).toEqual([])
+  })
+
+  it("清空不存在的会话的镜像：不会建出会话目录（删除会话后异步的清空不能把目录建回来）", () => {
+    const entry = sessionEntryDir(dataDir, "ch_a|oc_gone::D:\\ws\\a")
+    expect(fs.existsSync(entry)).toBe(false)
+    clearMirror("ch_a|oc_gone::D:\\ws\\a")
+    expect(fs.existsSync(entry)).toBe(false)
+    expect(fs.readdirSync(path.join(dataDir, "sessions")).filter((n) => !n.startsWith(".") && n !== "_global")).toEqual([])
+  })
+
+  it("清空已有的镜像：只删镜像文件，会话目录和里面别的文件还在", () => {
+    appendMirrorTurns("sk", [{ role: "user", text: "你好" }])
+    const entry = sessionEntryDir(dataDir, "sk")
+    fs.writeFileSync(path.join(entry, "state.json"), "{}")
+    clearMirror("sk")
+    expect(fs.existsSync(path.join(entry, "mirror.jsonl"))).toBe(false)
+    expect(fs.existsSync(path.join(entry, "state.json"))).toBe(true)
   })
 })
 
