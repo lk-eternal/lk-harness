@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from "react"
-import { Plus, Trash2, ChevronRight, ChevronDown, Folder, FileText } from "lucide-react"
+import { Plus, Trash2 } from "lucide-react"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
+import SkillTreeList from "./SkillTreeList"
+import SkillNameDialog from "./SkillNameDialog"
+import { ancestorExpandKeys, findEntryConflict, isSameOrInside, joinEntryPath, locationLabel, validateEntryName, type SkillEntryKind } from "./skill-entry"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
@@ -22,6 +25,7 @@ export default function SkillPanel() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [edit, setEdit] = useState<EditMode | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
+  const [namePrompt, setNamePrompt] = useState<{ kind: SkillEntryKind; skillPath: string; parentPath: string } | null>(null)
 
   const reloadRoots = useCallback(() => {
     window.electronAPI.getSkillRoots().then((roots) => {
@@ -48,39 +52,90 @@ export default function SkillPanel() {
     })
   }
 
+  /** 编辑器里有没保存的修改时问一下；返回 false 表示用户取消（或保存失败），调用方不要继续 */
+  const guardUnsaved = async (saveLabel: string): Promise<boolean> => {
+    if (!isDirty) return true
+    const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: saveLabel })
+    if (choice === "cancel") return false
+    if (choice === "save" && !(await handleSave())) return false
+    return true
+  }
+
   const selectSkill = async (s: SkillFile) => {
-    if (isDirty) {
-      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并切换" })
-      if (choice === "cancel") return
-      if (choice === "save" && !(await handleSave())) return
-    }
+    if (!(await guardUnsaved("保存并切换"))) return
     const mode: EditMode = { kind: "skill", skillPath: s.skillPath, name: s.skillPath, content: s.content, originalPath: s.skillPath, isNew: false }
     setEdit(mode)
     setSavedSnapshot(JSON.stringify(mode))
   }
 
-  const openFile = async (skillPath: string, relativePath: string) => {
-    if (isDirty) {
-      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并切换" })
-      if (choice === "cancel") return
-      if (choice === "save" && !(await handleSave())) return
-    }
+  /** 把文件读进编辑器（不管未保存的修改，调用前自己处理） */
+  const loadFile = async (skillPath: string, relativePath: string): Promise<boolean> => {
     const res = await window.electronAPI.readSkillFile(skillRootId, skillPath, relativePath)
-    if (!res.ok) { void showAlert("读取失败", res.error ?? ""); return }
+    if (!res.ok) { void showAlert("读取失败", res.error ?? ""); return false }
     const mode: EditMode = { kind: "file", skillPath, relativePath, content: res.content ?? "" }
+    setEdit(mode)
+    setSavedSnapshot(JSON.stringify(mode))
+    return true
+  }
+
+  const openFile = async (skillPath: string, relativePath: string) => {
+    if (!(await guardUnsaved("保存并切换"))) return
+    await loadFile(skillPath, relativePath)
+  }
+
+  const openAdd = async () => {
+    if (!(await guardUnsaved("保存并继续"))) return
+    const mode: EditMode = { kind: "skill", skillPath: "", name: "", content: "", originalPath: null, isNew: true }
     setEdit(mode)
     setSavedSnapshot(JSON.stringify(mode))
   }
 
-  const openAdd = async () => {
-    if (isDirty) {
-      const choice = await showUnsavedChoice("未保存", "有未保存的修改，怎么办？", { save: "保存并继续" })
-      if (choice === "cancel") return
-      if (choice === "save" && !(await handleSave())) return
+  /** 在 Skill 目录（或其子文件夹）下新建文件 / 文件夹：先弹出输入名字的对话框 */
+  const openCreate = async (kind: SkillEntryKind, skillPath: string, parentPath: string) => {
+    // 新建文件后会直接在编辑器里打开，先处理掉没保存的修改；新建文件夹不动编辑器
+    if (kind === "file" && !(await guardUnsaved("保存并继续"))) return
+    setNamePrompt({ kind, skillPath, parentPath })
+  }
+
+  /** 返回错误文案让对话框显示；返回 null 表示已建好 */
+  const submitNew = async (rawName: string): Promise<string | null> => {
+    if (!namePrompt) return null
+    const checked = validateEntryName(rawName)
+    if (!checked.ok) return checked.error
+    const { kind, skillPath, parentPath } = namePrompt
+    const rel = joinEntryPath(parentPath, checked.name)
+    try {
+      // 用刚从磁盘读的树查重，不用界面上可能过期的那份：直接 saveSkillFile 会把同名文件清空
+      const fresh = await window.electronAPI.getSkillTree(skillRootId)
+      const conflict = findEntryConflict(fresh.find((t) => t.name === skillPath)?.children, rel)
+      if (conflict) return conflict
+      const res = kind === "file"
+        ? await window.electronAPI.saveSkillFile(skillRootId, skillPath, rel, "")
+        : await window.electronAPI.createSkillDir(skillRootId, skillPath, rel)
+      if (!res.ok) return res.error ?? "创建失败"
+    } catch (e) {
+      return `创建失败：${e instanceof Error ? e.message : String(e)}`
     }
-    const mode: EditMode = { kind: "skill", skillPath: "", name: "", content: "", originalPath: null, isNew: true }
-    setEdit(mode)
-    setSavedSnapshot(JSON.stringify(mode))
+    setNamePrompt(null)
+    // 展开到新东西所在的位置，这样建完立刻看得见
+    setExpanded((prev) => new Set([...prev, ...ancestorExpandKeys(skillRootId, skillPath, rel)]))
+    reloadRoots(); reloadSkills()
+    if (kind === "file") await loadFile(skillPath, rel)
+    return null
+  }
+
+  const deleteFolder = async (skillPath: string, relativePath: string) => {
+    if (!(await showConfirm("删除文件夹", `确定删除「${skillPath}/${relativePath}」及其中所有内容？`))) return
+    try {
+      const res = await window.electronAPI.deleteSkillFile(skillRootId, skillPath, relativePath)
+      if (!res.ok) { void showAlert("删除失败", res.error ?? ""); return }
+    } catch (e) {
+      void showAlert("删除失败", e instanceof Error ? e.message : String(e))
+      return
+    }
+    // 编辑器里开着的文件在被删的文件夹里，就关掉它
+    if (edit?.kind === "file" && edit.skillPath === skillPath && isSameOrInside(edit.relativePath, relativePath)) setEdit(null)
+    reloadRoots(); reloadSkills()
   }
 
   const handleSave = async () => {
@@ -118,32 +173,6 @@ export default function SkillPanel() {
     setEdit(null)
   }
 
-  const renderTree = (nodes: SkillTreeNode[], skillPath: string, parentPath: string, depth: number): React.ReactNode => {
-    return nodes.map((node) => {
-      const fullPath = parentPath ? `${parentPath}/${node.name}` : node.name
-      const nodeKey = `${skillRootId}:${skillPath}/${fullPath}`
-      if (node.type === "directory") {
-        const open = expanded.has(nodeKey)
-        return (
-          <div key={nodeKey}>
-            <button type="button" onClick={() => toggleExpand(nodeKey)} style={{ paddingLeft: `${depth * 12 + 4}px` }}
-              className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-xs text-fg-3 hover:bg-raised/50 hover:text-fg-soft">
-              {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              <Folder size={12} className="text-accent/70" />{node.name}
-            </button>
-            {open && node.children && renderTree(node.children, skillPath, fullPath, depth + 1)}
-          </div>
-        )
-      }
-      return (
-        <button key={nodeKey} type="button" onClick={() => void openFile(skillPath, fullPath)} style={{ paddingLeft: `${depth * 12 + 16}px` }}
-          className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-xs text-fg-muted hover:bg-raised/50 hover:text-fg-soft">
-          <FileText size={11} />{node.name}
-        </button>
-      )
-    })
-  }
-
   return (
     <>
       <div className={PANEL_ROOT}>
@@ -157,24 +186,18 @@ export default function SkillPanel() {
             ))}
           </div>
           <div className={PANEL_LIST}>
-            {skills.map((s) => {
-              const skillKey = `${skillRootId}:${s.skillPath}`
-              const isOpen = expanded.has(skillKey)
-              const tree = skillTree.find((t) => t.name === s.skillPath)
-              return (
-                <div key={skillKey}>
-                  <div className="flex items-center gap-0.5">
-                    <button type="button" onClick={() => toggleExpand(skillKey)} className="rounded p-0.5 text-fg-faint hover:text-fg-2">
-                      {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                    </button>
-                    <button type="button" onClick={() => void selectSkill(s)} className={`min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-xs transition ${edit?.kind === "skill" && edit.skillPath === s.skillPath ? "bg-raised/70 text-fg" : "text-fg-3 hover:bg-raised/40"}`}>
-                      {s.name}
-                    </button>
-                  </div>
-                  {isOpen && tree?.children && renderTree(tree.children, s.skillPath, "", 1)}
-                </div>
-              )
-            })}
+            <SkillTreeList
+              rootId={skillRootId}
+              skills={skills}
+              tree={skillTree}
+              expanded={expanded}
+              activeSkillPath={edit?.kind === "skill" ? edit.skillPath : null}
+              onToggle={toggleExpand}
+              onSelectSkill={(skillPath) => { const s = skills.find((x) => x.skillPath === skillPath); if (s) void selectSkill(s) }}
+              onOpenFile={(skillPath, relativePath) => void openFile(skillPath, relativePath)}
+              onCreate={(kind, skillPath, parentPath) => void openCreate(kind, skillPath, parentPath)}
+              onDeleteFolder={(skillPath, relativePath) => void deleteFolder(skillPath, relativePath)}
+            />
             <button type="button" onClick={() => void openAdd()}
               className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40">
               <Plus size={14} />添加
@@ -215,6 +238,15 @@ export default function SkillPanel() {
           )}
         </div>
       </div>
+      {namePrompt && (
+        <SkillNameDialog
+          title={namePrompt.kind === "file" ? "新建文件" : "新建文件夹"}
+          location={locationLabel(namePrompt.skillPath, namePrompt.parentPath)}
+          placeholder={namePrompt.kind === "file" ? "例如 utils.py，或 scripts/run.sh（会一并建出 scripts）" : "例如 scripts"}
+          onSubmit={submitNew}
+          onCancel={() => setNamePrompt(null)}
+        />
+      )}
       {ModalPortal}
     </>
   )

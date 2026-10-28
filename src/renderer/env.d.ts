@@ -288,9 +288,9 @@ declare global {
     getSkills(rootId: string): Promise<{ rootId: string; skillPath: string; name: string; content: string }[]>
     getSkillTree(rootId: string): Promise<SkillTreeNode[]>
     readSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; content?: string; error?: string }>
-    saveSkillFile(rootId: string, skillPath: string, relativePath: string, content: string): Promise<{ ok: boolean }>
+    saveSkillFile(rootId: string, skillPath: string, relativePath: string, content: string): Promise<{ ok: boolean; error?: string }>
     deleteSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
-    createSkillDir(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean }>
+    createSkillDir(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
     saveSkill(rootId: string, skillPath: string, content: string): Promise<{ ok: boolean }>
     renameSkill(rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean }>
     deleteSkill(rootId: string, skillPath: string): Promise<{ ok: boolean }>
