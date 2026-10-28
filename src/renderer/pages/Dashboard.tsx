@@ -24,14 +24,16 @@ import {
   X,
   Plus,
   Cpu,
+  ArrowLeft,
 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
 import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
-import ChannelTree from "../components/dashboard/ChannelTree"
+import ChannelList from "../components/dashboard/ChannelList"
 import PanelShell from "../components/dashboard/PanelShell"
+import SessionsPage from "./SessionsPage"
 import { disambiguatePathLabel } from "../../shared/path-label"
 import { formatLogLineForUi, cardLabelFromSessionTab } from "../../shared/log-format"
 import { useStickToBottom } from "../hooks/useStickToBottom"
@@ -71,6 +73,8 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
   const showQueue = activePanel === "queue"
   const togglePanel = (p: "channels" | "sessions" | "queue") =>
     setActivePanel((cur) => (cur === p ? null : p))
+  /** 正在管理哪个通道的会话（会话管理页）；null = 显示工作台本身 */
+  const [sessionsChannelId, setSessionsChannelId] = useState<string | null>(null)
   const [expandedActive, setExpandedActive] = useState<string | null>(null)
   const [stoppingAgent, setStoppingAgent] = useState(false)
   const [clearingQueue, setClearingQueue] = useState(false)
@@ -675,6 +679,49 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
 
   const sessionWsDirs = sessionList.map((s) => s.workspaceDir).filter((d): d is string => !!d)
 
+  // 会话管理页：占满工作台这一页，标题栏保持一致；返回箭头回到工作台
+  if (sessionsChannelId !== null) {
+    return (
+      <div className="flex h-screen flex-col">
+        <TitleBar
+          center={<PageTabs page="dashboard" onChange={onSwitchPage} />}
+          actions={<TitleActions onSettings={onSettings} active={active} />}
+        >
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSessionsChannelId(null)}
+              className="rounded-lg p-1.5 text-fg-3 transition hover:bg-raised hover:text-fg"
+              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+              title="返回工作台"
+            >
+              <ArrowLeft size={18} />
+            </button>
+            <h1 className="text-lg font-semibold">会话管理</h1>
+          </div>
+        </TitleBar>
+        <SessionsPage
+          channels={treeChannels}
+          channelId={sessionsChannelId}
+          onSelectChannel={setSessionsChannelId}
+          active={active !== false}
+          modelPicker={modelPicker}
+          modelSwitching={modelSwitching}
+          error={actionError}
+          onDismissError={() => setActionError("")}
+          onNotice={setActionError}
+          onAddFavorite={(channelId) => void addFavoriteWorkspace(channelId)}
+          onSwitchModel={(sk, m) => void switchSessionModel(sk, m)}
+          onStopSession={(sk) => { void window.electronAPI.stopSessionAgent(sk); void refreshDashboardTree() }}
+          onDeleteSession={(node) => void deleteSessionTab(node.sessionKey, node.kind, node.label)}
+          onActivateSession={(sk) => void switchSessionTab(sk)}
+          onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
+        />
+        {ModalPortal}
+      </div>
+    )
+  }
+
   return (
     <div className="flex h-screen flex-col">
       <TitleBar
@@ -752,7 +799,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
               if (ok > 0 || (status.running && chs.length > 0)) return "yellow"
               return "gray"
             })()}
-            sub={treeChannels.length > 0 ? (showChannels ? "点击收起会话树" : "点击展开会话树") : "等待目标"}
+            sub={treeChannels.length > 0 ? (showChannels ? "点击收起通道列表" : "点击展开通道列表") : "等待目标"}
             action={treeChannels.length > 0 ? (
               showChannels ? <ChevronDown size={12} className="text-fg-muted" /> : <ChevronRight size={12} className="text-fg-muted" />
             ) : undefined}
@@ -895,17 +942,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
           title="消息通道"
           meta={`${treeChannels.length} 通道${activeSessions.length > 0 ? ` · 运行 ${activeSessions.length}` : ""}`}
         >
-        <ChannelTree
-          channels={treeChannels}
-          modelPicker={modelPicker}
-          modelSwitching={modelSwitching}
-          onAddFavorite={(channelId) => void addFavoriteWorkspace(channelId)}
-          onSwitchModel={(sk, m) => void switchSessionModel(sk, m)}
-          onStopSession={(sk) => { void window.electronAPI.stopSessionAgent(sk); void refreshDashboardTree() }}
-          onDeleteSession={(node) => void deleteSessionTab(node.sessionKey, node.kind, node.label)}
-          onActivateSession={(sk) => void switchSessionTab(sk)}
-          onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
-        />
+        <ChannelList channels={treeChannels} onManage={setSessionsChannelId} />
         </PanelShell>
       )}
 
