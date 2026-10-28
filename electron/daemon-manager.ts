@@ -96,7 +96,7 @@ import {
   listMainSessionTabs, listDashboardTree, resolveSessionModels, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
-  formatCurrentSessionBlock,
+  formatCurrentSessionBlock, currentResourceIdForSession,
 } from "./session-dispatcher"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 
@@ -1177,9 +1177,10 @@ export async function applySessionModelChange(
 ): Promise<{ ok: boolean; deferred?: boolean; error?: string }> {
   const channel = resolveChannelForSession(sessionKey)
   if (!channel) return { ok: false, error: "未配置通道" }
-  const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
+  const { initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
   initSessionResourceStore(app.getPath("userData"))
-  const effResId = resolveResourceForSession(sessionKey, channel.agentResourceId) ?? channel.agentResourceId
+  // 当前供应商要按会话所属人群取（别人的会话用的可能是通道里单独配的「其他人供应商」），不能一律取通道主供应商
+  const effResId = currentResourceIdForSession(sessionKey)
   const current = getAgentResource(effResId)
   if (!current.id?.trim()) return { ok: false, error: "未配置 Agent 资源" }
   const targetId = resourceId?.trim() || effResId

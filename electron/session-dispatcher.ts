@@ -41,7 +41,7 @@ import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { getSessionRecord, initSessionOverridesStore } from "../src/shared/session-overrides-store.js"
-import { resolveLaunchModel } from "../src/shared/launch-model.js"
+import { resolveLaunchModel, resolveSessionResourceId } from "../src/shared/launch-model.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
@@ -766,6 +766,18 @@ function sessionBelongsToChat(sessionKey: string, chatId: string): boolean {
 
 function scheduledTaskForSessionKey(sessionKey: string) {
   return findScheduledTaskBySessionKey(sessionKey, readTasksFromFile())
+}
+
+/**
+ * 会话当前用的供应商 id（会话自己存的 > 所属通道按人群取的默认）。
+ * 切换会话模型 / 供应商时拿它判断「是不是换了供应商」；定时任务的会话键凭键认不出，这里按任务表补上。
+ */
+export function currentResourceIdForSession(sessionKey: string): string {
+  return resolveSessionResourceId({
+    sessionKey,
+    channel: resolveChannelForSession(sessionKey),
+    chatType: scheduledTaskForSessionKey(sessionKey) ? "task" : undefined,
+  })
 }
 
 function tabLabelForSession(

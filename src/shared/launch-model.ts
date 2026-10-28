@@ -1,4 +1,4 @@
-import { resolveChannelResourceId, type ChannelAudience, type MessageChannel } from "./channel-types.js"
+import { resolveChannelAudience, resolveChannelResourceId, type ChannelAudience, type MessageChannel } from "./channel-types.js"
 import { getSessionOverride, resolveModelForSession } from "./session-model-store.js"
 import { resolveResourceForSession } from "./session-resource-store.js"
 
@@ -7,6 +7,9 @@ export type ChannelModelFields = Pick<
   MessageChannel,
   "agentResourceId" | "othersAgentResourceId" | "model" | "modelParams" | "othersModel" | "othersModelParams"
 >
+
+/** 通道里和「这个会话是主用户的还是其他人的」有关的字段 */
+export type ChannelAudienceFields = Pick<MessageChannel, "mainUserEnabled" | "mainUserChatId">
 
 /** 通道默认模型的取法：primary = 主用户（以及任务/项目/临时等系统会话）；others = 其他人与群聊 */
 export type ModelScenario = "primary" | "others"
@@ -109,4 +112,30 @@ export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
     modelParams: eff.modelParams ?? "",
     modelSource: fromSession ? "session" : "channel",
   }
+}
+
+/**
+ * 一个会话当前用的供应商 id：会话自己存的优先，否则是所属通道按人群取的默认（其他人留空跟随主用户）。
+ *
+ * 界面切换模型时，要拿它判断「是不是换了供应商」、并把模型覆盖记在正确的供应商名下。
+ * 以前这里直接取通道的主供应商，给配了独立「其他人供应商」的通道里的别人的会话换模型时，
+ * 当前供应商算错：同供应商换模型被当成换供应商，或覆盖记在了主供应商名下而不生效。
+ *
+ * 只能凭会话键判断人群（这里拿不到聊天类型）：主用户私聊、应用内对话、系统会话（临时/项目）归主用户，其余归其他人。
+ * 定时任务的会话键是一串 id，凭键看不出来，调用方知道的话要把 chatType 传 "task"。
+ */
+export function resolveSessionResourceId(input: {
+  sessionKey: string
+  channel: (Pick<ChannelModelFields, "agentResourceId" | "othersAgentResourceId"> & Partial<ChannelAudienceFields>) | undefined
+  chatType?: string
+}): string {
+  const { sessionKey, channel, chatType } = input
+  const audience = resolveChannelAudience({
+    mainUserEnabled: channel?.mainUserEnabled,
+    mainUserChatId: channel?.mainUserChatId,
+    sessionKey,
+    chatType,
+  })
+  const channelResourceId = resolveChannelResourceId(channel, audience)
+  return orElse(() => resolveResourceForSession(sessionKey, channelResourceId), undefined) ?? channelResourceId
 }

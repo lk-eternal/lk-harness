@@ -5,6 +5,7 @@ import * as path from "node:path"
 import {
   resolveChannelDefaultModel,
   resolveLaunchModel,
+  resolveSessionResourceId,
   type ChannelModelFields,
 } from "../src/shared/launch-model"
 import { initSessionOverridesStore, resetSessionOverridesStoreForTests } from "../src/shared/session-overrides-store"
@@ -229,6 +230,71 @@ describe("resolveLaunchModel：会话存储不可用", () => {
         model: "gemini-flash",
         modelSource: "channel",
       })
+    } finally {
+      if (prev !== undefined) process.env.APP_DATA_DIR = prev
+    }
+  })
+})
+
+describe("resolveSessionResourceId：切换模型时判断「当前供应商」", () => {
+  // 通道绑了主用户 ou_main；别人（oc_group1 群、ou_guest 私聊）用单独配的 llm_others
+  const bound = { ...channel, mainUserEnabled: true, mainUserChatId: "ou_main" }
+  const MAIN_SESSION = "ch_a|ou_main::D:\\ws\\a"
+  const GUEST_P2P = "ch_a|ou_guest::D:\\ws\\a"
+
+  it("主用户的会话：通道主供应商", () => {
+    expect(resolveSessionResourceId({ sessionKey: MAIN_SESSION, channel: bound })).toBe("sdk_main")
+  })
+
+  it("别人的群 / 私聊会话：其他人供应商，而不是通道主供应商（修复前这里算成 sdk_main）", () => {
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: bound })).toBe("llm_others")
+    expect(resolveSessionResourceId({ sessionKey: GUEST_P2P, channel: bound })).toBe("llm_others")
+  })
+
+  it("其他人供应商留空：跟随主供应商", () => {
+    const c = { ...bound, othersAgentResourceId: "" }
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: c })).toBe("sdk_main")
+  })
+
+  it("会话自己存的供应商优先于通道默认", () => {
+    setSessionResourceOverride(SESSION, "llm_other2")
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: bound })).toBe("llm_other2")
+    // 别的会话不受影响
+    expect(resolveSessionResourceId({ sessionKey: GUEST_P2P, channel: bound })).toBe("llm_others")
+  })
+
+  it("所属聊天上存的供应商，对该聊天下的会话同样生效", () => {
+    setSessionResourceOverride(CHAT, "llm_other2")
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: bound })).toBe("llm_other2")
+  })
+
+  it("系统会话（项目 / 临时）归主用户，哪怕聊天不是主用户的", () => {
+    expect(resolveSessionResourceId({ sessionKey: "ch_a|oc_group1::project_p1", channel: bound })).toBe("sdk_main")
+    expect(resolveSessionResourceId({ sessionKey: "temp_abcd1234", channel: bound })).toBe("sdk_main")
+  })
+
+  it("定时任务的会话键是裸 id，调用方传 chatType=task 才归主用户", () => {
+    expect(resolveSessionResourceId({ sessionKey: "task-1", channel: bound })).toBe("llm_others")
+    expect(resolveSessionResourceId({ sessionKey: "task-1", channel: bound, chatType: "task" })).toBe("sdk_main")
+  })
+
+  it("通道没绑主用户：所有会话都按其他人算", () => {
+    const c = { ...channel, mainUserEnabled: false, mainUserChatId: "ou_main" }
+    expect(resolveSessionResourceId({ sessionKey: MAIN_SESSION, channel: c })).toBe("llm_others")
+  })
+
+  it("找不到通道：只能用会话自己存的，没有就是空", () => {
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: undefined })).toBe("")
+    setSessionResourceOverride(SESSION, "llm_other2")
+    expect(resolveSessionResourceId({ sessionKey: SESSION, channel: undefined })).toBe("llm_other2")
+  })
+
+  it("会话存储没初始化：退回通道默认，不抛", () => {
+    resetSessionOverridesStoreForTests()
+    const prev = process.env.APP_DATA_DIR
+    delete process.env.APP_DATA_DIR
+    try {
+      expect(resolveSessionResourceId({ sessionKey: SESSION, channel: bound })).toBe("llm_others")
     } finally {
       if (prev !== undefined) process.env.APP_DATA_DIR = prev
     }
