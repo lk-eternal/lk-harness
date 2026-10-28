@@ -5,7 +5,7 @@ import {
   getConfig, getChannel, getChannels, getAgentResource, resolveChannelForSession,
   resolveChannelModel, effectiveWorkspaceDir, saveConfig, updateChannel,
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromChannelFavorites,
-  type MessageChannel, type ModelScenario,
+  type MessageChannel,
 } from "./config-store"
 import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
 import { createTempChatSession } from "../src/shared/temp-chat-session.js"
@@ -40,7 +40,8 @@ import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
-import { getSessionRecord } from "../src/shared/session-overrides-store.js"
+import { getSessionRecord, initSessionOverridesStore } from "../src/shared/session-overrides-store.js"
+import { resolveLaunchModel } from "../src/shared/launch-model.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
@@ -437,13 +438,19 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
   const notifySessionKey = p.notifySessionKey?.trim()
     || (scheduledTask ? resolveTaskOutboundChatKey(scheduledTask, channel?.mainUserChatId) : undefined)
-  // 会话级供应商覆盖（/m p set）优先于通道默认，只影响当前会话
-  let resourceId = resolveChannelResourceId(channel, audience)
+  // 供应商与模型的解析规则在 resolveLaunchModel（会话管理页显示的有效模型和这里共用同一份）：
+  // 供应商：会话级覆盖（/m p set）> 通道默认；模型：显式覆盖 > 会话存的 > 通道场景模型
   try {
-    const { resolveResourceForSession, initSessionResourceStore } = await import("../src/shared/session-resource-store.js")
-    initSessionResourceStore(app.getPath("userData"))
-    resourceId = resolveResourceForSession(sessionKey, resourceId) ?? resourceId
-  } catch { /* store 未就绪时沿用通道资源 */ }
+    initSessionOverridesStore(app.getPath("userData"))
+  } catch { /* store 未就绪时沿用通道配置 */ }
+  const effModel = resolveLaunchModel({
+    sessionKey,
+    channel,
+    audience,
+    explicit: p.modelOverride?.trim() ? { model: p.modelOverride, modelParams: p.modelParamsOverride } : undefined,
+    resolveResource: getAgentResource,
+  })
+  const resourceId = effModel.resourceId
   const resource = getAgentResource(resourceId)
   if (resourceId && resource.id !== resourceId) {
     return { ok: false, error: `Agent 资源「${resourceId}」未找到，请在设置 → Agent 中确认并已保存通道配置` }
@@ -477,25 +484,8 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   // 清理残留 workspace 注入
   cleanupWorkspaceDir(workDir)
 
-  // 模型解析：显式覆盖 > 会话 override/pending > 通道场景模型
-  let model: string
-  let modelParams: string
-  if (p.modelOverride?.trim()) {
-    model = p.modelOverride.trim()
-    modelParams = p.modelParamsOverride ?? ""
-  } else {
-    const scenario: ModelScenario = useMain || isOwnTask ? "primary" : "others"
-    const resolved = resolveChannelModel(channel, scenario)
-    model = resolved.model
-    modelParams = resolved.modelParams
-    try {
-      const { resolveModelForSession, initSessionModelStore } = await import("../src/shared/session-model-store.js")
-      initSessionModelStore(app.getPath("userData"))
-      const eff = resolveModelForSession(sessionKey, { model, modelParams, resourceId: resource.id })
-      model = eff.model
-      modelParams = eff.modelParams ?? ""
-    } catch { /* store 未就绪时沿用通道模型 */ }
-  }
+  const model = effModel.model
+  const modelParams = effModel.modelParams
 
   // 异源（其他人资源与主不同）且最终模型为空：跟随无意义，直接失败防串供应商
   // （放模型解析后：显式覆盖/会话 override 可补救通道空模型）
@@ -528,7 +518,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const ownerChatId = meta?.chatId?.trim()
   if ((chatType === "temp" || chatType === "task") && ownerChatId?.includes("|")) {
     try {
-      const { initSessionOverridesStore, patchSessionRecord } = await import("../src/shared/session-overrides-store.js")
+      const { patchSessionRecord } = await import("../src/shared/session-overrides-store.js")
       initSessionOverridesStore(app.getPath("userData"))
       patchSessionRecord(sessionKey, {
         chatId: ownerChatId,

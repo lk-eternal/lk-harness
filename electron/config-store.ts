@@ -7,6 +7,7 @@ import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
 import { APP_CHANNEL_CHAT_ID, channelIdFromSessionKey } from "../src/shared/channel-types"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { preserveChannelBindings } from "../src/shared/channel-binding.js"
+import { resolveChannelDefaultModel, type ModelScenario } from "../src/shared/launch-model.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 
 export type { AgentResource, MessageChannel, ScheduledTask }
@@ -580,15 +581,11 @@ export function migrateFavoriteWorkspacesToChannels(): void {
   saveConfig({ favWorkspacesMigrated: true })
 }
 
-export type ModelScenario = "primary" | "others"
+export type { ModelScenario }
 
-/** 解析通道在某场景下的模型（others 留空则跟随主模型） */
+/** 解析通道在某场景下的模型（others 留空则跟随主模型）；规则放在 shared，会话管理页和拉起 Agent 共用 */
 export function resolveChannelModel(channel: MessageChannel | undefined, scenario: ModelScenario): { model: string; modelParams: string } {
-  if (!channel) return { model: "", modelParams: "" }
-  if (scenario === "others" && channel.othersModel?.trim()) {
-    return { model: channel.othersModel, modelParams: channel.othersModelParams ?? "" }
-  }
-  return { model: channel.model ?? "", modelParams: channel.modelParams ?? "" }
+  return resolveChannelDefaultModel(channel, scenario)
 }
 
 /** 通道的有效主工作目录（仅通道级，不再回退全局） */
