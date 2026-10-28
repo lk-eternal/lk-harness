@@ -6,15 +6,20 @@ interface CapacitorGlobal {
    * 所以直接走 nativePromise；registerPlugin 的代理最终调的也是它。
    */
   nativePromise?: (plugin: string, method: string, options?: Record<string, unknown>) => Promise<unknown>
+  /** 订阅插件事件（桥自带，registerPlugin 的 addListener 最终调的也是它）；remove 取消订阅 */
+  addListener?: (plugin: string, event: string, callback: (data?: unknown) => void) => { remove: () => unknown }
+  /** 原生端在页面脚本之前注入：当前 APK 里实际装了哪些插件 */
+  PluginHeaders?: { name?: string }[]
 }
 
-function capacitor(): CapacitorGlobal | undefined {
+/** 原生桥；普通浏览器里是 undefined */
+export function nativeBridge(): CapacitorGlobal | undefined {
   return (window as { Capacitor?: CapacitorGlobal }).Capacitor
 }
 
 /** 是否运行在 Capacitor 原生壳（APK）里；普通浏览器里是 false */
 export function isNativeShell(): boolean {
-  return !!capacitor()?.isNativePlatform?.()
+  return !!nativeBridge()?.isNativePlatform?.()
 }
 
 export type OpenResult = { ok: true } | { ok: false; reason: string }
@@ -39,7 +44,7 @@ function describeError(err: unknown): string {
  * 失败时带上原因：之前把原因吞掉，用户看到「无法调起」却没人知道到底卡在哪一步。
  */
 export async function tryOpenInSystemBrowser(url: string): Promise<OpenResult> {
-  const cap = capacitor()
+  const cap = nativeBridge()
   if (!cap?.isNativePlatform?.()) return { ok: false, reason: "当前不在 App 内" }
   if (typeof cap.nativePromise !== "function") return { ok: false, reason: "原生桥不可用，App 版本可能不匹配" }
 

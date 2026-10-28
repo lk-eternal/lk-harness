@@ -44,7 +44,8 @@ jobs:
           # 不能加 --no-save：cap sync 靠 package.json 的依赖清单识别原生插件，--no-save 装的包不会被登记，
           # APK 里就缺插件（之前发布的 APK 里 capacitor.plugins.json 是空数组，「下载文件」交给系统浏览器因此一直没反应）。
           # 这里只改 CI 工作区里的 package.json / lock，不会提交
-          npm install @capacitor/core@^7.0.0 @capacitor/cli@^7.0.0 @capacitor/android@^7.0.0 @capacitor/browser@^7.0.0 @capacitor/assets@^3.0.5
+          # @capacitor/app：返回键。核心的原生壳不处理返回键，按一下就直接退出应用；装上它页面才能接管（src/mobile/native-back.ts）
+          npm install @capacitor/core@^7.0.0 @capacitor/cli@^7.0.0 @capacitor/android@^7.0.0 @capacitor/browser@^7.0.0 @capacitor/app@^7.0.0 @capacitor/assets@^3.0.5
           if [ ! -d "android" ]; then
             npx cap add android
           fi
@@ -52,6 +53,9 @@ jobs:
           # 守卫：App 代码依赖 Browser 插件，没登记上就让构建失败，别再发出一个下载不了文件的 APK
           grep -q '"@capacitor/browser"' android/app/src/main/assets/capacitor.plugins.json \
             || { echo "::error::cap sync 没有登记 @capacitor/browser，APK 内文件下载会失效"; exit 1; }
+          # 同理：没有 App 插件，页面就接不到返回键，按返回会直接退出应用而不是先关抽屉/弹窗
+          grep -q '"@capacitor/app"' android/app/src/main/assets/capacitor.plugins.json \
+            || { echo "::error::cap sync 没有登记 @capacitor/app，返回键无法关闭抽屉和弹窗"; exit 1; }
           # 1) 允许局域网 HTTP 与公网 HTTPS 双线路访问 (usesCleartextTraffic)
           # 2) 申请相机权限，App 内扫码配对要用（getUserMedia 经 Capacitor 的 WebChromeClient 转成系统授权弹窗）
           python3 - <<'PY'

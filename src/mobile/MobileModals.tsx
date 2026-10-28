@@ -82,17 +82,22 @@ export function SessionDrawer({
 }) {
   const now = Date.now()
   useBackToClose(open, onClose)
-  if (!open) return null
 
   const defaultChannelId = views[0]?.channelId
 
+  // 常驻挂载、靠 CSS 滑入滑出（关着时 visibility:hidden，见 mobile.css 的 .drawer）：
+  // 这样手指才能拖着它走（drawer-swipe.ts），按钮、遮罩、返回键也都有同样的动画
   return (
-    <div className="fixed inset-0 z-40 flex">
+    <div data-drawer data-open={open ? "true" : "false"} className="drawer fixed inset-0 z-40 flex">
       <div
+        data-drawer-scrim
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 backdrop-blur-[2px] transition-opacity"
+        className="drawer-scrim fixed inset-0 bg-black/60 backdrop-blur-[2px]"
       />
-      <aside className="relative z-10 flex h-full w-[82%] max-w-[320px] flex-col border-r border-line bg-surface pt-safe pb-safe shadow-2xl">
+      <aside
+        data-drawer-panel
+        className="drawer-panel relative z-10 flex h-full w-[82%] max-w-[320px] flex-col border-r border-line bg-surface pt-safe pb-safe shadow-2xl"
+      >
         {/* 头部主机卡片 */}
         <div className="border-b border-line-subtle px-4 pb-3 pt-2">
           <div className="flex items-center justify-between">

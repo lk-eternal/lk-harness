@@ -68,9 +68,11 @@ import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
 import { installExternalLinkHandler } from "./external-links"
+import { installNativeBackHandler } from "./native-back"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
 import UpdateBanner from "./UpdateBanner"
 import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
+import { useDrawerSwipe } from "./useDrawerSwipe"
 
 function dirName(dir: string | undefined): string | undefined {
   return dir?.split(/[\\/]/).filter(Boolean).pop()
@@ -260,6 +262,9 @@ export default function MobileApp() {
   // APK 里点聊天中的链接：交给系统浏览器，不让 WebView 自己跳走。
   // 跳走后聊天界面被目标页替换，而 APK 里没人处理返回键，按返回会直接退出应用、回不到会话
   useEffect(() => installExternalLinkHandler(setActionError), [])
+
+  // APK 里的返回键：有浮层先关浮层，没有就退到后台。原生壳自己不会替页面做这件事（见 native-back.ts）
+  useEffect(() => installNativeBackHandler(), [])
 
   const startUpdate = useCallback(async () => {
     if (!update) return
@@ -721,8 +726,13 @@ export default function MobileApp() {
   useBackToClose(previewImage !== null, () => setPreviewImage(null))
   const moreAnchor = moreMenuOpen ? moreButtonRef.current?.getBoundingClientRect() : undefined
 
+  // 左右滑动展开/收起会话列表
+  const rootRef = useRef<HTMLDivElement>(null)
+  useDrawerSwipe(rootRef, drawerOpen, setDrawerOpen)
+
   return (
-    <div className="flex h-full w-full flex-col bg-page text-fg">
+    // touch-pan-y：只把竖向滚动留给浏览器，横向手势才会稳定地交给上面的抽屉滑动，不会被浏览器抢去当作滚动
+    <div ref={rootRef} className="flex h-full w-full touch-pan-y flex-col bg-page text-fg">
       {/* ═══ 顶部导航栏 ═══ */}
       <header className="flex shrink-0 items-center gap-2 border-b border-line-subtle bg-surface/90 px-3 pb-2.5 pt-safe backdrop-blur">
         {/* 汉堡菜单按钮（带后台未读绿点 / 后台运行蓝点） */}

@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react"
 
 /**
- * 返回键 / 返回手势关浮层，不依赖 Capacitor 插件：
- * 安卓 WebView 默认「有历史就后退，没有才退出应用」，浏览器的返回手势同理。
+ * 返回键 / 返回手势关浮层。
+ * 浏览器（含手机浏览器）的返回手势会走 history：返回 → popstate → 关最上面一个浮层。
+ * APK 里不一样：Capacitor 的原生壳本身不处理返回键（没有「有历史就后退」），按返回会直接退出应用，
+ * 要由 native-back.ts 接管返回键、调用这里的 closeTopOverlay 才能关浮层。
  *
  * 每个打开的浮层对应一条 history 记录：返回 → popstate → 关最上面一个；
  * 浮层被按钮等方式关掉时，把多出来的记录退回去，没有浮层时按返回仍是原来的行为（退出应用）。
@@ -54,23 +56,44 @@ function onPopState(): void {
   stack.pop()?.close()
 }
 
+/** 当前打开着的浮层数（抽屉、弹窗、菜单、图片查看…）。手势据此判断有没有东西盖在上面，别去接管触摸 */
+export function openOverlayCount(): number {
+  return stack.length
+}
+
+/**
+ * 直接关掉最上层的浮层，返回有没有关。APK 里的返回键走这里（见 native-back.ts）。
+ * 关闭之后 useBackToClose 的清理会把多压的那条 history 记录退回去，和点关闭按钮完全一样。
+ */
+export function closeTopOverlay(): boolean {
+  const top = stack.pop()
+  if (!top) return false
+  top.close()
+  return true
+}
+
+/** 登记一个打开着的浮层，返回注销函数。useBackToClose 就是在 effect 里调它；拆出来是为了不靠渲染也能测 */
+export function registerOverlay(close: () => void): () => void {
+  if (!listening) {
+    window.addEventListener("popstate", onPopState)
+    listening = true
+  }
+  const entry: Entry = { close }
+  stack.push(entry)
+  scheduleReconcile()
+  return () => {
+    const at = stack.indexOf(entry)
+    if (at >= 0) stack.splice(at, 1) // 已被返回键弹出的不在栈里
+    scheduleReconcile()
+  }
+}
+
 export function useBackToClose(open: boolean, onClose: () => void): void {
   const closeRef = useRef(onClose)
   closeRef.current = onClose
 
   useEffect(() => {
     if (!open) return
-    if (!listening) {
-      window.addEventListener("popstate", onPopState)
-      listening = true
-    }
-    const entry: Entry = { close: () => closeRef.current() }
-    stack.push(entry)
-    scheduleReconcile()
-    return () => {
-      const at = stack.indexOf(entry)
-      if (at >= 0) stack.splice(at, 1) // 已被返回键弹出的不在栈里
-      scheduleReconcile()
-    }
+    return registerOverlay(() => closeRef.current())
   }, [open])
 }
