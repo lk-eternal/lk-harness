@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from "react"
 import { Loader2 } from "lucide-react"
 import type { CleanupPlan } from "../../../shared/managed-sessions"
 import { ModalShell, modalBtnDanger, modalBtnGhost } from "../ModalShell"
+import SessionTypeIcon from "./SessionTypeIcon"
 import {
   CLEANUP_DEFAULT_DAYS,
   DAEMON_DOWN_HINT,
-  chatTag,
   cleanupResultText,
   cleanupSummary,
   lastActiveText,
+  othersType,
   parseCleanupDays,
   sortCleanupCandidates,
 } from "./sessions-view"
@@ -154,7 +155,7 @@ export default function CleanupDialog({
               <div className="max-h-48 overflow-y-auto rounded border border-line-subtle/70">
                 {sorted.slice(0, LIST_LIMIT).map((s) => (
                   <div key={s.sessionKey} className="flex items-center gap-1.5 border-b border-line-subtle/60 px-2 py-1 text-xs last:border-b-0">
-                    <span className="shrink-0 rounded bg-raised px-1 text-[10px] text-fg-3">{chatTag(s)}</span>
+                    <SessionTypeIcon type={othersType(s)} size={11} />
                     <span className="min-w-0 truncate text-fg-2" title={s.sessionKey}>{s.name}</span>
                     {s.preview && <span className="min-w-0 flex-1 truncate text-[11px] text-fg-faint">{s.preview}</span>}
                     <span className="ml-auto shrink-0 text-[11px] text-fg-muted">{lastActiveText(s, now)}</span>

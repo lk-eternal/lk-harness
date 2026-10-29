@@ -97,12 +97,18 @@ function sessionBelongsToChat(sessionKey: string, chatId: string): boolean {
   return sessionKey.startsWith(`${chatId}::`)
 }
 
+/**
+ * 比较两个会话键是不是同一个会话时用的口径（渲染进程无 process）：
+ * sessionKey 含 Windows 路径，大小写与 \ / 混用都要能对上，
+ * 否则队列消息挂不到会话上，行内的排队计数会一直是 0
+ */
+export function sessionKeyToken(sessionKey: string): string {
+  return sessionKey.replace(/[\\/]+/g, "/").toLowerCase()
+}
+
 function sameSessionKey(a: string, b: string): boolean {
   if (a === b) return true
-  // 渲染进程无 process；sessionKey 含 Windows 路径，大小写与 \ / 混用都要能对上，
-  // 否则队列消息挂不到会话上，行内的排队计数会一直是 0
-  const norm = (s: string) => s.replace(/[\\/]+/g, "/").toLowerCase()
-  return norm(a) === norm(b)
+  return sessionKeyToken(a) === sessionKeyToken(b)
 }
 
 export function classifySessionGroup(

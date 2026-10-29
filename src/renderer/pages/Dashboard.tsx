@@ -705,6 +705,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
           channelId={sessionsChannelId}
           onSelectChannel={setSessionsChannelId}
           active={active !== false}
+          queue={queueMessages}
           modelPicker={modelPicker}
           modelSwitching={modelSwitching}
           error={actionError}
