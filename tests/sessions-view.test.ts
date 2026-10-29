@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest"
 import { DEFAULT_CLEANUP_DAYS, normalizeCleanupDays, type CleanupPlan, type ManagedSession } from "../src/shared/managed-sessions"
 import type { DashboardChannelNode, DashboardSessionNode, SessionGroupId } from "../src/shared/dashboard-tree"
 import {
+  ALL_CHANNELS,
   CLEANUP_DEFAULT_DAYS,
   MY_GROUP_IDS,
+  buildAllSessionItems,
   buildSessionItems,
   channelRunningCount,
   cleanupResultText,
@@ -18,6 +20,7 @@ import {
   parseCleanupDays,
   queueCounts,
   resetConfirmText,
+  resolveChannelSelection,
   resolveFilter,
   restoreConfirmText,
   rowCapabilities,
@@ -257,6 +260,92 @@ describe("buildSessionItems", () => {
   })
 })
 
+describe("buildSessionItems / buildAllSessionItems：行上带所属通道", () => {
+  const chan = (id: string, name: string, groups: Partial<Record<SessionGroupId, DashboardSessionNode[]>> = {}) =>
+    ({ channelId: id, name, ...channelNode(groups) })
+  const chA = chan("ch_a", "二师兄", { main: [node({ sessionKey: "ch_a|ou_me::D:/a", label: "📁 a", group: "main" })] })
+  const chB = chan("ch_b", "大师兄", { project: [node({ sessionKey: "ch_b|ou_me::project_p1", label: "📦 官网", group: "project" })] })
+  const managed = [
+    session({ sessionKey: "ch_a|ou_1", channelId: "ch_a", name: "张三", lastActiveAt: 300 }),
+    session({ sessionKey: "ch_b|oc_9", channelId: "ch_b", chatType: "group", name: "服务台", lastActiveAt: 500 }),
+    session({ sessionKey: "ch_b|ou_2", channelId: "ch_b", name: "李四", lastActiveAt: 100 }),
+  ]
+
+  it("单通道清单：条目带这个通道的 id，名字默认空（单通道清单不标通道名）", () => {
+    const items = build({ managed })
+    expect(items.every((i) => i.channelId === "ch_a" && i.channelName === "")).toBe(true)
+    const named = buildSessionItems({ channelId: "ch_a", channelName: "二师兄", groups: chA.groups, managed, queue: [] })
+    expect(named.every((i) => i.channelName === "二师兄")).toBe(true)
+  })
+
+  it("跨通道清单：每行带自己通道的 id 和名字，别的通道的会话不会串进来", () => {
+    const items = buildAllSessionItems({ channels: [chA, chB], managed, queue: [] })
+    const byKey = Object.fromEntries(items.map((i) => [i.sessionKey, [i.channelId, i.channelName]]))
+    expect(byKey).toEqual({
+      "ch_a|ou_me::D:/a": ["ch_a", "二师兄"],
+      "ch_a|ou_1": ["ch_a", "二师兄"],
+      "ch_b|ou_me::project_p1": ["ch_b", "大师兄"],
+      "ch_b|oc_9": ["ch_b", "大师兄"],
+      "ch_b|ou_2": ["ch_b", "大师兄"],
+    })
+    expect(items).toHaveLength(5)
+  })
+
+  it("跨通道混排：按最近对话从新到旧，没有记录的排最后", () => {
+    const items = buildAllSessionItems({ channels: [chA, chB], managed, queue: [] })
+    expect(keyOf(items)).toEqual(["ch_b|oc_9", "ch_a|ou_1", "ch_b|ou_2", "ch_a|ou_me::D:/a", "ch_b|ou_me::project_p1"])
+  })
+
+  it("只传一个通道就是单通道清单：只有它自己的会话", () => {
+    const items = buildAllSessionItems({ channels: [chB], managed, queue: [] })
+    expect(keyOf(items).sort()).toEqual(["ch_b|oc_9", "ch_b|ou_2", "ch_b|ou_me::project_p1"])
+    expect(items.every((i) => i.channelId === "ch_b")).toBe(true)
+  })
+
+  it("没有通道：空清单；清单里有通道之外的会话（通道已删）：不显示", () => {
+    expect(buildAllSessionItems({ channels: [], managed, queue: [] })).toEqual([])
+    expect(keyOf(buildAllSessionItems({ channels: [chA], managed, queue: [] })).sort()).toEqual(["ch_a|ou_1", "ch_a|ou_me::D:/a"])
+  })
+
+  it("排队消息按会话键挂到各自通道的会话上", () => {
+    const queue = [
+      { sessionKey: "ch_b|oc_9", fileId: "f1", preview: "群里的", status: "pending" as const },
+      { sessionKey: "ch_a|ou_1", fileId: "f2", preview: "张三的", status: "processing" as const },
+    ]
+    const items = buildAllSessionItems({ channels: [chA, chB], managed, queue })
+    expect(items.find((i) => i.sessionKey === "ch_b|oc_9")?.queue.map((q) => q.fileId)).toEqual(["f1"])
+    expect(items.find((i) => i.sessionKey === "ch_a|ou_1")?.queue.map((q) => q.fileId)).toEqual(["f2"])
+    expect(items.find((i) => i.sessionKey === "ch_b|ou_2")?.queue).toEqual([])
+  })
+})
+
+describe("resolveChannelSelection", () => {
+  const two = [{ channelId: "ch_a" }, { channelId: "ch_b" }]
+
+  it("只有一个通道时就是它（没有切换条），不管之前选的是什么", () => {
+    expect(resolveChannelSelection([{ channelId: "ch_a" }], ALL_CHANNELS)).toBe("ch_a")
+    expect(resolveChannelSelection([{ channelId: "ch_a" }], "ch_gone")).toBe("ch_a")
+  })
+
+  it("多个通道：选了某个存在的通道就是它，选了「全部」就是全部", () => {
+    expect(resolveChannelSelection(two, "ch_b")).toBe("ch_b")
+    expect(resolveChannelSelection(two, ALL_CHANNELS)).toBe(ALL_CHANNELS)
+  })
+
+  it("选中的通道没了（删除 / 停用）：回到「全部」，不是空着也不是随便挑一个", () => {
+    expect(resolveChannelSelection(two, "ch_gone")).toBe(ALL_CHANNELS)
+    expect(resolveChannelSelection(two, "")).toBe(ALL_CHANNELS)
+  })
+
+  it("没有通道：「全部」", () => {
+    expect(resolveChannelSelection([], "ch_a")).toBe(ALL_CHANNELS)
+  })
+
+  it("「全部」的取值不会和真实通道 id 撞（通道 id 都是 ch_ 开头）", () => {
+    expect(ALL_CHANNELS.startsWith("ch_")).toBe(false)
+  })
+})
+
 describe("filterChips / resolveFilter", () => {
   const items = build({
     groups: { main: [node({ sessionKey: "ch_a|ou_me", group: "main", running: true })] },
@@ -290,6 +379,13 @@ describe("filterChips / resolveFilter", () => {
       { id: "all", label: "全部", count: 0 },
       { id: "running", label: "运行中", count: 0 },
     ])
+  })
+
+  it("清单本来就只有运行中的会话（活跃会话）时不要「运行中」标签，其余不变", () => {
+    expect(filterChips(items, { running: false }).map((c) => c.id)).toEqual(["all", "main", "p2p", "group"])
+    expect(filterChips(items, { running: true }).map((c) => c.id)).toEqual(["all", "main", "p2p", "group", "running"])
+    expect(filterChips(items, {}).map((c) => c.id)).toContain("running")
+    expect(filterChips([], { running: false })).toEqual([{ id: "all", label: "全部", count: 0 }])
   })
 
   it("选中的筛选没有标签了就回到「全部」", () => {

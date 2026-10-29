@@ -49,6 +49,9 @@ export function othersOf(sessions: readonly ManagedSession[], channelId: string)
 
 interface SessionItemBase {
   sessionKey: string
+  /** 所属通道：跨通道的清单（「全部」/ 活跃会话）里行上要标出来 */
+  channelId: string
+  channelName: string
   type: SessionType
   /** 搜索用：聊天键（带通道前缀） */
   chatKey: string
@@ -99,11 +102,14 @@ function byRecent(a: SessionItem, b: SessionItem): number {
  */
 export function buildSessionItems(input: {
   channelId: string
+  /** 行上标所属通道用；不传就是空串（单通道清单不显示通道名） */
+  channelName?: string
   groups: DashboardChannelNode["groups"]
   managed: readonly ManagedSession[]
   queue: BuildDashboardTreeInput["queue"]
 }): SessionItem[] {
   const { channelId, groups, queue } = input
+  const channelName = input.channelName ?? ""
   const managed = input.managed.filter((s) => s.channelId === channelId)
   const activeAt = new Map(managed.map((s) => [sessionKeyToken(s.sessionKey), s.lastActiveAt]))
   const queueByKey = new Map<string, DashboardQueueItem[]>()
@@ -127,6 +133,8 @@ export function buildSessionItems(input: {
         node,
         current: !!node.current,
         sessionKey: node.sessionKey,
+        channelId,
+        channelName,
         type: MINE_TYPE[gid],
         chatKey: chatIdFromSessionKey(node.sessionKey),
         name: node.label,
@@ -149,6 +157,8 @@ export function buildSessionItems(input: {
       owner: "others",
       managed: s,
       sessionKey: s.sessionKey,
+      channelId,
+      channelName,
       type: othersType(s),
       chatKey: s.chatKey,
       name: s.name,
@@ -165,6 +175,30 @@ export function buildSessionItems(input: {
   return items.sort(byRecent)
 }
 
+/** 跨通道的清单：每个通道各合一张（buildSessionItems），再按最近对话混排。行上的 channelName 标出各自属于哪个通道 */
+export function buildAllSessionItems(input: {
+  channels: readonly Pick<DashboardChannelNode, "channelId" | "name" | "groups">[]
+  managed: readonly ManagedSession[]
+  queue: BuildDashboardTreeInput["queue"]
+}): SessionItem[] {
+  const { managed, queue } = input
+  return input.channels
+    .flatMap((c) => buildSessionItems({ channelId: c.channelId, channelName: c.name, groups: c.groups, managed, queue }))
+    .sort(byRecent)
+}
+
+/** 「消息通道」功能区的通道切换条里「全部」这一项的取值（不会和真实通道 id 撞：通道 id 形如 ch_xxx） */
+export const ALL_CHANNELS = "*"
+
+/**
+ * 功能区实际要看哪个通道：只有一个通道时就是它（没有切换条）；
+ * 选中的通道已经被删 / 停用了，回到「全部」，不要空着。
+ */
+export function resolveChannelSelection(channels: readonly { channelId: string }[], selected: string): string {
+  if (channels.length === 1) return channels[0].channelId
+  return selected !== ALL_CHANNELS && channels.some((c) => c.channelId === selected) ? selected : ALL_CHANNELS
+}
+
 export type ListFilter = "all" | SessionType | "running"
 
 export interface FilterChip {
@@ -176,15 +210,16 @@ export interface FilterChip {
 /**
  * 筛选标签：全部、有会话的各类型（带个数）、运行中。没有会话的类型不出现标签（项目 / 任务多数时候是空的）；
  * 类型未知的只在「全部」里，没有自己的标签。
+ * 清单本来就只有运行中的会话（活跃会话）时传 `running: false`：「运行中」标签和「全部」一模一样，不要。
  */
-export function filterChips(items: readonly SessionItem[]): FilterChip[] {
+export function filterChips(items: readonly SessionItem[], opts: { running?: boolean } = {}): FilterChip[] {
   const chips: FilterChip[] = [{ id: "all", label: "全部", count: items.length }]
   for (const type of SESSION_TYPE_ORDER) {
     if (type === "other") continue
     const count = items.filter((i) => i.type === type).length
     if (count > 0) chips.push({ id: type, label: SESSION_TYPE_LABEL[type], count })
   }
-  chips.push({ id: "running", label: "运行中", count: items.filter((i) => i.running).length })
+  if (opts.running !== false) chips.push({ id: "running", label: "运行中", count: items.filter((i) => i.running).length })
   return chips
 }
 

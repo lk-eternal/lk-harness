@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import SessionList from "../src/renderer/components/sessions/SessionList"
 import SessionListRow, { type SessionListRowProps } from "../src/renderer/components/sessions/SessionListRow"
-import { SESSION_TYPE_LABEL, buildSessionItems, type SessionItem, type SessionType } from "../src/renderer/components/sessions/sessions-view"
+import { SESSION_TYPE_LABEL, buildAllSessionItems, buildSessionItems, type SessionItem, type SessionType } from "../src/renderer/components/sessions/sessions-view"
 import type { ModelPickerSource } from "../src/renderer/components/chat/ModelPicker"
 import type { DashboardChannelNode, DashboardSessionNode, SessionGroupId } from "../src/shared/dashboard-tree"
 import type { ManagedSession } from "../src/shared/managed-sessions"
@@ -378,5 +378,146 @@ describe("SessionList：一张清单，没有页签", () => {
   it("还有找不到所属通道的会话时在底部说明", () => {
     expect(html({ skipped: 3 })).toContain("另有 3 个会话找不到所属通道")
     expect(html({ skipped: 0 })).not.toContain("找不到所属通道")
+  })
+
+  describe("没选定通道（「全部」通道）时", () => {
+    const noChannel = () => html({ channelId: undefined, channelName: undefined })
+    const hint = "这个操作按通道做，先在上方选一个通道"
+    const btn = (h: string, label: string) => new RegExp(`<button[^>]*>(?:(?!</button>)[\\s\\S])*${label}`).exec(h)?.[0] ?? ""
+
+    it("「+ 常用目录」和「清理久未使用」都点不了，悬停说明原因", () => {
+      const h = noChannel()
+      expect(btn(h, "常用目录")).toContain('disabled=""')
+      expect(btn(h, "常用目录")).toContain(`title="${hint}"`)
+      expect(btn(h, "清理久未使用")).toContain('disabled=""')
+      expect(btn(h, "清理久未使用")).toContain(`title="${hint}"`)
+    })
+
+    it("选定了通道就都能点（清理要有别人的会话、清单加载过）", () => {
+      const h = html()
+      expect(btn(h, "常用目录")).not.toContain('disabled=""')
+      expect(btn(h, "清理久未使用")).not.toContain('disabled=""')
+      expect(h).not.toContain(hint)
+    })
+
+    it("空清单的提示不写「这个通道」", () => {
+      expect(html({ channelId: undefined, items: [], loaded: true })).toContain("还没有会话")
+      expect(html({ channelId: undefined, items: [], loaded: true })).not.toContain("这个通道")
+      expect(html({ items: [], loaded: true })).toContain("这个通道还没有会话")
+    })
+  })
+
+  describe("活跃会话预设（mode=active）", () => {
+    const running = items({
+      groups: { main: [node({ running: true })] },
+      managed: [managed({ sessionKey: "ch_a|ou_2", name: "张三", running: true })],
+    })
+    const activeHtml = (over: Record<string, unknown> = {}) =>
+      html({ mode: "active", channelId: undefined, channelName: undefined, items: running, ...over })
+
+    it("清单标题是「运行中的会话」，没有按通道做的两个按钮", () => {
+      const h = activeHtml()
+      expect(h).toContain("运行中的会话")
+      expect(h).not.toContain("常用目录")
+      expect(h).not.toContain("清理久未使用")
+    })
+
+    it("筛选标签没有「运行中」（清单本来就都是运行中的），类型标签还在", () => {
+      const h = activeHtml()
+      expect(h).not.toContain('data-session-filter="running"')
+      for (const id of ["all", "main", "p2p"]) expect(h).toContain(`data-session-filter="${id}"`)
+    })
+
+    it("一个会话都没有：说「当前没有运行中的会话」；清单还没加载时仍是「正在加载」", () => {
+      expect(activeHtml({ items: [], loaded: true })).toContain("当前没有运行中的会话")
+      expect(activeHtml({ items: [], loaded: true })).not.toContain("还没有会话")
+      expect(activeHtml({ items: [], loaded: false })).toContain("正在加载")
+    })
+
+    it("底部「找不到所属通道」的说明不在这里出现（那是会话管理的事）", () => {
+      expect(activeHtml({ skipped: 3 })).not.toContain("找不到所属通道")
+    })
+
+    it("通道管理预设里标题是「会话」，仍有「运行中」标签", () => {
+      const h = html()
+      expect(h).toContain("<span>会话</span>")
+      expect(h).toContain('data-session-filter="running"')
+    })
+  })
+
+  it("showChannel：每一行都标出所属通道；不开就不标", () => {
+    const multi = buildAllSessionItems({
+      channels: [
+        { channelId: "ch_a", name: "二师兄", groups: groups({ main: [node()] }) },
+        { channelId: "ch_b", name: "大师兄", groups: groups({}) },
+      ],
+      managed: [managed({ sessionKey: "ch_b|oc_1", channelId: "ch_b", chatType: "group", name: "客服群" })],
+      queue: [],
+    })
+    const withBadge = html({ items: multi, showChannel: true })
+    expect(count(withBadge, "data-session-channel")).toBe(2)
+    expect(withBadge).toContain(">二师兄<")
+    expect(withBadge).toContain(">大师兄<")
+    expect(count(html({ items: multi }), "data-session-channel")).toBe(0)
+  })
+
+  it("清单撑满外面给的高度、自己滚动（搜索栏固定在上面）", () => {
+    const h = html()
+    expect(h).toMatch(/^<div class="flex min-h-0 flex-1 flex-col gap-3"/)
+    expect(h).toContain("data-session-scroll")
+    expect(/data-session-scroll[^>]*class="[^"]*overflow-y-auto/.test(h) || /class="[^"]*overflow-y-auto[^"]*"[^>]*data-session-scroll/.test(h)).toBe(true)
+  })
+})
+
+describe("行右边三栏固定宽度：每行操作个数不同，模型下拉也要对齐", () => {
+  const slotsOf = (item: SessionItem) => {
+    const h = rowHtml(item)
+    const actions = /data-session-col="actions"[^>]*>([\s\S]*?)<\/div>/.exec(h)?.[1] ?? ""
+    return actions.split("</span>").filter((s) => s.includes("inline-flex w-6 shrink-0 justify-center")).map((s) => s.includes("<button"))
+  }
+
+  it("操作区永远是 4 格（停止 / 恢复默认 / 重置 / 删除），这一行没有的操作那一格留空", () => {
+    expect(slotsOf(mineItem({ removable: true }))).toEqual([false, false, false, true])
+    expect(slotsOf(mineItem({ running: true, removable: true }))).toEqual([true, false, false, true])
+    expect(slotsOf(othersItem())).toEqual([false, false, true, true])
+    expect(slotsOf(othersItem({ running: true, canRestoreDefault: true }))).toEqual([true, true, true, true])
+  })
+
+  it("各行的位置一致：按钮在同一格里，不会因为前面少一个按钮就左移", () => {
+    const pos = (item: SessionItem, title: string) => {
+      const cells = (/data-session-col="actions"[^>]*>([\s\S]*?)<\/div>/.exec(rowHtml(item))?.[1] ?? "").split("</span>")
+      return cells.findIndex((c) => c.includes(`title="${title}"`))
+    }
+    expect(pos(mineItem({ removable: true }), "删除会话")).toBe(3)
+    expect(pos(othersItem(), "删除会话")).toBe(3)
+    expect(pos(othersItem({ running: true }), "删除会话")).toBe(3)
+    expect(pos(othersItem(), "重置：清空上下文，会话和设置保留")).toBe(2)
+    expect(pos(othersItem({ canRestoreDefault: true }), "恢复为通道默认模型")).toBe(1)
+    expect(pos(othersItem({ running: true }), "停止会话")).toBe(0)
+    expect(pos(mineItem({ running: true }), "停止会话")).toBe(0)
+  })
+
+  it("时间和模型下拉也是固定宽度的列（靠右对齐）", () => {
+    const h = rowHtml(othersItem())
+    expect(h).toMatch(/class="ml-auto w-16 shrink-0 text-right[^"]*" title="最近一次对话"/)
+    expect(h).toMatch(/data-session-col="model" class="flex w-40 shrink-0 justify-end"/)
+  })
+})
+
+describe("行上标所属通道（清单里混着多个通道时）", () => {
+  const item = buildSessionItems({ channelId: "ch_a", channelName: "二师兄", groups: groups({}), managed: [managed()], queue: [] })[0]
+
+  it("showChannel 开着：在类型图标后面、名字前面标通道名", () => {
+    const h = rowHtml(item, { showChannel: true })
+    expect(h).toContain("data-session-channel")
+    expect(h).toContain('title="所属通道"')
+    expect(h.indexOf("data-session-type-icon")).toBeLessThan(h.indexOf("data-session-channel"))
+    expect(h.indexOf("data-session-channel")).toBeLessThan(h.indexOf("张三"))
+    expect(h).toContain(">二师兄<")
+  })
+
+  it("默认不标；通道名是空的也不标（不渲染一个空标签）", () => {
+    expect(rowHtml(item)).not.toContain("data-session-channel")
+    expect(rowHtml({ ...item, channelName: "" }, { showChannel: true })).not.toContain("data-session-channel")
   })
 })

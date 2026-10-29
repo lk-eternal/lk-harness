@@ -12,12 +12,16 @@ import {
 } from "./sessions-view"
 
 const iconBtn = "rounded p-1 transition disabled:opacity-40"
+/** 操作按钮的固定位置：停止 / 恢复默认 / 重置 / 删除各占一格，这一行没有的操作留空，别的行的按钮和模型下拉才对得齐 */
+const ACTION_SLOT = "inline-flex w-6 shrink-0 justify-center"
 
 export interface SessionListRowProps {
   item: SessionItem
   now: number
   /** 会话清单（最近活动时间在里面）已经加载过；没加载过时不显示「无记录」 */
   activityKnown: boolean
+  /** 清单混着多个通道的会话（「全部」/ 活跃会话）时，行上标出所属通道；单个通道的清单不标 */
+  showChannel?: boolean
   modelPicker: ModelPickerSource
   /** 这一行正在被操作（重置 / 删除 / 换模型 …）：变淡 */
   busy: boolean
@@ -47,6 +51,7 @@ export default function SessionListRow({
   item,
   now,
   activityKnown,
+  showChannel = false,
   modelPicker,
   busy,
   switching,
@@ -86,6 +91,11 @@ export default function SessionListRow({
       <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 text-xs">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.running ? "bg-success" : "bg-stronger"}`} title={item.running ? "运行中" : "空闲"} />
         <SessionTypeIcon type={item.type} />
+        {showChannel && item.channelName && (
+          <span data-session-channel className="shrink-0 rounded bg-raised px-1 text-[10px] text-fg-3" title="所属通道">
+            {item.channelName}
+          </span>
+        )}
         <span className={`min-w-0 max-w-[16rem] truncate ${current ? "text-accent-bright" : "text-fg-2"}`} title={item.sessionKey}>{item.name}</span>
         {caps.activate && (
           <button
@@ -118,59 +128,72 @@ export default function SessionListRow({
         {badge && (
           <span className="shrink-0 rounded bg-blue-600/20 px-1 text-[10px] text-accent-soft" title={badge.title}>{badge.text}</span>
         )}
-        <span className="ml-auto shrink-0 text-[11px] text-fg-muted" title="最近一次对话">
+        {/* 右边三栏（时间 / 模型 / 操作）都是固定宽度、靠右对齐：每行操作按钮个数不同，不固定的话各行的模型下拉会参差不齐 */}
+        <span className="ml-auto w-16 shrink-0 text-right text-[11px] text-fg-muted" title="最近一次对话">
           {activityKnown ? lastActiveText(item, now) : ""}
         </span>
-        <ModelPicker
-          variant="compact"
-          placement="down"
-          portal
-          resources={modelPicker.resources}
-          currentResourceId={item.resourceId}
-          currentModel={item.model}
-          currentParams={item.modelParams}
-          currentLabel={modelLabel}
-          placeholder="选择模型"
-          quickModels={modelPicker.quickModels}
-          favorites={modelPicker.favorites}
-          onToggleFavorite={modelPicker.onToggleFavorite}
-          onOpen={modelPicker.onOpen}
-          switching={switching}
-          disabled={blocked && !busy}
-          onSelect={onSwitchModel}
-        />
-        {caps.stop && (
-          <button type="button" disabled={blocked} onClick={onStop} className={`${iconBtn} text-danger hover:bg-red-600/20`} title="停止会话">
-            <Square size={12} />
-          </button>
-        )}
-        {caps.restore && (
-          <button type="button" disabled={blocked} onClick={onRestore} className={`${iconBtn} text-fg-3 hover:bg-raised hover:text-accent-soft`} title="恢复为通道默认模型">
-            <RotateCcw size={12} />
-          </button>
-        )}
-        {caps.reset && (
-          <button
-            type="button"
-            disabled={blocked || !managed?.manageable}
-            onClick={onReset}
-            className={`${iconBtn} text-fg-3 hover:bg-raised hover:text-warning-soft`}
-            title={managed?.manageable ? "重置：清空上下文，会话和设置保留" : managed?.blockedReason}
-          >
-            <Eraser size={12} />
-          </button>
-        )}
-        {caps.remove && (
-          <button
-            type="button"
-            disabled={blocked || (item.owner === "others" && (!managed?.manageable || !daemonRunning))}
-            onClick={onDelete}
-            className={`${iconBtn} text-fg-faint hover:text-danger`}
-            title={deleteTitle}
-          >
-            <Trash2 size={12} />
-          </button>
-        )}
+        <div data-session-col="model" className="flex w-40 shrink-0 justify-end">
+          <ModelPicker
+            variant="compact"
+            placement="down"
+            portal
+            resources={modelPicker.resources}
+            currentResourceId={item.resourceId}
+            currentModel={item.model}
+            currentParams={item.modelParams}
+            currentLabel={modelLabel}
+            placeholder="选择模型"
+            quickModels={modelPicker.quickModels}
+            favorites={modelPicker.favorites}
+            onToggleFavorite={modelPicker.onToggleFavorite}
+            onOpen={modelPicker.onOpen}
+            switching={switching}
+            disabled={blocked && !busy}
+            onSelect={onSwitchModel}
+          />
+        </div>
+        <div data-session-col="actions" className="flex shrink-0">
+          <span className={ACTION_SLOT}>
+            {caps.stop && (
+              <button type="button" disabled={blocked} onClick={onStop} className={`${iconBtn} text-danger hover:bg-red-600/20`} title="停止会话">
+                <Square size={12} />
+              </button>
+            )}
+          </span>
+          <span className={ACTION_SLOT}>
+            {caps.restore && (
+              <button type="button" disabled={blocked} onClick={onRestore} className={`${iconBtn} text-fg-3 hover:bg-raised hover:text-accent-soft`} title="恢复为通道默认模型">
+                <RotateCcw size={12} />
+              </button>
+            )}
+          </span>
+          <span className={ACTION_SLOT}>
+            {caps.reset && (
+              <button
+                type="button"
+                disabled={blocked || !managed?.manageable}
+                onClick={onReset}
+                className={`${iconBtn} text-fg-3 hover:bg-raised hover:text-warning-soft`}
+                title={managed?.manageable ? "重置：清空上下文，会话和设置保留" : managed?.blockedReason}
+              >
+                <Eraser size={12} />
+              </button>
+            )}
+          </span>
+          <span className={ACTION_SLOT}>
+            {caps.remove && (
+              <button
+                type="button"
+                disabled={blocked || (item.owner === "others" && (!managed?.manageable || !daemonRunning))}
+                onClick={onDelete}
+                className={`${iconBtn} text-fg-faint hover:text-danger`}
+                title={deleteTitle}
+              >
+                <Trash2 size={12} />
+              </button>
+            )}
+          </span>
+        </div>
       </div>
       {queueOpen && item.queue.length > 0 && (
         <div data-queue-panel className="space-y-1 border-t border-line-subtle/50 bg-page/40 px-3 py-2 text-[11px] text-fg-3">

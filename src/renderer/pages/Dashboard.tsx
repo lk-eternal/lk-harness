@@ -1,44 +1,37 @@
-import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react"
+import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import {
   Play,
   Square,
   Wifi,
   WifiOff,
   Bot,
-  Bird,
   MessageSquare,
-  Clock,
   Loader2,
   Trash2,
-  LogIn,
-  AlertTriangle,
-  CheckCircle2,
-  Circle,
-  ChevronRight,
-  ChevronDown,
-  ChevronUp,
-  FolderOpen,
-  Package,
-  Rocket,
-  Search,
   X,
-  Plus,
-  Cpu,
-  ArrowLeft,
 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
 import PageTabs, { type MainPage } from "../components/PageTabs"
 import useInlineModal from "../components/useInlineModal"
-import ChannelList from "../components/dashboard/ChannelList"
-import PanelShell from "../components/dashboard/PanelShell"
-import SessionsPage from "./SessionsPage"
+import StatusCard, { TabPane } from "../components/dashboard/StatusCard"
+import LogPanel from "../components/dashboard/LogPanel"
+import QueuePanel from "../components/dashboard/QueuePanel"
+import SessionsArea from "../components/sessions/SessionsArea"
+import {
+  DEFAULT_DASHBOARD_TAB,
+  activeCardSub,
+  activeChannelCount,
+  channelsCardSub,
+  queueCardSub,
+  type DashboardTab,
+} from "../components/dashboard/dashboard-view"
+import { ALL_CHANNELS } from "../components/sessions/sessions-view"
+import { useManagedSessions } from "../hooks/useManagedSessions"
 import { disambiguatePathLabel } from "../../shared/path-label"
-import { formatLogLineForUi, cardLabelFromSessionTab } from "../../shared/log-format"
-import { useStickToBottom } from "../hooks/useStickToBottom"
-import { buildDashboardTree, GROUP_IDS, type DashboardChannelNode, type DashboardSessionNode } from "../../shared/dashboard-tree"
-import SessionRow from "../components/dashboard/SessionRow"
+import { cardLabelFromSessionTab } from "../../shared/log-format"
+import { buildDashboardTree, GROUP_IDS, type DashboardChannelNode } from "../../shared/dashboard-tree"
 import type { ModelChoice, ModelPickerSource } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { makeChatKey } from "../../shared/channel-types"
@@ -60,22 +53,15 @@ interface OnboardState {
 
 export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
   const [status, setStatus] = useState<DaemonStatus>({ running: false })
-  const [logLines, setLogLines] = useState<string[]>([])
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [actionError, setActionError] = useState("")
   const [queueMessages, setQueueMessages] = useState<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>([])
   const [treeChannels, setTreeChannels] = useState<DashboardChannelNode[]>([])
-  /** 卡片面板互斥：同一时刻只展开一个，避免几块面板叠着把日志挤没 */
-  const [activePanel, setActivePanel] = useState<"channels" | "sessions" | "queue" | null>(null)
-  const showChannels = activePanel === "channels"
-  const showSessions = activePanel === "sessions"
-  const showQueue = activePanel === "queue"
-  const togglePanel = (p: "channels" | "sessions" | "queue") =>
-    setActivePanel((cur) => (cur === p ? null : p))
-  /** 正在管理哪个通道的会话（会话管理页）；null = 显示工作台本身 */
-  const [sessionsChannelId, setSessionsChannelId] = useState<string | null>(null)
-  const [expandedActive, setExpandedActive] = useState<string | null>(null)
+  /** 四张卡片就是四个页签：选中哪张，下面的功能区就显示它的内容。启动时看日志，不记住上次选的 */
+  const [activeTab, setActiveTab] = useState<DashboardTab>(DEFAULT_DASHBOARD_TAB)
+  /** 「消息通道」功能区看哪个通道：ALL_CHANNELS = 全部（选中的通道没了会自动回到全部） */
+  const [sessionsChannelId, setSessionsChannelId] = useState<string>(ALL_CHANNELS)
   const [stoppingAgent, setStoppingAgent] = useState(false)
   const [clearingQueue, setClearingQueue] = useState(false)
   const [onboard, setOnboard] = useState<OnboardState | null>(null)
@@ -87,18 +73,6 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     [sessionTabs],
   )
   const { showConfirm, ModalPortal } = useInlineModal()
-  /** Agent 卡片下的扁平视图：跨通道拉平所有运行中会话，只用徽标标出来源通道 */
-  const activeSessions = useMemo(() => {
-    const out: { channelName: string; node: DashboardSessionNode }[] = []
-    for (const ch of treeChannels) {
-      for (const gid of GROUP_IDS) {
-        for (const s of ch.groups[gid].sessions) {
-          if (s.running) out.push({ channelName: ch.name, node: s })
-        }
-      }
-    }
-    return out
-  }, [treeChannels])
   /** 队列行复用会话树的通道名与会话 label，两处徽标口径一致 */
   const sessionMetaByKey = useMemo(() => {
     const m = new Map<string, { channelName: string; label: string }>()
@@ -458,21 +432,6 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     }
   }
 
-  const [exportingDiag, setExportingDiag] = useState(false)
-  const [logFilter, setLogFilter] = useState("")
-  const [logMatchCursor, setLogMatchCursor] = useState(0)
-  const logRef = useRef<HTMLDivElement>(null)
-  const logBufRef = useRef<string[]>([])
-  const logFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { sentinelRef: logSentinelRef, atBottom: logAtBottom, stickRef: logStickRef, scrollToBottom: scrollLogToBottom } =
-    useStickToBottom(logRef, [logLines])
-
-  /** 回到底部后再裁到窗口大小；阅读中只增不裁 */
-  useEffect(() => {
-    if (!logAtBottom) return
-    setLogLines((prev) => (prev.length > 300 ? prev.slice(-300) : prev))
-  }, [logAtBottom])
-
   useEffect(() => {
     const refresh = async () => {
       const s = await window.electronAPI.getDaemonStatus()
@@ -484,67 +443,33 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     refresh()
     const timer = setInterval(refresh, 5_000)
 
-    window.electronAPI.getLogBuffer().then((buf) => {
-      if (buf.length > 0) setLogLines(buf.slice(-300))
-    })
-
+    // 日志的订阅、缓冲和滚动都在 LogPanel 里（它在整个页面生命周期内常驻，切到别的功能区只是被藏起来）
     const unsub = window.electronAPI.onDaemonStatus((s) => {
       setStatus(s)
-    })
-    const unsubLog = window.electronAPI.onDaemonLog((line) => {
-      // 攒批 250ms 再 setState：聊天时 thinking/工具日志逐行刷屏会打爆渲染
-      logBufRef.current.push(line)
-      if (logFlushTimer.current) return
-      logFlushTimer.current = setTimeout(() => {
-        logFlushTimer.current = null
-        const batch = logBufRef.current
-        logBufRef.current = []
-        if (!batch.length) return
-        setLogLines((prev) => {
-          const next = prev.concat(batch)
-          // 置顶浏览历史时也封顶（此前无上限，久聊会堆内存）
-          const cap = logStickRef.current ? 300 : 1000
-          if (next.length > cap) return next.slice(-cap)
-          return next
-        })
-      }, 250)
     })
 
     const unsubSessions = window.electronAPI.onSessionAgents?.((list: typeof sessionList) => { setSessionList(list); void refreshDashboardTree() })
 
     return () => {
       clearInterval(timer)
-      if (logFlushTimer.current) clearTimeout(logFlushTimer.current)
       unsub()
-      unsubLog()
       unsubSessions?.()
     }
   }, [])
 
-  const logQuery = logFilter.trim()
-  const logMatchIndexes = useMemo(() => {
-    const q = logQuery.toLowerCase()
-    if (!q) return [] as number[]
-    const out: number[] = []
-    for (let i = 0; i < logLines.length; i++) {
-      if (logLines[i].toLowerCase().includes(q)) out.push(i)
-    }
-    return out
-  }, [logLines, logQuery])
-
+  // 会话清单（磁盘上存着的会话，含空闲的别人的会话）：只在「消息通道」/「活跃会话」功能区看得见时才读磁盘。
+  // 清单由工作台持有、不跟功能区一起卸载：切走再切回来先显示旧的，同时刷新，不闪「正在加载」。
+  const sessionsAreaOpen = active !== false && (activeTab === "channels" || activeTab === "sessions")
+  const managedSessions = useManagedSessions(sessionsAreaOpen)
+  const refreshManagedSessions = managedSessions.refresh
+  // 运行中的会话集合变了（Agent 推送 + 5 秒轮询）就补读一次清单：别人的会话是不是「运行中」靠它，不等 8 秒的定时刷新
+  const runningSig = useMemo(() => sessionList.map((s) => s.sessionKey).sort().join("\n"), [sessionList])
+  const prevRunningSig = useRef(runningSig)
   useEffect(() => {
-    setLogMatchCursor(0)
-  }, [logQuery])
-
-  const jumpToLogMatch = (dir: -1 | 1) => {
-    if (logMatchIndexes.length === 0) return
-    const next = (logMatchCursor + dir + logMatchIndexes.length) % logMatchIndexes.length
-    setLogMatchCursor(next)
-    const lineIdx = logMatchIndexes[next]
-    const el = logRef.current?.querySelector(`[data-log-idx="${lineIdx}"]`)
-    if (!el) return
-    el.scrollIntoView({ block: "center" })
-  }
+    if (prevRunningSig.current === runningSig) return
+    prevRunningSig.current = runningSig
+    if (sessionsAreaOpen) void refreshManagedSessions()
+  }, [runningSig, sessionsAreaOpen, refreshManagedSessions])
 
   const handleStart = async () => {
     setStarting(true)
@@ -595,13 +520,13 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     return msgs
   }
 
-  const toggleQueue = async () => {
-    if (!showQueue) await refreshQueueMessages()
-    togglePanel("queue")
+  /** 选中一张卡片：队列明细切进来时先拉一次最新的，不等 5 秒轮询 */
+  const selectTab = (next: DashboardTab) => {
+    setActiveTab(next)
+    if (next === "queue") void refreshQueueMessages().catch(() => { /* 5 秒轮询会兜底 */ })
   }
 
-  const handleClearQueue = async (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleClearQueue = async () => {
     setClearingQueue(true)
     await window.electronAPI.clearQueueMessages()
     setQueueMessages([])
@@ -609,32 +534,15 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     setClearingQueue(false)
   }
 
-  const handleDeleteQueueMessage = async (fileId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation()
+  const handleDeleteQueueMessage = async (fileId: string) => {
     await window.electronAPI.deleteQueueMessage(fileId)
     const msgs = queueMessages.filter((m) => m.fileId !== fileId)
     setQueueMessages(msgs)
     setStatus((prev) => ({ ...prev, queueLength: Math.max(0, (prev.queueLength ?? 1) - 1) }))
   }
 
-    const handleExportDiagnostics = async () => {
-    setExportingDiag(true)
-    try {
-      const r = await window.electronAPI.exportDiagnostics()
-      if (!r.ok) setActionError(r.error ?? "诊断包导出失败")
-    } finally {
-      setExportingDiag(false)
-    }
-  }
-
   const getSessionQueueMessages = (sessionKey: string) =>
     queueMessages.filter((m) => m.sessionKey === sessionKey)
-
-  const formatTimestamp = (ts?: number) => {
-    if (!ts) return ""
-    const d = new Date(ts)
-    return d.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
-  }
 
   const getSessionLabel = (msg: { sessionKey?: string; chatType?: string; sessionLabel?: string }) => {
     if (msg.sessionLabel) return msg.sessionLabel
@@ -679,49 +587,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
 
   const sessionWsDirs = sessionList.map((s) => s.workspaceDir).filter((d): d is string => !!d)
 
-  // 会话管理页：占满工作台这一页，标题栏保持一致；返回箭头回到工作台
-  if (sessionsChannelId !== null) {
-    return (
-      <div className="flex h-screen flex-col">
-        <TitleBar
-          center={<PageTabs page="dashboard" onChange={onSwitchPage} />}
-          actions={<TitleActions onSettings={onSettings} active={active} />}
-        >
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setSessionsChannelId(null)}
-              className="rounded-lg p-1.5 text-fg-3 transition hover:bg-raised hover:text-fg"
-              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-              title="返回工作台"
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <h1 className="text-lg font-semibold">会话管理</h1>
-          </div>
-        </TitleBar>
-        <SessionsPage
-          channels={treeChannels}
-          channelId={sessionsChannelId}
-          onSelectChannel={setSessionsChannelId}
-          active={active !== false}
-          queue={queueMessages}
-          modelPicker={modelPicker}
-          modelSwitching={modelSwitching}
-          error={actionError}
-          onDismissError={() => setActionError("")}
-          onNotice={setActionError}
-          onAddFavorite={(channelId) => void addFavoriteWorkspace(channelId)}
-          onSwitchModel={(sk, m) => void switchSessionModel(sk, m)}
-          onStopSession={(sk) => { void window.electronAPI.stopSessionAgent(sk); void refreshDashboardTree() }}
-          onDeleteSession={(node) => void deleteSessionTab(node.sessionKey, node.kind, node.label)}
-          onActivateSession={(sk) => void switchSessionTab(sk)}
-          onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
-        />
-        {ModalPortal}
-      </div>
-    )
-  }
+  const activeChannels = activeChannelCount(treeChannels)
 
   return (
     <div className="flex h-screen flex-col">
@@ -732,9 +598,12 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         <TitleBrand />
       </TitleBar>
 
-      {/* Status cards */}
-      <div className="grid shrink-0 grid-cols-4 gap-3 px-6 py-4">
+      {/* 四张状态卡片 = 四个页签：选中哪张，下面的功能区就显示它的内容 */}
+      <div role="tablist" aria-label="工作台" className="grid shrink-0 grid-cols-4 gap-3 px-6 py-4">
         <StatusCard
+          tab="logs"
+          selected={activeTab === "logs"}
+          onSelect={() => selectTab("logs")}
           icon={status.running ? Wifi : WifiOff}
           label="Daemon"
           value={status.running ? "运行中" : isStarting ? "启动中" : "已停止"}
@@ -778,51 +647,45 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             </button>
           )}
         />
-        <div
-          onClick={() => { if (treeChannels.length > 0) togglePanel("channels") }}
-          className={treeChannels.length > 0 ? "cursor-pointer" : ""}
-        >
-          <StatusCard
-            icon={(status.channels ?? []).some((c) => c.connected) ? Wifi : WifiOff}
-            label="消息通道"
-            value={(() => {
-              const chs = status.channels ?? []
-              if (chs.length === 0) return status.running ? "未配置通道" : "等待连接"
-              const ok = chs.filter((c) => c.connected).length
-              if (ok === chs.length) return chs.length === 1 ? `${chs[0].name} 已连接` : `${ok}/${chs.length} 通道在线`
-              if (ok > 0) return `${ok}/${chs.length} 通道在线`
-              return status.running ? "通道连接中" : "等待连接"
-            })()}
-            color={(() => {
-              const chs = status.channels ?? []
-              const ok = chs.filter((c) => c.connected).length
-              if (ok > 0 && ok === chs.length) return "green"
-              if (ok > 0 || (status.running && chs.length > 0)) return "yellow"
-              return "gray"
-            })()}
-            sub={treeChannels.length > 0 ? (showChannels ? "点击收起通道列表" : "点击展开通道列表") : "等待目标"}
-            action={treeChannels.length > 0 ? (
-              showChannels ? <ChevronDown size={12} className="text-fg-muted" /> : <ChevronRight size={12} className="text-fg-muted" />
-            ) : undefined}
-          />
-        </div>
-        <div
-          onClick={() => { if (sessionList.length > 0) togglePanel("sessions") }}
-          className={sessionList.length > 0 ? "cursor-pointer" : ""}
-        >
         <StatusCard
+          tab="channels"
+          selected={activeTab === "channels"}
+          onSelect={() => selectTab("channels")}
+          icon={(status.channels ?? []).some((c) => c.connected) ? Wifi : WifiOff}
+          label="消息通道"
+          value={(() => {
+            const chs = status.channels ?? []
+            if (chs.length === 0) return status.running ? "未配置通道" : "等待连接"
+            const ok = chs.filter((c) => c.connected).length
+            if (ok === chs.length) return chs.length === 1 ? `${chs[0].name} 已连接` : `${ok}/${chs.length} 通道在线`
+            if (ok > 0) return `${ok}/${chs.length} 通道在线`
+            return status.running ? "通道连接中" : "等待连接"
+          })()}
+          color={(() => {
+            const chs = status.channels ?? []
+            const ok = chs.filter((c) => c.connected).length
+            if (ok > 0 && ok === chs.length) return "green"
+            if (ok > 0 || (status.running && chs.length > 0)) return "yellow"
+            return "gray"
+          })()}
+          sub={channelsCardSub(treeChannels.length)}
+        />
+        <StatusCard
+          tab="sessions"
+          selected={activeTab === "sessions"}
+          onSelect={() => selectTab("sessions")}
           icon={Bot}
-          label="Agent"
+          label="活跃会话"
           value={
             sessionList.length > 0
               ? `${sessionList.length} 个会话`
               : status.agentRunning ? `会话中 PID:${status.agentPid}` : "空闲"
           }
           color={status.agentRunning || sessionList.length > 0 ? "blue" : "gray"}
-          sub={sessionList.length > 0 ? (showSessions ? "点击收起活跃会话" : "点击查看活跃会话") : "等待消息"}
+          sub={activeCardSub(sessionList.length, activeChannels)}
           action={status.agentRunning || sessionList.length > 0 ? (
             <button
-              onClick={(e) => { e.stopPropagation(); handleStopAgent() }}
+              onClick={() => void handleStopAgent()}
               disabled={stoppingAgent}
               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
               title="停止全部 Agent"
@@ -832,9 +695,10 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             </button>
           ) : undefined}
         />
-        </div>
-        <div onClick={() => void toggleQueue()} className="cursor-pointer">
         <StatusCard
+          tab="queue"
+          selected={activeTab === "queue"}
+          onSelect={() => selectTab("queue")}
           icon={MessageSquare}
           label="消息队列"
           value={(() => {
@@ -857,10 +721,10 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             )
           })()}
           color={(status.queueCounts?.processing ?? 0) > 0 ? "blue" : (status.queueCounts?.pending ?? 0) > 0 ? "yellow" : "gray"}
-          sub={showQueue ? "点击收起明细" : "点击查看明细"}
+          sub={queueCardSub(status.queueLength)}
           action={status.queueLength ? (
             <button
-              onClick={handleClearQueue}
+              onClick={() => void handleClearQueue()}
               disabled={clearingQueue}
               className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
               title="清空队列"
@@ -870,86 +734,11 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             </button>
           ) : undefined}
         />
-        </div>
       </div>
-
-      {showSessions && (
-        <PanelShell title="活跃会话" meta={`${activeSessions.length} 个运行中`}>
-          {activeSessions.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-fg-faint">当前没有运行中的会话</p>
-          ) : (
-            activeSessions.map(({ channelName, node }) => (
-              <SessionRow
-                key={node.sessionKey}
-                node={node}
-                channelName={channelName}
-                modelPicker={modelPicker}
-                modelSwitching={modelSwitching === node.sessionKey}
-                expanded={expandedActive === node.sessionKey}
-                onToggle={() => setExpandedActive((k) => k === node.sessionKey ? null : node.sessionKey)}
-                onSwitchModel={(m) => void switchSessionModel(node.sessionKey, m)}
-                onStop={() => { void window.electronAPI.stopSessionAgent(node.sessionKey); void refreshDashboardTree() }}
-                onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
-              />
-            ))
-          )}
-        </PanelShell>
-      )}
-
-      {showQueue && (
-        <PanelShell title="全局消息队列" meta={`${queueMessages.length} 条`}>
-          {queueMessages.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-fg-faint">队列为空</p>
-          ) : (
-            <div className="space-y-1.5 p-3">
-              {queueMessages.map((msg) => {
-                const meta = msg.sessionKey ? sessionMetaByKey.get(msg.sessionKey.toLowerCase()) : undefined
-                return (
-                  <div key={msg.fileId || msg.index} className="flex items-start justify-between gap-2 rounded-lg bg-raised/60 px-3 py-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {meta && (
-                          <span className="shrink-0 rounded bg-raised px-1 text-[10px] text-fg-3" title="所属通道">
-                            {meta.channelName}
-                          </span>
-                        )}
-                        <span className="min-w-0 truncate text-[10px] font-medium text-accent" title={msg.sessionKey}>
-                          {meta?.label ?? getSessionLabel(msg)}
-                        </span>
-                        <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-blue-600/25 text-accent-soft" : "bg-yellow-600/20 text-warning-soft"}`}>
-                          {msg.status === "processing" ? "处理中" : "排队"}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-fg-muted">{formatTimestamp(msg.timestamp)}</span>
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-fg-2">{msg.preview}</p>
-                    </div>
-                    <button
-                      onClick={(e) => handleDeleteQueueMessage(msg.fileId, e)}
-                      className="shrink-0 rounded p-0.5 text-fg-muted transition hover:bg-red-600/20 hover:text-danger"
-                      title="删除此消息"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </PanelShell>
-      )}
-
-      {showChannels && treeChannels.length > 0 && (
-        <PanelShell
-          title="消息通道"
-          meta={`${treeChannels.length} 通道${activeSessions.length > 0 ? ` · 运行 ${activeSessions.length}` : ""}`}
-        >
-        <ChannelList channels={treeChannels} onManage={setSessionsChannelId} />
-        </PanelShell>
-      )}
 
       {/* Error message */}
       {actionError && (
-        <div className="mx-6 mt-3 flex items-start gap-2 rounded-lg border border-danger-line bg-danger-tint/50 px-4 py-2 text-sm text-danger-soft">
+        <div className="mx-6 mb-3 flex shrink-0 items-start gap-2 rounded-lg border border-danger-line bg-danger-tint/50 px-4 py-2 text-sm text-danger-soft">
           <span className="min-w-0 flex-1">{actionError}</span>
           <button type="button" onClick={() => setActionError("")}
             className="shrink-0 rounded px-1 text-danger hover:bg-danger-tint-strong/50 hover:text-danger-bright" title="关闭">
@@ -958,241 +747,46 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         </div>
       )}
 
-      {/* Logs */}
-      <div className="flex min-h-0 flex-1 flex-col px-6 py-4">
-        <div className="mb-2 flex items-center justify-between gap-3 text-sm text-fg-3">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Clock size={14} className="shrink-0" />
-            <span className="shrink-0">日志</span>
-            <div className="relative ml-2 flex max-w-[260px] flex-1 items-center">
-              <Search size={12} className="pointer-events-none absolute left-2 text-fg-faint" />
-              <input
-                value={logFilter}
-                onChange={(e) => setLogFilter(e.target.value)}
-                placeholder="搜索日志..."
-                className="w-full rounded-md border border-line-subtle bg-surface/60 py-1 pl-7 pr-7 text-xs text-fg-2 placeholder-fg-faint outline-none transition focus:border-line-strong"
-              />
-              {logFilter && (
-                <button
-                  onClick={() => setLogFilter("")}
-                  className="absolute right-1.5 rounded p-0.5 text-fg-faint transition hover:text-fg-2"
-                  title="清除搜索"
-                >
-                  <X size={11} />
-                </button>
-              )}
-            </div>
-            {logQuery && (
-              <>
-                <span className="shrink-0 text-[10px] text-fg-faint">
-                  {logMatchIndexes.length > 0
-                    ? `${logMatchCursor + 1}/${logMatchIndexes.length}`
-                    : "0 条命中"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => jumpToLogMatch(-1)}
-                  disabled={logMatchIndexes.length === 0}
-                  className="rounded p-0.5 text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-40"
-                  title="上一条命中"
-                >
-                  <ChevronUp size={14} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => jumpToLogMatch(1)}
-                  disabled={logMatchIndexes.length === 0}
-                  className="rounded p-0.5 text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-40"
-                  title="下一条命中"
-                >
-                  <ChevronDown size={14} />
-                </button>
-              </>
-            )}
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <button
-              onClick={() => void handleExportDiagnostics()}
-              disabled={exportingDiag}
-              className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2 disabled:opacity-50"
-              title="汇总日志、脱敏配置、会话与队列快照到单个文件，用于远程排障"
-            >
-              {exportingDiag ? "导出中..." : "导出诊断包"}
-            </button>
-            {logLines.length > 0 && (
-              <button
-                onClick={() => { navigator.clipboard.writeText(logLines.join("\n")) }}
-                className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2"
-                title="复制全部日志"
-              >
-                复制
-              </button>
-            )}
-            {logLines.length > 0 && (
-              <button
-                onClick={() => setLogLines([])}
-                className="rounded px-2 py-0.5 text-xs text-fg-muted transition hover:bg-raised hover:text-fg-2"
-              >
-                清空
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="relative min-h-0 flex-1">
-          <div
-            ref={logRef}
-            className="h-full overflow-auto overscroll-contain rounded-lg border border-line-subtle bg-surface/50 p-3 font-mono text-xs leading-5"
-          >
-            {logLines.length > 0
-              ? logLines.map((line, i) => (
-                  <div
-                    key={i}
-                    data-log-idx={i}
-                    className={logMatchIndexes[logMatchCursor] === i ? "rounded bg-yellow-500/10" : undefined}
-                  >
-                    <LogLine
-                      line={line}
-                      highlight={logQuery}
-                      resolveLabel={resolveLogSessionLabel}
-                    />
-                  </div>
-                ))
-              : <span className="text-fg-faint">暂无日志</span>}
-            <div ref={logSentinelRef} className="h-px shrink-0" aria-hidden />
-          </div>
-          {!logAtBottom && (
-            <button
-              onClick={scrollLogToBottom}
-              className="absolute bottom-3 right-4 flex items-center gap-1 rounded-full border border-line bg-raised/95 px-2.5 py-1 text-[11px] text-fg-2 shadow-lg transition hover:bg-strong"
-              title="恢复自动滚动"
-            >
-              <ChevronDown size={12} />
-              回到底部
-            </button>
-          )}
-        </div>
+      {/* 功能区：日志常驻（切走只是藏起来），其余只在选中时渲染 */}
+      <div className="relative min-h-0 flex-1">
+        <TabPane tab="logs" selected={activeTab === "logs"}>
+          <LogPanel resolveLabel={resolveLogSessionLabel} onError={setActionError} />
+        </TabPane>
+        {(activeTab === "channels" || activeTab === "sessions") && (
+          <TabPane key={activeTab} tab={activeTab} selected>
+            <SessionsArea
+              scope={activeTab === "channels" ? "channels" : "active"}
+              channels={treeChannels}
+              channelId={sessionsChannelId}
+              onSelectChannel={setSessionsChannelId}
+              managed={managedSessions}
+              queue={queueMessages}
+              modelPicker={modelPicker}
+              modelSwitching={modelSwitching}
+              confirm={showConfirm}
+              onNotice={setActionError}
+              onOpenChannelSettings={() => onSettings("channel")}
+              onAddFavorite={(channelId) => void addFavoriteWorkspace(channelId)}
+              onSwitchModel={(sk, m) => void switchSessionModel(sk, m)}
+              onStopSession={(sk) => { void window.electronAPI.stopSessionAgent(sk); void refreshDashboardTree() }}
+              onDeleteSession={(node) => void deleteSessionTab(node.sessionKey, node.kind, node.label)}
+              onActivateSession={(sk) => void switchSessionTab(sk)}
+              onDeleteQueueItem={(fileId) => void handleDeleteQueueMessage(fileId)}
+            />
+          </TabPane>
+        )}
+        {activeTab === "queue" && (
+          <TabPane tab="queue" selected>
+            <QueuePanel
+              messages={queueMessages}
+              metaByKey={sessionMetaByKey}
+              labelOf={getSessionLabel}
+              onDelete={(fileId) => void handleDeleteQueueMessage(fileId)}
+            />
+          </TabPane>
+        )}
       </div>
       {ModalPortal}
-    </div>
-  )
-}
-
-const LOG_RE = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) \[(\w+)\] (\w+) (.*)$/
-
-/** 与主进程 escapeLogContentSingleLine 对应：展示时把 ⏎ 标记还原为换行 */
-function displayLogMessageBody(msg: string): string {
-  return msg.replace(/⏎/g, "\n")
-}
-
-const LEVEL_COLORS: Record<string, string> = {
-  ERROR: "text-danger",
-  WARN: "text-warning",
-  INFO: "text-accent",
-  DEBUG: "text-fg-muted",
-}
-
-const PROCESS_COLORS: Record<string, string> = {
-  Daemon: "text-purple",
-  Agent: "text-cyan",
-  Electron: "text-orange",
-  Scheduler: "text-teal",
-}
-
-const CHANNEL_STATUS_TEXT: Record<string, string> = {
-  connected: "在线",
-  connecting: "连接中",
-  qr_pending: "待扫码",
-  logging_in: "登录中",
-  disconnected: "已断开",
-  error: "错误",
-}
-
-/** 命中片段高亮渲染（大小写不敏感） */
-function renderHighlighted(text: string, query: string): React.ReactNode {
-  if (!query) return text
-  const lower = text.toLowerCase()
-  const q = query.toLowerCase()
-  const parts: React.ReactNode[] = []
-  let i = 0
-  let idx: number
-  while ((idx = lower.indexOf(q, i)) >= 0) {
-    if (idx > i) parts.push(text.slice(i, idx))
-    parts.push(<mark key={idx} className="rounded-sm bg-yellow-500/40 text-warning-bright">{text.slice(idx, idx + q.length)}</mark>)
-    i = idx + q.length
-  }
-  if (parts.length === 0) return text
-  if (i < text.length) parts.push(text.slice(i))
-  return parts
-}
-
-const LogLine = memo(function LogLine({ line, highlight = "", resolveLabel }: { line: string; highlight?: string; resolveLabel?: (sk: string) => string | undefined }) {
-  const view = formatLogLineForUi(line, resolveLabel)
-  const m = LOG_RE.exec(view)
-  if (!m) {
-    return <div className="whitespace-pre-wrap break-all text-fg-3">{renderHighlighted(displayLogMessageBody(view), highlight)}</div>
-  }
-  const [, ts, proc, level, msg] = m
-  const body = displayLogMessageBody(msg)
-  return (
-    <div className="whitespace-pre-wrap break-all" title={line.length > 120 ? line : undefined}>
-      <span className="text-fg-faint">{renderHighlighted(ts, highlight)}</span>
-      {" "}
-      <span className={PROCESS_COLORS[proc] ?? "text-fg-3"}>{renderHighlighted(`[${proc}]`, highlight)}</span>
-      {" "}
-      <span className={LEVEL_COLORS[level] ?? "text-fg-3"}>{renderHighlighted(level, highlight)}</span>
-      {" "}
-      <span className={level === "ERROR" ? "text-danger-soft" : level === "WARN" ? "text-warning-soft" : "text-fg-2"}>{renderHighlighted(body, highlight)}</span>
-    </div>
-  )
-})
-
-function StatusCard({
-  icon: Icon,
-  label,
-  value,
-  color,
-  sub,
-  action,
-}: {
-  icon: typeof Wifi
-  label: string
-  value: React.ReactNode
-  color: "green" | "red" | "blue" | "yellow" | "gray"
-  sub?: string
-  action?: React.ReactNode
-}) {
-  const colors: Record<string, string> = {
-    green: "text-success",
-    red: "text-danger",
-    blue: "text-accent",
-    yellow: "text-warning",
-    gray: "text-fg-muted",
-  }
-
-  const dotColors: Record<string, string> = {
-    green: "bg-success",
-    red: "bg-danger",
-    blue: "bg-accent",
-    yellow: "bg-warning",
-    gray: "bg-stronger",
-  }
-
-  return (
-    <div className="flex h-[88px] flex-col rounded-lg border border-line-subtle p-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Icon size={14} className={colors[color]} />
-          <span className="text-xs text-fg-muted">{label}</span>
-        </div>
-        <div className="min-w-0">{action}</div>
-      </div>
-      <div className="mt-auto">
-        <div className="flex items-center gap-2">
-          <div className={`h-2 w-2 shrink-0 rounded-full ${dotColors[color]}`} />
-          <span className={`text-sm font-medium ${colors[color]}`}>{value}</span>
-        </div>
-        <div className="mt-1 h-4 truncate text-xs text-fg-faint">{sub ?? "\u00A0"}</div>
-      </div>
     </div>
   )
 }
