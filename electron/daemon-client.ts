@@ -51,14 +51,14 @@ export async function httpPost(url: string, body: object, timeoutMs = 3000): Pro
 
 export async function notifySessionLaunched(
   sessionKey: string,
-  opts: { resumed?: boolean; runtime?: "llm" | "sdk" },
+  opts: { resumed?: boolean; runtime?: "llm" | "sdk"; modelLabel?: string },
 ): Promise<void> {
   const lock = readLockFile()
   if (!lock?.port) return
   try {
     await httpPost(
       `http://127.0.0.1:${lock.port}/api/session-launched`,
-      { session_key: sessionKey, resumed: opts.resumed ?? false, runtime: opts.runtime },
+      { session_key: sessionKey, resumed: opts.resumed ?? false, runtime: opts.runtime, model_label: opts.modelLabel },
       5_000,
     )
   } catch { /* best-effort */ }

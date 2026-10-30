@@ -42,10 +42,11 @@ import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { getSessionRecord, initSessionOverridesStore } from "../src/shared/session-overrides-store.js"
 import { resolveLaunchModel, resolveSessionResourceId } from "../src/shared/launch-model.js"
+import { taskTabModel } from "../src/shared/task-tab-model.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
-import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, resolveTaskOutboundChatKey } from "../src/shared/scheduled-task"
+import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, resolveTaskChannelId, resolveTaskOutboundChatKey } from "../src/shared/scheduled-task"
 import {
   clearLaunchFailStreak,
   clearAllLaunchFailStreaks,
@@ -997,6 +998,13 @@ function tabModelFor(
   running?: { model?: string; modelParams?: string; resourceId?: string },
 ): { model?: string; modelParams?: string; resourceId?: string } {
   if (running?.model) return { model: running.model, modelParams: running.modelParams, ...(running.resourceId ? { resourceId: running.resourceId } : {}) }
+  // 定时任务的会话键是裸任务 id，凭键认不出所属通道，下面「按会话键找通道」的回落对它不成立（任务没配模型时就整行空着）：
+  // 按任务绑定的通道、任务自己配的模型解析，和真实拉起（launchAgent）走同一套规则
+  const task = scheduledTaskForSessionKey(sessionKey)
+  if (task) {
+    try { initSessionOverridesStore(app.getPath("userData")) } catch { /* store 未就绪时沿用通道配置 */ }
+    return taskTabModel({ sessionKey, task, channels: getChannels(), resolveResource: getAgentResource })
+  }
   const ov = getSessionOverride(sessionKey)
   if (ov) return { model: ov.model, modelParams: ov.modelParams, ...(ov.resourceId ? { resourceId: ov.resourceId } : {}) }
   const fallback = resolveChannelModel(resolveChannelForSession(sessionKey), "primary")
@@ -1542,8 +1550,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
       const resumableT = hasResumableAgentSession(sessionKey)
       // 队列唤醒必须带回任务绑定的通道，否则 getAgentResource(undefined) 会回落默认 SDK
       const task = readTasksFromFile().find((t) => t.id === sessionKey)
-      const channelId = task?.channelId
-        || getChannels().find((c) => c.enabled)?.id
+      const channelId = resolveTaskChannelId(task, getChannels())
       const ownerChat = boundChatIdForSession(sessionKey)
       if (enqueueSessionLaunch(sessionKey, launches, async () => {
         const r = await launchAgent({

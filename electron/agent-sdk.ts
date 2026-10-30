@@ -794,8 +794,8 @@ export function handlePollPhaseEvent(
 /**
  * 拉起后通知 daemon：resumed=false 全新会话（收口上一 run 残留流式卡）。失败静默＝降级默认行为。
  */
-async function notifySessionLaunched(sessionKey: string, resumed: boolean): Promise<void> {
-  await notifyDaemonSessionLaunched(sessionKey, { resumed, runtime: "sdk" })
+async function notifySessionLaunched(sessionKey: string, resumed: boolean, modelLabel?: string): Promise<void> {
+  await notifyDaemonSessionLaunched(sessionKey, { resumed, runtime: "sdk", modelLabel })
 }
 
 function flushSdkLog(session: SdkSessionAgent): void {
@@ -1512,7 +1512,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       await postStreamCard(sessionKey, "finish", { segments: [] }, { cardId: resumable.streamCardId })
       patchResumableStreamCard(sessionKey, undefined, { onlyIf: resumable.streamCardId })
     }
-    await notifySessionLaunched(sessionKey, resumed)
+    await notifySessionLaunched(sessionKey, resumed, session.modelLabel)
 
     if ((sessionResetGen.get(sessionKey) ?? 0) === resetGenAtStart) {
       rememberResumable(session)

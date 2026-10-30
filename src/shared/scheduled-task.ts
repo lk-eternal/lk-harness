@@ -85,6 +85,33 @@ export function formatScheduledTaskLabel(name: string): string {
   return `⏰ ${name}`;
 }
 
+/**
+ * 独立任务（裸 id 会话）拉起时用哪个通道：任务绑定的通道，没绑就是第一个启用的通道。
+ * 队列唤醒拉起任务和界面显示任务的模型共用这一条规则，两边才不会各取各的。
+ */
+export function resolveTaskChannelId(
+  task: Pick<ScheduledTask, "channelId"> | undefined,
+  channels: readonly { id: string; enabled?: boolean }[],
+): string | undefined {
+  return task?.channelId || channels.find((c) => c.enabled)?.id;
+}
+
+/**
+ * 独立任务发到飞书的卡片页脚：这次运行用的模型。
+ * 独立任务不建流式卡（流式卡收口时才带「模型 · 耗时」页脚），它的消息是单独发出的卡片，页脚由发送处补上。
+ * 只管独立任务；没登记模型 / 登记的是空白时不加页脚。
+ */
+export function taskCardFooter(input: {
+  sessionKey?: string;
+  invokerSessionKey?: string;
+  tasks: ScheduledTask[];
+  modelLabelOf: (sessionKey: string) => string | undefined;
+}): string | undefined {
+  const key = (input.invokerSessionKey || input.sessionKey)?.trim();
+  if (!key || !isIndependentTaskSessionKey(key, input.tasks)) return undefined;
+  return input.modelLabelOf(key)?.trim() || undefined;
+}
+
 /** 由任务配置拼出 outbound 投递用的 notify_session_key（仅显式 notifyChatId） */
 export function buildNotifySessionKey(task: Pick<ScheduledTask, "notifyChatId" | "channelId">): string | undefined {
   const raw = task.notifyChatId?.trim();

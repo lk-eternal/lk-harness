@@ -298,8 +298,8 @@ function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "
   }, resolveDaemonPortForPrompt())
 }
 
-async function notifySessionLaunched(sessionKey: string, resumed: boolean): Promise<void> {
-  await notifyDaemonSessionLaunched(sessionKey, { resumed, runtime: "llm" })
+async function notifySessionLaunched(sessionKey: string, resumed: boolean, modelLabel?: string): Promise<void> {
+  await notifyDaemonSessionLaunched(sessionKey, { resumed, runtime: "llm", modelLabel })
 }
 
 function toolSummaryFromArgs(args: unknown): string {
@@ -924,7 +924,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     }
 
     session.piUnsubscribe = piSession.subscribe((event) => handlePiSessionEvent(session!, event))
-    await notifySessionLaunched(sessionKey, resumed)
+    await notifySessionLaunched(sessionKey, resumed, session.modelLabel)
 
     const { startLlmWorkerLoop, isLlmWorkerActive } = await import("./llm-session-worker.js")
     if (isLlmWorkerActive(sessionKey)) {

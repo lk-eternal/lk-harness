@@ -54,7 +54,7 @@ import {
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, taskCardFooter, type ScheduledTask } from "./shared/scheduled-task.js";
 import { createTempChatSession } from "./shared/temp-chat-session.js";
 import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { resolveMcpSendSessionKey } from "./shared/mcp-outbound-session-key.js";
@@ -630,6 +630,9 @@ const sessionLastReplyAt = new Map<string, number>();
 /** Agent 运行时（session-launched 登记）：决定 poll 阻塞超时与 timeout directive 文案 */
 type SessionAgentRuntime = "llm" | "sdk";
 const sessionAgentRuntime = new Map<string, SessionAgentRuntime>();
+
+/** 会话最近一次拉起时用的模型显示名（session-launched 登记）：独立定时任务的卡片页脚用，它不建流式卡，没有收口页脚 */
+const sessionModelLabel = new Map<string, string>();
 
 /** 记录出站回复时刻（zombie 假死判定 + 黑洞投递嫌疑判定） */
 function touchSessionLastReply(sessionKey: string): void {
@@ -4674,17 +4677,24 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       );
       const title = resolveReplyTitle(ch, colorKey || session_key);
       const headerTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
+      // 独立定时任务不建流式卡，没有收口页脚；它的卡片在这里补一行「用的哪个模型」。其余会话（走不到这里的、或不是独立任务的）不加
+      const footer = taskCardFooter({
+        sessionKey: session_key,
+        invokerSessionKey: invoker_session_key,
+        tasks: readTasksSafe(),
+        modelLabelOf: (k) => sessionModelLabel.get(normalizeSessionKey(k) || k),
+      });
       let sentMsgId: string | undefined;
       // p2p 直发砍引用条；群聊保留 reply；internal_ 不可 reply
       if (shouldReplyToMessage(ch, message_id)) {
-        sentMsgId = await sender.sendMessage(text, message_id, undefined, title, headerTemplate);
+        sentMsgId = await sender.sendMessage(text, message_id, undefined, title, headerTemplate, false, footer);
         if (!sentMsgId) {
           log("INFO", `回复退避: message_id=${message_id} → ${ch.chatId ? `chat_id=${ch.chatId}` : "无目标"}`);
-          if (ch.chatId) sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate);
+          if (ch.chatId) sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, false, footer);
         }
       } else {
         if (!ch.chatId) { json(res, { ok: false, error: "无法解析发送目标 chatId" }, 400); return true; }
-        sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate);
+        sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, false, footer);
       }
       if (sentMsgId && session_key) trackMessageSession(sentMsgId, session_key);
       json(res, { ok: !!sentMsgId, message_id: sentMsgId });
@@ -5069,14 +5079,18 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/session-launched") {
     const body = JSON.parse(await readBody(req));
-    const { session_key, resumed, runtime } = body as {
-      session_key?: string; resumed?: boolean; runtime?: SessionAgentRuntime;
+    const { session_key, resumed, runtime, model_label } = body as {
+      session_key?: string; resumed?: boolean; runtime?: SessionAgentRuntime; model_label?: string;
     };
     if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
     const sk = normalizeSessionKey(session_key) || session_key;
     if (runtime === "llm" || runtime === "sdk") {
       sessionAgentRuntime.set(sk, runtime);
     }
+    // 每次拉起都覆盖：这次没带模型名就清掉旧的，页脚不能沿用上一次拉起时的模型
+    const modelLabel = typeof model_label === "string" ? model_label.trim() : "";
+    if (modelLabel) sessionModelLabel.set(sk, modelLabel);
+    else sessionModelLabel.delete(sk);
     if (!resumed) {
       // 全新会话（上下文丢失）：收口上一个 run 的残留流式卡，防新回复追加旧卡
       void sealActiveStreamCardOnDelivery(sk);

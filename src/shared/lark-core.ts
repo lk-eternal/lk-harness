@@ -233,12 +233,25 @@ export class LarkSender {
     return text.replace(/<at\s+user_id="([^"]+)"[^>]*>([^<]*)<\/at>/gi, "<at id=$1>$2</at>");
   }
 
-  private formatForSend(text: string, title?: CardTitle, template?: string, offerDismiss = false): { content: string; msgType: string } {
+  private formatForSend(text: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): { content: string; msgType: string } {
     const fullText = `${this.messagePrefix}${text}`;
     if (LarkSender.containsAtTag(fullText)) {
+      // 含 @ 的走纯文本消息（卡片里的 @ 语法在这条路上不生效），没有页脚的位置
       return { content: JSON.stringify({ text: fullText }), msgType: "text" };
     }
-    return { content: JSON.stringify(LarkSender.buildCard(fullText, title, undefined, undefined, template, undefined, undefined, offerDismiss)), msgType: "interactive" };
+    const card = LarkSender.buildCard(fullText, title, undefined, undefined, template, undefined, undefined, offerDismiss);
+    return { content: JSON.stringify(LarkSender.withNotationFooter(card, footer)), msgType: "interactive" };
+  }
+
+  /**
+   * 卡片末尾加一行小字页脚：分隔线 + notation 小字，和流式卡收口页脚（模型 · 耗时）同款样式。
+   * 空白页脚不加，原样返回同一个卡片对象。
+   */
+  static withNotationFooter(card: any, footer?: string): any {
+    const foot = footer?.replace(/^\s+|\s+$/gu, "");
+    if (!foot) return card;
+    card.body.elements.push({ tag: "hr" }, { tag: "markdown", content: foot, text_size: "notation" });
+    return card;
   }
 
   /** 按显示宽度计数（CJK/emoji 算 2，半角算 1）；.length 会低估中文导致窄屏按钮文字被截为 "..." */
@@ -1927,9 +1940,9 @@ export class LarkSender {
     }
   }
 
-  async replyMessage(messageId: string, text: string, title?: CardTitle, template?: string, offerDismiss = false): Promise<string | undefined> {
+  async replyMessage(messageId: string, text: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): Promise<string | undefined> {
     try {
-      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss);
+      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss, footer);
       const res = await this.client.im.message.reply({
         path: { message_id: messageId },
         data: { content, msg_type: msgType },
@@ -1940,8 +1953,8 @@ export class LarkSender {
     } catch (e: any) { this.log("WARN", `飞书回复异常: ${e?.message ?? e}`); return undefined; }
   }
 
-  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, template?: string, offerDismiss = false): Promise<string | undefined> {
-    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, template, offerDismiss); }
+  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): Promise<string | undefined> {
+    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, template, offerDismiss, footer); }
     // internal_ 不可 reply：必须显式 chatId，禁止回落到 this.chatId（主用户）造成窜台
     if (replyMessageId?.startsWith("internal_") && !chatId) {
       this.log("WARN", `internal 消息回复缺少 chatId，已拒绝默认私聊兜底 (${replyMessageId})`);
@@ -1950,7 +1963,7 @@ export class LarkSender {
     const targetChatId = chatId ?? this.chatId;
     if (!targetChatId) { this.log("WARN", "无发送目标"); return undefined; }
     try {
-      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss);
+      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss, footer);
       const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" as any },
         data: { receive_id: targetChatId, content, msg_type: msgType },

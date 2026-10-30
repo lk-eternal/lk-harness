@@ -142,6 +142,30 @@ export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
 }
 
 /**
+ * 定时任务下次拉起时用的供应商和模型。任务是主用户自己的系统会话，按主用户那一套取默认；
+ * 任务自己配了模型就是显式指定（优先级最高），没配（空白）就跟随通道主模型。
+ *
+ * 拉起任务（launchAgent）走的是同一个 resolveLaunchModel，这里只是把「任务 → 显式指定 + 主用户人群」这一层固定下来，
+ * 界面上显示的任务模型和真实拉起的才对得上。
+ * 任务的会话键是裸任务 id，凭键认不出所属通道，所以通道要由调用方按任务绑定的通道传进来。
+ */
+export function resolveTaskLaunchModel(input: {
+  sessionKey: string
+  task: { model?: string; modelParams?: string }
+  channel: ChannelModelFields | undefined
+  resolveResource: LaunchModelInput["resolveResource"]
+}): LaunchModel {
+  const model = input.task.model?.trim()
+  return resolveLaunchModel({
+    sessionKey: input.sessionKey,
+    channel: input.channel,
+    audience: "main",
+    explicit: model ? { model, modelParams: input.task.modelParams } : undefined,
+    resolveResource: input.resolveResource,
+  })
+}
+
+/**
  * 一个会话当前用的供应商 id：会话自己存的优先，否则是所属通道按人群取的默认（其他人留空跟随主用户）。
  *
  * 界面切换模型时，要拿它判断「是不是换了供应商」、并把模型覆盖记在正确的供应商名下。
