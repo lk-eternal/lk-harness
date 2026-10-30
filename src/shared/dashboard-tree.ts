@@ -1,3 +1,4 @@
+import { appChatSessionName } from "./app-chat-types.js"
 import { channelIdFromSessionKey, resolveChannelResourceId } from "./channel-types.js"
 
 export type SessionGroupId = "main" | "other_p2p" | "group" | "project" | "task"
@@ -234,6 +235,41 @@ export function groupLabel(id: SessionGroupId): string {
     case "project": return "项目"
     case "task": return "任务/临时"
   }
+}
+
+/**
+ * 应用内对话通道的会话，在工作台里和对话页叫同一个名字（摘要标题 / 手动改的名字，没有时按 appChatSessionName 的规则）。
+ * 树里的 label 是给飞书 / 微信会话用的「目录 · 分支」写法，应用内的会话用不上。
+ * 只动 appChannelIds 里的通道；其它通道、取不到名字的会话（项目、定时任务）原样返回，没有变化时返回的还是同一个对象。
+ */
+export function withAppChatNames(
+  channels: DashboardChannelNode[],
+  appChannelIds: ReadonlySet<string>,
+  titles: Readonly<Record<string, string>>,
+): DashboardChannelNode[] {
+  if (appChannelIds.size === 0) return channels
+  let anyChanged = false
+  const out = channels.map((ch) => {
+    if (!appChannelIds.has(ch.channelId)) return ch
+    let chChanged = false
+    const groups = { ...ch.groups }
+    for (const gid of GROUP_IDS) {
+      let groupChanged = false
+      const sessions = groups[gid].sessions.map((s) => {
+        const label = appChatSessionName(s.sessionKey, titles, s.label) ?? s.label
+        if (label === s.label) return s
+        groupChanged = true
+        return { ...s, label }
+      })
+      if (!groupChanged) continue
+      groups[gid] = { ...groups[gid], sessions }
+      chChanged = true
+    }
+    if (!chChanged) return ch
+    anyChanged = true
+    return { ...ch, groups }
+  })
+  return anyChanged ? out : channels
 }
 
 export { GROUP_IDS }

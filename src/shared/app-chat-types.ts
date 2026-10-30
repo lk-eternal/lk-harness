@@ -1,6 +1,7 @@
 // ── 应用内对话通道：聊天条目与事件（Daemon / Electron / 渲染层共用）──────────────
 
-import { normalizeSessionKey } from "./channel-types.js";
+import { normalizeSessionKey, workspaceDirFromSessionKey } from "./channel-types.js";
+import { isTempChatWorkspace } from "./temp-workspace.js";
 
 export interface AppChatTool {
   name: string;
@@ -171,4 +172,21 @@ export interface AppChatResult {
 export function appChatSessionId(sessionKey: string): string {
   const normalized = normalizeSessionKey(sessionKey) || sessionKey;
   return normalized.replace(/[\\/]+/g, "/").toLowerCase();
+}
+
+/**
+ * 应用内会话在界面上叫什么（对话页的会话列表、工作台的会话清单共用这一条规则）：
+ * 摘要标题（或手动改的名字）优先；还没有时，临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支）；
+ * 连目录都取不到（项目、定时任务这类不是目录的会话）就用 fallback。
+ */
+export function appChatSessionName(
+  sessionKey: string,
+  titles: Readonly<Record<string, string>>,
+  fallback?: string,
+): string | undefined {
+  const title = titles[appChatSessionId(sessionKey)];
+  if (title) return title;
+  const dir = workspaceDirFromSessionKey(sessionKey);
+  if (isTempChatWorkspace(dir)) return "新会话";
+  return dir?.split(/[\\/]/).filter(Boolean).pop() ?? fallback;
 }

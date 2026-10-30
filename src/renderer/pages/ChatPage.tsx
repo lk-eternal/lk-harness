@@ -16,7 +16,7 @@ import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
-import { appChatSessionId, chatStreamItems, isQueuedUserItem } from "../../shared/app-chat-types"
+import { appChatSessionId, appChatSessionName, chatStreamItems, isQueuedUserItem } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
@@ -206,7 +206,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 当前会话的目录；临时会话的目录对用户不可见，视为没有指定目录 */
   const workspaceDir = selected && !isTempChatWorkspace(workspaceDirFromSessionKey(selected)) ? workspaceDirFromSessionKey(selected) : undefined
   /** 会话名：摘要标题；还没有时临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
-  const sessionName = (t: ChatTab) => titles[appChatSessionId(t.sessionKey)] ?? (isTempTab(t) ? "新会话" : dirName(workspaceDirFromSessionKey(t.sessionKey))) ?? t.label
+  const sessionName = (t: ChatTab) => appChatSessionName(t.sessionKey, titles, t.label) ?? t.label
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
   /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
   const sortAt = (t: ChatTab) => activeAt(t) ?? tempWorkspaceCreatedAt(workspaceDirFromSessionKey(t.sessionKey)) ?? 0

@@ -31,7 +31,7 @@ import { ALL_CHANNELS } from "../components/sessions/sessions-view"
 import { useManagedSessions } from "../hooks/useManagedSessions"
 import { disambiguatePathLabel } from "../../shared/path-label"
 import { cardLabelFromSessionTab } from "../../shared/log-format"
-import { buildDashboardTree, GROUP_IDS, type DashboardChannelNode } from "../../shared/dashboard-tree"
+import { buildDashboardTree, GROUP_IDS, withAppChatNames, type DashboardChannelNode } from "../../shared/dashboard-tree"
 import type { ModelChoice, ModelPickerSource } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { makeChatKey } from "../../shared/channel-types"
@@ -57,7 +57,14 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
   const [stopping, setStopping] = useState(false)
   const [actionError, setActionError] = useState("")
   const [queueMessages, setQueueMessages] = useState<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>([])
-  const [treeChannels, setTreeChannels] = useState<DashboardChannelNode[]>([])
+  const [rawTreeChannels, setTreeChannels] = useState<DashboardChannelNode[]>([])
+  /** 应用内对话通道的 id，和会话摘要标题（键为 appChatSessionId）：这些通道的会话在清单里叫会话名，和对话页一致 */
+  const [appChannelIds, setAppChannelIds] = useState<ReadonlySet<string>>(() => new Set())
+  const [appChatTitles, setAppChatTitles] = useState<Record<string, string>>({})
+  const treeChannels = useMemo(
+    () => withAppChatNames(rawTreeChannels, appChannelIds, appChatTitles),
+    [rawTreeChannels, appChannelIds, appChatTitles],
+  )
   /** 四张卡片就是四个页签：选中哪张，下面的功能区就显示它的内容。启动时看日志，不记住上次选的 */
   const [activeTab, setActiveTab] = useState<DashboardTab>(DEFAULT_DASHBOARD_TAB)
   /** 「消息通道」功能区看哪个通道：ALL_CHANNELS = 全部（选中的通道没了会自动回到全部） */
@@ -115,6 +122,21 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     const t = setInterval(refreshProjectNames, 30_000)
     return () => clearInterval(t)
   }, [refreshProjectNames, active])
+
+  // 应用内会话的摘要标题：生成完成 / 改名 / 清空 / 删除都会整体推送；先订阅再拉取，拉取晚到不能盖掉已推送的新值
+  useEffect(() => {
+    let pushed = false
+    let disposed = false
+    const unsub = window.electronAPI.onAppChatTitles((t) => {
+      pushed = true
+      setAppChatTitles(t)
+    })
+    void window.electronAPI.appChatTitles().then((t) => { if (!pushed && !disposed) setAppChatTitles(t) }).catch(() => { /* 取不到就先显示目录名 */ })
+    return () => {
+      disposed = true
+      unsub()
+    }
+  }, [])
 
   const refreshTaskNames = useCallback(() => {
     window.electronAPI.getScheduledTasks().then((tasks) => {
@@ -210,6 +232,9 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
       setAgentResources(cfg.agentResources ?? [])
       const connected = new Map((st.channels ?? []).map((c) => [c.id, !!c.connected]))
       const cfgChannels = (cfg.channels ?? []).filter((c) => c.enabled !== false)
+      const appIds = cfgChannels.filter((c) => c.type === "app").map((c) => c.id)
+      // 5 秒一轮：内容没变就沿用旧集合，不白白触发重算
+      setAppChannelIds((prev) => (prev.size === appIds.length && appIds.every((id) => prev.has(id)) ? prev : new Set(appIds)))
 
       const dashChannels = (dash.ok && dash.channels.length > 0)
         ? dash.channels
