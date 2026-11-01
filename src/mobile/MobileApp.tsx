@@ -18,7 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { appChatSessionId, chatStreamItems, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { appChatSessionId, appChatSessionName, chatStreamItems, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
@@ -479,11 +479,8 @@ export default function MobileApp() {
   )
 
   const sessionName = useCallback(
-    (t: MobileChatTab): string => {
-      const custom = titles[appChatSessionId(t.sessionKey)]
-      if (custom) return custom
-      return isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey)) ? "新会话" : t.label
-    },
+    // 和桌面端对话页、工作台共用同一条命名规则：标题 > 临时会话叫「新会话」 > 目录名（不带「（主）」和分支）
+    (t: MobileChatTab): string => appChatSessionName(t.sessionKey, titles, t.label) ?? t.label,
     [titles],
   )
 
