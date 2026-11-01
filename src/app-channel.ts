@@ -377,6 +377,9 @@ export class AppChat {
       const targetId = entry.liveCardId ?? opts.cardId;
       const live = targetId ? this.findAssistant(entry, targetId) : undefined;
       if (!live) return { cardId: targetId, hasReply: hasReplyText(segments) };
+      // 收口只认第一次：Agent 重新拉起（Resume）时会按记着的卡 id 再补发一次 finish，
+      // 再盖一次 finishedAt，「耗时」就成了从这条回复到下一条消息的整段时间（几小时）
+      if (live.finished) return { cardId: live.id, hasReply: hasReplyText(live.segments) };
       const next: AppChatAssistantItem = {
         ...live,
         segments: segments.length ? segments : live.segments,
