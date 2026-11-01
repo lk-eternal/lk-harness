@@ -4,14 +4,14 @@ import ModelPicker from "./chat/ModelPicker"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
-import { applyTaskChannel, applyTaskModel, resolveTaskResourceId } from "./task-model"
+import { applyTaskChannel, applyTaskModel, resolveTaskResourceId, taskResourceMissing } from "./task-model"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
 interface TaskItem {
   id: string; name: string; cron: string; content: string; enabled: boolean; independent?: boolean
-  channelId?: string; model?: string; modelParams?: string; notifyChatId?: string
+  channelId?: string; resourceId?: string; model?: string; modelParams?: string; notifyChatId?: string
 }
 
 function emptyTask(channels: ChannelConfig[]): TaskItem {
@@ -77,7 +77,9 @@ export default function TaskPanel() {
     openDraft(t, false)
   }
 
-  const draftResourceId = draft ? resolveTaskResourceId(taskChannels, agentResources, draft.channelId) : undefined
+  /** 任务所属通道的供应商：选择器里「跟随通道」那一项列的是它家的模型 */
+  const draftChannelResourceId = draft ? resolveTaskResourceId(taskChannels, agentResources, draft.channelId) : undefined
+  const draftResourceMissing = draft ? taskResourceMissing(draft, agentResources) : false
 
   useEffect(() => {
     if (!draft) {
@@ -240,22 +242,24 @@ export default function TaskPanel() {
                       variant="field"
                       placement="down"
                       portal
-                      lockProvider
                       resources={agentResources}
-                      currentResourceId={draftResourceId}
+                      currentResourceId={draft.resourceId ?? ""}
                       currentModel={draft.model ?? ""}
                       currentParams={draft.modelParams}
-                      followResourceId={draftResourceId}
+                      followProvider="跟随通道"
+                      followResourceId={draftChannelResourceId}
                       followModel="跟随通道主模型"
                       allowManual
-                      disabled={!draftResourceId}
-                      placeholder={draftResourceId ? "跟随通道主模型" : "该通道还没有配置供应商"}
+                      placeholder="选择供应商 / 模型"
                       quickModels={quickModels}
                       favorites={favorites}
                       onToggleFavorite={toggleFavorite}
                       onOpen={() => void refreshModels()}
                       onSelect={(c) => setDraft(applyTaskModel(draft, c))}
                     />
+                    {draftResourceMissing && (
+                      <p className="mt-1 text-xs text-warning">任务选的供应商已不存在，运行会失败，请重新选择。</p>
+                    )}
                   </div>
                 </div>
                 <div>

@@ -19,6 +19,8 @@ export interface ScheduledTask {
   /** 任务模型，空 = 跟随通道主模型 */
   model?: string;
   modelParams?: string;
+  /** 任务自己选的供应商（Agent 资源 id），空 = 跟随通道的供应商。只在同时配了 model 时生效：供应商换了，模型必须是它家的 */
+  resourceId?: string;
   /** MCP 投递目标会话 ID（裸 oc_xxx 或完整 chatKey）；与 channelId 拼 outbound key，空则主用户私聊 */
   notifyChatId?: string;
 }
@@ -94,6 +96,38 @@ export function resolveTaskChannelId(
   channels: readonly { id: string; enabled?: boolean }[],
 ): string | undefined {
   return task?.channelId || channels.find((c) => c.enabled)?.id;
+}
+
+/**
+ * 任务入队时登记在它会话里的模型覆盖（会话换模、界面读取都看这份记录）。
+ * 任务没配模型就不登记；供应商：任务自己选的 > 所属通道的。
+ * cron 触发（daemon）和手动触发（经 /enqueue）共用，两条路径登记的才一样。
+ */
+export function taskSessionOverride(
+  input: { model?: string; modelParams?: string; resourceId?: string },
+  channelResourceId?: string,
+): { model: string; modelParams: string; resourceId?: string } | undefined {
+  const model = input.model?.trim();
+  if (!model) return undefined;
+  const resourceId = input.resourceId?.trim() || channelResourceId?.trim();
+  return { model, modelParams: input.modelParams ?? "", ...(resourceId ? { resourceId } : {}) };
+}
+
+const modelSetting = (t: Pick<ScheduledTask, "channelId" | "model" | "modelParams" | "resourceId">): string =>
+  [t.channelId, t.model, t.modelParams, t.resourceId].map((v) => v?.trim() ?? "").join("\u0001");
+
+/**
+ * 保存任务后，哪些任务的「跑在哪、用什么模型」改了：所属通道、供应商、模型、参数任一变化。
+ * 只看保存前后都存在的任务；新建和删除的不算。
+ * 这些任务在会话里登记过的旧模型覆盖要作废：daemon 只在任务有模型时才登记，
+ * 改回「跟随」或换了供应商后，旧覆盖不清就会盖过新设置。
+ */
+export function tasksWithChangedModelSetting(
+  before: readonly ScheduledTask[],
+  after: readonly ScheduledTask[],
+): string[] {
+  const old = new Map(before.map((t) => [t.id, modelSetting(t)]));
+  return after.filter((t) => old.has(t.id) && old.get(t.id) !== modelSetting(t)).map((t) => t.id);
 }
 
 /**

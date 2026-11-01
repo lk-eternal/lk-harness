@@ -215,6 +215,48 @@ describe("resolveLaunchModel：显式指定（定时任务 / 工作流节点）"
     const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m" }, resolveResource })
     expect(r).toMatchObject({ resourceId: "llm_other2", resourceSource: "session" })
   })
+
+  describe("显式指定供应商（定时任务自己选的）", () => {
+    it("优先于会话存的供应商和通道默认；供应商不是跟着通道的，来源标成「会话」", () => {
+      setSessionResourceOverride(SESSION, "llm_other2")
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m", resourceId: "llm_others" }, resolveResource })
+      expect(r).toMatchObject({
+        channelResourceId: "sdk_main",
+        resourceId: "llm_others",
+        resolvedResourceId: "llm_others",
+        resourceSource: "session",
+        model: "m",
+        modelSource: "explicit",
+      })
+    })
+
+    it("恰好就是通道的那一家：来源仍是跟着通道", () => {
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m", resourceId: "sdk_main" }, resolveResource })
+      expect(r).toMatchObject({ resourceId: "sdk_main", resourceSource: "channel" })
+    })
+
+    it("前后空白不影响", () => {
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m", resourceId: "  llm_others " }, resolveResource })
+      expect(r.resourceId).toBe("llm_others")
+    })
+
+    it("只有供应商、没有显式模型：供应商不生效（模型是跟着供应商走的，不能把通道的模型名交给别家）", () => {
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "   ", resourceId: "llm_others" }, resolveResource })
+      expect(r).toMatchObject({ resourceId: "sdk_main", model: "composer-2", modelSource: "channel" })
+    })
+
+    it("供应商只有空白：等于没指定，仍取会话存的 / 通道的", () => {
+      setSessionResourceOverride(SESSION, "llm_other2")
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m", resourceId: "   " }, resolveResource })
+      expect(r.resourceId).toBe("llm_other2")
+    })
+
+    it("供应商在配置里找不到：resourceId 保留原值，resolvedResourceId 回落默认资源，调用方据此报错", () => {
+      const r = resolveLaunchModel({ sessionKey: SESSION, channel, audience: "main", explicit: { model: "m", resourceId: "llm_gone" }, resolveResource })
+      expect(r.resourceId).toBe("llm_gone")
+      expect(r.resolvedResourceId).toBe("sdk_default")
+    })
+  })
 })
 
 describe("resolveLaunchModel：会话存储不可用", () => {

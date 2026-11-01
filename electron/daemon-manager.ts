@@ -16,6 +16,8 @@ import {
 } from "./config-store"
 import { parseChatKey, channelIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
+import type { ScheduledTask } from "../src/shared/scheduled-task"
+import { resetChangedTaskModelOverrides } from "../src/shared/task-model-reset.js"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
@@ -1405,7 +1407,7 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           if (!isAdmin) { await denyNonAdmin(); break }
           await handleFeishuTaskCommand(
             lock.port, claimed.messageId, rawCmd,
-            (task, content) => launchIndependentAgent(task.id, task.name, content, "task", undefined, task.channelId, task.model, task.modelParams),
+            (task, content) => launchIndependentAgent(task.id, task.name, content, "task", undefined, task.channelId, task.model, task.modelParams, task.resourceId),
             claimed.chatId,
             async (content, preferredChatId) => enqueueToMainSession(lock.port, content, preferredChatId ?? claimed.chatId),
             patchTarget,
@@ -2225,8 +2227,16 @@ export function initDaemonManager(): void {
   })
 
   ipcMain.handle("scheduled-tasks:get", () => readTasksFromFile())
-  ipcMain.handle("scheduled-tasks:save", (_, tasks) => {
+  ipcMain.handle("scheduled-tasks:save", (_, tasks: ScheduledTask[]) => {
+    const before = readTasksFromFile()
     writeTasksToFile(tasks)
+    // 改过通道 / 供应商 / 模型的任务，把会话里登记的旧覆盖作废，下次触发按新设置重新登记
+    try {
+      initSessionModelStore(app.getPath("userData"))
+      resetChangedTaskModelOverrides(before, tasks)
+    } catch (e) {
+      broadcastLog(`[定时任务] 作废旧模型覆盖失败: ${e instanceof Error ? e.message : e}`, "WARN")
+    }
     return { ok: true }
   })
   ipcMain.handle("scheduled-tasks:validate-cron", (_, expression: string) => {
@@ -2251,6 +2261,7 @@ export function initDaemonManager(): void {
         channelId: task.channelId,
         model: task.model,
         modelParams: task.modelParams,
+        resourceId: task.resourceId,
       })
     }
     const result = await enqueueToMainSession(lock.port, content, undefined, task.channelId)

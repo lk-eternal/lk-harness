@@ -403,6 +403,8 @@ interface LaunchAgentParams {
   /** 显式模型覆盖（任务模型 / 工作流节点模型） */
   modelOverride?: string
   modelParamsOverride?: string
+  /** 显式供应商（任务自己选的）；只在同时有 modelOverride 时生效，空 = 取会话覆盖 / 通道的 */
+  resourceIdOverride?: string
   workingDirectory?: string
   /** 调度时已知的队列 messageId（SDK bootstrap poll 预登记，防误换卡） */
   pendingMessageIds?: string[]
@@ -448,7 +450,9 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     sessionKey,
     channel,
     audience,
-    explicit: p.modelOverride?.trim() ? { model: p.modelOverride, modelParams: p.modelParamsOverride } : undefined,
+    explicit: p.modelOverride?.trim()
+      ? { model: p.modelOverride, modelParams: p.modelParamsOverride, resourceId: p.resourceIdOverride }
+      : undefined,
     resolveResource: getAgentResource,
   })
   const resourceId = effModel.resourceId
@@ -589,11 +593,11 @@ export async function launchSessionAgent(
 
 export async function launchIndependentAgent(
   taskId: string, _taskName: string, message: string, type: ChatType = "task",
-  _chatId?: string, channelId?: string, model?: string, modelParams?: string,
+  _chatId?: string, channelId?: string, model?: string, modelParams?: string, resourceId?: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const lock = cachedLock()
   if (!lock?.port) return { ok: false, error: "daemon 未就绪" }
-  const r = await enqueueToSession(lock.port, taskId, message, type, { channelId, chatId: _chatId, model, modelParams })
+  const r = await enqueueToSession(lock.port, taskId, message, type, { channelId, chatId: _chatId, model, modelParams, resourceId })
   if (!r.ok) return r
   await dispatchSessionAgents()
   return { ok: true }
@@ -1560,6 +1564,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           channelId,
           modelOverride: task?.model,
           modelParamsOverride: task?.modelParams,
+          resourceIdOverride: task?.resourceId,
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)

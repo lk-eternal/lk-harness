@@ -54,7 +54,7 @@ import {
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, taskCardFooter, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, taskCardFooter, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import { createTempChatSession } from "./shared/temp-chat-session.js";
 import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { resolveMcpSendSessionKey } from "./shared/mcp-outbound-session-key.js";
@@ -3842,6 +3842,7 @@ function startHttpServer(): Promise<number> {
           const channelId = typeof body.channelId === "string" ? body.channelId.trim() : "";
           const model = typeof body.model === "string" ? body.model.trim() : "";
           const modelParams = typeof body.modelParams === "string" ? body.modelParams : "";
+          const bodyResourceId = typeof body.resourceId === "string" ? body.resourceId.trim() : "";
           const internalMsgId = `internal_enqueue_${Date.now()}`;
           const inboundId = typeof body.messageId === "string" ? body.messageId.trim() : "";
           const effectiveId = inboundId || internalMsgId;
@@ -3855,14 +3856,11 @@ function startHttpServer(): Promise<number> {
             const target = rt ? channelDefaultChatId(rt) : null;
             const boundChat = chatId || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined);
             if (boundChat) sessionToChatMap.set(normalized, boundChat);
-            if (model) {
+            // 供应商：调用方显式给的（任务自己选的）> 通道的
+            const override = taskSessionOverride({ model, modelParams, resourceId: bodyResourceId }, rt?.cfg.agentResourceId);
+            if (override) {
               try {
-                const rid = rt?.cfg.agentResourceId?.trim()
-                setSessionOverride(normalized, {
-                  model,
-                  modelParams,
-                  ...(rid ? { resourceId: rid } : {}),
-                })
+                setSessionOverride(normalized, override)
               }
               catch (e: unknown) { log("WARN", `enqueue 模型 override 失败: ${e instanceof Error ? e.message : String(e)}`); }
             }
@@ -5507,14 +5505,10 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void
     rememberSessionKey(outboundChatKey);
     log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
     sessionToChatMap.set(task.id, outboundChatKey);
-    if (task.model?.trim()) {
+    const override = taskSessionOverride(task, rt?.cfg.agentResourceId);
+    if (override) {
       try {
-        const rid = rt?.cfg.agentResourceId?.trim()
-        setSessionOverride(task.id, {
-          model: task.model.trim(),
-          modelParams: task.modelParams ?? "",
-          ...(rid ? { resourceId: rid } : {}),
-        })
+        setSessionOverride(task.id, override);
       } catch (e: unknown) {
         log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
       }

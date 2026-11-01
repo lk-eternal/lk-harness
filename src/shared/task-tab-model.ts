@@ -15,7 +15,7 @@ export interface TabModel {
  */
 export function taskTabModel(input: {
   sessionKey: string
-  task: Pick<ScheduledTask, "channelId" | "model" | "modelParams">
+  task: Pick<ScheduledTask, "channelId" | "model" | "modelParams" | "resourceId">
   channels: readonly (ChannelModelFields & { id: string; enabled?: boolean })[]
   resolveResource: LaunchModelInput["resolveResource"]
 }): TabModel {

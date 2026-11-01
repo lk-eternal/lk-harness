@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
 import { resolveTaskLaunchModel, type ChannelModelFields } from "../src/shared/launch-model"
-import { resolveTaskChannelId, taskCardFooter, type ScheduledTask } from "../src/shared/scheduled-task"
+import { resolveTaskChannelId, taskCardFooter, taskSessionOverride, tasksWithChangedModelSetting, type ScheduledTask } from "../src/shared/scheduled-task"
 import { initSessionOverridesStore, resetSessionOverridesStoreForTests } from "../src/shared/session-overrides-store"
 import { setSessionOverride } from "../src/shared/session-model-store"
 import { taskTabModel } from "../src/shared/task-tab-model"
@@ -120,6 +120,86 @@ describe("resolveTaskLaunchModel", () => {
     expect(r.model).toBe("")
   })
 
+  describe("任务自己选了供应商", () => {
+    const own = { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" }
+
+    it("用任务选的供应商和模型，不是通道的", () => {
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task(own), channel, resolveResource })
+      expect(r).toMatchObject({ model: "gemini-flash", resolvedResourceId: "llm_others", modelSource: "explicit", resourceSource: "session" })
+    })
+
+    it("盖过会话里旧登记的供应商（改了供应商后，旧登记不能让它继续用老的）", () => {
+      setSessionOverride(TASK_ID, { model: "stale", modelParams: "", resourceId: "sdk_main" })
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task(own), channel, resolveResource })
+      expect(r).toMatchObject({ model: "gemini-flash", resolvedResourceId: "llm_others" })
+    })
+
+    it("没配模型时供应商不生效，整个跟随通道（模型名是跟着供应商走的）", () => {
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task({ ...own, model: undefined }), channel, resolveResource })
+      expect(r).toMatchObject({ model: "claude-sonnet", resolvedResourceId: "sdk_main", modelSource: "channel" })
+    })
+
+    it("选的供应商已不在配置里：resolvedResourceId 回落默认资源，拉起时据此报错，不会悄悄换一家跑", () => {
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task({ ...own, resourceId: "llm_gone" }), channel, resolveResource })
+      expect(r.resourceId).toBe("llm_gone")
+      expect(r.resolvedResourceId).toBe("sdk_default")
+    })
+  })
+})
+
+describe("taskSessionOverride：入队时登记在任务会话里的模型覆盖", () => {
+  it("没配模型就不登记（空串、空白、缺省都算）", () => {
+    expect(taskSessionOverride({}, "sdk_main")).toBeUndefined()
+    expect(taskSessionOverride({ model: "" }, "sdk_main")).toBeUndefined()
+    expect(taskSessionOverride({ model: "   ", resourceId: "llm_others" }, "sdk_main")).toBeUndefined()
+  })
+
+  it("没选供应商：登记通道的供应商（和原来一致）", () => {
+    expect(taskSessionOverride({ model: " m ", modelParams: "[1]" }, " sdk_main ")).toEqual({ model: "m", modelParams: "[1]", resourceId: "sdk_main" })
+  })
+
+  it("选了供应商：登记任务自己的，不是通道的", () => {
+    expect(taskSessionOverride({ model: "m", resourceId: " llm_others " }, "sdk_main")).toEqual({ model: "m", modelParams: "", resourceId: "llm_others" })
+  })
+
+  it("通道也没配供应商：不带 resourceId", () => {
+    expect(taskSessionOverride({ model: "m" }, undefined)).toEqual({ model: "m", modelParams: "" })
+    expect(taskSessionOverride({ model: "m", resourceId: "  " }, "  ")).toEqual({ model: "m", modelParams: "" })
+  })
+})
+
+describe("tasksWithChangedModelSetting：保存后哪些任务的旧模型覆盖要作废", () => {
+  const base = task({ model: "m", modelParams: "[1]", resourceId: "llm_others" })
+  const other = task({ id: "other-task", model: "x" })
+
+  it("什么都没改：没有", () => {
+    expect(tasksWithChangedModelSetting([base, other], [{ ...base }, { ...other }])).toEqual([])
+  })
+
+  it("改了模型 / 参数 / 供应商 / 通道任一项：有这个任务，没改的不在里面", () => {
+    for (const patch of [{ model: "m2" }, { modelParams: "[2]" }, { resourceId: "sdk_main" }, { channelId: "ch_c" }]) {
+      expect(tasksWithChangedModelSetting([base, other], [{ ...base, ...patch }, other])).toEqual([base.id])
+    }
+  })
+
+  it("改回「跟随」（模型和供应商都清掉）也算改了：正是旧覆盖会盖过新设置的情形", () => {
+    const cleared = { ...base, model: undefined, modelParams: undefined, resourceId: undefined }
+    expect(tasksWithChangedModelSetting([base], [cleared])).toEqual([base.id])
+  })
+
+  it("只有空白的差别不算改", () => {
+    expect(tasksWithChangedModelSetting([base], [{ ...base, model: " m ", resourceId: "llm_others " }])).toEqual([])
+    expect(tasksWithChangedModelSetting([task()], [task({ model: "  ", resourceId: "" })])).toEqual([])
+  })
+
+  it("名称、内容、cron 等无关字段变了不算", () => {
+    expect(tasksWithChangedModelSetting([base], [{ ...base, name: "改名", cron: "0 9 * * *", content: "y", enabled: false }])).toEqual([])
+  })
+
+  it("新建和删除的任务不算", () => {
+    expect(tasksWithChangedModelSetting([base], [base, other])).toEqual([])
+    expect(tasksWithChangedModelSetting([base, other], [base])).toEqual([])
+  })
 })
 
 describe("taskTabModel：工作台上定时任务那一行显示的模型", () => {
@@ -154,6 +234,22 @@ describe("taskTabModel：工作台上定时任务那一行显示的模型", () =
       resolveResource,
     })
     expect(r).toEqual({ model: "composer-2.5", modelParams: '[{"id":"fast","value":"true"}]', resourceId: "sdk_main" })
+  })
+
+  it("任务自己选了供应商：显示任务的供应商（工作台那一行才不会把别家的模型名挂在通道的供应商下）", () => {
+    const r = taskTabModel({
+      sessionKey: TASK_ID,
+      task: task({ channelId: "ch_b", model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" }),
+      channels,
+      resolveResource,
+    })
+    expect(r).toEqual({ model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
+  })
+
+  it("任务选了供应商但没配模型：供应商不生效，显示通道的", () => {
+    const r = taskTabModel({ sessionKey: TASK_ID, task: task({ channelId: "ch_b", resourceId: "llm_others" }), channels, resolveResource })
+    expect(r.resourceId).toBe("sdk_main")
+    expect(r.model).toBe("claude-sonnet")
   })
 
   it("任务没绑通道：按第一个启用的通道（和拉起任务时一致），跳过停用的", () => {

@@ -123,7 +123,7 @@ export async function enqueueToSession(
   sessionKey: string,
   content: string,
   chatType = "project",
-  opts?: { channelId?: string; chatId?: string; model?: string; modelParams?: string; messageId?: string; senderOpenId?: string; senderType?: string },
+  opts?: { channelId?: string; chatId?: string; model?: string; modelParams?: string; resourceId?: string; messageId?: string; senderOpenId?: string; senderType?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await httpPost(`http://127.0.0.1:${port}/enqueue`, {
@@ -132,6 +132,7 @@ export async function enqueueToSession(
       chatId: opts?.chatId,
       model: opts?.model,
       modelParams: opts?.modelParams,
+      resourceId: opts?.resourceId,
       messageId: opts?.messageId,
       senderOpenId: opts?.senderOpenId,
       senderType: opts?.senderType,

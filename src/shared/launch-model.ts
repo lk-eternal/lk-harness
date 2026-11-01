@@ -58,8 +58,11 @@ export interface LaunchModelInput {
   channel: ChannelModelFields | undefined
   /** 会话人群：main 用主模型，others 用「其他人」那一套（留空跟随主） */
   audience: ChannelAudience
-  /** 显式指定（定时任务 / 工作流节点），优先级最高；model 为空白视为没指定 */
-  explicit?: { model: string; modelParams?: string }
+  /**
+   * 显式指定（定时任务 / 工作流节点），优先级最高；model 为空白视为没指定。
+   * resourceId 是显式指定的供应商，只在同时有模型时生效（模型是跟着供应商走的，只给供应商不给模型会把通道的模型名交给别家）
+   */
+  explicit?: { model: string; modelParams?: string; resourceId?: string }
   /**
    * 把供应商 id 解析成实际生效的 Agent 资源。找不到、或没配置时也要返回一个带 id 的对象
    * （主进程传 getAgentResource：没配置时回落到默认资源 / 「unset」）。放进参数是因为资源列表在主进程的配置里
@@ -96,7 +99,7 @@ function orElse<T>(read: () => T, fallback: T): T {
  * 页面上显示的才会和真实拉起的一致。
  *
  * 规则（照搬原来 launchAgent 里内联的写法）：
- * - 供应商：会话级覆盖（会话自己存的，没有再看它所属聊天存的）> 通道按人群取的默认；
+ * - 供应商：显式指定的（任务自己选的，要同时有显式模型）> 会话级覆盖（会话自己存的，没有再看它所属聊天存的）> 通道按人群取的默认；
  * - 模型：显式指定 > 会话存的模型 > 通道默认模型（others 留空跟随主）；
  * - 会话存的模型必须和最终供应商匹配才生效：没有 resourceId 的老数据、或属于别的供应商的，一律不生效，
  *   免得把大模型供应商的模型名交给 Cursor SDK。
@@ -106,12 +109,15 @@ function orElse<T>(read: () => T, fallback: T): T {
 export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
   const { sessionKey, channel, audience, explicit, resolveResource } = input
 
+  const explicitModel = explicit?.model?.trim()
+  const explicitResourceId = explicitModel ? explicit?.resourceId?.trim() : undefined
+
   const channelResourceId = resolveChannelResourceId(channel, audience)
-  const resourceId = orElse(() => resolveResourceForSession(sessionKey, channelResourceId), undefined) ?? channelResourceId
+  const resourceId = explicitResourceId
+    || (orElse(() => resolveResourceForSession(sessionKey, channelResourceId), undefined) ?? channelResourceId)
   const resourceSource: LaunchModel["resourceSource"] = resourceId !== channelResourceId ? "session" : "channel"
   const resolvedResourceId = resolveResource(resourceId).id
 
-  const explicitModel = explicit?.model?.trim()
   if (explicitModel) {
     return {
       channelResourceId,
@@ -144,6 +150,7 @@ export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
 /**
  * 定时任务下次拉起时用的供应商和模型。任务是主用户自己的系统会话，按主用户那一套取默认；
  * 任务自己配了模型就是显式指定（优先级最高），没配（空白）就跟随通道主模型。
+ * 任务自己选了供应商（resourceId）时用它，没选跟随通道；供应商只在同时配了模型时生效。
  *
  * 拉起任务（launchAgent）走的是同一个 resolveLaunchModel，这里只是把「任务 → 显式指定 + 主用户人群」这一层固定下来，
  * 界面上显示的任务模型和真实拉起的才对得上。
@@ -151,7 +158,7 @@ export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
  */
 export function resolveTaskLaunchModel(input: {
   sessionKey: string
-  task: { model?: string; modelParams?: string }
+  task: { model?: string; modelParams?: string; resourceId?: string }
   channel: ChannelModelFields | undefined
   resolveResource: LaunchModelInput["resolveResource"]
 }): LaunchModel {
@@ -160,7 +167,7 @@ export function resolveTaskLaunchModel(input: {
     sessionKey: input.sessionKey,
     channel: input.channel,
     audience: "main",
-    explicit: model ? { model, modelParams: input.task.modelParams } : undefined,
+    explicit: model ? { model, modelParams: input.task.modelParams, resourceId: input.task.resourceId } : undefined,
     resolveResource: input.resolveResource,
   })
 }
