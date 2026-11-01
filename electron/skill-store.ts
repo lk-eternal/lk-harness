@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import { isPathInside } from "../src/shared/path-inside.js"
 
 export interface SkillRootInfo {
   id: string
@@ -116,7 +117,7 @@ export function resolveSkillDir(rootId: string, skillPath: string): string | und
   const rootAbs = absRoot(rootId)
   if (!rootAbs) return undefined
   const dir = path.resolve(rootAbs, skillPath)
-  if (!dir.startsWith(path.resolve(rootAbs))) return undefined
+  if (!isPathInside(rootAbs, dir)) return undefined
   return dir
 }
 
@@ -128,6 +129,6 @@ export function resolveSkillFile(rootId: string, skillPath: string, relativePath
   const skillDir = resolveSkillDir(rootId, skillPath)
   if (!skillDir) return undefined
   const filePath = path.resolve(skillDir, relativePath)
-  if (!filePath.startsWith(path.resolve(skillDir))) return undefined
+  if (!isPathInside(skillDir, filePath)) return undefined
   return filePath
 }

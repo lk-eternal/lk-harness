@@ -332,19 +332,15 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle("skills:create-dir", (_, rootId: string, skillPath: string, relativePath: string) => {
-    const skillDir = resolveSkillDir(String(rootId), skillPath)
-    if (!skillDir) return { ok: false, error: "路径无效" }
-    const dirPath = path.resolve(skillDir, relativePath)
-    if (!dirPath.startsWith(path.resolve(skillDir))) return { ok: false, error: "路径无效" }
+    const dirPath = resolveSkillFile(String(rootId), skillPath, relativePath)
+    if (!dirPath) return { ok: false, error: "路径无效" }
     if (!fs.existsSync(dirPath)) fs.mkdirSync(dirPath, { recursive: true })
     return { ok: true }
   })
 
   ipcMain.handle("skills:delete-file", (_, rootId: string, skillPath: string, relativePath: string) => {
-    const skillDir = resolveSkillDir(String(rootId), skillPath)
-    if (!skillDir) return { ok: false, error: "路径无效" }
-    const filePath = path.resolve(skillDir, relativePath)
-    if (!filePath.startsWith(path.resolve(skillDir))) return { ok: false, error: "路径无效" }
+    const filePath = resolveSkillFile(String(rootId), skillPath, relativePath)
+    if (!filePath) return { ok: false, error: "路径无效" }
     if (!fs.existsSync(filePath)) return { ok: false, error: "文件不存在" }
     const stat = fs.statSync(filePath)
     if (stat.isDirectory()) fs.rmSync(filePath, { recursive: true, force: true })
@@ -364,8 +360,8 @@ function registerIpcHandlers(): void {
     const rootAbs = resolveRootAbs(String(rootId))
     const oldDir = resolveSkillDir(String(rootId), oldPath)
     if (!rootAbs || !oldDir || !fs.existsSync(oldDir)) return { ok: false, error: "原目录不存在" }
-    const newDir = path.resolve(rootAbs, newPath.replace(/\//g, path.sep))
-    if (!newDir.startsWith(path.resolve(rootAbs))) return { ok: false, error: "路径无效" }
+    const newDir = resolveSkillDir(String(rootId), newPath.replace(/\//g, path.sep))
+    if (!newDir) return { ok: false, error: "路径无效" }
     if (fs.existsSync(newDir)) return { ok: false, error: "目标目录已存在" }
     fs.renameSync(oldDir, newDir)
     return { ok: true }

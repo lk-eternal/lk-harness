@@ -1,5 +1,4 @@
 import { createHmac, randomBytes } from "node:crypto"
-import * as path from "node:path"
 import { challengeMessage } from "./mobile-challenge.js"
 
 /** 电脑端对手机挑战随机数的应答（见 mobile-challenge.ts）；手机端用同样的算法验算 */
@@ -7,12 +6,8 @@ export function computeChallengeProof(token: string, nonce: string): string {
   return createHmac("sha256", token).update(challengeMessage(nonce)).digest("hex")
 }
 
-/** target 是否位于 root 目录内（含 root 自身）。按路径边界比较，避免 `/a/mobile` 误放行 `/a/mobile-evil` */
-export function isPathInside(root: string, target: string): boolean {
-  const rel = path.relative(path.resolve(root), path.resolve(target))
-  if (rel === "") return true
-  return rel !== ".." && !rel.startsWith(".." + path.sep) && !path.isAbsolute(rel)
-}
+// 路径包含判断挪到了 path-inside.ts（Skill 目录校验也要用），这里转出，原有的引用方不用改
+export { isPathInside } from "./path-inside.js"
 
 export interface FileTicketStore {
   /** 为已通过鉴权的文件路径签发下载票据 */
