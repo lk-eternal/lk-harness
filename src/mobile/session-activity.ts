@@ -32,7 +32,18 @@ export function isActivityBusy(activity: SessionActivity | undefined): boolean {
   return !!activity && (activity.liveCardId !== undefined || activity.awaiting)
 }
 
-/** 由一段历史消息推出会话当前的回复进度 */
+/**
+ * 由一段历史消息推出会话当前的回复进度。
+ *
+ * 历史里每条记录只剩最终状态：收口的回合卡前面没有事件流里的「未收口」那一帧（那一帧才会清掉「等待回应」）。
+ * 所以这里已收口的回合卡本身就算对前面用户消息的回应；照搬事件流的规则会让「等待回应」一直挂着，
+ * 回复完了还显示「Agent 正在思考」、发送键变成停止键。
+ * 事件流（applyActivityItem）不能这么处理：Resume 时会重新收口旧卡，那不是对新消息的回应。
+ */
 export function activityFromItems(items: AppChatItem[]): SessionActivity {
-  return items.reduce<SessionActivity | undefined>(applyActivityItem, undefined) ?? { awaiting: false }
+  const folded = items.reduce<SessionActivity | undefined>((cur, item) => {
+    const next = applyActivityItem(cur, item)
+    return item.kind === "assistant" && item.finished && next.awaiting ? { ...next, awaiting: false } : next
+  }, undefined)
+  return folded ?? { awaiting: false }
 }

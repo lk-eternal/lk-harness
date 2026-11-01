@@ -449,8 +449,10 @@ export default function MobileApp() {
         setActionError(r.error ?? "读取历史消息失败")
         return
       }
-      setItems(upsertItems(r.items ?? [], [...live.values()]))
-      setActivity((prev) => ({ ...prev, [id]: activityFromItems(r.items ?? []) }))
+      // 回复进度也要用并入实时流之后的列表算：拉取期间先到的收口事件，不能被更早生成的旧快照盖回「还在回复」
+      const merged = upsertItems(r.items ?? [], [...live.values()])
+      setItems(merged)
+      setActivity((prev) => ({ ...prev, [id]: activityFromItems(merged) }))
     })
     return () => {
       cancelled = true
