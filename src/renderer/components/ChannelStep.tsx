@@ -4,7 +4,10 @@ import {
   ShieldCheck, UserCheck, ArrowRight, type LucideIcon,
 } from "lucide-react"
 import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
+import { holdBackModelEdits, type ChannelModelImpact } from "../../shared/channel-model-impact"
+import { saveChannelWithImpact, type ImpactChoice } from "../../shared/channel-save-flow"
 import { emptyChannel } from "../channel-defaults"
+import ChannelModelImpactDialog from "./ChannelModelImpactDialog"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -85,6 +88,10 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
   const [bindingId, setBindingId] = useState<string | null>(null)
   const [bindErr, setBindErr] = useState<{ id: string; message: string } | null>(null)
   const [committing, setCommitting] = useState(false)
+  /** 保存「其他人的默认模型要变了」的确认框；resolve 之前保存流程一直停在这里 */
+  const [impactAsk, setImpactAsk] = useState<{ channelName: string; impact: ChannelModelImpact; resolve: (c: ImpactChoice | null) => void } | null>(null)
+  /** 保存之后要告诉用户的话（取消了模型改动、或清除 / 停止的结果） */
+  const [notice, setNotice] = useState("")
   const wechatBusy = useRef(false)
 
   const byType = (t: ChannelType) => saved.find((c) => c.type === t)
@@ -127,9 +134,36 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
       enabled: true,
       agentResourceId: pickAgentResourceId(cfg.agentResources ?? [], agentResourceId),
     }
-    const next = existing ? channels.map((c) => (c.id === channel.id ? channel : c)) : [...channels, channel]
-    await window.electronAPI.saveConfig({ channels: next })
-    setSaved(next)
+    // 落库时重新读一遍：问用户期间配置可能被别处改过，不能拿开头那份旧快照覆盖回去
+    const write = async (toSave: ChannelConfig) => {
+      const latest = (await window.electronAPI.getConfig()).channels ?? []
+      const next = latest.some((c) => c.id === toSave.id)
+        ? latest.map((c) => (c.id === toSave.id ? toSave : c))
+        : [...latest, toSave]
+      await window.electronAPI.saveConfig({ channels: next })
+      setSaved(next)
+    }
+    // 新通道还没有别人的会话，直接存
+    if (!existing) {
+      await write(channel)
+      return
+    }
+    // 已有的通道：这一步会把它的供应商改成第 1 步选的。其他人留空跟随主用户时，他们的默认也跟着变，
+    // 要和设置页一样先说清楚影响哪些会话。取消 = 保留原来的模型设置，其余（刚扫出来的凭据等）照存，不能丢
+    const r = await saveChannelWithImpact(
+      channel.id,
+      channel,
+      {
+        preview: (id, draft) => window.electronAPI.previewChannelModelImpact(id, draft),
+        ask: (impact) => new Promise<ImpactChoice | null>((resolve) => setImpactAsk({ channelName: channel.name, impact, resolve })),
+        clear: (id) => window.electronAPI.clearOthersModelOverrides(id),
+        stop: (id) => window.electronAPI.stopOthersFollowingDefault(id),
+      },
+      () => write(channel),
+      () => write(holdBackModelEdits(channel, existing)),
+    )
+    if (r.cancelled) setNotice(`已保留「${channel.name}」原来的默认模型，这一步的其余设置照常保存了。`)
+    else if (r.lines.length > 0) setNotice(r.lines.join("\n"))
   }
 
   const connectFeishu = async (id: string, secret: string, quickCreated: boolean) => {
@@ -360,7 +394,21 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
         {noneSelected && (
           <p className="mt-2 text-xs text-fg-muted">没有选择任何通道也可以继续，之后在 设置 → 消息通道 里添加。</p>
         )}
+        {notice && <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-warning">{notice}</p>}
       </div>
+
+      {impactAsk && (
+        <ChannelModelImpactDialog
+          channelName={impactAsk.channelName}
+          impact={impactAsk.impact}
+          cancelLabel="保留原来的模型"
+          cancelHint="选「保留原来的模型」：这一步的其余设置照常保存，只是不改该通道的默认模型。"
+          onDone={(choice) => {
+            impactAsk.resolve(choice)
+            setImpactAsk(null)
+          }}
+        />
+      )}
     </>
   )
 }

@@ -6,12 +6,10 @@ import {
   stopOptionText,
   type ChannelModelImpact,
 } from "../../shared/channel-model-impact"
+import type { ImpactChoice } from "../../shared/channel-save-flow"
 import { ModalShell, modalBtnGhost, modalBtnPrimary } from "./ModalShell"
 
-export interface ImpactChoice {
-  clear: boolean
-  stop: boolean
-}
+export type { ImpactChoice }
 
 /**
  * 保存通道时「其他人的默认模型 / 供应商变了」的确认框：先说清楚影响到哪些会话，
@@ -22,11 +20,17 @@ export default function ChannelModelImpactDialog({
   channelName,
   impact,
   onDone,
+  cancelLabel = "取消",
+  cancelHint,
 }: {
   channelName: string
   impact: ChannelModelImpact
   /** null = 取消（不保存） */
   onDone: (choice: ImpactChoice | null) => void
+  /** 取消按钮的字样；引导向导里取消不是「不保存」，而是「保留原来的模型」 */
+  cancelLabel?: string
+  /** 取消按钮的补充说明，显示在选项下面 */
+  cancelHint?: string
 }) {
   const [clear, setClear] = useState(false)
   const [stop, setStop] = useState(false)
@@ -41,7 +45,7 @@ export default function ChannelModelImpactDialog({
       title={`「${channelName}」其他人的默认模型要变了`}
       footer={
         <div className="flex w-full justify-end gap-2">
-          <button type="button" className={modalBtnGhost} onClick={() => onDone(null)}>取消</button>
+          <button type="button" className={modalBtnGhost} onClick={() => onDone(null)}>{cancelLabel}</button>
           <button
             type="button"
             className={modalBtnPrimary}
@@ -81,6 +85,7 @@ export default function ChannelModelImpactDialog({
             )}
           </div>
         )}
+        {cancelHint && <p className="text-xs text-fg-muted">{cancelHint}</p>}
       </div>
     </ModalShell>
   )
