@@ -64,6 +64,7 @@ import {
 } from "./api"
 import { APP_VERSION } from "./app-version"
 import { useBackToClose } from "./back-stack"
+import { isTouchPrimary, shouldSendOnEnter } from "./enter-key"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
@@ -1025,7 +1026,8 @@ export default function MobileApp() {
             disabled={!selected || !route.connected}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              // 手机软键盘上回车是换行（发送走右边的按钮）；有实体键盘时回车发送、Shift+回车换行
+              if (shouldSendOnEnter({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing }, isTouchPrimary())) {
                 e.preventDefault()
                 if (!busy) void handleSend()
               }

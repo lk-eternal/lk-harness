@@ -35,6 +35,7 @@ import {
   type RouteStatus,
 } from "./api"
 import { useBackToClose } from "./back-stack"
+import { useSheetDrag } from "./useSheetDrag"
 import { QrScanner } from "./QrScanner"
 
 function fmtBytes(n: number): string {
@@ -259,9 +260,10 @@ export function SessionDrawer({
                               onDelete(t)
                             }}
                             title="删除会话"
-                            className="ml-1 shrink-0 rounded-lg p-2 text-fg-faint transition active:bg-raised active:text-danger"
+                            aria-label="删除会话"
+                            className="ml-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-fg-faint transition active:bg-raised active:text-danger"
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size={16} />
                           </button>
                         )}
                       </div>
@@ -378,6 +380,7 @@ export function ModelSheet({
   }, [models, search])
 
   useBackToClose(open, onClose)
+  const { panelRef, grip } = useSheetDrag(onClose)
   if (!open) return null
 
   return (
@@ -386,11 +389,11 @@ export function ModelSheet({
         onClick={onClose}
         className="fixed inset-0 bg-black/60 backdrop-blur-[2px]"
       />
-      <div className="relative z-10 flex max-h-[82vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
-        {/* 顶部抓手 */}
-        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-strong" />
+      <div ref={panelRef} className="relative z-10 flex max-h-[82vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
+        {/* 顶部抓手：按住往下拖可关闭 */}
+        {grip}
 
-        <div className="flex items-center justify-between px-4 pb-2 pt-2.5">
+        <div className="flex items-center justify-between px-4 pb-2 pt-1">
           <div className="flex items-center gap-2">
             <Cpu size={16} className="text-accent" />
             <span className="text-sm font-semibold text-fg">切换对话模型</span>
@@ -572,15 +575,16 @@ export function DirSheet({
   onSelect: (sessionKey: string) => void
 }) {
   useBackToClose(open, onClose)
+  const { panelRef, grip } = useSheetDrag(onClose)
   if (!open) return null
   const dirTabs = tabs.filter((t) => !isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey)))
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col justify-end">
       <div onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-[2px]" />
-      <div className="relative z-10 flex max-h-[70vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
-        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-strong" />
-        <div className="flex items-center justify-between px-4 pb-2.5 pt-2.5">
+      <div ref={panelRef} className="relative z-10 flex max-h-[70vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
+        {grip}
+        <div className="flex items-center justify-between px-4 pb-2.5 pt-1">
           <div className="flex items-center gap-2">
             <FolderOpen size={16} className="text-accent" />
             <span className="text-sm font-semibold text-fg">切换工作区目录会话</span>
@@ -669,6 +673,7 @@ export function PairSheet({
   }, [open, config])
 
   useBackToClose(open, onClose)
+  const { panelRef, grip } = useSheetDrag(onClose)
   if (!open) return null
 
   const applyParsed = (parsed: MobilePairConfig) => {
@@ -718,10 +723,10 @@ export function PairSheet({
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end">
       <div onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-[2px]" />
-      <div className="relative z-10 flex max-h-[88vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
-        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-strong" />
+      <div ref={panelRef} className="relative z-10 flex max-h-[88vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
+        {grip}
 
-        <div className="flex items-center justify-between px-4 pb-2 pt-2.5">
+        <div className="flex items-center justify-between px-4 pb-2 pt-1">
           <div className="flex items-center gap-2">
             <Monitor size={16} className="text-accent" />
             <span className="text-sm font-semibold text-fg">电脑配对与线路切换</span>
