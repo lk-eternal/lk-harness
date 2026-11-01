@@ -62,6 +62,8 @@ interface Props {
   /** 正在切换：按钮显示转圈并禁用 */
   switching?: boolean
   disabled?: boolean
+  /** 禁用时悬停显示的说明（为什么不能改、去哪里改）；没给就还是平时的提示 */
+  disabledReason?: string
   /** chip = 输入框旁的小按钮；field = 表单里整行的选择框；compact = 列表行里的紧凑小标签（只显示模型名） */
   variant?: "chip" | "field" | "compact"
   /** 面板相对按钮向上还是向下展开（放不下会自动翻面，仅 portal 模式） */
@@ -119,6 +121,7 @@ export default function ModelPicker({
   onOpen,
   switching = false,
   disabled = false,
+  disabledReason,
   variant = "chip",
   placement = "up",
   portal = false,
@@ -277,9 +280,12 @@ export default function ModelPicker({
   })
   /** 紧凑标签上不显示供应商，悬停时补在提示里 */
   const providerName = entries.find((e) => e.id === (currentResourceId ?? ""))?.name
-  const triggerTitle = variant === "compact"
-    ? (providerName && !text.empty ? `${providerName} / ${text.model}（点击切换）` : "切换本会话模型")
-    : "切换供应商 / 模型"
+  const currentName = providerName && !text.empty ? `${providerName} / ${text.model}` : ""
+  const triggerTitle = disabled && disabledReason
+    ? (currentName && variant === "compact" ? `${currentName}（${disabledReason}）` : disabledReason)
+    : variant === "compact"
+      ? (currentName ? `${currentName}（点击切换）` : "切换本会话模型")
+      : "切换供应商 / 模型"
 
   const renderRow = (row: PickerRow) => {
     const cur = shownIsCurrent && isCurrentRow(row, current)

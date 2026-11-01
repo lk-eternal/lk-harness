@@ -259,14 +259,26 @@ export interface RowCapabilities {
   restore: boolean
   reset: boolean
   remove: boolean
+  /**
+   * 能不能在这一行上换模型。定时任务不能：任务的供应商 / 模型归任务设置管，拉起时任务自己配的优先于会话里存的，
+   * 每次触发入队时 daemon 还会按任务重新登记一遍，在行上改了既不生效、下次触发还会被改回去。
+   */
+  model: boolean
 }
 
 /** 一行上有哪些操作：主用户的会话沿用工作台的（激活 / 停止 / 删除），别人的是会话清单的（停止 / 恢复默认 / 重置 / 删除） */
 export function rowCapabilities(item: SessionItem): RowCapabilities {
   if (item.owner === "mine") {
-    return { stop: item.running, activate: !item.running && !item.current, restore: false, reset: false, remove: !!item.node.removable }
+    return {
+      stop: item.running,
+      activate: !item.running && !item.current,
+      restore: false,
+      reset: false,
+      remove: !!item.node.removable,
+      model: item.type !== "task",
+    }
   }
-  return { stop: item.running, activate: false, restore: item.managed.canRestoreDefault, reset: true, remove: true }
+  return { stop: item.running, activate: false, restore: item.managed.canRestoreDefault, reset: true, remove: true, model: true }
 }
 
 /** 会话自己改过什么：给行上的小标签和悬停说明；没改过返回 undefined */
@@ -334,6 +346,9 @@ export function cleanupResultText(r: CleanupRunResult): string {
 }
 
 export const DAEMON_DOWN_HINT = "服务未运行，无法清理路由，请先启动服务"
+
+/** 定时任务那一行的模型是只读的：它归任务设置管，在行上改会被任务自己的模型盖过 */
+export const TASK_MODEL_HINT = "定时任务的模型在「设置 → 定时任务」里改"
 
 /** 清理对话框里天数输入框的初始值（和主进程的默认天数保持一致，测试里有对照） */
 export const CLEANUP_DEFAULT_DAYS = 14

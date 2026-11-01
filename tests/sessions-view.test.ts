@@ -482,7 +482,7 @@ describe("rowCapabilities", () => {
   const othersItem = (over: Partial<ManagedSession> = {}): SessionItem => build({ managed: [session(over)] })[0]
 
   it("主用户的空闲会话：能激活；能不能删看会话树的 removable；没有重置 / 恢复默认", () => {
-    expect(rowCapabilities(mineItem({ removable: true }))).toEqual({ stop: false, activate: true, restore: false, reset: false, remove: true })
+    expect(rowCapabilities(mineItem({ removable: true }))).toEqual({ stop: false, activate: true, restore: false, reset: false, remove: true, model: true })
     expect(rowCapabilities(mineItem({ removable: false })).remove).toBe(false)
     expect(rowCapabilities(mineItem({})).remove).toBe(false)
   })
@@ -495,9 +495,31 @@ describe("rowCapabilities", () => {
   })
 
   it("别人的会话：能重置、能删除、没有「激活」；停止只在运行中；恢复默认只在只改了模型时", () => {
-    expect(rowCapabilities(othersItem())).toEqual({ stop: false, activate: false, restore: false, reset: true, remove: true })
+    expect(rowCapabilities(othersItem())).toEqual({ stop: false, activate: false, restore: false, reset: true, remove: true, model: true })
     expect(rowCapabilities(othersItem({ running: true })).stop).toBe(true)
     expect(rowCapabilities(othersItem({ canRestoreDefault: true })).restore).toBe(true)
+  })
+
+  // 任务的模型归任务设置管：拉起时任务自己配的优先于会话里存的，每次触发入队 daemon 还会按任务重新登记，
+  // 在行上换了既不生效、下次触发还会被改回去。只有任务行不能换，别的行都能
+  describe("换模型（model）", () => {
+    const taskItem = (over: Partial<DashboardSessionNode> = {}): SessionItem =>
+      build({ groups: { task: [node({ sessionKey: "task_abc", label: "⏰ 日报", group: "task", ...over })] } })[0]
+    const projectItem = (): SessionItem =>
+      build({ groups: { project: [node({ sessionKey: "ch_a|ou_me::project_abc", label: "📦 官网", group: "project" })] } })[0]
+
+    it("定时任务行不能换模型，运行中也一样", () => {
+      expect(taskItem().type).toBe("task")
+      expect(rowCapabilities(taskItem()).model).toBe(false)
+      expect(rowCapabilities(taskItem({ running: true })).model).toBe(false)
+    })
+
+    it("主用户的普通会话、项目、别人的私聊和群都能换模型", () => {
+      expect(rowCapabilities(mineItem({})).model).toBe(true)
+      expect(rowCapabilities(projectItem()).model).toBe(true)
+      expect(rowCapabilities(othersItem({ chatType: "p2p" })).model).toBe(true)
+      expect(rowCapabilities(othersItem({ chatType: "group" })).model).toBe(true)
+    })
   })
 })
 

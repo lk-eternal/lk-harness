@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
 import SessionList from "../src/renderer/components/sessions/SessionList"
 import SessionListRow, { type SessionListRowProps } from "../src/renderer/components/sessions/SessionListRow"
-import { SESSION_TYPE_LABEL, buildAllSessionItems, buildSessionItems, type SessionItem, type SessionType } from "../src/renderer/components/sessions/sessions-view"
+import { SESSION_TYPE_LABEL, TASK_MODEL_HINT, buildAllSessionItems, buildSessionItems, type SessionItem, type SessionType } from "../src/renderer/components/sessions/sessions-view"
 import type { ModelPickerSource } from "../src/renderer/components/chat/ModelPicker"
 import type { DashboardChannelNode, DashboardSessionNode, SessionGroupId } from "../src/shared/dashboard-tree"
 import type { ManagedSession } from "../src/shared/managed-sessions"
@@ -501,6 +501,46 @@ describe("行右边三栏固定宽度：每行操作个数不同，模型下拉�
     const h = rowHtml(othersItem())
     expect(h).toMatch(/class="ml-auto w-16 shrink-0 text-right[^"]*" title="最近一次对话"/)
     expect(h).toMatch(/data-session-col="model" class="flex w-40 shrink-0 justify-end"/)
+  })
+})
+
+// 任务的模型归任务设置管：拉起时任务自己配的优先于会话里存的，每次触发入队 daemon 还会按任务重新登记，
+// 在行上换了既不生效、下次触发还会被改回去。所以任务行的模型下拉只读，悬停说明去哪里改；别的行不受影响
+describe("定时任务行的模型是只读的", () => {
+  /** 模型列里那个下拉按钮的开标签（ModelPicker 的根 div 后面第一个 button） */
+  const modelButton = (item: SessionItem, over: Partial<SessionListRowProps> = {}) =>
+    /data-session-col="model"[^>]*>\s*<div[^>]*>\s*(<button[^>]*>)/.exec(rowHtml(item, over))?.[1] ?? ""
+  const taskItem = (over: Partial<DashboardSessionNode> = {}) =>
+    mineItem({ sessionKey: "temp_1", label: "⏰ 日报", model: "gpt-5", resourceId: "r1", ...over }, "task")
+
+  it("任务行：下拉按钮禁用，悬停说明模型在设置里改", () => {
+    const btn = modelButton(taskItem())
+    expect(btn).toContain("<button")
+    expect(btn).toMatch(/\sdisabled(=""|\s|>)/)
+    expect(btn).toContain(TASK_MODEL_HINT)
+    // 说明要真的告诉人去哪里改，而不是只说「不可用」
+    expect(TASK_MODEL_HINT).toMatch(/设置.*定时任务/)
+  })
+
+  it("任务行运行中、行上别的操作正在进行时也一样是禁用的", () => {
+    expect(modelButton(taskItem({ running: true }))).toMatch(/\sdisabled(=""|\s|>)/)
+    expect(modelButton(taskItem(), { blocked: false, switching: false, busy: true })).toMatch(/\sdisabled(=""|\s|>)/)
+  })
+
+  it("主用户的普通会话、项目、别人的私聊和群：下拉可用，没有这句说明", () => {
+    const others = [othersItem({ chatType: "p2p" }), othersItem({ chatType: "group", name: "客服群" })]
+    const mine = [mineItem(), mineItem({ sessionKey: "ch_a|ou_me::project_abc", label: "📦 官网" }, "project")]
+    for (const item of [...mine, ...others]) {
+      const btn = modelButton(item)
+      expect(btn, item.sessionKey).toContain("<button")
+      expect(btn, item.sessionKey).not.toMatch(/\sdisabled(=""|\s|>)/)
+      expect(btn, item.sessionKey).not.toContain(TASK_MODEL_HINT)
+    }
+  })
+
+  it("原来的禁用条件还在：别的行正在被操作时，别人的会话的下拉照样禁用", () => {
+    expect(modelButton(othersItem(), { blocked: true, busy: false })).toMatch(/\sdisabled(=""|\s|>)/)
+    expect(modelButton(othersItem(), { blocked: true, busy: true })).not.toMatch(/\sdisabled(=""|\s|>)/)
   })
 })
 

@@ -8,6 +8,7 @@ import {
   overrideBadge,
   queueCounts,
   rowCapabilities,
+  TASK_MODEL_HINT,
   type SessionItem,
 } from "./sessions-view"
 
@@ -148,7 +149,8 @@ export default function SessionListRow({
             onToggleFavorite={modelPicker.onToggleFavorite}
             onOpen={modelPicker.onOpen}
             switching={switching}
-            disabled={blocked && !busy}
+            disabled={!caps.model || (blocked && !busy)}
+            disabledReason={caps.model ? undefined : TASK_MODEL_HINT}
             onSelect={onSwitchModel}
           />
         </div>
