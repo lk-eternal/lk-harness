@@ -4,14 +4,6 @@ import {
   FolderOpen,
   CheckCircle2,
   Loader2,
-  RefreshCw,
-  ShieldCheck,
-  ShieldAlert,
-  LogIn,
-  Plus,
-  Pencil,
-  Trash2,
-  Terminal,
   X,
   Settings as SettingsIcon,
   Network,
@@ -21,13 +13,8 @@ import {
   Sparkles,
   Bot,
   Download,
-  ChevronDown,
-  ChevronRight,
   Wrench,
-  File,
-  Folder,
   FilePlus,
-  FolderPlus,
   BookOpen,
   ExternalLink,
   Copy,
@@ -39,7 +26,6 @@ import {
   Smartphone,
   Upload,
 } from "lucide-react"
-import SortableList from "../components/SortableList"
 import { FlowHubBrowser } from "../components/FlowHubBrowser"
 import ToolboxPanel from "../components/ToolboxPanel"
 import AgentPanel from "../components/AgentPanel"
@@ -63,10 +49,6 @@ interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () =>
 type Tab = "general" | "channel" | "mobile" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
 type CloseWindowAction = "ask" | "minimize" | "quit"
 
-interface McpEditForm {
-  json: string; jsonError?: string
-}
-interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 interface ProjectListItem {
   id: string
   name: string
@@ -86,11 +68,6 @@ interface ProjectListItem {
 }
 type ProjectsSubTab = "list" | "settings" | "groups"
 const PROJECT_STATUS_LABEL: Record<string, string> = { active: "进行中", paused: "已暂停", done: "已完成" }
-
-const MCP_TEMPLATE = JSON.stringify({
-  "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] },
-}, null, 2)
-const emptyMcpForm: McpEditForm = { json: MCP_TEMPLATE }
 
 const MASTER_DETAIL_TABS: Tab[] = ["agent", "channel", "rules", "skills", "mcp", "projects", "tasks"]
 
@@ -161,71 +138,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
 
   const [saved, setSaved] = useState(false)
 
-  const [mcpServers, setMcpServers] = useState<McpServerEntry[]>([])
-  const [mcpLoading, setMcpLoading] = useState<Record<string, boolean>>({})
-  const [mcpStatusLoading, setMcpStatusLoading] = useState(true)
-  const [mcpEditing, setMcpEditing] = useState<McpEditForm | null>(null)
-  const [mcpEditOriginalName, setMcpEditOriginalName] = useState<string | null>(null)
-  const [mcpExpanded, setMcpExpanded] = useState<string | null>(null)
-  const [mcpTools, setMcpTools] = useState<Record<string, { loading: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>>({})
-  const [mcpStatus, setMcpStatus] = useState<Record<string, string>>({})
-
-  const toggleMcpExpand = async (name: string) => {
-    if (mcpExpanded === name) { setMcpExpanded(null); return }
-    setMcpExpanded(name)
-    if (!mcpTools[name]) {
-      setMcpTools((p) => ({ ...p, [name]: { loading: true, tools: [] } }))
-      const res = await window.electronAPI.getMcpTools(name)
-      setMcpTools((p) => ({ ...p, [name]: { loading: false, tools: res.tools, error: res.ok ? undefined : res.error } }))
-    }
-  }
-
-  const [skillRoots, setSkillRoots] = useState<{ id: string; label: string; path: string; skillCount: number }[]>([])
-  const [skillRootId, setSkillRootId] = useState("cursor")
-  const [skills, setSkills] = useState<SkillFile[]>([])
-  const [skillTree, setSkillTree] = useState<SkillTreeNode[]>([])
-  const [skillExpanded, setSkillExpanded] = useState<Set<string>>(new Set())
-  const [skillEditing, setSkillEditing] = useState<SkillFile | null>(null)
-  const [skillEditOriginalName, setSkillEditOriginalName] = useState<string | null>(null)
-  const [skillFileEditing, setSkillFileEditing] = useState<{ rootId: string; skillPath: string; relativePath: string; content: string } | null>(null)
-  const [skillPrompt, setSkillPrompt] = useState<{ rootId: string; skillPath: string; parentPath: string; kind: "file" | "folder"; value: string } | null>(null)
-  const [skillDeleteConfirm, setSkillDeleteConfirm] = useState<{ rootId: string; skillPath: string; relativePath: string } | null>(null)
-
-
   const loaded = useRef(false)
   const projectsLoaded = useRef(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const projectsSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
-  const [mcpRefreshing, setMcpRefreshing] = useState(false)
-  const refreshMcpServers = useCallback(async (force = false) => {
-    setMcpRefreshing(true)
-    setMcpStatusLoading(true)
-    const [servers, enabled, status] = await Promise.all([
-      window.electronAPI.getMcpServers(),
-      window.electronAPI.getMcpEnabledMap(force),
-      window.electronAPI.getMcpStatusMap(force),
-    ])
-    setMcpServers(servers.map((s) => ({ ...s, enabled: enabled[s.name] ?? false })))
-    setMcpStatus(status)
-    setMcpStatusLoading(false)
-    setMcpRefreshing(false)
-    for (const s of servers) {
-      window.electronAPI.getMcpTools(s.name).then((res) => {
-        setMcpTools((p) => ({ ...p, [s.name]: { loading: false, tools: res.tools, error: res.ok ? undefined : res.error } }))
-      })
-    }
-  }, [])
-  const refreshSkillRoots = useCallback(() => {
-    window.electronAPI.getSkillRoots().then((roots) => {
-      setSkillRoots(roots)
-      if (!roots.some((r) => r.id === skillRootId) && roots[0]) setSkillRootId(roots[0].id)
-    })
-  }, [skillRootId])
-  const refreshSkills = useCallback(() => {
-    window.electronAPI.getSkills(skillRootId).then(setSkills)
-    window.electronAPI.getSkillTree(skillRootId).then(setSkillTree)
-  }, [skillRootId])
   const refreshProjectList = useCallback(() => {
     void window.electronAPI.listProjects().then(setProjectList).catch(() => setProjectList([]))
   }, [])
@@ -306,13 +223,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   }, [tab])
 
   useEffect(() => {
-    const unsub1 = window.electronAPI.onMcpLoginComplete(({ serverName, ok }) => {
-      if (ok) setMcpServers((prev) => prev.map((s) => s.name === serverName ? { ...s, authenticated: true } : s))
-    })
-    return () => { unsub1() }
-  }, [])
-
-  useEffect(() => {
     if (tab === "general" || tab === "setup") window.electronAPI.getConfig().then((config) => {
       setProxy(config.httpProxy || config.httpsProxy || "")
       setNoProxy(config.noProxy || "localhost,127.0.0.1,feishu.cn,weixin.qq.com")
@@ -322,8 +232,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       setFirstFeishuAppId(config.channels?.find((c) => c.type === "feishu")?.larkAppId ?? config.larkAppId ?? "")
       loaded.current = true
     })
-    if (tab === "mcp") refreshMcpServers()
-    if (tab === "skills") { refreshSkillRoots(); refreshSkills() }
     if (tab === "about") {
       window.electronAPI.getConfig().then((config) => {
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
@@ -350,12 +258,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
       }).catch(() => {})
     }
-  }, [tab, refreshMcpServers, refreshSkillRoots, refreshSkills, refreshProjectList])
-
-  useEffect(() => {
-    if (tab !== "skills") return
-    refreshSkills()
-  }, [skillRootId, tab, refreshSkills])
+  }, [tab, refreshProjectList])
 
   const autoSave = useCallback(() => {
     if (!loaded.current) return
@@ -479,143 +382,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     const next = !autoUpgradePrompt
     setAutoUpgradePrompt(next)
     await window.electronAPI.saveConfig({ autoUpgradePrompt: next })
-  }
-
-  // ── MCP ──
-  const handleMcpToggle = async (name: string, enabled: boolean) => {
-    setMcpServers((prev) => prev.map((s) => s.name === name ? { ...s, enabled } : s))
-    setMcpLoading((p) => ({ ...p, [name]: true }))
-    const res = await window.electronAPI.toggleMcp(name, enabled)
-    setMcpLoading((p) => ({ ...p, [name]: false }))
-    if (!res.ok) {
-      setMcpServers((prev) => prev.map((s) => s.name === name ? { ...s, enabled: !enabled } : s))
-      void showAlert("错误", res.output || `MCP ${enabled ? "启用" : "禁用"}失败`)
-    }
-  }
-  const stripAnsi = (s: string) => s.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\r/g, "").trim()
-  const [mcpLoginPending, setMcpLoginPending] = useState<Record<string, boolean>>({})
-  const handleMcpLogin = (name: string) => {
-    setMcpLoginPending((p) => ({ ...p, [name]: true }))
-    window.electronAPI.loginMcp(name).then((res) => {
-      setMcpLoginPending((p) => ({ ...p, [name]: false }))
-      if (res.ok) {
-        setMcpServers((prev) => prev.map((s) => s.name === name ? { ...s, authenticated: true } : s))
-      }
-    })
-  }
-  const openMcpAdd = () => { setMcpEditOriginalName(null); setMcpEditing({ ...emptyMcpForm }) }
-  const openMcpEdit = (s: McpServerEntry) => {
-    setMcpEditOriginalName(s.name)
-    const inner = s.rawConfig ?? {}
-    setMcpEditing({ json: JSON.stringify({ [s.name]: inner }, null, 2) })
-  }
-  const handleMcpDelete = async (name: string) => {
-    await window.electronAPI.deleteMcpServer(name)
-    setMcpServers((prev) => prev.filter((s) => s.name !== name))
-  }
-  const handleMcpSave = async () => {
-    if (!mcpEditing) return
-    const setErr = (msg: string) => setMcpEditing({ ...mcpEditing, jsonError: msg })
-    let raw = mcpEditing.json.trim()
-
-    // 兼容粘贴片段 `"name": { ... }` —— 补成 `{ "name": { ... } }`
-    if (raw.startsWith('"') && !raw.startsWith('{')) raw = `{${raw}}`
-
-    let parsed: Record<string, unknown>
-    try { parsed = JSON.parse(raw) }
-    catch { setErr("JSON 格式无效"); return }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      setErr("JSON 必须是一个对象"); return
-    }
-
-    // 兼容完整 mcp.json 格式 `{ "mcpServers": { ... } }`
-    if ("mcpServers" in parsed && typeof parsed.mcpServers === "object" && parsed.mcpServers !== null) {
-      parsed = parsed.mcpServers as Record<string, unknown>
-    }
-
-    const keys = Object.keys(parsed)
-    if (keys.length === 0) { setErr("JSON 中没有 MCP 服务器配置"); return }
-    if (keys.length !== 1) { setErr("一次只能保存一个 MCP 服务器"); return }
-
-    const name = keys[0]
-    const entry = parsed[name]
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
-      setErr(`"${name}" 的值必须是一个对象`); return
-    }
-    if (mcpEditOriginalName && mcpEditOriginalName !== name) await window.electronAPI.deleteMcpServer(mcpEditOriginalName)
-    await window.electronAPI.saveMcpServer(name, entry as Record<string, unknown>)
-    const isNew = !mcpEditOriginalName
-    if (isNew) window.electronAPI.toggleMcp(name, true)
-    const isUrl = "url" in (entry as Record<string, unknown>) && !("command" in (entry as Record<string, unknown>))
-    const saved: McpServerEntry = {
-      name, type: isUrl ? "url" : "command", source: "harness",
-      ...(isUrl ? { url: (entry as Record<string, string>).url } : { command: (entry as Record<string, string>).command, args: (entry as Record<string, string[]>).args }),
-      rawConfig: entry as Record<string, unknown>,
-      enabled: isNew ? true : undefined,
-    }
-    setMcpServers((prev) => {
-      const old = prev.find((s) => s.name === mcpEditOriginalName || s.name === name)
-      if (!isNew && old) saved.enabled = old.enabled
-      const filtered = prev.filter((s) => s.name !== name && s.name !== mcpEditOriginalName)
-      return [...filtered, saved]
-    })
-    setMcpEditing(null)
-  }
-
-  // ── Skills ──
-  const openSkillAdd = () => { setSkillEditOriginalName(null); setSkillEditing({ rootId: skillRootId, skillPath: "", name: "", content: "" }) }
-  const openSkillEdit = (s: SkillFile) => { setSkillEditOriginalName(s.skillPath); setSkillEditing({ ...s }) }
-  const handleSkillDelete = async (skillPath: string) => {
-    await window.electronAPI.deleteSkill(skillRootId, skillPath)
-    refreshSkillRoots(); refreshSkills()
-  }
-  const handleSkillSave = async () => {
-    if (!skillEditing || !skillEditing.name.trim()) return
-    const newPath = skillEditing.name.trim()
-    if (skillEditOriginalName && skillEditOriginalName !== newPath) {
-      await window.electronAPI.renameSkill(skillRootId, skillEditOriginalName, newPath)
-    }
-    await window.electronAPI.saveSkill(skillRootId, newPath, skillEditing.content)
-    setSkillEditing(null); refreshSkillRoots(); refreshSkills()
-  }
-  const toggleSkillExpand = (key: string) => {
-    setSkillExpanded((prev) => {
-      const next = new Set(prev)
-      next.has(key) ? next.delete(key) : next.add(key)
-      return next
-    })
-  }
-  const openSkillFile = async (skillPath: string, relativePath: string) => {
-    const res = await window.electronAPI.readSkillFile(skillRootId, skillPath, relativePath)
-    if (res.ok) setSkillFileEditing({ rootId: skillRootId, skillPath, relativePath, content: res.content ?? "" })
-  }
-  const handleSkillFileSave = async () => {
-    if (!skillFileEditing) return
-    await window.electronAPI.saveSkillFile(skillFileEditing.rootId, skillFileEditing.skillPath, skillFileEditing.relativePath, skillFileEditing.content)
-    setSkillFileEditing(null); refreshSkills()
-  }
-  const handleCreateFile = (skillPath: string, parentPath: string) => setSkillPrompt({ rootId: skillRootId, skillPath, parentPath, kind: "file", value: "" })
-  const handleCreateFolder = (skillPath: string, parentPath: string) => setSkillPrompt({ rootId: skillRootId, skillPath, parentPath, kind: "folder", value: "" })
-  const handleSkillPromptConfirm = async () => {
-    if (!skillPrompt || !skillPrompt.value.trim()) return
-    const name = skillPrompt.value.trim()
-    const { rootId, skillPath, parentPath, kind } = skillPrompt
-    if (kind === "file") {
-      const rel = parentPath ? `${parentPath}/${name}` : name
-      await window.electronAPI.saveSkillFile(rootId, skillPath, rel, "")
-      refreshSkills(); setSkillPrompt(null)
-      openSkillFile(skillPath, rel)
-    } else {
-      const rel = parentPath ? `${parentPath}/${name}` : name
-      await window.electronAPI.createSkillDir(rootId, skillPath, rel)
-      refreshSkills(); setSkillPrompt(null)
-    }
-  }
-  const handleDeleteFile = (skillPath: string, relativePath: string) => setSkillDeleteConfirm({ rootId: skillRootId, skillPath, relativePath })
-  const handleDeleteFileConfirm = async () => {
-    if (!skillDeleteConfirm) return
-    await window.electronAPI.deleteSkillFile(skillDeleteConfirm.rootId, skillDeleteConfirm.skillPath, skillDeleteConfirm.relativePath)
-    setSkillDeleteConfirm(null); refreshSkills()
   }
 
   const activeGroup = nodeGroups.find((g) => g.id === activeGroupId) ?? nodeGroups[0]
@@ -1058,180 +824,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {/* ═══ Mobile ═══ */}
             {tab === "mobile" && <MobilePairPanel />}
 
-            {/* ═══ MCP ═══ */}
-            {tab === "mcp" && (<>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-fg-2">MCP 服务器</h3>
-                  <button onClick={() => refreshMcpServers(true)} disabled={mcpRefreshing} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg disabled:opacity-50"><RefreshCw size={12} className={mcpRefreshing ? "animate-spin" : ""} />{mcpRefreshing ? "加载中" : "刷新"}</button>
-                  <div className="flex-1" />
-                  <button onClick={openMcpAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
-                </div>
-                <div className="space-y-2">
-                  {mcpServers.map((s) => {
-                    const expanded = mcpExpanded === s.name
-                    const toolState = mcpTools[s.name]
-                    const rawStatus = mcpStatus[s.name]
-                    const isReady = rawStatus === "ready" || rawStatus === "enabled"
-                    const statusColor = !rawStatus ? "text-fg-faint" : isReady ? "text-success" : rawStatus === "disabled" || rawStatus.includes("not loaded") ? "text-fg-muted" : "text-danger"
-                    const statusLabel = !rawStatus ? "—" : isReady ? "ready" : rawStatus === "disabled" ? "disabled" : rawStatus.includes("not loaded") ? "not loaded" : rawStatus
-                    return (
-                    <div key={s.name} className="rounded-lg border border-line overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-3">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <button onClick={() => toggleMcpExpand(s.name)} className="shrink-0 rounded p-0.5 text-fg-muted transition hover:text-fg">
-                            <ChevronDown size={14} className={`transition-transform duration-200 ${expanded ? "rotate-180" : ""}`} />
-                          </button>
-                          {s.type === "url" ? (s.enabled && s.authenticated ? <ShieldCheck size={16} className="shrink-0 text-success" /> : s.enabled && !s.authenticated ? <ShieldAlert size={16} className="shrink-0 text-warning" /> : <Network size={16} className="shrink-0 text-fg-3" />) : <Terminal size={16} className="shrink-0 text-fg-3" />}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="truncate text-sm font-medium">{s.name}</p>
-                              <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-muted">Claw</span>
-                              {!mcpStatusLoading && <span className={`shrink-0 text-[10px] ${statusColor}`}>{statusLabel}</span>}
-                              {toolState && !toolState.loading && toolState.tools.length > 0 && <span className="shrink-0 rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-muted">{toolState.tools.length} tools</span>}
-                            </div>
-                            <p className="truncate text-xs text-fg-muted">{s.type === "url" ? s.url : `${s.command} ${(s.args ?? []).join(" ")}`}</p>
-                          </div>
-                        </div>
-                        <div className="ml-3 flex shrink-0 items-center gap-2">
-                          {s.type === "url" && s.enabled && (s.authenticated ? <span className="text-xs text-success">已认证</span> : mcpLoginPending[s.name] ? <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600/70 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Loader2 size={12} className="animate-spin" />认证中</button> : <button onClick={() => handleMcpLogin(s.name)} className="flex items-center gap-1 rounded-md bg-blue-600 px-2 py-1 text-xs font-medium text-white transition hover:bg-blue-500" title="仅当该 MCP 使用浏览器 OAuth 时需要"><LogIn size={12} />授权</button>)}
-                          <button onClick={() => openMcpEdit(s)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg"><Pencil size={13} /></button>
-                          <button onClick={() => handleMcpDelete(s.name)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger"><Trash2 size={13} /></button>
-                          {(mcpStatusLoading && s.enabled === undefined) || mcpLoading[s.name] ? (
-                            <div className="inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-full bg-strong">
-                              <Loader2 size={12} className="animate-spin text-fg-3" />
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => handleMcpToggle(s.name, !s.enabled)}
-                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${s.enabled ? "bg-green-500" : "bg-stronger"}`}
-                            >
-                              <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${s.enabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                      {expanded && (
-                        <div className="border-t border-line/50 bg-surface/30 px-4 py-2.5">
-                          {toolState?.loading ? (
-                            <div className="flex items-center gap-2 py-1 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />正在获取工具列表…</div>
-                          ) : toolState?.error ? (
-                            <p className="py-1 text-xs text-fg-muted">{toolState.error}</p>
-                          ) : toolState && toolState.tools.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {toolState.tools.map((t) => {
-                                const tip = [t.description, ...(t.params ?? []).map((p) => `${p.required ? "* " : ""}${p.name}${p.type ? `: ${p.type}` : ""}${p.description ? ` — ${p.description}` : ""}`)].filter(Boolean).join("\n") || t.name
-                                return (
-                                  <span key={t.name} className="inline-flex items-center gap-1 rounded-md bg-raised px-2 py-0.5 text-[11px] text-fg-2" title={tip}>
-                                    <Wrench size={10} className="shrink-0 text-fg-muted" />{t.name}
-                                  </span>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <p className="py-1 text-xs text-fg-muted">无已注册工具</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )})}
-                  {mcpServers.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无 MCP 服务器配置</p>}
-                </div>
-              </section>
-            </>)}
-
-            {/* ═══ Skills ═══ */}
-            {tab === "skills" && (<>
-              <section className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-fg-2">Agent Skills</h3>
-                  <button onClick={() => { refreshSkillRoots(); refreshSkills() }} className="flex items-center gap-1 rounded px-2 py-0.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"><RefreshCw size={12} />刷新</button>
-                  <div className="flex-1" />
-                  <button onClick={openSkillAdd} className="flex items-center gap-1 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-500"><Plus size={12} />新增</button>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {skillRoots.map((root) => (
-                    <button
-                      key={root.id}
-                      type="button"
-                      onClick={() => { setSkillRootId(root.id); setSkillExpanded(new Set()) }}
-                      className={`rounded-md border px-2.5 py-1 text-xs transition ${skillRootId === root.id ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
-                    >
-                      {root.label} ({root.skillCount})
-                    </button>
-                  ))}
-                </div>
-                <div className="space-y-1">
-                  {skillTree.map((skill) => {
-                    const skillKey = `${skillRootId}:${skill.name}`
-                    const isExpanded = skillExpanded.has(skillKey)
-                    const renderNode = (node: SkillTreeNode, parentPath: string, depth: number): React.ReactNode => {
-                      const fullPath = parentPath ? `${parentPath}/${node.name}` : node.name
-                      const nodeKey = `${skillKey}/${fullPath}`
-                      if (node.type === "directory") {
-                        const dirExpanded = skillExpanded.has(nodeKey)
-                        return (
-                          <div key={nodeKey}>
-                            <div className="group flex items-center" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
-                              <button
-                                onClick={() => toggleSkillExpand(nodeKey)}
-                                className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-fg-3 transition hover:bg-raised/50 hover:text-fg-soft"
-                              >
-                                {dirExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                                <Folder size={12} className="text-accent/70" />
-                                <span>{node.name}</span>
-                              </button>
-                              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition group-hover:opacity-100">
-                                <button onClick={() => handleCreateFile(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-fg-2" title="新建文件"><FilePlus size={12} /></button>
-                                <button onClick={() => handleCreateFolder(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-fg-2" title="新建文件夹"><FolderPlus size={12} /></button>
-                                <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="rounded p-0.5 text-fg-faint hover:text-danger" title="删除文件夹"><Trash2 size={12} /></button>
-                              </div>
-                            </div>
-                            {dirExpanded && node.children?.map((child) => renderNode(child, fullPath, depth + 1))}
-                          </div>
-                        )
-                      }
-                      return (
-                        <div key={nodeKey} className="group flex items-center" style={{ paddingLeft: `${(depth + 1) * 16 + 20}px` }}>
-                          <button
-                            onClick={() => openSkillFile(skill.name, fullPath)}
-                            className="flex flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-xs text-fg-muted transition hover:bg-raised/50 hover:text-fg-soft"
-                          >
-                            <File size={11} className="shrink-0 text-fg-faint" />
-                            <span className="truncate">{node.name}</span>
-                          </button>
-                          <button onClick={() => handleDeleteFile(skill.name, fullPath)} className="shrink-0 rounded p-0.5 text-fg-faint opacity-0 transition hover:text-danger group-hover:opacity-100" title="删除文件"><Trash2 size={12} /></button>
-                        </div>
-                      )
-                    }
-                    return (
-                      <div key={skillKey} className="rounded-lg border border-line overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2.5">
-                          <button onClick={() => toggleSkillExpand(skillKey)} className="flex items-center gap-2 min-w-0">
-                            {isExpanded ? <ChevronDown size={14} className="shrink-0 text-fg-muted" /> : <ChevronRight size={14} className="shrink-0 text-fg-muted" />}
-                            <Sparkles size={14} className="shrink-0 text-warning/70" />
-                            <span className="truncate text-sm font-medium">{skill.name}</span>
-                          </button>
-                          <div className="ml-3 flex shrink-0 items-center gap-1">
-                            <button onClick={() => handleCreateFile(skill.name, "")} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="新建文件"><FilePlus size={13} /></button>
-                            <button onClick={() => handleCreateFolder(skill.name, "")} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="新建文件夹"><FolderPlus size={13} /></button>
-                            <button onClick={() => { const s = skills.find((x) => x.skillPath === skill.name); if (s) openSkillEdit(s) }} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg" title="编辑 SKILL.md"><Pencil size={13} /></button>
-                            <button onClick={() => handleSkillDelete(skill.name)} className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-danger" title="删除整个 Skill"><Trash2 size={13} /></button>
-                          </div>
-                        </div>
-                        {isExpanded && skill.children && skill.children.length > 0 && (
-                          <div className="border-t border-line/50 bg-surface/30 px-1 py-1.5">
-                            {skill.children.map((child) => renderNode(child, "", 0))}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                  {skillTree.length === 0 && <p className="py-4 text-center text-xs text-fg-faint">暂无 Skill</p>}
-                </div>
-              </section>
-            </>)}
-
             {/* ═══ Toolbox ═══ */}
             {tab === "toolbox" && <ToolboxPanel />}
 
@@ -1445,37 +1037,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         </div>
       </div>
 
-      {/* ═══ MCP Edit Modal ═══ */}
-      {mcpEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <h3 className="text-sm font-semibold text-fg-soft">{mcpEditOriginalName ? "编辑 MCP" : "新增 MCP"}</h3>
-              <button onClick={() => setMcpEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div>
-                <label className="mb-1 block text-xs text-fg-muted">配置 JSON</label>
-                <textarea
-                  value={mcpEditing.json}
-                  onChange={(e) => setMcpEditing({ ...mcpEditing, json: e.target.value, jsonError: undefined })}
-                  rows={14}
-                  spellCheck={false}
-                  className={inputCls + " font-mono text-xs leading-relaxed" + (mcpEditing.jsonError ? " border-red-500" : "")}
-                  placeholder={MCP_TEMPLATE}
-                />
-                {mcpEditing.jsonError && <p className="mt-1 text-xs text-danger">{mcpEditing.jsonError}</p>}
-                <p className="mt-1 text-xs text-fg-faint">格式: {"{"} "名称": {"{"} "command"|"url": ... {"}"} {"}"}</p>
-              </div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
-              <button onClick={() => setMcpEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={handleMcpSave} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ═══ Project Node Edit Modal ═══ */}
       {nodeEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -1596,95 +1157,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
               <button onClick={() => setGroupEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
               <button onClick={handleGroupSave} disabled={!groupEditing.id.trim() || !groupEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Skill Edit Modal ═══ */}
-      {skillEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <h3 className="text-sm font-semibold text-fg-soft">{skillEditOriginalName ? "编辑 Skill" : "新增 Skill"}</h3>
-              <button onClick={() => setSkillEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div><label className="mb-1 block text-xs text-fg-muted">路径（相对根目录）</label><input type="text" value={skillEditing.name} onChange={(e) => setSkillEditing({ ...skillEditing, name: e.target.value })} className={inputCls} placeholder="my-skill 或 group/my-skill" /></div>
-              <div><label className="mb-1 block text-xs text-fg-muted">SKILL.md 内容</label><textarea value={skillEditing.content} onChange={(e) => setSkillEditing({ ...skillEditing, content: e.target.value })} rows={16} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="# My Skill\n\nDescription of what this skill does..." /></div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
-              <button onClick={() => setSkillEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={handleSkillSave} disabled={!skillEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Skill File Edit Modal ═══ */}
-      {skillFileEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-2xl flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "85vh" }}>
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold text-fg-soft">编辑文件</h3>
-                <p className="truncate text-xs text-fg-muted mt-0.5">{skillFileEditing.skillPath}/{skillFileEditing.relativePath}</p>
-              </div>
-              <button onClick={() => setSkillFileEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-              <textarea
-                value={skillFileEditing.content}
-                onChange={(e) => setSkillFileEditing({ ...skillFileEditing, content: e.target.value })}
-                rows={24}
-                spellCheck={false}
-                className={inputCls + " font-mono text-xs leading-relaxed"}
-              />
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
-              <button onClick={() => setSkillFileEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={handleSkillFileSave} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Skill Create Prompt ═══ */}
-      {skillPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-xl border border-line bg-surface shadow-2xl">
-            <div className="border-b border-line-subtle px-5 py-3">
-              <h3 className="text-sm font-semibold text-fg-soft">新建{skillPrompt.kind === "file" ? "文件" : "文件夹"}</h3>
-            </div>
-            <div className="px-5 py-4">
-              <input
-                autoFocus
-                type="text"
-                value={skillPrompt.value}
-                onChange={(e) => setSkillPrompt({ ...skillPrompt, value: e.target.value })}
-                onKeyDown={(e) => { if (e.key === "Enter") void handleSkillPromptConfirm() }}
-                placeholder={skillPrompt.kind === "file" ? "例如 utils.py" : "例如 scripts"}
-                className={inputCls}
-              />
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-3">
-              <button onClick={() => setSkillPrompt(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={() => void handleSkillPromptConfirm()} disabled={!skillPrompt.value.trim()} className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40">确定</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══ Skill Delete Confirm ═══ */}
-      {skillDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-xl border border-line bg-surface shadow-2xl">
-            <div className="px-5 py-4">
-              <p className="text-sm text-fg-2">确定删除 <code className="text-danger-soft">{skillDeleteConfirm.relativePath}</code> ？</p>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-5 py-3">
-              <button onClick={() => setSkillDeleteConfirm(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={() => void handleDeleteFileConfirm()} className="rounded-md bg-red-600 px-3 py-1 text-xs font-medium text-white hover:bg-red-500">删除</button>
             </div>
           </div>
         </div>
