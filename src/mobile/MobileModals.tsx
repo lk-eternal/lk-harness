@@ -31,10 +31,20 @@ import {
   type MobileChannelView,
   type MobileChatTab,
   type MobilePairConfig,
+  type MobileProviderModel,
   type MobileQuickModel,
   type RouteStatus,
 } from "./api"
 import { useBackToClose } from "./back-stack"
+import {
+  choiceForListed,
+  choiceForQuick,
+  isCurrentListed,
+  isCurrentQuick,
+  listedRowKey,
+  resolveProviderId,
+  type ModelChoice,
+} from "./model-choice"
 import { useSheetDrag } from "./useSheetDrag"
 import { QrScanner } from "./QrScanner"
 
@@ -305,19 +315,81 @@ export function SessionDrawer({
   )
 }
 
-export function ModelSheet({
-  open,
-  onClose,
-  baseUrl,
-  token,
-  resources,
-  quickModels,
-  currentResourceId,
-  currentModel,
-  currentParams,
-  switching,
-  onSelect,
+/**
+ * 「常用模型」里的一张卡片。名字要显示完整：同一个模型的几档推理参数只差名字末尾的档位，
+ * 用省略号截断的话几张卡片看起来一模一样，所以允许换行（break-words：模型名里没有空格，在连字符处断，放不下才硬断）。
+ */
+export function QuickModelCard({
+  qm,
+  current,
+  resourceName,
+  onPick,
 }: {
+  qm: MobileQuickModel
+  current: boolean
+  resourceName?: string
+  onPick: (choice: ModelChoice) => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={current ? "true" : undefined}
+      onClick={() => onPick(choiceForQuick(qm))}
+      className={`flex min-w-0 flex-col items-start rounded-xl border px-3 py-2 text-left transition active:scale-[0.98] ${
+        current
+          ? "border-blue-500 bg-blue-600/15 text-fg"
+          : "border-line bg-page/70 text-fg-2"
+      }`}
+    >
+      <div className="flex w-full items-start justify-between gap-1">
+        <span data-model-name className="min-w-0 break-words text-xs font-medium leading-snug">
+          {qm.label || modelSlug(qm.model, qm.modelParams)}
+        </span>
+        {current && <Check size={12} className="mt-0.5 shrink-0 text-accent" />}
+      </div>
+      <span className="mt-0.5 max-w-full truncate text-[10px] text-fg-muted">
+        {resourceName || qm.model}
+      </span>
+    </button>
+  )
+}
+
+/** 供应商模型列表里的一行；名字同样允许换行，带参数的名字（如 xxx (effort=high, fast=true)）很长 */
+export function ModelRow({
+  row,
+  resourceId,
+  current,
+  onPick,
+}: {
+  row: MobileProviderModel
+  /** 这一列属于哪家供应商 */
+  resourceId: string
+  current: boolean
+  onPick: (choice: ModelChoice) => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={current ? "true" : undefined}
+      onClick={() => onPick(choiceForListed(row, resourceId))}
+      className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-left transition active:scale-[0.99] ${
+        current
+          ? "border-blue-500/50 bg-blue-600/15 text-fg"
+          : "border-line-subtle bg-page/60 text-fg-2"
+      }`}
+    >
+      <div className="min-w-0 flex-1">
+        <p data-model-name className="break-words text-xs font-medium leading-snug">{row.label || row.id}</p>
+        {row.label && row.label !== row.id && (
+          <p className="break-words font-mono text-[10px] text-fg-muted">{row.id}</p>
+        )}
+      </div>
+      {current && <Check size={14} className="shrink-0 text-accent" />}
+    </button>
+  )
+}
+
+interface ModelSheetProps {
   open: boolean
   onClose: () => void
   baseUrl: string
@@ -329,24 +401,41 @@ export function ModelSheet({
   currentParams?: string
   switching: boolean
   onSelect: (choice: { model: string; modelParams?: string; resourceId?: string }) => void
-}) {
-  const [selectedResId, setSelectedResId] = useState<string>(
-    currentResourceId || resources[0]?.id || "",
-  )
+}
+
+/**
+ * 「切换对话模型」抽屉。只在打开时才挂载内容：搜索词、选中的供应商都是内容里的状态，
+ * 每次打开都是全新的，不用靠 effect 去重置。
+ * 原来是靠一个依赖 resources 的 effect 在打开时重置——手机端每 10 秒刷新一次，每次都给一个新的 resources 数组，
+ * 于是正在输入的搜索词、正在看的供应商会被周期性地清掉、拉回当前供应商。
+ */
+export function ModelSheet(props: ModelSheetProps) {
+  if (!props.open) return null
+  return <ModelSheetBody {...props} />
+}
+
+function ModelSheetBody({
+  onClose,
+  baseUrl,
+  token,
+  resources,
+  quickModels,
+  currentResourceId,
+  currentModel,
+  currentParams,
+  switching,
+  onSelect,
+}: ModelSheetProps) {
+  // 用户在这次打开里点过的供应商（没点过是空串）；真正生效的那家由 resolveProviderId 决定
+  const [pickedResId, setPickedResId] = useState("")
+  const selectedResId = resolveProviderId(pickedResId, resources, currentResourceId)
   const [search, setSearch] = useState("")
-  const [models, setModels] = useState<{ id: string; label?: string; current?: boolean }[]>([])
+  const [models, setModels] = useState<MobileProviderModel[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
 
   useEffect(() => {
-    if (!open) return
-    const targetRes = currentResourceId || resources[0]?.id || ""
-    setSelectedResId(targetRes)
-    setSearch("")
-  }, [open, currentResourceId, resources])
-
-  useEffect(() => {
-    if (!open || !selectedResId || !baseUrl || !token) return
+    if (!selectedResId || !baseUrl || !token) return
     let cancelled = false
     setLoading(true)
     setError("")
@@ -367,7 +456,7 @@ export function ModelSheet({
     return () => {
       cancelled = true
     }
-  }, [open, selectedResId, baseUrl, token, currentModel, currentParams])
+  }, [selectedResId, baseUrl, token, currentModel, currentParams])
 
   const filteredModels = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -379,9 +468,8 @@ export function ModelSheet({
     )
   }, [models, search])
 
-  useBackToClose(open, onClose)
+  useBackToClose(true, onClose)
   const { panelRef, grip } = useSheetDrag(onClose)
-  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col justify-end">
@@ -439,41 +527,18 @@ export function ModelSheet({
                 <Sparkles size={11} className="text-accent" />常用模型
               </p>
               <div className="grid grid-cols-2 gap-2">
-                {quickModels.map((qm, idx) => {
-                  const isCur =
-                    qm.model === currentModel &&
-                    (!qm.resourceId || qm.resourceId === currentResourceId)
-                  const resName = resources.find((r) => r.id === qm.resourceId)?.name
-                  return (
-                    <button
-                      key={`${qm.resourceId ?? ""}-${qm.model}-${idx}`}
-                      type="button"
-                      onClick={() => {
-                        onSelect({
-                          model: qm.model,
-                          modelParams: qm.modelParams,
-                          resourceId: qm.resourceId,
-                        })
-                        onClose()
-                      }}
-                      className={`flex flex-col items-start rounded-xl border px-3 py-2 text-left transition active:scale-[0.98] ${
-                        isCur
-                          ? "border-blue-500 bg-blue-600/15 text-fg"
-                          : "border-line bg-page/70 text-fg-2"
-                      }`}
-                    >
-                      <div className="flex w-full items-center justify-between gap-1">
-                        <span className="truncate text-xs font-medium">
-                          {qm.label || modelSlug(qm.model)}
-                        </span>
-                        {isCur && <Check size={12} className="shrink-0 text-accent" />}
-                      </div>
-                      <span className="mt-0.5 truncate text-[10px] text-fg-muted">
-                        {resName || qm.model}
-                      </span>
-                    </button>
-                  )
-                })}
+                {quickModels.map((qm, idx) => (
+                  <QuickModelCard
+                    key={`${qm.resourceId ?? ""}-${qm.model}-${qm.modelParams ?? ""}-${idx}`}
+                    qm={qm}
+                    current={isCurrentQuick(qm, { model: currentModel, params: currentParams, resourceId: currentResourceId })}
+                    resourceName={resources.find((r) => r.id === qm.resourceId)?.name}
+                    onPick={(choice) => {
+                      onSelect(choice)
+                      onClose()
+                    }}
+                  />
+                ))}
               </div>
             </div>
           )}
@@ -489,7 +554,7 @@ export function ModelSheet({
                     <button
                       key={r.id}
                       type="button"
-                      onClick={() => setSelectedResId(r.id)}
+                      onClick={() => setPickedResId(r.id)}
                       className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition ${
                         active
                           ? "border-blue-500 bg-blue-600 text-white"
@@ -519,37 +584,27 @@ export function ModelSheet({
               </p>
             ) : (
               <div className="space-y-1.5">
-                {filteredModels.map((m) => {
-                  const isCur =
-                    (m.id === currentModel || m.current) &&
-                    selectedResId === (currentResourceId || selectedResId)
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        onSelect({
-                          model: m.id,
-                          resourceId: selectedResId,
-                        })
-                        onClose()
-                      }}
-                      className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-left transition active:scale-[0.99] ${
-                        isCur
-                          ? "border-blue-500/50 bg-blue-600/15 text-fg"
-                          : "border-line-subtle bg-page/60 text-fg-2"
-                      }`}
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium">{m.label || m.id}</p>
-                        {m.label && m.label !== m.id && (
-                          <p className="truncate font-mono text-[10px] text-fg-muted">{m.id}</p>
-                        )}
-                      </div>
-                      {isCur && <Check size={14} className="shrink-0 text-accent" />}
-                    </button>
-                  )
-                })}
+                {filteredModels.length === 0 && models.length > 0 && (
+                  <p data-no-match className="px-1 py-6 text-center text-xs text-fg-muted">
+                    当前供应商里没有匹配「{search.trim()}」的模型
+                  </p>
+                )}
+                {filteredModels.map((m) => (
+                  <ModelRow
+                    key={listedRowKey(m)}
+                    row={m}
+                    resourceId={selectedResId}
+                    // 同一个模型有好几档推理参数：模型和参数都对上才算当前；展示的还得是当前供应商那一列
+                    current={
+                      selectedResId === (currentResourceId || selectedResId) &&
+                      isCurrentListed(m, { model: currentModel, params: currentParams })
+                    }
+                    onPick={(choice) => {
+                      onSelect(choice)
+                      onClose()
+                    }}
+                  />
+                ))}
               </div>
             )}
           </div>

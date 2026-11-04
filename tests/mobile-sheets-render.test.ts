@@ -1,7 +1,7 @@
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it, vi } from "vitest"
-import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "../src/mobile/MobileModals"
+import { DirSheet, ModelRow, ModelSheet, PairSheet, QuickModelCard, SessionDrawer } from "../src/mobile/MobileModals"
 import type { MobileChatTab, RouteStatus } from "../src/mobile/api"
 
 const route: RouteStatus = { connected: true, activeUrl: "http://x", routeType: "lan" }
@@ -59,6 +59,95 @@ describe("底部弹层都带可拖动的抓手", () => {
     const grip = /<div data-sheet-grip[^>]*>/.exec(html)?.[0] ?? ""
     expect(grip).toContain("touch-none")
     expect(grip).toContain("py-2.5")
+  })
+})
+
+describe("模型弹层：同一个模型的几档推理参数", () => {
+  const MODEL = "claude-sonnet-5-5-300k"
+  const HIGH = JSON.stringify([{ id: "effort", value: "high" }])
+  const XHIGH = JSON.stringify([{ id: "effort", value: "xhigh" }])
+  // 两张卡片只差名字末尾的档位——原来被省略号截断，看起来一模一样，而且两张都打勾
+  const quick = [
+    { model: MODEL, modelParams: HIGH, label: `${MODEL}-high`, resourceId: "r1" },
+    { model: MODEL, modelParams: XHIGH, label: `${MODEL}-xhigh`, resourceId: "r1" },
+  ]
+  const resources = [{ id: "r1", name: "LK", type: "sdk" }] as never
+  const render = (over: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(
+      createElement(ModelSheet, {
+        open: true, onClose: noop, baseUrl: "", token: "", resources, quickModels: quick,
+        currentResourceId: "r1", currentModel: MODEL, currentParams: XHIGH,
+        switching: false, onSelect: noop, ...over,
+      }),
+    )
+  const cards = (html: string) => html.match(/<button[^>]*>(?:(?!<\/button>).)*<\/button>/gs)?.filter((b) => b.includes("data-model-name")) ?? []
+
+  it("只有当前这一档的卡片打勾", () => {
+    const html = render()
+    const c = cards(html)
+    expect(c.length).toBe(2)
+    expect(c.filter((b) => b.includes('aria-current="true"')).length).toBe(1)
+    expect(c.find((b) => b.includes('aria-current="true"'))).toContain(`${MODEL}-xhigh`)
+    expect(c.find((b) => !b.includes('aria-current="true"'))).toContain(`${MODEL}-high<`)
+  })
+
+  it("换一档当前值，打勾的跟着换", () => {
+    const c = cards(render({ currentParams: HIGH }))
+    expect(c.find((b) => b.includes('aria-current="true"'))).toContain(`${MODEL}-high<`)
+  })
+
+  it("当前是不带参数的同名模型：两档都不打勾", () => {
+    expect(cards(render({ currentParams: undefined })).some((b) => b.includes('aria-current="true"'))).toBe(false)
+  })
+
+  it("名字完整显示：两张卡片的名字都在，且不用省略号截断（可以换行）", () => {
+    const html = render()
+    expect(html).toContain(`${MODEL}-high<`)
+    expect(html).toContain(`${MODEL}-xhigh<`)
+    for (const b of cards(html)) {
+      const name = /<span data-model-name[^>]*>/.exec(b)?.[0] ?? ""
+      expect(name).not.toContain("truncate")
+      expect(name).toContain("break-words")
+    }
+  })
+
+  it("卡片没有名字时按「模型 + 参数」显示，带上档位", () => {
+    const html = render({ quickModels: [{ model: MODEL, modelParams: HIGH, resourceId: "r1" }] })
+    expect(html).toContain(`${MODEL}-high<`)
+  })
+
+  it("点卡片：模型、参数、供应商一并交给选择回调", () => {
+    const onPick = vi.fn()
+    const el = QuickModelCard({ qm: quick[1], current: false, resourceName: "LK", onPick }) as { props: { onClick: () => void } }
+    el.props.onClick()
+    expect(onPick).toHaveBeenCalledWith({ model: MODEL, modelParams: XHIGH, resourceId: "r1" })
+  })
+
+  it("列表里的一行：当前档位打勾，名字可换行；id 和名字不同时再显示一行 id", () => {
+    const row = { id: MODEL, label: `${MODEL}-xhigh`, params: XHIGH }
+    const on = renderToStaticMarkup(createElement(ModelRow, { row, resourceId: "r1", current: true, onPick: noop }))
+    const off = renderToStaticMarkup(createElement(ModelRow, { row, resourceId: "r1", current: false, onPick: noop }))
+    expect(on).toContain('aria-current="true"')
+    expect(off).not.toContain("aria-current")
+    expect(on).toContain(`${MODEL}-xhigh`)
+    expect(on).toContain("break-words")
+    expect(on).not.toContain("truncate")
+    expect((on.match(new RegExp(`>${MODEL}<`, "g")) ?? []).length).toBe(1)
+  })
+
+  it("点列表里的一行：带上这一行的推理参数和这一列的供应商（原来参数丢了，选中的是不带参数的默认档）", () => {
+    const onPick = vi.fn()
+    const el = ModelRow({ row: { id: MODEL, label: `${MODEL}-xhigh`, params: XHIGH }, resourceId: "r1", current: false, onPick }) as { props: { onClick: () => void } }
+    el.props.onClick()
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick).toHaveBeenCalledWith({ model: MODEL, modelParams: XHIGH, resourceId: "r1" })
+  })
+
+  it("没有参数的行不带 modelParams", () => {
+    const onPick = vi.fn()
+    const el = ModelRow({ row: { id: "gpt-x" }, resourceId: "r2", current: false, onPick }) as { props: { onClick: () => void } }
+    el.props.onClick()
+    expect(onPick).toHaveBeenCalledWith({ model: "gpt-x", resourceId: "r2" })
   })
 })
 

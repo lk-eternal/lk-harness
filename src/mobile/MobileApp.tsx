@@ -33,7 +33,7 @@ import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../shared/temp-work
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import useInlineModal from "../renderer/components/useInlineModal"
-import { modelSlug } from "../renderer/model-utils"
+import { currentModelLabel } from "./model-choice"
 import {
   applyMobileTheme,
   clearMobileSession,
@@ -525,12 +525,11 @@ export default function MobileApp() {
   const isTemp = isTempChatWorkspace(workspaceDir)
   const workspaceLabel = isTemp ? "临时会话" : dirName(workspaceDir)
 
-  const modelLabel = useMemo(() => {
-    const m = currentTab?.model
-    if (!m || m === "auto") return "默认模型"
-    const hit = quickModels.find((q) => q.model === m && q.label)
-    return hit?.label || modelSlug(m)
-  }, [currentTab?.model, quickModels])
+  // 同模型有好几档推理参数：名字要按模型 + 参数找，否则几档都显示成同一个名字
+  const modelLabel = useMemo(
+    () => currentModelLabel(currentTab?.model, currentTab?.modelParams, quickModels),
+    [currentTab?.model, currentTab?.modelParams, quickModels],
+  )
 
   // 发送消息
   const handleSend = async (overrideText?: string) => {

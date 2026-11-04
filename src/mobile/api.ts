@@ -387,11 +387,22 @@ export async function fetchSessionModels(
   return await callApi(baseUrl, token, "/api/mobile/session-models", { sessionKeys })
 }
 
+/**
+ * 供应商的一行模型。同一个 id 可能有好几行（模型的不同推理档位），靠 params（JSON 字符串）区分；
+ * 没有 params 字段的供应商（LLM 类）等同于没有参数。
+ */
+export interface MobileProviderModel {
+  id: string
+  label?: string
+  params?: string
+  current?: boolean
+}
+
 export async function listMobileProviderModels(
   baseUrl: string,
   token: string,
   payload: { resourceId: string; currentModel?: string; currentParams?: string },
-): Promise<{ ok: boolean; models: { id: string; label?: string; current?: boolean }[]; error?: string }> {
+): Promise<{ ok: boolean; models: MobileProviderModel[]; error?: string }> {
   return await callApi(baseUrl, token, "/api/mobile/list-models", payload)
 }
 
