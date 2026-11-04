@@ -10,6 +10,7 @@ import { workspaceDirFromSessionKey } from "../src/shared/channel-types.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
+import { boundedCall, createTimeoutMessage, resumeTimeoutMessage } from "./bounded-call"
 import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource } from "./config-store"
@@ -277,6 +278,12 @@ export function sdkFailCooldownRemaining(sessionKey: string): number {
 
 /** pack/异常退出后 force 重发偶发挂死；超时后丢 resume，下次全新会话 */
 const FORCE_SEND_TIMEOUT_MS = 30_000
+
+/**
+ * Agent.resume / Agent.create 的等待上限。SDK 没有超时也没有取消入口，网络半断时会一直挂到底层放弃
+ * （实测一次 Resume 挂了 3 分 12 秒，期间用户没有任何回应，随后的重试 1.5 秒就成功）；正常的 Resume 约 1.5 秒。
+ */
+export const SDK_LAUNCH_TIMEOUT_MS = 45_000
 const REATTACH_PROBE_MS = 1500
 
 async function tryReattachActiveRun(
@@ -1381,11 +1388,21 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       && (chatType === "project" || !taskMessage)
     if (!wantResume) forgetResumable(sessionKey)
     const resumable = wantResume ? getResumableMap().get(sessionKey) : undefined
+    // 超时放弃之后才返回的 Agent 没人接手，必须释放，否则就是一个没人管的实例
+    const releaseLateAgent = (what: string) => (late: SDKAgent): void => {
+      pushUiLog("SDK", "INFO", `[${sessionKey}] ${what}超时后才返回，已释放这个晚到的 Agent (agentId=${late.agentId})`)
+      try { late.close() } catch { /* best-effort */ }
+    }
     let agent: SDKAgent | undefined
     if (resumable && resumable.workspaceDir === workspaceDir) {
       try {
         pushUiLog("SDK", "INFO", `[${sessionKey}] Resume 恢复会话 (agentId=${resumable.agentId}, model=${JSON.stringify(modelSelection)}, 新连接/上下文保留)`)
-        agent = await Agent.resume(resumable.agentId, agentBaseOpts)
+        agent = await boundedCall(
+          Agent.resume(resumable.agentId, agentBaseOpts),
+          SDK_LAUNCH_TIMEOUT_MS,
+          resumeTimeoutMessage(SDK_LAUNCH_TIMEOUT_MS),
+          releaseLateAgent("Resume"),
+        )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)
         // 只有服务端确认上下文不存在才允许回退全新会话；网络等瞬时故障直接放弃本次拉起——
@@ -1404,7 +1421,12 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     if (!agent) {
       pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, store=jsonl, model=${JSON.stringify(modelSelection)})`)
-      agent = await Agent.create(agentBaseOpts)
+      agent = await boundedCall(
+        Agent.create(agentBaseOpts),
+        SDK_LAUNCH_TIMEOUT_MS,
+        createTimeoutMessage(SDK_LAUNCH_TIMEOUT_MS),
+        releaseLateAgent("创建"),
+      )
     }
 
     // 拉起期间被 /reset：本次 agent 可能带着旧上下文，直接丢弃（队列消息会驱动下一次全新拉起）
