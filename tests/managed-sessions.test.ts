@@ -248,6 +248,20 @@ describe("listManagedSessions：整理磁盘上存着的会话", () => {
     expect(byKey(list, GUEST_P2P)).toMatchObject({ running: false, queued: 3 })
   })
 
+  it("名字：别人的私聊和群查不到时不会都叫同一个名字——各按自己的尾号区分，不出现「访客」", () => {
+    const g2 = "ch_a|oc_aaaa111111::D:\\ws\\a"
+    const g3 = "ch_a|oc_bbbb222222::D:\\ws\\a"
+    const p2 = "ch_a|ou_zzzz333333::D:\\ws\\a"
+    for (const k of [g2, g3, p2]) addSession(k)
+    const list = listed({
+      routing: { chatType: { "ch_a|oc_aaaa111111": "group", "ch_a|oc_bbbb222222": "group", "ch_a|ou_zzzz333333": "p2p" } },
+    })
+    const names = [g2, g3, p2].map((k) => byKey(list, k).name)
+    expect(names).toEqual(["群 111111", "群 222222", "私聊 333333"])
+    expect(new Set(names).size).toBe(3)
+    expect(names.join("")).not.toContain("访客")
+  })
+
   it("名字：查得到用查到的，查不到按群 / 私聊 + 尾号（id 很长只取最后 6 位）", () => {
     const longGroup = "ch_a|oc_0123456789abcdef::D:\\ws\\a"
     addSession(GROUP)
@@ -309,12 +323,65 @@ describe("listManagedSessions：最近活动时间与预览", () => {
     expect(s.preview!.length).toBe(61)
   })
 
-  it("群会话和主用户的会话不读预览", () => {
-    addSession(GROUP, { mirror: mirrorAt(NOW - DAY) })
+  it("别人的群和私聊一视同仁都带预览（群名没查到时也靠它认出在聊什么）；主用户自己的会话不读", () => {
+    addSession(GROUP, { mirror: mirrorAt(NOW - DAY, ["群里最后一句"]) })
+    addSession(GUEST_P2P, { mirror: mirrorAt(NOW - DAY, ["私聊最后一句"]) })
     addSession(MAIN, { mirror: mirrorAt(NOW - DAY) })
     const list = listed()
-    expect(byKey(list, GROUP).preview).toBeUndefined()
+    expect(byKey(list, GROUP).preview).toBe("群里最后一句")
+    expect(byKey(list, GUEST_P2P).preview).toBe("私聊最后一句")
     expect(byKey(list, MAIN).preview).toBeUndefined()
+  })
+
+  it("路由表里没登记类型的别人的会话也带预览", () => {
+    const stray = "ch_a|oc_unregistered::D:\\ws\\a"
+    addSession(stray, { mirror: mirrorAt(NOW - DAY, ["没登记类型的"]) })
+    const s = byKey(listed(), stray)
+    expect(s.chatType).toBe("unknown")
+    expect(s.preview).toBe("没登记类型的")
+  })
+
+  it("镜像很大时只读末尾：最后一条用户消息后面跟着很长的助手回复，照样取得到", () => {
+    // 助手回复 300KB，超过第一档 128KB 的窗口，要扩到第二档才找得到那条用户消息
+    const big = "长".repeat(100 * 1024) // 汉字 3 字节，约 300KB
+    addSession(GROUP, {
+      mirror: {
+        mtime: NOW - DAY,
+        lines: [
+          { role: "user", text: "更早的问题", at: 1 },
+          { role: "assistant", text: "答", at: 2 },
+          { role: "user", text: "被长回复压在后面的问题", at: 3 },
+          { role: "assistant", text: big, at: 4 },
+        ],
+      },
+    })
+    expect(byKey(listed(), GROUP).preview).toBe("被长回复压在后面的问题")
+  })
+
+  it("镜像很大、用户消息在窗口里：取到最新的一条，窗口起点切在半行 / 半个汉字里也不出乱码", () => {
+    // 前面塞很多轮把文件撑过 128KB，起点落在某一行中间
+    const filler = Array.from({ length: 400 }, (_, i) => [
+      { role: "user", text: `旧问题${i}`, at: i },
+      { role: "assistant", text: "答".repeat(300), at: i },
+    ]).flat()
+    addSession(GROUP, { mirror: { mtime: NOW - DAY, lines: [...filler, { role: "user", text: "最新的问题", at: 9999 }] } })
+    const p = byKey(listed(), GROUP).preview
+    expect(p).toBe("最新的问题")
+    expect(p).not.toContain("\uFFFD")
+  })
+
+  it("最后一条用户消息在 4MB 之外：不读那么远，没有预览（宁可不显示也不每 8 秒读一遍几十 MB）", () => {
+    const huge = "长".repeat(1_500_000) // 约 4.5MB
+    addSession(GROUP, {
+      mirror: {
+        mtime: NOW - DAY,
+        lines: [
+          { role: "user", text: "太久以前的问题", at: 1 },
+          { role: "assistant", text: huge, at: 2 },
+        ],
+      },
+    })
+    expect(byKey(listed(), GROUP).preview).toBeUndefined()
   })
 
   it("没有镜像：没有预览", () => {

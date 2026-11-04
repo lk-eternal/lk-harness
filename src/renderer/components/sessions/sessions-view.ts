@@ -56,7 +56,7 @@ interface SessionItemBase {
   /** 搜索用：聊天键（带通道前缀） */
   chatKey: string
   name: string
-  /** 别人的私聊才有：最后一句话 */
+  /** 别人的会话（私聊和群）才有：最后一句话 */
   preview?: string
   workspaceDir?: string
   running: boolean

@@ -96,7 +96,7 @@ import {
   notifyChatFallback,
   getSessionAgentList, handleChatCommand, clearMessageQueue, getQueueMessages, deleteQueueMessage, formatSessionStatusBlock,
   listMainSessionTabs, listDashboardTree, resolveSessionModels, switchMainSession, deleteUserSession, leaveProjectSession,
-  pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache,
+  pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache, rememberP2pNames,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
   formatCurrentSessionBlock, currentResourceIdForSession,
 } from "./session-dispatcher"
@@ -1096,6 +1096,13 @@ function startStatusPolling(): void {
           byChannel.set(cid, list)
         }
         for (const [cid, ids] of byChannel) await fetchUserNames(ids, cid)
+
+        // 记下运行中私聊的对方是谁（按聊天键，落盘）：会话空闲、应用重启之后，会话清单里才还认得出
+        rememberP2pNames(sessions.map((s) => ({
+          sessionKey: s.sessionKey,
+          chatType: s.chatType,
+          senderOpenId: "senderOpenId" in s ? s.senderOpenId : undefined,
+        })))
       }
 
       if (status.running) {

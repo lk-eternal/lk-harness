@@ -28,12 +28,14 @@ import { clearAgentFailStreaks, resetAllSessionContext } from "./agent-engine/co
 import { getAgentResource, getChannels } from "./config-store"
 import { readTasksFromFile } from "./cron-scheduler"
 import { purgeSessionRouting, readLockFile } from "./daemon-client"
-import { resolveSessionChatName } from "./session-chat-name"
+import { lookupChatName } from "./session-chat-name"
 import {
+  fetchChatNames,
   getQueueMessages,
   getSessionAgentList,
   isSessionAgentRunning,
   previousActiveSessionMap,
+  rememberP2pNames,
   stopSessionAgent,
 } from "./session-dispatcher"
 
@@ -50,12 +52,25 @@ const keyOf = (sessionKey: string): string => normalizeSessionKey(sessionKey) ||
 async function collect(): Promise<{ sessions: ManagedSession[]; skipped: number }> {
   initSessionOverridesStore(userData())
   const queuedByKey = new Map<string, number>()
-  for (const m of await getQueueMessages()) {
+  const queueMessages = await getQueueMessages()
+  for (const m of queueMessages) {
     if (!m.sessionKey) continue
     const k = keyOf(m.sessionKey)
     queuedByKey.set(k, (queuedByKey.get(k) ?? 0) + 1)
   }
+  const running = getSessionAgentList()
   const taskNames = new Map(readTasksFromFile().map((t) => [t.id, t.name]))
+
+  // 私聊对方叫什么：名字缓存按 open_id 存，而磁盘上的会话只有聊天键，要靠 open_id 才对得上。
+  // 运行中的会话和队列里的消息都带着 open_id（队列、工作台树就是靠它显示出名字的），
+  // 这里每次列清单前先按聊天键记下来（落盘），下面按聊天键查就和它们看到的是同一个名字；
+  // 会话结束、应用重启之后清单里也还认得出是谁。群不记：群里的 open_id 是发言人，不是这个群。
+  const people: { sessionKey: string; chatType?: string; senderOpenId?: string }[] = [...running]
+  for (const m of queueMessages) {
+    if (m.sessionKey) people.push({ sessionKey: m.sessionKey, chatType: m.chatType, senderOpenId: m.senderOpenId })
+  }
+  rememberP2pNames(people)
+
   return listManagedSessions({
     userDataDir: userData(),
     now: Date.now(),
@@ -64,12 +79,25 @@ async function collect(): Promise<{ sessions: ManagedSession[]; skipped: number 
       const r = getAgentResource(id)
       return { id: r.id, name: r.name }
     },
-    runningKeys: getSessionAgentList().map((s) => s.sessionKey),
+    runningKeys: running.map((s) => s.sessionKey),
     queuedByKey,
     routing: readRoutingSnapshot(userData()),
     taskIds: new Set(taskNames.keys()),
-    chatName: (k) => taskNames.get(k) ?? resolveSessionChatName(k),
+    // 只给查到过的名字：查不到由清单按「群 / 私聊 + 尾号」显示，不要在这里编「通道名·访客」——
+    // 那样所有没查到名字的会话都叫同一个名字，群也叫「访客」，根本分不清谁是谁
+    chatName: (k) => taskNames.get(k) ?? lookupChatName(k),
   })
+}
+
+/**
+ * 清单里的群，后台去问飞书要群名（不等结果：清单马上返回，8 秒后下一次刷新就带上了）。
+ * 磁盘上只有一串 id，群名只有问飞书才知道；原来只在群运行时才问，空闲的群永远没有名字。
+ * 分批、冷却、不重复问都在 fetchChatNames 里，每次刷新都调用也不会多打接口。
+ */
+function fillGroupNamesInBackground(sessions: readonly ManagedSession[]): void {
+  const feishu = new Set(getChannels().filter((c) => c.type === "feishu" && c.enabled !== false).map((c) => c.id))
+  const keys = sessions.filter((s) => s.chatType === "group" && feishu.has(s.channelId)).map((s) => s.chatKey)
+  if (keys.length > 0) void fetchChatNames(keys).catch(() => {})
 }
 
 const daemonPort = (): number | undefined => readLockFile()?.port || undefined
@@ -77,6 +105,7 @@ const daemonPort = (): number | undefined => readLockFile()?.port || undefined
 export async function listSessionsForManager(): Promise<ManagerListResult> {
   try {
     const { sessions, skipped } = await collect()
+    fillGroupNamesInBackground(sessions)
     return { ok: true, daemonRunning: !!daemonPort(), sessions, skipped }
   } catch (e) {
     return { ok: false, daemonRunning: !!daemonPort(), sessions: [], skipped: 0, error: errorText(e) }

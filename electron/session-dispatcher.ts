@@ -14,7 +14,8 @@ import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSes
 import { reportCommandResult } from "./command-handler"
 import { resolveEffectiveModel, resolveEffectiveSessionKey } from "./session-key-resolver"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
-import { setChatNameResolver, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
+import { setChatNameResolver, setChatNameStored, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
+import { createChatNameBook, createChatNameFetcher, type ChatNameBook } from "../src/shared/chat-names.js"
 import {
   getAgentEngine,
   getAllAgentEngines,
@@ -35,7 +36,7 @@ import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName 
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
-import { globalRoutingPath, purgeSessionEntry } from "../src/shared/session-entry-paths.js"
+import { globalChatNamesPath, globalRoutingPath, purgeSessionEntry } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
@@ -165,17 +166,47 @@ function formatDuration(ms: number): string {
 
 // ── 名称解析 ──────────────────────────────────────────────
 
-export async function fetchChatNames(chatIds: string[]): Promise<void> {
-  const missing = chatIds.filter((id) => id && !chatNameCache.has(id))
-  if (missing.length === 0) return
-  const lock = cachedLock()
-  if (!lock?.port) return
-  try {
-    const res = (await httpPost(`http://127.0.0.1:${lock.port}/api/chat-names`, { chatIds: missing }, 15_000)) as { names?: Record<string, string> }
-    if (res?.names) {
-      for (const [id, name] of Object.entries(res.names)) chatNameCache.set(id, name)
-    }
-  } catch { /* ignore */ }
+/**
+ * 聊天键 → 名字，落盘：重启后别人的群 / 私聊在重新问到名字之前也能认出来。
+ * 私聊对方的 open_id 没存在任何地方，只有查到名字的当下记下来，之后才认得出。
+ */
+let _chatNameBook: ChatNameBook | null = null
+function chatNameBookInstance(): ChatNameBook {
+  if (!_chatNameBook) _chatNameBook = createChatNameBook(globalChatNamesPath(app.getPath("userData")))
+  return _chatNameBook
+}
+export const chatNameBook: ChatNameBook = {
+  get: (chatKey) => chatNameBookInstance().get(chatKey),
+  setMany: (entries) => chatNameBookInstance().setMany(entries),
+}
+
+/**
+ * 记下私聊对方叫什么：名字缓存按 open_id 存，会话清单按聊天键找，两边靠这里接上并落盘。
+ * 只记私聊——群的名字走 fetchChatNames，本来就是按聊天键存的。
+ */
+export function rememberP2pNames(sessions: readonly { sessionKey: string; chatType?: string; senderOpenId?: string }[]): void {
+  const names: Record<string, string> = {}
+  for (const s of sessions) {
+    const name = s.chatType === "p2p" && s.senderOpenId ? chatNameCache.get(s.senderOpenId) : undefined
+    if (name) names[extractChatId(s.sessionKey)] = name
+  }
+  chatNameBook.setMany(names)
+}
+
+/** 群名：分批问、查不到的冷却一会儿再问、同一个群不重复问（会话清单会在后台为每个群补名字） */
+const groupNameFetcher = createChatNameFetcher({
+  cache: chatNameCache,
+  book: chatNameBook,
+  request: async (chatKeys) => {
+    const lock = cachedLock()
+    if (!lock?.port) return null
+    const res = (await httpPost(`http://127.0.0.1:${lock.port}/api/chat-names`, { chatIds: chatKeys }, 15_000)) as { names?: Record<string, string> }
+    return res?.names ?? {}
+  },
+})
+
+export function fetchChatNames(chatIds: string[]): Promise<void> {
+  return groupNameFetcher.fetch(chatIds)
 }
 
 /** 解析失败冷却：避免对无权限/无法解析的 openId 每轮轮询都打 API */
@@ -1628,6 +1659,8 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     }
 
     const userName = senderOpenId ? chatNameCache.get(senderOpenId) : undefined
+    // 私聊对方的名字按聊天键记下来：会话清单里这个会话空闲后，凭它还认得出是谁
+    rememberP2pNames([{ sessionKey, chatType, senderOpenId }])
     const chatName = chatNameCache.get(chatId) || userName
     const resumable = hasResumableAgentSession(sessionKey)
     const p2pName = userName || resolveSessionChatName(sessionKey, undefined, senderOpenId) || chatId
@@ -1656,6 +1689,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
 
 export function initSessionDispatcher(): void {
   setChatNameResolver((chatId) => chatNameCache.get(chatId))
+  setChatNameStored((chatId) => chatNameBook.get(chatId))
   // 名字查不到（如 bot 缺通讯录权限）时，用「通道名·访客」代替裸 sessionKey
   setChatNameFallback((chatId) => {
     const channel = getChannel(parseChatKey(chatId).channelId)

@@ -62,7 +62,10 @@ export interface ManagedSession {
   /** 展示名：能查到的聊天名 / 用户名，否则是「群 / 私聊 + 尾号」 */
   name: string
   workspaceDir?: string
-  /** 别人的私聊会话才有：最后一条用户消息（私聊只有一串 id，靠它认出是谁） */
+  /**
+   * 别人的会话才有（私聊和群一视同仁）：最后一条用户消息。
+   * 私聊只有一串 id、群名也未必查得到，靠它认出这个会话在聊什么；主用户自己的会话不需要。
+   */
   preview?: string
   running: boolean
   queued: number
@@ -104,7 +107,10 @@ export interface ManagedSessionsEnv {
   routing: RoutingSnapshot
   /** 定时任务的 id（任务的会话键就是裸 id，凭键认不出） */
   taskIds: ReadonlySet<string>
-  /** 会话叫什么（聊天名 / 用户名 / 任务名）；查不到返回 undefined */
+  /**
+   * 会话叫什么（聊天名 / 用户名 / 任务名）；查不到返回 undefined。
+   * 只给真查到的名字：兜底名由清单按「群 / 私聊 + 尾号」统一生成，调用方不要自己编（编成同一个名字就分不清谁是谁了）
+   */
   chatName: (sessionKey: string) => string | undefined
 }
 
@@ -223,10 +229,35 @@ export function previewFromMirror(raw: string, maxChars = PREVIEW_MAX_CHARS): st
   return undefined
 }
 
+/**
+ * 预览每次刷新清单（8 秒一次）都要给每个别人的会话读一遍，镜像文件会随对话越写越大，所以只读末尾：
+ * 先读最后 128KB，里面没有用户消息（末尾全是一整段很长的助手回复）再扩到 4MB，再没有就当没有。
+ */
+const PREVIEW_TAIL_WINDOWS = [128 * 1024, 4 * 1024 * 1024]
+
+function readTail(file: string, size: number, bytes: number): string {
+  const fd = fs.openSync(file, "r")
+  try {
+    const buf = Buffer.alloc(bytes)
+    fs.readSync(fd, buf, 0, bytes, size - bytes)
+    // 窗口起点多半落在一行中间（甚至半个汉字里）：那半行解析不出来，previewFromMirror 本来就会跳过坏行
+    return buf.toString("utf8")
+  } finally {
+    fs.closeSync(fd)
+  }
+}
+
 function readPreview(entryDir: string | undefined): string | undefined {
   if (!entryDir) return undefined
+  const file = path.join(entryDir, MIRROR_FILE)
   try {
-    return previewFromMirror(fs.readFileSync(path.join(entryDir, MIRROR_FILE), "utf8"))
+    const size = fs.statSync(file).size
+    for (const bytes of PREVIEW_TAIL_WINDOWS) {
+      if (size <= bytes) return previewFromMirror(fs.readFileSync(file, "utf8"))
+      const hit = previewFromMirror(readTail(file, size, bytes))
+      if (hit) return hit
+    }
+    return undefined
   } catch {
     return undefined
   }
@@ -305,7 +336,7 @@ export function listManagedSessions(env: ManagedSessionsEnv): { sessions: Manage
         kind,
         name: env.chatName(sessionKey) || fallbackName(chatKey, chatType),
         workspaceDir: workspaceDirFromSessionKey(sessionKey),
-        preview: audience === "others" && chatType !== "group" ? readPreview(entryDir) : undefined,
+        preview: audience === "others" ? readPreview(entryDir) : undefined,
         running: running.has(sessionKey),
         queued: env.queuedByKey.get(sessionKey) ?? 0,
         lastActiveAt: lastActiveOf(entryDir),
