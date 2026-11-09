@@ -31,7 +31,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        # npm ci 偶发失败（锁文件里 300 多个包走 npmmirror，GitHub 的机器连它不稳），最多试 3 次；npm ci 每次都会先清空 node_modules，重试是干净的
+        run: |
+          for i in 1 2 3; do
+            npm ci && exit 0
+            echo "npm ci 第 $i 次失败，稍后重试"
+            sleep $((i * 10))
+          done
+          exit 1
 
       - name: Run tests
         run: npm test
@@ -56,7 +64,15 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        # npm ci 偶发失败（锁文件里 300 多个包走 npmmirror，GitHub 的机器连它不稳），最多试 3 次；npm ci 每次都会先清空 node_modules，重试是干净的
+        run: |
+          for i in 1 2 3; do
+            npm ci && exit 0
+            echo "npm ci 第 $i 次失败，稍后重试"
+            sleep $((i * 10))
+          done
+          exit 1
 
       - name: Run e2e tests
         run: npm run test:e2e
