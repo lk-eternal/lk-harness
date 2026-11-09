@@ -70,45 +70,45 @@ jobs:
       - name: Package - Windows
         if: matrix.platform == 'win'
         shell: bash
-        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504，已下载的部分有缓存，重试会接着往下走。
+        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504（可能持续几分钟），已下载的部分有缓存，重试会接着往下走。
         # 失败原因写成注解（不登录也能看到）。
         run: |
           set -o pipefail
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             if npx electron-builder --win --publish never 2>&1 | tee /tmp/electron-builder.log; then exit 0; fi
-            MSG=$(tail -n 25 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            MSG=$(tail -n 45 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=打包第 $i 次失败::$MSG"
-            sleep $((i * 20))
+            sleep $((i * 30))
           done
           exit 1
 
       - name: Package - macOS
         if: matrix.platform == 'mac'
         shell: bash
-        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504，已下载的部分有缓存，重试会接着往下走。
+        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504（可能持续几分钟），已下载的部分有缓存，重试会接着往下走。
         # 失败原因写成注解（不登录也能看到）。
         run: |
           set -o pipefail
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             if npx electron-builder --mac --publish never 2>&1 | tee /tmp/electron-builder.log; then exit 0; fi
-            MSG=$(tail -n 25 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            MSG=$(tail -n 45 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=打包第 $i 次失败::$MSG"
-            sleep $((i * 20))
+            sleep $((i * 30))
           done
           exit 1
 
       - name: Package - Linux
         if: matrix.platform == 'linux'
         shell: bash
-        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504，已下载的部分有缓存，重试会接着往下走。
+        # electron-builder 要从 GitHub Releases 下载 Electron / NSIS 等；那边偶发 504（可能持续几分钟），已下载的部分有缓存，重试会接着往下走。
         # 失败原因写成注解（不登录也能看到）。
         run: |
           set -o pipefail
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             if npx electron-builder --linux --publish never 2>&1 | tee /tmp/electron-builder.log; then exit 0; fi
-            MSG=$(tail -n 25 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            MSG=$(tail -n 45 /tmp/electron-builder.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=打包第 $i 次失败::$MSG"
-            sleep $((i * 20))
+            sleep $((i * 30))
           done
           exit 1
 
