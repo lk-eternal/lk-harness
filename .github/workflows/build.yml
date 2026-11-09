@@ -10,6 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# package-lock.json 里有 301 个包的下载地址是 registry.npmmirror.com（国内镜像）。
+# GitHub 的机器连它时好时坏（同一次推送里一个 job 装得上、另一个连试 3 次都装不上）。
+# 把这个主机名换成默认源 registry.npmjs.org：路径和包内容一样，已逐个核对 301 个包的 sha512 与锁文件一致。
+# 只对 CI 生效，不改 package-lock.json，本地开发不受影响。
+env:
+  NPM_CONFIG_REPLACE_REGISTRY_HOST: registry.npmmirror.com
+
 jobs:
   build:
     strategy:
