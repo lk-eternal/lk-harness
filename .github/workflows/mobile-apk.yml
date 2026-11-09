@@ -12,12 +12,10 @@ concurrency:
   group: mobile-apk-${{ github.ref }}
   cancel-in-progress: true
 
-# package-lock.json 里有 301 个包的下载地址是 registry.npmmirror.com（国内镜像）。
-# GitHub 的机器连它时好时坏（同一次推送里一个 job 装得上、另一个连试 3 次都装不上）。
-# 把这个主机名换成默认源 registry.npmjs.org：路径和包内容一样，已逐个核对 301 个包的 sha512 与锁文件一致。
-# 只对 CI 生效，不改 package-lock.json，本地开发不受影响。
+# 手机 APK 只打包网页和 Capacitor 壳，用不到 Electron 的可执行文件：不下载它。
+# node_modules/electron 的安装脚本要从 GitHub Releases 下载约 100MB，偶发返回 504（npm ci 就是因此失败的）。
 env:
-  NPM_CONFIG_REPLACE_REGISTRY_HOST: registry.npmmirror.com
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
 
 jobs:
   build-apk:
@@ -44,7 +42,7 @@ jobs:
         shell: bash
         # npm ci 偶发失败（锁文件里 300 多个包走 npmmirror，GitHub 的机器连它不稳），最多试 3 次；npm ci 每次都会先清空 node_modules，重试是干净的
         run: |
-          for i in 1 2 3; do
+          for i in 1 2 3 4; do
             if npm ci > /tmp/npm-ci.log 2>&1; then
               tail -n 15 /tmp/npm-ci.log
               exit 0
@@ -54,7 +52,7 @@ jobs:
             # 失败原因也写成注解：不登录也能在 Actions 页面和接口里看到，不用翻日志
             MSG=$(tail -n 25 /tmp/npm-ci.log | tr -d '\r' | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
             echo "::error title=npm ci 第 $i 次失败::$MSG"
-            sleep $((i * 10))
+            sleep $((i * 15))
           done
           exit 1
 
