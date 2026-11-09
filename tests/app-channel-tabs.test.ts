@@ -89,7 +89,15 @@ async function boot() {
   const tabsOf = async (channelId: string) => {
     const tree = await dispatcher.listDashboardTree()
     expect(tree.ok).toBe(true)
-    return tree.channels.find((c) => c.channelId === channelId)!.mainTabs
+    // 会话树里「没读到 daemon 锁文件」和「某个通道构建时抛错」都会静默变成空列表；
+    // 不先排除这两种，下面「是空的」的断言会空过（之前就在这上面踩过一次）
+    expect(tree.error, "会话树报错（没读到 daemon 锁文件）").toBeUndefined()
+    const tabs = tree.channels.find((c) => c.channelId === channelId)!.mainTabs
+    if (tabs.length === 0) {
+      // 直接走同一套构建（它不吞错）：构建抛错时，真正的原因在这里露出来
+      await dispatcher.listMainSessionTabs()
+    }
+    return tabs
   }
   return { config, tabsOf }
 }
