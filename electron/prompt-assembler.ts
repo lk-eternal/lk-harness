@@ -5,6 +5,9 @@ import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
 import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
 import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, getProjectNodes, projectGroupIds } from "../src/shared/project-store.js"
+import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
+import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
+import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
 import type { LaunchMeta } from "./agent-session-types"
@@ -164,6 +167,25 @@ function ctxIncludeAdmin(ctx: PromptAssemblyContext): boolean {
   return ctx.includeAdmin === true
 }
 
+/**
+ * 独立定时任务会话的协议段：告诉 AI 它的输出没人看、结果要用 send_result 交付，以及结果会去哪。
+ * 不是独立任务会话（含非独立任务、普通会话）返回空串。读任务文件失败也按「不是」处理，不阻断拉起。
+ */
+function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey">): string {
+  const sk = ctx.sessionKey?.trim()
+  if (!sk) return ""
+  try {
+    const task = findScheduledTaskBySessionKey(sk, readTasksFromFile())
+    if (!task) return ""
+    return buildTaskProtocolSection(task, {
+      channelName: (id) => (id ? getChannel(id)?.name : undefined),
+      projectName: (id) => getProject(id)?.name,
+    })
+  } catch {
+    return ""
+  }
+}
+
 export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">, daemonPort?: number | null): string {
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const includeAdmin = ctxIncludeAdmin(ctx)
@@ -179,6 +201,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   }
   h.update(scope.audience)
   h.update(scope.channelId ?? "")
+  h.update(resolveTaskProtocolSection(ctx))
   return h.digest("hex").slice(0, 16)
 }
 
@@ -194,6 +217,11 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
     parts.push(identity)
   }
   appendUserHarnessRules(parts, ctx)
+  const taskSection = resolveTaskProtocolSection(ctx)
+  if (taskSection) {
+    parts.push("---")
+    parts.push(taskSection)
+  }
   return parts
 }
 

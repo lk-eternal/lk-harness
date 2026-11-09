@@ -21,7 +21,10 @@ interface Props {
 export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, groupId, onUploadNode }: Props) {
   const { showAlert, showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+  // 选中的存节点 id，下标由它推导：拖动排序后节点换了位置，选中的仍是同一个节点
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedIdx = selectedId === null ? -1 : nodes.findIndex((n) => n.id === selectedId)
+  const selectedIndex: number | null = selectedIdx >= 0 ? selectedIdx : null
   const [draft, setDraft] = useState<(ProjectNodeItem & { index: number }) | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
   const [isNew, setIsNew] = useState(false)
@@ -44,7 +47,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
       if (choice === "cancel") return
       if (choice === "save" && !(await handleSave())) return
     }
-    setSelectedIndex(index)
+    setSelectedId(nodes[index]?.id ?? null)
   }
 
   const openAdd = async () => {
@@ -57,7 +60,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
     setDraft(d)
     setSavedSnapshot(JSON.stringify(d))
     setIsNew(true)
-    setSelectedIndex(null)
+    setSelectedId(null)
   }
 
   const handleSave = async () => {
@@ -80,8 +83,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
       : nodes.map((n, j) => j === draft.index ? { ...n, ...item } : n)
     await onSaveNodes(next)
     markSaved()
-    const idx = draft.index < 0 ? next.length - 1 : draft.index
-    setSelectedIndex(idx)
+    setSelectedId(id)
     setIsNew(false)
     return true
   }
@@ -91,7 +93,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
     if (!(await showConfirm("删除节点", `确定删除「${draft.label || draft.id}」？`))) return
     await onSaveNodes(nodes.filter((_, j) => j !== draft.index))
     setDraft(null)
-    setSelectedIndex(null)
+    setSelectedId(null)
   }
 
   return (
@@ -149,7 +151,7 @@ export default function ProjectNodePanel({ nodes, onSaveNodes, hubConfigured, gr
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <button onClick={() => { setDraft(null); setSelectedIndex(null) }} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
+                  <button onClick={() => { setDraft(null); setSelectedId(null) }} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.id.trim() || !draft.label.trim()}
                     className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
                     {justSaved ? "已保存" : "保存"}

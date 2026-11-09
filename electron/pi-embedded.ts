@@ -173,7 +173,9 @@ export async function createHarnessPiSession(
   const includeAdmin = opts.includeAdmin === true
   // 项目会话另挂 lk-harness-project（与 agent-sdk 一致；宿主无 chatType，按 sessionKey 启发式，同 shouldIncludeAdminMcp 惯例）
   const includeProject = opts.sessionKey?.includes("::project_") === true
-  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject, opts.sessionKey)
+  // 独立定时任务没有流式卡片，结果只能靠 send_result 交付：走 task 端点（与 agent-sdk 一致）
+  const mcpEndpoint = opts.chatType === "task" ? "task" : "interactive"
+  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject, opts.sessionKey, mcpEndpoint)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)
 
   // Always inject Harness protocol into appendSystemPrompt so resumed sessions

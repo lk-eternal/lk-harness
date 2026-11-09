@@ -25,7 +25,15 @@
 管理 Harness Agent Skills（list / read / save / delete）。
 
 ### manage_tasks
-管理定时任务（list / add / update / delete / toggle）。
+管理**全局**定时任务，和设置页里的一样（list / add / update / delete / toggle）。它**不是**「给当前会话定时」：
+- 独立运行（默认）：每次由全新 Agent 执行，结果按 `notify` 发出。
+- `independent=false`：任务内容投给「所属通道」的**主会话**。飞书/微信通道的主会话就是主用户私聊，回复会发到飞书/微信，不一定是你当前所在的会话。
+- 所属通道默认是你当前所在的通道；创建后工具会返回任务实际的去向，如实转述给用户，不要自己推断。
+
+### schedule_create / schedule_list / schedule_cancel
+给**你当前所在的会话**自己排定时任务（等 CI、定期检查、隔天复查）。用户说「给当前会话定时」时用它，不要用 manage_tasks。
+- `mode=fresh`（默认）：每次由新 Agent 执行，结论投回本会话；`mode=session`：到点提醒本会话自己做。
+- 只有主会话和项目会话能用。
 
 ### manage_workspace
 管理工作目录（get / set）。切换后热更新生效。

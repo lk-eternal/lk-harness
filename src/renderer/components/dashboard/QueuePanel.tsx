@@ -1,5 +1,6 @@
 import { Trash2 } from "lucide-react"
 import PanelShell from "./PanelShell"
+import { queueRowView } from "./queue-row"
 
 export interface QueueMessageView {
   index: number
@@ -11,6 +12,10 @@ export interface QueueMessageView {
   timestamp?: number
   senderOpenId?: string
   sessionLabel?: string
+  /** 会话所属通道名；别人的会话（私聊他人、群）空闲时不在会话树里，徽标靠它 */
+  channelName?: string
+  /** others = 别人的会话：名字以主进程给的 sessionLabel 为准，不跟会话树走 */
+  audience?: "main" | "others"
 }
 
 export function formatQueueTimestamp(ts?: number): string {
@@ -40,18 +45,19 @@ export default function QueuePanel({
       ) : (
         <div className="space-y-1.5 p-3">
           {messages.map((msg) => {
-            const meta = msg.sessionKey ? metaByKey.get(msg.sessionKey.toLowerCase()) : undefined
+            const tree = msg.sessionKey ? metaByKey.get(msg.sessionKey.toLowerCase()) : undefined
+            const row = queueRowView(msg, tree, () => labelOf(msg))
             return (
               <div key={msg.fileId || msg.index} data-queue-item={msg.fileId} className="flex items-start justify-between gap-2 rounded-lg bg-raised/60 px-3 py-2">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    {meta && (
+                    {row.channelName && (
                       <span className="shrink-0 rounded bg-raised px-1 text-[10px] text-fg-3" title="所属通道">
-                        {meta.channelName}
+                        {row.channelName}
                       </span>
                     )}
                     <span className="min-w-0 truncate text-[10px] font-medium text-accent" title={msg.sessionKey}>
-                      {meta?.label ?? labelOf(msg)}
+                      {row.label}
                     </span>
                     <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-blue-600/25 text-accent-soft" : "bg-yellow-600/20 text-warning-soft"}`}>
                       {msg.status === "processing" ? "处理中" : "排队"}

@@ -380,3 +380,102 @@ describe("清单里别人的会话：最后一句话", () => {
     expect(preview).toEqual({ [P_GUEST]: "私聊里的最后一句", [G1]: "群里的最后一句" })
   })
 })
+
+/**
+ * 工作台「消息队列」每一行的标签（getQueueMessages 给的 sessionLabel / channelName / audience）。
+ * 现场：别人的私聊在队列里被标成「私聊 📁AI Support（主）」，像主用户的会话；会话一空闲、一运行，同一行还来回换写法。
+ * 成因：别人的私聊会话键是「聊天键::通道主目录」（daemon 把所有私聊都路由到通道主目录），
+ * 旧标签只比「目录 = 通道主目录」就加「（主）」，不看这是谁的聊天。
+ */
+describe("队列里别人的会话：标签和清单同名，不当成主用户的会话", () => {
+  const MAIN_DIR = "D:\\ws\\a"
+  const MAIN_CHAT = "ch_f|ou_main"
+
+  beforeEach(() => {
+    channels = [{ ...FEISHU, workspaceDir: MAIN_DIR }]
+  })
+
+  let seq = 0
+  function queuedMsg(sessionKey: string, chatType: string, senderOpenId?: string): Record<string, unknown> {
+    seq++
+    return { index: seq, fileId: `q${seq}`, preview: "x", status: "processing", sessionKey, chatType, timestamp: seq, senderOpenId }
+  }
+
+  async function rowOf(sessionKey: string) {
+    const { dispatcher } = await boot()
+    const rows = await dispatcher.getQueueMessages()
+    return { rows, row: rows.find((r) => r.sessionKey === sessionKey)!, dispatcher }
+  }
+
+  it("别人的私聊：会话键带着通道主目录，也不叫「（主）」；名字就是清单里的名字", async () => {
+    const key = `${P_GUEST}::${MAIN_DIR}`
+    addSession(P_GUEST, MAIN_DIR)
+    writeRouting({ [P_GUEST]: "p2p" })
+    queued = [queuedMsg(key, "p2p", P_OPENID)]
+    const { dispatcher } = await boot()
+    dispatcher.chatNameCache.set(P_OPENID, "甘露")
+
+    const row = (await dispatcher.getQueueMessages())[0]
+    expect(row.sessionLabel).toBe("甘露")
+    expect(row.sessionLabel).not.toContain("（主）")
+    expect(row.audience).toBe("others")
+    expect(row.channelName).toBe("AI Support")
+    // 和会话清单同名
+    const { sessions } = await (await import("../electron/session-manager")).listSessionsForManager()
+    expect(sessions.find((s) => s.chatKey === P_GUEST)?.name).toBe(row.sessionLabel)
+  })
+
+  it("别人的私聊还没查到名字：「私聊 + 尾号」，和清单一样，不带目录和「（主）」", async () => {
+    const key = `${P_GUEST}::${MAIN_DIR}`
+    addSession(P_GUEST, MAIN_DIR)
+    writeRouting({ [P_GUEST]: "p2p" })
+    queued = [queuedMsg(key, "p2p", P_OPENID)]
+    const { row } = await rowOf(key)
+    expect(row.sessionLabel).toBe("私聊 ccc333")
+    expect(row.audience).toBe("others")
+  })
+
+  it("两个人各排各的队：各叫各的名字，不串", async () => {
+    const P2 = "ch_f|oc_p2p_hhh888"
+    queued = [queuedMsg(`${P_GUEST}::${MAIN_DIR}`, "p2p", P_OPENID), queuedMsg(`${P2}::${MAIN_DIR}`, "p2p", "ou_other")]
+    const { dispatcher } = await boot()
+    dispatcher.chatNameCache.set(P_OPENID, "甘露")
+    dispatcher.chatNameCache.set("ou_other", "李四")
+    const rows = await dispatcher.getQueueMessages()
+    expect(rows.map((r) => r.sessionLabel)).toEqual(["甘露", "李四"])
+  })
+
+  it("主用户自己的私聊：还是「（主）」，audience 是 main", async () => {
+    const key = `${MAIN_CHAT}::${MAIN_DIR}`
+    queued = [queuedMsg(key, "p2p", "ou_main")]
+    const { row } = await rowOf(key)
+    expect(row.sessionLabel).toContain("（主）")
+    expect(row.audience).toBe("main")
+    expect(row.channelName).toBe("AI Support")
+  })
+
+  it("群：叫「群 + 尾号」（发言人的名字不能当群名）；audience 是 others", async () => {
+    queued = [queuedMsg(G1, "group", "ou_speaker")]
+    const { dispatcher } = await boot()
+    dispatcher.chatNameCache.set("ou_speaker", "群里的某人")
+    const [row] = await dispatcher.getQueueMessages()
+    expect(row.sessionLabel).toBe("群 aaa111")
+    expect(row.audience).toBe("others")
+  })
+
+  it("项目专属群里的消息进的是项目会话：属于主用户这边，不算别人的会话", async () => {
+    const key = `${G1}::project_abc123def456`
+    queued = [queuedMsg(key, "group", "ou_speaker")]
+    const { row } = await rowOf(key)
+    expect(row.audience).toBe("main")
+  })
+
+  it("应用内通道的会话：不算别人的会话", async () => {
+    channels = [{ ...FEISHU, id: "ch_app", name: "应用内", type: "app", workspaceDir: MAIN_DIR, mainUserEnabled: false, mainUserChatId: "" }]
+    const key = `ch_app|app_main::${MAIN_DIR}`
+    queued = [queuedMsg(key, "p2p")]
+    const { row } = await rowOf(key)
+    expect(row.audience).toBe("main")
+    expect(row.channelName).toBe("应用内")
+  })
+})

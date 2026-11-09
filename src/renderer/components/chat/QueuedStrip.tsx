@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Check, Clock, ImageIcon, Loader2, Pencil, SendHorizontal, Trash2, X } from "lucide-react"
 import type { AppChatUserItem } from "../../../shared/app-chat-types"
+import { HANDOFF_HINT_MAX_MS, phaseAfterSend, queuedHeaderText, type HandoffPhase, type SendNowOutcome } from "./queued-strip-text"
 
 interface Props {
   /** 排队中、还没投递给 Agent 的消息，按发送顺序 */
@@ -8,8 +9,8 @@ interface Props {
   /** 改正文；返回 false 表示没改成（已送达等），界面保持原样 */
   onEdit: (id: string, text: string) => Promise<boolean>
   onRemove: (id: string) => Promise<void>
-  /** 打断当前回合，让排队的消息立刻交给 Agent */
-  onSendNow: () => Promise<void>
+  /** 打断当前回合，让排队的消息立刻交给 Agent；返回交接结果，用来显示「已打断 / 正在启动」提示 */
+  onSendNow: () => Promise<SendNowOutcome>
 }
 
 /**
@@ -21,12 +22,26 @@ export default function QueuedStrip({ items, onEdit, onRemove, onSendNow }: Prop
   const [draft, setDraft] = useState("")
   const [saving, setSaving] = useState(false)
   const [sending, setSending] = useState(false)
+  /** 点「立即发送」之后到消息被 Agent 领走之间的提示阶段；null = 平时的排队提示 */
+  const [handoff, setHandoff] = useState<HandoffPhase>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
 
   // 正在编辑的那条已经送达或被删：退出编辑态，别留一个指向不存在消息的编辑框
   useEffect(() => {
     if (editingId && !items.some((i) => i.id === editingId)) setEditingId(null)
   }, [items, editingId])
+
+  // 消息被领走（暂存区清空）：交接结束，下次排队从平时的提示开始
+  useEffect(() => {
+    if (items.length === 0) setHandoff(null)
+  }, [items.length])
+
+  // 交接提示不能永远挂着：Agent 一直没领走（比如启动失败）时回到平时的提示
+  useEffect(() => {
+    if (handoff !== "soft" && handoff !== "starting") return
+    const t = setTimeout(() => setHandoff(null), HANDOFF_HINT_MAX_MS)
+    return () => clearTimeout(t)
+  }, [handoff])
 
   useEffect(() => {
     if (!editingId) return
@@ -61,10 +76,13 @@ export default function QueuedStrip({ items, onEdit, onRemove, onSendNow }: Prop
   const sendNow = async () => {
     if (sending) return
     setSending(true)
+    setHandoff("interrupting")
+    let next: HandoffPhase = null
     try {
-      await onSendNow()
+      next = phaseAfterSend(await onSendNow())
     } finally {
       setSending(false)
+      setHandoff(next)
     }
   }
 
@@ -72,12 +90,12 @@ export default function QueuedStrip({ items, onEdit, onRemove, onSendNow }: Prop
     <div className="mb-2 overflow-hidden rounded-xl border border-line bg-surface/70">
       <div className="flex items-center gap-2 border-b border-line-subtle px-3 py-1.5 text-[12px] text-fg-muted">
         <Clock size={13} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">排队中 · {items.length} 条，Agent 完成当前回合后自动发出</span>
+        <span className="min-w-0 flex-1 truncate">{queuedHeaderText(items.length, handoff)}</span>
         <button
           type="button"
           onClick={() => void sendNow()}
           disabled={sending}
-          title="停止当前回合，立刻把排队的消息交给 Agent"
+          title="打断当前回合，立刻把排队的消息交给 Agent"
           className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-accent transition hover:bg-raised disabled:opacity-50"
         >
           {sending ? <Loader2 size={12} className="animate-spin" /> : <SendHorizontal size={12} />}立即发送

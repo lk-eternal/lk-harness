@@ -20,6 +20,7 @@ import {
   getResumableSummary,
   completeSdkText,
 } from "../agent-sdk"
+import { interruptSdkWorkerTurn } from "../sdk-session-worker"
 import type { AgentEngine, AgentLaunchParams } from "./types"
 
 export const cursorSdkEngine: AgentEngine = {
@@ -54,6 +55,13 @@ export const cursorSdkEngine: AgentEngine = {
   isRunning: isSdkSessionRunning,
   stop: stopSdkSession,
   stopAll: stopAllSdkSessions,
+
+  async interruptTurn(sessionKey) {
+    const r = await interruptSdkWorkerTurn(sessionKey)
+    // 还没有 worker，但 SDK 在拉起中（Resume/Create 进行中）：排队的消息由它起来后的第一次轮询领走
+    if (r === "not-running" && isSdkSessionRunning(sessionKey)) return "launching"
+    return r
+  },
 
   listSessions() {
     return getSdkSessionList().map((s) => ({

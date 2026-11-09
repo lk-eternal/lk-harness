@@ -143,6 +143,19 @@ export async function enqueueToSession(
   }
 }
 
+/**
+ * 手动触发定时任务：交给 daemon 按任务配置投递（独立运行 / 绑定的 Agent 会话 / 通知方式），
+ * 与 cron 触发是同一套入队逻辑，调用方不用再自己判断「该投到哪」。
+ */
+export async function triggerScheduledTaskViaDaemon(port: number, taskId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = (await httpPost(`http://127.0.0.1:${port}/api/task-trigger`, { taskId }, 10_000)) as { ok?: boolean; error?: string } | null
+    return r?.ok ? { ok: true } : { ok: false, error: r?.error ?? "触发失败" }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 /** 主工作区 sessionKey（与 enqueueToMainSession 路由一致） */
 export async function resolveMainSessionKey(
   port: number, preferredChatId?: string, channelId?: string,

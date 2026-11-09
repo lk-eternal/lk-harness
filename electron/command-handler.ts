@@ -21,7 +21,7 @@ import { listQuickModels, getSessionOverride, type ModelEntry } from "../src/sha
 import { resolveModelLabel, rememberModelLabel, selectModelVariants } from "../src/shared/model-utils.js"
 import { listSdkModels } from "./agent-sdk"
 import { McpServerEntry, getMcpServerList, getMcpEnabledMap, toggleMcpServer, deleteMcpServer, saveMcpServer } from "./mcp-manager"
-import { httpPost, enqueueToMainSession } from "./daemon-client"
+import { httpPost } from "./daemon-client"
 import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 
 // ── 共享类型与工具 ─────────────────────────────────────────
@@ -770,10 +770,9 @@ function taskPreviewBullet(i: number): string { return TASK_PREVIEW_BULLETS[i] ?
 function formatTaskStatusLine(enabled: boolean): string { return enabled ? "✅ 运行中" : "⏸️ 已停止" }
 
 export type TaskRunFn = (task: ScheduledTask, content: string) => Promise<{ ok: boolean; error?: string }>
-export type TaskEnqueueFn = (content: string, chatId?: string) => Promise<{ ok: boolean; error?: string }>
 
 export async function handleFeishuTaskCommand(
-  port: number, messageId: string, raw: string, taskRunFn: TaskRunFn, chatId?: string, taskEnqueueFn?: TaskEnqueueFn,
+  port: number, messageId: string, raw: string, taskRunFn: TaskRunFn, chatId?: string,
   patchMessageId?: string,
 ): Promise<void> {
   const parts = raw.trim().split(/\s+/).filter((p) => p.length > 0)
@@ -846,21 +845,13 @@ export async function handleFeishuTaskCommand(
     const t = tasks[idx - 1]
     const nowStr = new Date().toLocaleString("zh-CN")
     const content = `[定时任务: ${t.name}] (手动触发: ${nowStr})\n\n${t.content}`
-    if (t.independent !== false) {
-      const result = await taskRunFn(t, content)
-      if (result.ok) {
-        await reportCommandResult(port, messageId, true, `🚀 已独立启动任务 #${idx} ${t.name}`, chatId, undefined, tExtra())
-      } else {
-        await reportCommandResult(port, messageId, false, `❌ 独立启动失败: ${result.error}`, chatId, undefined, tExtra())
-      }
+    // 投到哪（独立会话 / 绑定的 Agent 会话）由 daemon 按任务配置定，和 cron 触发一致
+    const result = await taskRunFn(t, content)
+    const independent = t.independent !== false
+    if (result.ok) {
+      await reportCommandResult(port, messageId, true, `🚀 ${independent ? "已独立启动" : "已手动触发"}任务 #${idx} ${t.name}`, chatId, undefined, tExtra())
     } else {
-      const enqueue = taskEnqueueFn ?? ((c, preferredChatId) => enqueueToMainSession(port, c, preferredChatId ?? chatId))
-      const result = await enqueue(content, chatId)
-      if (result.ok) {
-        await reportCommandResult(port, messageId, true, `🚀 已手动触发任务 #${idx} ${t.name}`, chatId, undefined, tExtra())
-      } else {
-        await reportCommandResult(port, messageId, false, `❌ 触发失败: ${result.error}`, chatId, undefined, tExtra())
-      }
+      await reportCommandResult(port, messageId, false, `❌ ${independent ? "独立启动失败" : "触发失败"}: ${result.error}`, chatId, undefined, tExtra())
     }
     return
   }

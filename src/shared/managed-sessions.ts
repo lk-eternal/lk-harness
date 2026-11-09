@@ -191,7 +191,8 @@ export function manageBlockedReason(kind: ManagedSessionKind, audience: ChannelA
   return undefined
 }
 
-function fallbackName(chatKey: string, chatType: ManagedChatType): string {
+/** 查不到名字时的会话名：「群 / 私聊 + 尾号」。会话清单和工作台的消息队列共用，两处同名 */
+export function fallbackName(chatKey: string, chatType: ManagedChatType): string {
   const raw = parseChatKey(chatKey).chatId
   const tail = raw.length > 8 ? raw.slice(-6) : raw
   if (chatType === "group") return `群 ${tail}`

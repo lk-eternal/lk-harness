@@ -9,6 +9,8 @@ import {
   setSessionOverride,
   getSessionOverride,
   clearSessionOverride,
+  applySessionProviderSwitch,
+  clearSessionProviderOverride,
   resolveModelForSession,
   pushRecentModel,
   recordModelUse,
@@ -19,6 +21,7 @@ import {
   type ModelEntry,
 } from "../src/shared/session-model-store.js"
 import { sessionStateDir } from "../src/shared/data-paths.js"
+import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import {
   STATE_FILE,
   globalLastModelsPath,
@@ -152,6 +155,35 @@ describe("resourceId（供应商+模型整体）", () => {
     expect(getSessionOverride(project)?.model).toBe("gemini")
     clearSessionOverride(project)
     expect(getSessionOverride(project)?.model).toBe("spark")
+  })
+})
+
+describe("applySessionProviderSwitch（切供应商时整体落盘）", () => {
+  it("供应商和模型一起记下，读回一致（打包版曾把这函数折叠成只清空，界面切了没反应）", () => {
+    applySessionProviderSwitch(SESSION, {
+      resourceId: "llm_bridge",
+      model: { model: "claude-sonnet-5-5", modelParams: "", resourceId: "llm_bridge" },
+    })
+    expect(getSessionOverride(SESSION)).toEqual({ model: "claude-sonnet-5-5", modelParams: "", resourceId: "llm_bridge" })
+    expect(resolveModelForSession(SESSION, { model: "composer-2.5", modelParams: "", resourceId: "llm_bridge" }).model)
+      .toBe("claude-sonnet-5-5")
+  })
+
+  it("只切供应商不带模型时，清掉旧模型但记下新供应商", () => {
+    setSessionOverride(SESSION, { model: "old-m", modelParams: "", resourceId: "sdk_a" })
+    applySessionProviderSwitch(SESSION, { resourceId: "llm_bridge", model: null })
+    expect(getSessionOverride(SESSION)).toBeUndefined()
+    expect(getSessionRecord(SESSION)?.resourceId).toBe("llm_bridge")
+    expect(fs.existsSync(path.join(sessionEntryDir(dataDir, SESSION), STATE_FILE))).toBe(true)
+  })
+
+  it("clearSessionProviderOverride 把模型和供应商一起作废", () => {
+    applySessionProviderSwitch(SESSION, {
+      resourceId: "llm_bridge",
+      model: { model: "claude-sonnet-5-5", modelParams: "", resourceId: "llm_bridge" },
+    })
+    clearSessionProviderOverride(SESSION)
+    expect(getSessionOverride(SESSION)).toBeUndefined()
   })
 })
 

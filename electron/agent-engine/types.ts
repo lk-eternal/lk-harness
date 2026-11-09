@@ -81,6 +81,23 @@ export interface CompleteParams {
   prompt: string
 }
 
+/** 软打断的结果：调用方据此决定是否还要走「停止 + 重新拉起」 */
+export type InterruptTurnResult =
+  /** 当前这一轮已取消并收口；Agent 还在，会自己去队列领排队的消息 */
+  | "interrupted"
+  /** Agent 正在拉起，还没有可打断的回合；排队的消息会由它启动后领走 */
+  | "launching"
+  /** Agent 活着，但此刻没有在跑回合（刚好结束，或在空闲监听） */
+  | "no-turn"
+  /** 不适用：按需唤醒的会话（回合一结束 Agent 就退出）或引擎不支持 */
+  | "unsupported"
+  /** 已取消，但回合迟迟没有收口 */
+  | "timeout"
+  /** 打断过程中 Agent 退出了（出错、账本滚动要冷启动等），由调度器重新拉起 */
+  | "exited"
+  /** 没有 Agent 在运行 */
+  | "not-running"
+
 export interface AgentEngine {
   kind: AgentEngineKind
   runtimeId: AgentRuntimeId
@@ -89,6 +106,12 @@ export interface AgentEngine {
   isRunning(sessionKey: string): boolean
   stop(sessionKey: string): Promise<void>
   stopAll(): Promise<void>
+  /**
+   * 软打断（可选）：只取消当前这一轮，Agent 不退出，随后自己去队列领排队的消息。
+   * 比「停止再重新拉起」快得多：省掉重新拉起（SDK 的 Resume 要走网络，偶发卡 30 秒以上）。
+   * 不实现 = 不支持，调用方走停止 + 重新拉起。
+   */
+  interruptTurn?(sessionKey: string): Promise<InterruptTurnResult>
 
   listSessions(): AgentSessionInfo[]
   getSessionCount(): number

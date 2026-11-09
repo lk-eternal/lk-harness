@@ -168,6 +168,14 @@ export interface AppChatResult {
   sessionKey?: string;
 }
 
+/**
+ * 对话页会话列表要显示的 tab：定时任务自己的会话（kind=task）不是对话会话，
+ * 它的内容在任务执行里，进对话页只会显示成空会话，所以不列。
+ */
+export function visibleChatTabs<T extends { kind: string }>(tabs: readonly T[]): T[] {
+  return tabs.filter((t) => t.kind !== "task");
+}
+
 /** 会话在存储与比对里的统一标识：路径分隔符与大小写归一（Windows 路径混写不分裂） */
 export function appChatSessionId(sessionKey: string): string {
   const normalized = normalizeSessionKey(sessionKey) || sessionKey;

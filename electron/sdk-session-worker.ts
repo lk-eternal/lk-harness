@@ -1,6 +1,7 @@
 import type { SdkSessionAgent } from "./agent-sdk"
 import {
   executeSdkTurn,
+  finishInterruptedTurn,
   onSdkWorkerFinished,
   unregisterSdkSessionForWorker,
 } from "./agent-sdk"
@@ -18,6 +19,7 @@ import {
 import { assembleSdkWorkerTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
+import type { InterruptTurnResult } from "./agent-engine/types"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
 
@@ -31,6 +33,10 @@ interface WorkerState {
   firstTurn: boolean
   abort: AbortController
   loopPromise: Promise<void>
+  /** 正在 executeSdkTurn 里（从调用到返回，同步置位/复位，供软打断判断有没有回合可打断） */
+  inTurn: boolean
+  /** 软打断在等：worker 回到监听（或退出）时唤醒 */
+  turnEndWaiters: Array<() => void>
 }
 
 const workers = new Map<string, WorkerState>()
@@ -91,6 +97,59 @@ export async function stopAllSdkWorkers(): Promise<void> {
   await Promise.all([...workers.keys()].map((k) => stopSdkWorker(k)))
 }
 
+/** 软打断等回合收口的时限：取消一般 2~3.5 秒生效，超过说明卡在长工具调用里，交给调用方走硬停止 */
+export const SDK_INTERRUPT_TIMEOUT_MS = 6_000
+
+function flushTurnEndWaiters(state: WorkerState): void {
+  const waiters = state.turnEndWaiters.splice(0)
+  for (const wake of waiters) wake()
+}
+
+/**
+ * 软打断：只取消当前这一轮，worker 和 Agent 都不退出，回合收口后自己回去监听、领排队的消息。
+ * 用于「立即发送」——原来是停掉 Agent 再 Resume 重建，Resume 要走网络，偶发卡 30 秒以上。
+ *
+ * 返回值告诉调用方还要不要自己兜底：只有 interrupted 表示已经完成；其余都由调用方决定怎么走。
+ */
+export async function interruptSdkWorkerTurn(
+  sessionKey: string,
+  timeoutMs: number = SDK_INTERRUPT_TIMEOUT_MS,
+): Promise<InterruptTurnResult> {
+  const w = findWorkerState(sessionKey)
+  if (!w) return "not-running"
+  // 按需唤醒的 worker 回合一结束就退出，没有「回去监听」可言
+  if (!w.persistentPoll) return "unsupported"
+  if (w.abort.signal.aborted || w.session.abortController.signal.aborted) return "exited"
+  if (!w.inTurn) return "no-turn"
+
+  const { session } = w
+  // 先登记标记和等待，再 cancel：send 还没返回 run 的短窗口里 cancel 没有对象，executeSdkTurn 拿到 run 后会看标记补一刀
+  session.interruptRequested = true
+  let wake: () => void = () => undefined
+  const settled = new Promise<void>((resolve) => { wake = resolve; w.turnEndWaiters.push(resolve) })
+  cancelRunQuietly(session)
+
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timedOut = await Promise.race([
+    settled.then(() => false),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(true), timeoutMs) }),
+  ])
+  if (timer) clearTimeout(timer)
+
+  if (timedOut) {
+    const i = w.turnEndWaiters.indexOf(wake)
+    if (i >= 0) w.turnEndWaiters.splice(i, 1)
+    // 撤回标记：调用方接着会走硬停止；万一回合之后自己结束，也别被当成打断
+    session.interruptRequested = false
+    pushUiLog("SDK", "WARN", `[${sessionKey}] 软打断 ${timeoutMs / 1000}s 内回合没收口，交给调用方走停止+重启`)
+    return "timeout"
+  }
+  const alive = findWorkerState(sessionKey) === w
+    && !w.abort.signal.aborted
+    && !session.abortController.signal.aborted
+  return alive ? "interrupted" : "exited"
+}
+
 function filterDeliverable(messages: PollMessage[]): PollMessage[] {
   return messages.filter((m) => m.text?.trim() && m.messageId)
 }
@@ -131,6 +190,8 @@ export function startSdkWorkerLoop(
     firstTurn: opts.firstTurn,
     abort,
     loopPromise: Promise.resolve(),
+    inTurn: false,
+    turnEndWaiters: [],
   }
   workers.set(session.sessionKey, state)
   state.loopPromise = runWorkerLoop(state)
@@ -148,6 +209,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   try {
     while (!abort.signal.aborted && !session.abortController.signal.aborted) {
       state.phase = "listening"
+      flushTurnEndWaiters(state)
 
       let pollResult
       try {
@@ -198,10 +260,20 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
       pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 
-      const turnResult = await executeSdkTurn(session, prompt)
+      state.inTurn = true
+      let turnResult: Awaited<ReturnType<typeof executeSdkTurn>>
+      try {
+        turnResult = await executeSdkTurn(session, prompt)
+      } finally {
+        state.inTurn = false
+      }
+      // 只管这一轮：读完立刻清，避免残留到下一轮
+      const interrupted = session.interruptRequested === true
+      session.interruptRequested = false
       if (abort.signal.aborted || session.abortController.signal.aborted) break
 
-      if (!turnResult.ok) {
+      // 被软打断的回合：取消引发的错误状态不算失败，worker 继续监听
+      if (!turnResult.ok && !interrupted) {
         errored = true
         errorDetail = turnResult.errorDetail
         networkFail = turnResult.networkFail
@@ -221,6 +293,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
           ...(at ? [{ role: "assistant" as const, text: at }] : []),
         ])
       } catch { /* ignore */ }
+
+      if (interrupted) {
+        pushUiLog("SDK", "INFO", `[${sessionKey}] 回合被「立即发送」打断，Agent 不退出，去领排队的消息`)
+        // 在确认旧消息、领新消息之前把这一轮的卡封成「已打断」：保证聊天里先是被打断的卡，再是新回合的卡
+        try { await finishInterruptedTurn(session) } catch { /* best-effort */ }
+      }
 
       await markMessagesProcessed(session, sessionKey, fresh)
 
@@ -261,5 +339,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
     } catch (e: unknown) {
       pushUiLog("SDK", "WARN", `[${sessionKey}] worker finished 回调失败: ${e instanceof Error ? e.message : String(e)}`)
     }
+    flushTurnEndWaiters(state)
   }
 }

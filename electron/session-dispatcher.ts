@@ -7,14 +7,15 @@ import {
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromChannelFavorites,
   type MessageChannel,
 } from "./config-store"
-import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, type ChannelAudience } from "../src/shared/channel-types"
+import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, resolveChannelAudience, type ChannelAudience } from "../src/shared/channel-types"
 import { createTempChatSession } from "../src/shared/temp-chat-session.js"
 import { broadcastLog } from "./ui-logger"
-import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession, purgeSessionRouting } from "./daemon-client"
+import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession, purgeSessionRouting, triggerScheduledTaskViaDaemon } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import { resolveEffectiveModel, resolveEffectiveSessionKey } from "./session-key-resolver"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
-import { setChatNameResolver, setChatNameStored, setChatNameFallback, resolveSessionChatName } from "./session-chat-name"
+import { setChatNameResolver, setChatNameStored, setChatNameFallback, resolveSessionChatName, lookupChatName } from "./session-chat-name"
+import { fallbackName } from "../src/shared/managed-sessions"
 import { createChatNameBook, createChatNameFetcher, type ChatNameBook } from "../src/shared/chat-names.js"
 import {
   getAgentEngine,
@@ -29,6 +30,8 @@ import {
   setAllAgentIdleHandlers,
   warmupAgentModels,
 } from "./agent-engine"
+import type { InterruptTurnResult } from "./agent-engine/types"
+import { interruptRunningEngine } from "./send-queued-now"
 import { cleanupWorkspaceDir } from "./workspace-injector"
 import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
@@ -44,10 +47,11 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { getSessionRecord, initSessionOverridesStore } from "../src/shared/session-overrides-store.js"
 import { resolveLaunchModel, resolveSessionResourceId } from "../src/shared/launch-model.js"
 import { taskTabModel } from "../src/shared/task-tab-model.js"
+import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
-import { findScheduledTaskBySessionKey, formatScheduledTaskLabel, resolveTaskChannelId, resolveTaskOutboundChatKey } from "../src/shared/scheduled-task"
+import { findScheduledTaskBySessionKey, isOrphanTaskSessionKey, formatScheduledTaskLabel, resolveTaskChannelId, resolveTaskOutboundChatKey, taskOutboundChannelId, type ScheduledTask } from "../src/shared/scheduled-task"
 import {
   clearLaunchFailStreak,
   clearAllLaunchFailStreaks,
@@ -109,6 +113,15 @@ export function isSessionAgentRunning(key: string): boolean {
 export async function stopSessionAgent(key: string): Promise<void> {
   releaseLaunch(key)
   await Promise.all(getAllAgentEngines().map((e) => e.stop(key)))
+}
+
+/**
+ * 软打断该会话当前的回合（「立即发送」用）：Agent 不退出，只取消这一轮。
+ * 在跑这个会话的引擎不支持软打断时返回 unsupported，由调用方退回「停止 + 重新拉起」。
+ */
+export function interruptSessionTurn(key: string): Promise<InterruptTurnResult> {
+  // 调度器已预留名额、引擎还没登记：属于正在拉起
+  return interruptRunningEngine(key, getAllAgentEngines(), launchReserved.has(key))
 }
 
 export async function stopAllSessionAgents(): Promise<void> {
@@ -306,8 +319,15 @@ export interface QueueMessageItem {
   chatType?: string
   timestamp?: number
   senderOpenId?: string
-  /** UI 展示用：私聊/群聊 + 项目名或目录名（避免裸 project_xxx） */
+  /** UI 展示用：别人的会话是对方的名字；主用户自己的是「私聊/群聊 + 项目名或目录名」（避免裸 project_xxx） */
   sessionLabel?: string
+  /** 会话所属通道的名字：队列行上的通道徽标。不跟会话树走（树里没有空闲的别人的会话） */
+  channelName?: string
+  /**
+   * others = 别人的会话（私聊他人、群）；main = 主用户自己的、项目、任务、临时和应用内通道。
+   * 别人的会话的名字以 sessionLabel 为准：会话树里只有运行中的别人的会话，跟着树走，会话一空闲一运行这一行就换一种写法。
+   */
+  audience?: "main" | "others"
 }
 
 function queueSessionLabel(sessionKey: string, chatType?: string): string {
@@ -318,15 +338,48 @@ function queueSessionLabel(sessionKey: string, chatType?: string): string {
   return `${chatLabel} ${icon}${name}`
 }
 
+/**
+ * 排队消息属于别人的会话吗（私聊他人、群）。判法和会话清单同一个：resolveChannelAudience。
+ * 应用内通道没有「别人」；项目、任务、临时会话是主用户这边的。
+ * 注意不能看会话键里的目录：daemon 把所有私聊都路由到「聊天键::通道主目录」，别人的私聊键里也带着主目录。
+ */
+function isOthersQueueSession(sessionKey: string, chatType?: string): boolean {
+  const channel = resolveChannelForSession(sessionKey)
+  if (!channel || channel.type === "app") return false
+  return resolveChannelAudience({
+    mainUserEnabled: channel.mainUserEnabled,
+    mainUserChatId: channel.mainUserChatId,
+    sessionKey,
+    chatType,
+  }) === "others"
+}
+
+/**
+ * 别人的会话在队列里叫什么：和会话清单同一个名字（查到的聊天名 / 用户名，否则「群 / 私聊 + 尾号」）。
+ * 私聊靠发送人的 open_id 才查得到用户名；群里的 open_id 是发言人，不能当群名。
+ */
+function othersQueueLabel(sessionKey: string, chatType?: string, senderOpenId?: string): string {
+  const name = lookupChatName(sessionKey, chatType === "p2p" ? senderOpenId : undefined)
+  if (name) return name
+  return fallbackName(extractChatId(sessionKey), chatType === "p2p" || chatType === "group" ? chatType : "unknown")
+}
+
+/** 一条排队消息在界面上的标签三件套；每次轮询算出来的结果只取决于消息本身，不取决于会话此刻是否在运行 */
+function queueRowInfo(m: QueueMessageItem): Pick<QueueMessageItem, "sessionLabel" | "channelName" | "audience"> {
+  if (!m.sessionKey) return {}
+  const channelName = resolveChannelForSession(m.sessionKey)?.name
+  if (isOthersQueueSession(m.sessionKey, m.chatType)) {
+    return { sessionLabel: othersQueueLabel(m.sessionKey, m.chatType, m.senderOpenId), channelName, audience: "others" }
+  }
+  return { sessionLabel: queueSessionLabel(m.sessionKey, m.chatType), channelName, audience: "main" }
+}
+
 export async function getQueueMessages(): Promise<QueueMessageItem[]> {
   const lock = cachedLock()
   if (!lock?.port) return []
   try {
     const res = await httpGet(`http://127.0.0.1:${lock.port}/queue`) as { messages?: QueueMessageItem[] }
-    return (res.messages ?? []).map((m) => ({
-      ...m,
-      sessionLabel: m.sessionKey ? queueSessionLabel(m.sessionKey, m.chatType) : undefined,
-    }))
+    return (res.messages ?? []).map((m) => ({ ...m, ...queueRowInfo(m) }))
   } catch {
     return []
   }
@@ -470,8 +523,11 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
+  // 任务结果的出站通道：通知到 IM 时是「发送通道」（可能不是所属通道），其余是所属通道
+  const taskTarget = scheduledTask ? { ...scheduledTask, channelId: scheduledTask.channelId || channel?.id } : undefined
+  const outboundChannel = taskTarget ? getChannel(taskOutboundChannelId(taskTarget)) : undefined
   const notifySessionKey = p.notifySessionKey?.trim()
-    || (scheduledTask ? resolveTaskOutboundChatKey(scheduledTask, channel?.mainUserChatId) : undefined)
+    || (taskTarget ? resolveTaskOutboundChatKey(taskTarget, (outboundChannel ?? channel)?.mainUserChatId) : undefined)
   // 供应商与模型的解析规则在 resolveLaunchModel（会话管理页显示的有效模型和这里共用同一份）：
   // 供应商：会话级覆盖（/m p set）> 通道默认；模型：显式覆盖 > 会话存的 > 通道场景模型
   try {
@@ -622,13 +678,14 @@ export async function launchSessionAgent(
   return launchAgent({ sessionKey, chatType, meta, useMainWorkspace, senderOpenId, pendingMessageIds })
 }
 
-export async function launchIndependentAgent(
-  taskId: string, _taskName: string, message: string, type: ChatType = "task",
-  _chatId?: string, channelId?: string, model?: string, modelParams?: string, resourceId?: string,
-): Promise<{ ok: boolean; error?: string }> {
+/**
+ * 手动触发定时任务（设置页「立即执行」/ IM 的 /t run）：投递规则（独立 / 绑定的 Agent 会话 / 通知方式）都在 daemon，
+ * 和 cron 触发是同一套；这里只负责入队后立刻唤醒调度，不等下一次轮询。
+ */
+export async function triggerScheduledTaskNow(task: Pick<ScheduledTask, "id">): Promise<{ ok: boolean; error?: string }> {
   const lock = cachedLock()
   if (!lock?.port) return { ok: false, error: "daemon 未就绪" }
-  const r = await enqueueToSession(lock.port, taskId, message, type, { channelId, chatId: _chatId, model, modelParams, resourceId })
+  const r = await triggerScheduledTaskViaDaemon(lock.port, task.id)
   if (!r.ok) return r
   await dispatchSessionAgents()
   return { ok: true }
@@ -732,9 +789,12 @@ function buildSessionListForChat(
   const switchable = buildSwitchableSessions(chatId, running, activeKey)
   const seen = new Set<string>()
   const out: SessionListEntry[] = []
+  const tasks = readTasksFromFile()
   const push = (sessionKey: string) => {
     const norm = normalizeSessionKey(sessionKey) || sessionKey
     if (!norm || seen.has(norm)) return
+    // 任务跑完 / 被删后，daemon 里它的路由登记还在，但任务表里已经没有它：不是对话，列出来只会是一个删不掉的空会话
+    if (isOrphanTaskSessionKey(norm, tasks)) return
     seen.add(norm)
     out.push({
       sessionKey: norm,
@@ -853,6 +913,17 @@ function sessionTabKind(sessionKey: string): SessionTabItem["kind"] {
   const mainDir = effectiveWorkspaceDir(channel)
   if (mainDir && sameDirPath(mainDir, ws)) return "main"
   return "dir"
+}
+
+/**
+ * 对话页「这个会话的定时」要知道当前会话是谁：项目会话取项目 id，主会话取它所属的通道。
+ * 判「主会话」和会话列表的 tab 同一口径（sessionTabKind），所以界面上标成主会话的那个才会匹配到用户任务。
+ */
+export function scheduleContextForSession(sessionKey: string): SessionScheduleContext {
+  const key = normalizeSessionKey(sessionKey) || sessionKey
+  const projectId = projectIdFromSessionKey(key)
+  const mainOfChannelId = !projectId && sessionTabKind(key) === "main" ? resolveChannelForSession(key)?.id : undefined
+  return { sessionKey: key, ...(projectId ? { projectId } : {}), ...(mainOfChannelId ? { mainOfChannelId } : {}) }
 }
 
 function isMainSessionKey(sessionKey: string, chatId: string): boolean {

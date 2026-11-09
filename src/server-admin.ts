@@ -27,6 +27,10 @@ function daemonUrl(path: string): string {
 
 function txt(text: string) { return { content: [{ type: "text" as const, text }] }; }
 
+function indentLines(text: string, prefix: string): string {
+  return text.split("\n").map((l) => prefix + l).join("\n");
+}
+
 async function daemonGet(path: string): Promise<any> {
   return new Promise((resolve, reject) => {
     http.get(daemonUrl(path), { timeout: 10_000 }, (res) => {
@@ -218,7 +222,12 @@ export function registerAdminTools(mcpServer: McpServer): void {
 
   mcpServer.tool(
     "manage_tasks",
-    "管理定时任务。支持列出、添加/更新、删除、启用/禁用定时任务。",
+    [
+      "管理全局定时任务（和设置页里的一样）。支持列出、添加/更新、删除、启用/禁用。",
+      "注意：这不是「给当前会话定时」。要让你当前所在的会话到点自己做事、或过一阵回来跟进，用 schedule_create（它绑定调用者所在的会话），不要用本工具。",
+      "本工具建的任务：独立运行（默认）= 每次由全新 Agent 执行，结果按 notify 发出；independent=false = 把任务内容投给「所属通道」的主会话——飞书/微信通道的主会话就是主用户私聊，回复会发到飞书/微信，不一定是你当前所在的会话。所属通道默认是你当前所在的通道。",
+      "创建 / 修改 / 启用后会返回任务实际的去向，如实转述给用户，不要自己推断。",
+    ].join("\n"),
     {
       action: z.enum(["list", "add", "update", "delete", "toggle"]).describe("操作：list=列出, add=新增, update=更新, delete=删除, toggle=切换启用状态"),
       id: z.string().optional().describe("任务 ID（update/delete/toggle 时必填）"),
@@ -226,32 +235,38 @@ export function registerAdminTools(mcpServer: McpServer): void {
       cron: z.string().optional().describe("Cron 表达式（add 时必填，update 时可选）"),
       content: z.string().optional().describe("任务消息内容（add 时必填，update 时可选）"),
       enabled: z.boolean().optional().describe("是否启用（add 时默认 true）"),
-      independent: z.boolean().optional().describe("是否独立运行（add 时默认 true）"),
+      independent: z.boolean().optional().describe("是否独立运行（add 时默认 true）。false = 任务内容投给所属通道的主会话由它自己执行，会占用该会话的上下文；飞书/微信通道的主会话回复会发到 IM，不一定是你当前所在的会话"),
+      notify: z.enum(["none", "agent", "im"]).optional().describe("独立运行的任务做完后怎么通知（非独立运行无效）：none=不通知，agent=把结果投进所属通道的主会话，im=发到所属通道的主用户私聊（add 时默认 im）。AI 在任务里用 send_result 提交结果"),
     },
-    async ({ action, id, name, cron, content, enabled, independent }) => {
+    async ({ action, id, name, cron, content, enabled, independent, notify }) => {
       try {
+        // 调用者所在的会话：新建任务默认挂在它所在的通道，并据此告诉 AI「任务是不是投给了它自己」
+        const invokerSessionKey = getMcpInvokerSessionKey();
         if (action === "list") {
-          const data = await daemonGet("/api/tasks");
+          const data = await daemonGet(`/api/tasks${invokerSessionKey ? `?invoker=${encodeURIComponent(invokerSessionKey)}` : ""}`);
           const tasks = data.tasks ?? [];
           if (tasks.length === 0) return txt("当前没有定时任务。");
           const lines = tasks.map((t: any) =>
-            `- **${t.name}** [${t.enabled ? "✅启用" : "⏸禁用"}] cron=\`${t.cron}\` ${t.independent !== false ? "[独立]" : ""}\n  ID: ${t.id}\n  内容: ${(t.content ?? "").slice(0, 100)}${(t.content ?? "").length > 100 ? "..." : ""}`,
+            `- **${t.name}** [${t.enabled ? "✅启用" : "⏸禁用"}] cron=\`${t.cron}\` ${t.independent !== false ? "[独立]" : ""}${t.createdBy === "ai" ? " [AI 自排程]" : ""}\n  ID: ${t.id}\n  内容: ${(t.content ?? "").slice(0, 100)}${(t.content ?? "").length > 100 ? "..." : ""}${t.summary ? `\n${indentLines(String(t.summary), "  ")}` : ""}`,
           );
           return txt(lines.join("\n\n"));
         }
         const body: Record<string, unknown> = { action };
+        if (invokerSessionKey) body.invokerSessionKey = invokerSessionKey;
         if (id !== undefined) body.id = id;
         if (name !== undefined) body.name = name;
         if (cron !== undefined) body.cron = cron;
         if (content !== undefined) body.content = content;
         if (enabled !== undefined) body.enabled = enabled;
         if (independent !== undefined) body.independent = independent;
+        if (notify !== undefined) body.notify = notify;
         const res = await daemonPost("/api/tasks", body);
         if (res.ok) {
-          if (action === "add") return txt(`✅ 任务 "${res.task?.name}" 已创建。ID: ${res.task?.id}`);
+          const where = res.summary ? `\n${res.summary}` : "";
+          if (action === "add") return txt(`✅ 任务 "${res.task?.name}" 已创建。ID: ${res.task?.id}${where}`);
           if (action === "delete") return txt(`✅ 任务 "${res.removed?.name}" 已删除。`);
-          if (action === "toggle") return txt(`✅ 任务 "${res.task?.name}" 已${res.task?.enabled ? "启用" : "禁用"}。`);
-          if (action === "update") return txt(`✅ 任务 "${res.task?.name}" 已更新。`);
+          if (action === "toggle") return txt(`✅ 任务 "${res.task?.name}" 已${res.task?.enabled ? "启用" : "禁用"}。${res.task?.enabled ? where : ""}`);
+          if (action === "update") return txt(`✅ 任务 "${res.task?.name}" 已更新。${where}`);
         }
         return txt(`❌ ${res.error ?? "操作失败"}`);
       } catch (e: any) {

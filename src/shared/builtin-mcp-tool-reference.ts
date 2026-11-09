@@ -46,12 +46,32 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "compare_ref", type: "string", description: "对比分支或 commit" },
       ],
     },
-    send_text: {
-      summary: "发送纯文本。仅 /mcp-task 端点（定时任务等无流式卡会话）。",
+    send_result: {
+      summary: "提交独立定时任务本次运行的结果。仅 /mcp-task 端点。",
       params: [
-        { name: "text", required: true, type: "string", description: "消息正文" },
-        { name: "message_id", type: "string", description: "回复模式可选" },
+        { name: "text", type: "string", description: "结果正文（Markdown）；quiet=true 时可省略" },
+        { name: "quiet", type: "boolean", description: "true = 没什么要汇报的，不发消息" },
       ],
+      notes: "结果按任务的通知方式送达：不通知 / Agent 会话 / IM。",
+    },
+  },
+  "lk-harness-schedule": {
+    schedule_create: {
+      summary: "给自己排一个定时任务，到点自动执行。绑定调用它的会话。",
+      params: [
+        { name: "name", required: true, type: "string", description: "排程名称" },
+        { name: "prompt", required: true, type: "string", description: "到点要执行的内容（自包含）" },
+        { name: "every_minutes", type: "number", description: "每隔多少分钟触发一次，与 cron 二选一" },
+        { name: "cron", type: "string", description: "cron 表达式（5 段，本地时区），与 every_minutes 二选一" },
+        { name: "mode", type: "enum", enumValues: ["fresh", "session"], description: "fresh（默认）：每次新 Agent 执行，结果投回本会话；session：到点提醒本会话自己做" },
+        { name: "max_runs", type: "number", description: "最多触发几次，与 expires_in_hours 二选一必填" },
+        { name: "expires_in_hours", type: "number", description: "多少小时后过期，与 max_runs 二选一必填" },
+      ],
+    },
+    schedule_list: { summary: "列出本会话名下的 AI 排程（id、进度、过期时间）。", params: [] },
+    schedule_cancel: {
+      summary: "取消本会话名下的一个 AI 排程。",
+      params: [{ name: "id", required: true, type: "string", description: "排程 id（来自 schedule_list）" }],
     },
   },
   "lk-harness-project": {
@@ -128,7 +148,8 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
       ],
     },
     manage_tasks: {
-      summary: "管理 cron 定时任务。",
+      summary: "管理全局定时任务（和设置页里的一样）。不是「给当前会话定时」：那用 schedule_create。",
+      notes: "新建时所属通道默认是调用者所在的通道。independent=false 投给所属通道的主会话（飞书/微信通道的主会话回复会发到 IM，不一定是调用者当前所在的会话）。创建 / 修改 / 启用后返回任务实际的去向。",
       params: [
         {
           name: "action",
@@ -142,7 +163,8 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "cron", type: "string", description: "add 必填；update 可选：cron 表达式" },
         { name: "content", type: "string", description: "add 必填；update 可选：到点发给 Agent 的任务正文" },
         { name: "enabled", type: "boolean", description: "add 默认 true；update 可选" },
-        { name: "independent", type: "boolean", description: "add 默认 true：独立队列、无流式卡" },
+        { name: "independent", type: "boolean", description: "add 默认 true：每次由全新 Agent 执行；false：任务内容投给所属通道的主会话，占用该会话上下文（飞书/微信通道的主会话回复会发到 IM）" },
+        { name: "notify", type: "enum", enumValues: ["none", "agent", "im"], description: "独立运行的结果通知方式（非独立运行无效）：none 不通知 / agent 投进所属通道的主会话 / im 发到所属通道的主用户私聊（add 默认 im）" },
       ],
     },
     manage_project: {

@@ -4,6 +4,9 @@ import { resolveSessionChatName } from "../session-chat-name"
 import type { AgentEngine, AgentSessionDiagnostics, AgentSessionInfo } from "./types"
 import { app } from "electron"
 import { getAgentEngine, getAllAgentEngines, agentEngineKind } from "./factory"
+// 静态导入、不要改回动态 import：打包时 Rollup 曾只按另一个「全 null 字面量」调用点
+// 把 applySessionProviderSwitch 折叠成只清空，切供应商就成了点了没反应（源码测试测不出来）
+import { applySessionProviderSwitch, initSessionModelStore } from "../../src/shared/session-model-store.js"
 
 export type ListedAgentSession = AgentSessionInfo & { pid: number; source: AgentSessionInfo["runtimeId"] }
 
@@ -109,7 +112,6 @@ export async function switchAgentSessionProvider(
   targetResource: AgentResource,
   opts?: { model?: string; modelParams?: string },
 ): Promise<{ ok: boolean; sameLedger: boolean; turns: number; fromLabel: string; toLabel: string; error?: string }> {
-  const { applySessionProviderSwitch, initSessionModelStore } = await import("../../src/shared/session-model-store.js")
   const { stashCarryover, initCarryoverStore, readMirrorTurns, takeLastTurns, peekCarryover, consumeCarryover } = await import("../carryover.js")
   initSessionModelStore(app.getPath("userData"))
   initCarryoverStore(app.getPath("userData"))

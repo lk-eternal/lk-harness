@@ -28,11 +28,21 @@ export interface ChatItem {
   closedNote?: string
 }
 
+export interface IsolatedDaemonOptions {
+  /**
+   * 排在 ch_test 前面的额外「应用内」通道。
+   * 用来复现「第一个通道不是用户所在的通道」：多通道时 daemon 取第一个通道当默认，任务就会悄悄投到别的通道。
+   */
+  leadingChannels?: Array<{ id: string; name: string }>
+}
+
 export interface IsolatedDaemon {
   base: string
   dataDir: string
   wsDir: string
   sessionKey: string
+  /** leadingChannels 对应的通道、工作目录和主会话 key（顺序一致） */
+  leading: Array<{ id: string; wsDir: string; sessionKey: string }>
   post(p: string, body: unknown): Promise<any>
   get(p: string): Promise<any>
   /** 模拟 Agent 非阻塞领取这个会话的消息 */
@@ -48,15 +58,26 @@ export interface IsolatedDaemon {
   stop(): Promise<void>
 }
 
-export async function startIsolatedDaemon(): Promise<IsolatedDaemon> {
+export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Promise<IsolatedDaemon> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "lkh-e2e-"))
   const wsDir = path.join(dataDir, "ws-a")
   fs.mkdirSync(wsDir, { recursive: true })
   const sessionKey = `ch_test|app_main::${wsDir}`
-  const channels = [{
-    id: "ch_test", name: "测试", type: "app", enabled: true,
-    mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: wsDir,
-  }]
+  const leading = (opts.leadingChannels ?? []).map((c) => {
+    const dir = path.join(dataDir, `ws-${c.id}`)
+    fs.mkdirSync(dir, { recursive: true })
+    return { id: c.id, name: c.name, wsDir: dir, sessionKey: `${c.id}|app_main::${dir}` }
+  })
+  const channels = [
+    ...leading.map((c) => ({
+      id: c.id, name: c.name, type: "app", enabled: true,
+      mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: c.wsDir,
+    })),
+    {
+      id: "ch_test", name: "测试", type: "app", enabled: true,
+      mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: wsDir,
+    },
+  ]
 
   const child: ChildProcess = spawn(
     process.execPath,
@@ -120,6 +141,7 @@ export async function startIsolatedDaemon(): Promise<IsolatedDaemon> {
 
   return {
     base, dataDir, wsDir, sessionKey, post, get, history, users, findFile, stop,
+    leading: leading.map(({ id, wsDir: dir, sessionKey: key }) => ({ id, wsDir: dir, sessionKey: key })),
     poll: async () => (await fetch(`${base}/api/poll-message?sessionKey=${encodeURIComponent(sessionKey)}&wait=false`)).json(),
     queuedOf: async () => (await users()).filter((i) => i.queued).map((i) => i.text ?? ""),
     card: (action, extra = {}) =>

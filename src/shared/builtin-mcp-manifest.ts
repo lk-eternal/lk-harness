@@ -37,7 +37,17 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
         { name: "send_file", description: "发送本地文件到飞书/微信。" },
         { name: "send_question", description: "向用户提问并给出选项按钮。" },
         { name: "render_branch_diff", description: "生成分支对比单文件 HTML，返回本地绝对路径。" },
-        { name: "send_text", description: "发送文本消息。仅 task 端点（定时任务/无流式卡片会话）。" },
+        { name: "send_result", description: "提交独立定时任务本次运行的结果。仅 task 端点（独立运行的定时任务）。" },
+      ]),
+    },
+    {
+      key: "lk-harness-schedule",
+      title: "LK Harness AI 自排程",
+      scope: "仅主用户主会话 / 项目会话可用",
+      tools: withDocs("lk-harness-schedule", [
+        { name: "schedule_create", description: "给自己排一个定时任务（限次数 / 过期，到点自动执行）。" },
+        { name: "schedule_list", description: "列出本会话名下的 AI 排程。" },
+        { name: "schedule_cancel", description: "取消本会话名下的一个 AI 排程。" },
       ]),
     },
     {

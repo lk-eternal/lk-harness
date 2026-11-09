@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { bugWatchUnsupportedReason } from "../../shared/project-bug-watch"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -24,6 +25,7 @@ interface ProjectListItem {
   workspaceType?: string
   metadata?: Record<string, string>
   groupChatId?: string
+  watchBugs?: boolean
 }
 
 interface NodeGroup { id: string; name: string }
@@ -105,6 +107,8 @@ export default function ProjectListPanel() {
       status: draft.status,
       groupIds: draft.groupIds ?? [],
       metadata,
+      // 需求链接不支持时一律关掉（改掉链接后不能留着一个空转的开关）
+      watchBugs: !bugWatchUnsupportedReason(draft.storyUrl) && draft.watchBugs === true,
     })
     if (!r.ok) { void showAlert("错误", r.error ?? "保存失败"); return false }
     const list = await window.electronAPI.listProjects().catch(() => [] as ProjectListItem[])
@@ -204,7 +208,30 @@ export default function ProjectListPanel() {
                     </div></div>
                 </div>
                 <div><label className="mb-1 block text-xs text-fg-muted">飞书项目 / 需求链接</label>
-                  <input type="text" value={draft.storyUrl ?? ""} onChange={(e) => setDraft({ ...draft, storyUrl: e.target.value })} className={inputCls} /></div>
+                  <input type="text" value={draft.storyUrl ?? ""} onChange={(e) => setDraft({ ...draft, storyUrl: e.target.value })} className={inputCls} />
+                  {(() => {
+                    const why = bugWatchUnsupportedReason(draft.storyUrl)
+                    return (
+                      <div className="mt-2">
+                        <label className={`flex items-center gap-2 text-xs ${why ? "text-fg-faint" : "text-fg-3"}`}>
+                          <input
+                            type="checkbox"
+                            disabled={!!why}
+                            checked={!why && draft.watchBugs === true}
+                            onChange={(e) => setDraft({ ...draft, watchBugs: e.target.checked })}
+                            className="rounded border-line-strong"
+                          />
+                          自动盯缺陷
+                        </label>
+                        <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">
+                          {why
+                            ? `暂不能开启：${why}`
+                            : "每 10 分钟查一次飞书项目里关联本需求的缺陷，发现新增的就交给项目会话处理，并在项目群里提一句。开启时已有的缺陷不会通知，只通知之后新增的。"}
+                        </p>
+                      </div>
+                    )
+                  })()}
+                </div>
                 <div><label className="mb-1 block text-xs text-fg-muted">产品文档</label>
                   <input type="text" value={draft.productDocUrl ?? ""} onChange={(e) => setDraft({ ...draft, productDocUrl: e.target.value })} className={inputCls} /></div>
                 <div><label className="mb-1 block text-xs text-fg-muted">技术文档</label>

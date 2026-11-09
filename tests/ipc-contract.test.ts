@@ -36,6 +36,24 @@ describe("IPC 接线", () => {
     expect(invoked.filter((c) => !handled.has(c))).toEqual([])
   })
 
+  it("对话页「这个会话的定时」：两个方法在 preload / 主进程 / 界面类型里都有，且各调各的通道", () => {
+    const envDts = read("src/renderer/env.d.ts")
+    const expectChannel: Record<string, string> = {
+      getSessionSchedules: "scheduled-tasks:for-session",
+      deleteScheduledTask: "scheduled-tasks:delete",
+    }
+    for (const [method, channel] of Object.entries(expectChannel)) {
+      expect(envDts, `env.d.ts 缺 ${method}`).toMatch(new RegExp(`\\b${method}\\(`))
+      expect(handled.has(channel), `主进程没注册 ${channel}`).toBe(true)
+      const start = preload.indexOf(`\n  ${method}: `)
+      expect(start, `preload 缺 ${method}`).toBeGreaterThan(-1)
+      const rest = preload.slice(start + 1)
+      const next = rest.slice(1).search(/\n  \w+: /)
+      const block = next < 0 ? rest : rest.slice(0, next + 1)
+      expect([...block.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1]), method).toEqual([channel])
+    }
+  })
+
   it("会话管理页的 9 个通道：preload 和主进程一一对应", () => {
     const pre = invoked.filter((c) => c.startsWith("session-manager:")).sort()
     const main = [...handled].filter((c) => c.startsWith("session-manager:")).sort()

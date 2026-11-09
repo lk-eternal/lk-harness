@@ -1,5 +1,5 @@
 import { tasksWithChangedModelSetting, type ScheduledTask } from "./scheduled-task.js"
-import { applySessionProviderSwitch } from "./session-model-store.js"
+import { clearSessionProviderOverride } from "./session-model-store.js"
 import { getSessionRecord } from "./session-overrides-store.js"
 
 /**
@@ -19,7 +19,7 @@ export function resetChangedTaskModelOverrides(
   for (const id of tasksWithChangedModelSetting(before, after)) {
     const rec = getSessionRecord(id)
     if (!rec || (!rec.model && !rec.resourceId)) continue
-    applySessionProviderSwitch(id, { resourceId: null, model: null })
+    clearSessionProviderOverride(id)
     reset.push(id)
   }
   return reset

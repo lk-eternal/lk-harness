@@ -56,7 +56,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [actionError, setActionError] = useState("")
-  const [queueMessages, setQueueMessages] = useState<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>([])
+  const [queueMessages, setQueueMessages] = useState<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string; channelName?: string; audience?: "main" | "others" }[]>([])
   const [rawTreeChannels, setTreeChannels] = useState<DashboardChannelNode[]>([])
   /** 应用内对话通道的 id，和会话摘要标题（键为 appChatSessionId）：这些通道的会话在清单里叫会话名，和对话页一致 */
   const [appChannelIds, setAppChannelIds] = useState<ReadonlySet<string>>(() => new Set())
@@ -267,7 +267,8 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         for (const t of ch.mainTabs) {
           labelByKey.set(t.sessionKey, t.label)
           if (t.removable) removable.add(t.sessionKey)
-          if (!t.running) {
+          // 定时任务会话不是可切换的对话会话（运行中时另在 running 列表里显示），不进可切换清单
+          if (!t.running && (t.kind as string) !== "task") {
             mainSwitchable.push({
               channelId: ch.channelId,
               sessionKey: t.sessionKey,

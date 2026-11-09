@@ -1,31 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { GripVertical } from "lucide-react"
-
-function reorderById<T>(items: T[], activeId: string, overId: string, getId: (t: T) => string): T[] {
-  const from = items.findIndex((x) => getId(x) === activeId)
-  const to = items.findIndex((x) => getId(x) === overId)
-  if (from < 0 || to < 0 || from === to) return items
-  const next = [...items]
-  const [moved] = next.splice(from, 1)
-  next.splice(to, 0, moved)
-  return next
-}
-
-type Snapshot = { id: string; midY: number }
-
-function resolveOverIndex(clientY: number, fromIdx: number, snaps: Snapshot[]): number {
-  let toIdx = fromIdx
-  for (let i = 0; i < snaps.length; i++) {
-    if (i === fromIdx) continue
-    const { midY } = snaps[i]
-    if (fromIdx < i) {
-      if (clientY >= midY) toIdx = i
-    } else if (clientY <= midY) {
-      toIdx = i
-    }
-  }
-  return toIdx
-}
+import { applyOrder, createReorderTracker, reorderById, resolveOverIndex, type Snapshot } from "./sortable-list-logic"
 
 type SortableListProps<T> = {
   items: T[]
@@ -39,24 +14,36 @@ type SortableListProps<T> = {
 export default function SortableList<T>({ items, getId, onReorder, disabled, gapClass = "space-y-2", renderItem }: SortableListProps<T>) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
+  // 松手后、保存结果回来之前：先按新顺序显示，免得先跳回旧顺序、等保存完又跳到新顺序
+  const [pendingOrder, setPendingOrder] = useState<string[] | null>(null)
   const refs = useRef(new Map<string, HTMLDivElement>())
   const snapshotRef = useRef<Snapshot[]>([])
-  const itemsRef = useRef(items)
+  const overRef = useRef<string | null>(null)
+  const trackerRef = useRef(createReorderTracker())
+  const baseItemsRef = useRef(items)
+  const getIdRef = useRef(getId)
   const onReorderRef = useRef(onReorder)
-  itemsRef.current = items
+  getIdRef.current = getId
   onReorderRef.current = onReorder
 
   const sortable = !disabled && items.length > 1
 
+  // 不在拖动时显示的顺序：保存还在途中就先用刚排好的顺序；下一次拖动也以它为起点
+  const baseItems = useMemo(
+    () => (pendingOrder ? applyOrder(items, pendingOrder, getId) : items),
+    [items, pendingOrder, getId],
+  )
+  baseItemsRef.current = baseItems
+
   const displayItems = useMemo(() => {
-    if (!activeId || !overId || activeId === overId) return items
-    return reorderById(items, activeId, overId, getId)
-  }, [items, activeId, overId, getId])
+    if (!activeId || !overId || activeId === overId) return baseItems
+    return reorderById(baseItems, activeId, overId, getId)
+  }, [baseItems, activeId, overId, getId])
 
   const takeSnapshot = () => {
     const snaps: Snapshot[] = []
-    for (const item of itemsRef.current) {
-      const id = getId(item)
+    for (const item of baseItemsRef.current) {
+      const id = getIdRef.current(item)
       const el = refs.current.get(id)
       if (!el) continue
       const { top, height } = el.getBoundingClientRect()
@@ -65,33 +52,48 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
     snapshotRef.current = snaps
   }
 
-  const pickOverId = (clientY: number): string | null => {
-    const snaps = snapshotRef.current
-    if (!snaps.length || !activeId) return activeId
-    const fromIdx = snaps.findIndex((s) => s.id === activeId)
-    if (fromIdx < 0) return activeId
-    return snaps[resolveOverIndex(clientY, fromIdx, snaps)]?.id ?? activeId
-  }
-
+  // 只依赖 activeId：getId 通常是父组件里的内联函数，每次渲染都变，放进依赖会让拖动中的监听反复重建。
+  // 当前落点、列表内容都从 ref 读，所以即使父组件在拖动中重渲染，松手也照常生效
   useEffect(() => {
     if (!activeId) return
-    let currentOver = activeId
 
+    const pickOverId = (clientY: number): string => {
+      const snaps = snapshotRef.current
+      const fromIdx = snaps.findIndex((s) => s.id === activeId)
+      if (fromIdx < 0) return activeId
+      return snaps[resolveOverIndex(clientY, fromIdx, snaps)]?.id ?? activeId
+    }
     const onMove = (e: PointerEvent) => {
       const next = pickOverId(e.clientY)
-      if (next && next !== currentOver) {
-        currentOver = next
+      if (next !== overRef.current) {
+        overRef.current = next
         setOverId(next)
       }
     }
     const onUp = () => {
-      const src = itemsRef.current
-      const next = reorderById(src, activeId, currentOver, getId)
-      const changed = next.some((n, i) => getId(n) !== getId(src[i]))
+      const idOf = getIdRef.current
+      const src = baseItemsRef.current
+      const next = reorderById(src, activeId, overRef.current ?? activeId, idOf)
+      const changed = next.some((n, i) => idOf(n) !== idOf(src[i]))
       snapshotRef.current = []
+      overRef.current = null
       setActiveId(null)
       setOverId(null)
-      if (changed) void onReorderRef.current(next)
+      if (!changed) return
+
+      const ids = next.map(idOf)
+      const tracker = trackerRef.current
+      tracker.begin(ids)
+      setPendingOrder(tracker.order)
+      void (async () => {
+        try {
+          await onReorderRef.current(next)
+        } catch (err) {
+          console.error("[SortableList] 保存排序失败", err)
+        } finally {
+          if (tracker.end()) setPendingOrder(null)
+        }
+      })()
     }
 
     window.addEventListener("pointermove", onMove)
@@ -100,7 +102,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
     }
-  }, [activeId, getId])
+  }, [activeId])
 
   return (
     <div className={`${gapClass}${activeId ? " select-none [&_*]:pointer-events-none" : ""}`}>
@@ -114,6 +116,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
               e.preventDefault()
               e.stopPropagation()
               takeSnapshot()
+              overRef.current = id
               setActiveId(id)
               setOverId(id)
             }}

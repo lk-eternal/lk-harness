@@ -540,9 +540,12 @@ export function updateChannel(id: string, partial: Partial<MessageChannel>): Mes
 // ── 通道级常用目录 ────────────────────────────────────────
 // 全局 favoriteWorkspaces 会让每个通道都列出同一批目录，看起来像会话串了。
 // 通道自带列表后各自独立；undefined 表示尚未迁移，读时回退全局。
+// 应用内通道例外：它的目录会话只来自用户在对话页自己加的，新建出来就是空的，不继承全局那批
+// （全局这批是给飞书/微信 /c w 快捷切换用的；继承过来每个目录都会冒出一个会话，用户得逐个删）。
 
 export function getChannelFavoriteWorkspaces(channel: MessageChannel | undefined): string[] {
   if (channel?.favoriteWorkspaces) return dedupeFavoriteWorkspaces(channel.favoriteWorkspaces)
+  if (channel?.type === "app") return []
   return dedupeFavoriteWorkspaces(getConfig().favoriteWorkspaces)
 }
 
@@ -574,7 +577,8 @@ export function migrateFavoriteWorkspacesToChannels(): void {
   const channels = getChannels()
   if (channels.length > 0) {
     const global = dedupeFavoriteWorkspaces(cfg.favoriteWorkspaces)
-    const next = channels.map((c) => c.favoriteWorkspaces ? c : { ...c, favoriteWorkspaces: [...global] })
+    // 应用内通道不继承全局常用目录（见 getChannelFavoriteWorkspaces）
+    const next = channels.map((c) => c.favoriteWorkspaces ? c : { ...c, favoriteWorkspaces: c.type === "app" ? [] : [...global] })
     saveConfig({ channels: next, favWorkspacesMigrated: true })
     return
   }

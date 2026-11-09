@@ -112,6 +112,16 @@ export function applySessionProviderSwitch(
   patchSessionRecord(sessionKey, patch)
 }
 
+/**
+ * 作废会话的模型 + 供应商覆盖（任务改设置后清旧登记用），回到跟随通道默认。
+ * 单独一个函数、不要拿 applySessionProviderSwitch 传全 null 来兼做这件事：
+ * 主进程打包（Rollup）曾把那个「全 null 字面量」的调用点当成函数的唯一形态，
+ * 把 applySessionProviderSwitch 整体折叠成只清空——界面切供应商点了没反应、覆盖还被清掉。
+ */
+export function clearSessionProviderOverride(sessionKey: string): void {
+  patchSessionRecord(sessionKey, { model: undefined, modelParams: undefined, resourceId: undefined })
+}
+
 /** 解析会话有效模型：session override > fallback */
 export function resolveModelForSession(sessionKey: string, fallback: ModelRef): ModelRef {
   const resourceId = fallback.resourceId

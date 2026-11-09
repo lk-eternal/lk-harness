@@ -132,6 +132,8 @@ export interface Project {
   notifyChatId?: string
   /** 独立群模式：项目专属群 chatKey（ch_xxx|oc_yyy）；命中该群的消息强制路由到本项目 */
   groupChatId?: string
+  /** 自动盯缺陷：daemon 定期查飞书项目里关联本项目需求的缺陷，新增的投给项目会话并通知项目群（需要需求链接是 wk-dm 空间的产品需求） */
+  watchBugs?: boolean
   /** 项目级 KV 配置，AI 可通过 project_update 持久化（空字符串 value 表示删 key） */
   metadata?: Record<string, string>
   createdAt: number

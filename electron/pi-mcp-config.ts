@@ -1,4 +1,4 @@
-import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
+import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 
 /** pi-mcp-adapter ServerEntry 类型，避免 tsc 依赖 adapter 源码 */
 export interface PiMcpServerEntry {
@@ -23,9 +23,18 @@ function normalizeServerEntry(cfg: Record<string, unknown>): PiMcpServerEntry {
   return entry
 }
 
-/** 交互会话用 lk-harness MCP 的 /mcp-interactive（无 send_text，有 send_question/媒体/Diff）；项目会话另加 /mcp-project */
-export function buildPiHostMcpConfig(port: number | null, includeAdmin: boolean, includeProject = false, invokerSessionKey?: string): PiMcpConfig {
-  const raw = { ...buildSdkMcpServers(port, includeAdmin, "interactive", includeProject, invokerSessionKey) }
+/**
+ * 交互会话用 lk-harness MCP 的 /mcp-interactive（无 send_result，有 send_question/媒体/Diff）；项目会话另加 /mcp-project。
+ * 独立定时任务会话传 endpoint="task"：用 /mcp-task，才有 send_result（否则 AI 没有交付结果的工具）。
+ */
+export function buildPiHostMcpConfig(
+  port: number | null,
+  includeAdmin: boolean,
+  includeProject = false,
+  invokerSessionKey?: string,
+  endpoint: HarnessMcpEndpoint = "interactive",
+): PiMcpConfig {
+  const raw = { ...buildSdkMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey) }
   const mcpServers: Record<string, PiMcpServerEntry> = {}
   for (const [name, cfg] of Object.entries(raw)) {
     mcpServers[name] = normalizeServerEntry(cfg)

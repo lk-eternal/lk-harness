@@ -16,8 +16,9 @@ export interface StoreFile {
 export const CLAW_MCP_KEY = "lk-harness"
 export const ADMIN_MCP_KEY = "lk-harness-admin"
 export const PROJECT_MCP_KEY = "lk-harness-project"
+export const SCHEDULE_MCP_KEY = "lk-harness-schedule"
 
-const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY, PROJECT_MCP_KEY])
+const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY, PROJECT_MCP_KEY, SCHEDULE_MCP_KEY])
 
 let userDataRoot = ""
 
@@ -201,6 +202,10 @@ export function buildBuiltinMcpServers(
       }
     }
     if (includeProject) servers[PROJECT_MCP_KEY] = { url: `${base}/mcp-project` }
+    // AI 自排程：主用户会话 / 项目会话才有；排程绑定调用者会话，没有调用者身份就不挂（挂了也无法确定归属）
+    if ((includeAdmin || includeProject) && endpoint !== "task" && sk) {
+      servers[SCHEDULE_MCP_KEY] = { url: `${base}/mcp-schedule`, ...invokerHeaders }
+    }
   }
   return servers
 }

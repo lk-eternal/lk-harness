@@ -3,27 +3,11 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { makeChatKey } from "./channel-types.js";
 import { atomicWriteUtf8 } from "./atomic-json.js";
+import type { ScheduledTask } from "./scheduled-task-rules.js";
 
-export interface ScheduledTask {
-  id: string;
-  name: string;
-  cron: string;
-  content: string;
-  enabled: boolean;
-  /** 独立会话运行（不进主会话队列） */
-  independent?: boolean;
-  /** 所属消息通道；空 = 第一个可用通道 */
-  channelId?: string;
-  /** 任务模型，空 = 跟随通道主模型 */
-  model?: string;
-  modelParams?: string;
-  /** 任务自己选的供应商（Agent 资源 id），空 = 跟随通道的供应商。只在同时配了 model 时生效：供应商换了，模型必须是它家的 */
-  resourceId?: string;
-  /** MCP 投递目标会话 ID（裸 oc_xxx 或完整 chatKey）；与 channelId 拼 outbound key，空则主用户私聊 */
-  notifyChatId?: string;
-}
+// 类型与纯规则在 scheduled-task-rules.ts（渲染进程也要用，不能带 node 依赖）；这里转出，旧的 import 路径照常可用
+export * from "./scheduled-task-rules.js";
 
 export class ScheduledTasksReadError extends Error {
   constructor(message: string) {
@@ -72,6 +56,16 @@ export function findScheduledTaskBySessionKey(
   const key = sessionKey.trim();
   if (!key || key.includes("|") || key.includes("::")) return undefined;
   return tasks.find((t) => t.id === key);
+}
+
+/**
+ * 会话键长得像任务会话（裸 id），任务表里却已经没有这个任务：任务跑完 / 被删后留下的路由登记。
+ * 聊天会话的键一定带通道前缀或目录（`ch_x|chat`、`…::dir`），裸 temp_* 是临时会话，所以它不会是任何一个对话。
+ */
+export function isOrphanTaskSessionKey(sessionKey: string, tasks: ScheduledTask[]): boolean {
+  const key = sessionKey.trim();
+  if (!key || key.startsWith("temp_") || key.includes("|") || key.includes("::")) return false;
+  return !findScheduledTaskBySessionKey(key, tasks);
 }
 
 /** 独立运行定时任务（默认 independent=true）的 sessionKey */
@@ -145,27 +139,3 @@ export function taskCardFooter(input: {
   if (!key || !isIndependentTaskSessionKey(key, input.tasks)) return undefined;
   return input.modelLabelOf(key)?.trim() || undefined;
 }
-
-/** 由任务配置拼出 outbound 投递用的 notify_session_key（仅显式 notifyChatId） */
-export function buildNotifySessionKey(task: Pick<ScheduledTask, "notifyChatId" | "channelId">): string | undefined {
-  const raw = task.notifyChatId?.trim();
-  if (!raw) return undefined;
-  if (raw.startsWith("ch_") && raw.includes("|")) return raw;
-  const channelId = task.channelId?.trim();
-  if (!channelId) return undefined;
-  return makeChatKey(channelId, raw);
-}
-
-/** 独立任务 MCP / 路由用 outbound chatKey：notifyChatId 优先，否则通道主用户私聊 */
-export function resolveTaskOutboundChatKey(
-  task: Pick<ScheduledTask, "notifyChatId" | "channelId">,
-  mainUserChatId?: string | null,
-): string | undefined {
-  const explicit = buildNotifySessionKey(task);
-  if (explicit) return explicit;
-  const channelId = task.channelId?.trim();
-  const main = mainUserChatId?.trim();
-  if (!channelId || !main) return undefined;
-  return makeChatKey(channelId, main);
-}
-

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
+import type { SessionScheduleItem } from "../src/shared/session-schedule"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
 import type { ChannelImpactClearResult, ChannelImpactPreviewResult, ChannelImpactStopResult } from "../src/shared/channel-model-impact"
 import type { MobileServerStatus } from "./mobile-server"
@@ -206,7 +207,7 @@ const api = {
   exportDiagnostics: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("diagnostics:export"),
   stopSessionAgent: (sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }> => ipcRenderer.invoke("agent:stop-session", sessionKey, clearQueue),
-  sendQueuedNow: (sessionKey: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("agent:send-queued-now", sessionKey),
+  sendQueuedNow: (sessionKey: string): Promise<{ ok: boolean; error?: string; via?: "soft" | "launching" | "relaunch" | "hard" }> => ipcRenderer.invoke("agent:send-queued-now", sessionKey),
   setSessionModel: (sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }> =>
     ipcRenderer.invoke("session:set-model", sessionKey, model, modelParams, resourceId),
   listSessionTabs: (): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }> =>
@@ -248,14 +249,14 @@ const api = {
   listProjects: (): Promise<{
     id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
     featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string
-    metadata?: Record<string, string>; groupChatId?: string
+    metadata?: Record<string, string>; groupChatId?: string; watchBugs?: boolean
   }[]> =>
     ipcRenderer.invoke("project:list"),
   deleteProject: (projectId: string): Promise<{ ok: boolean; name?: string; error?: string }> =>
     ipcRenderer.invoke("project:delete", projectId),
   updateProject: (patch: {
     id: string; name?: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
-    status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>
+    status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:update", patch),
   switchProject: (projectId: string): Promise<{ ok: boolean; error?: string }> =>
@@ -273,7 +274,7 @@ const api = {
   stopDaemon: (): Promise<void> => ipcRenderer.invoke("daemon:stop"),
   getDaemonStatus: (): Promise<DaemonStatus> => ipcRenderer.invoke("daemon:status"),
   getLogBuffer: (): Promise<string[]> => ipcRenderer.invoke("daemon:get-log-buffer"),
-  getQueueMessages: (): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]> => ipcRenderer.invoke("daemon:queue"),
+  getQueueMessages: (): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string; channelName?: string; audience?: "main" | "others" }[]> => ipcRenderer.invoke("daemon:queue"),
   deleteQueueMessage: (fileId: string): Promise<boolean> => ipcRenderer.invoke("daemon:queue-delete", fileId),
   clearQueueMessages: (): Promise<number> => ipcRenderer.invoke("daemon:queue-clear"),
   listModels: (): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }> => ipcRenderer.invoke("models:list"),
@@ -288,8 +289,14 @@ const api = {
     ipcRenderer.invoke("scheduled-tasks:preview-cron", expression),
   triggerScheduledTask: (taskId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("scheduled-tasks:trigger", taskId),
+  cancelAiScheduledTask: (taskId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("scheduled-tasks:cancel-ai", taskId),
   getScheduledTaskStatus: (): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>> =>
     ipcRenderer.invoke("scheduled-tasks:get-status"),
+  getSessionSchedules: (sessionKey: string): Promise<SessionScheduleItem[]> =>
+    ipcRenderer.invoke("scheduled-tasks:for-session", sessionKey),
+  deleteScheduledTask: (taskId: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("scheduled-tasks:delete", taskId),
 
   // ── 项目流程组 ──────────────────────────────────────
   getProjectNodeGroups: (): Promise<{ id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string; defaultPrompt?: string }[] }[]> =>

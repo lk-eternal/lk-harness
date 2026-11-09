@@ -1,5 +1,6 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
+import type { SessionScheduleItem as SessionScheduleItemType } from "../shared/session-schedule"
 import type {
   ChannelImpactClearResult as ChannelImpactClearResultType,
   ChannelImpactPreviewResult as ChannelImpactPreviewResultType,
@@ -229,7 +230,8 @@ declare global {
     getSessionDiagnostics(sessionKey: string): Promise<{ running: boolean; resumeAgentId?: string; resumeUpdatedAt?: number; lastRun?: { status: string; endedAt: number; durationMs?: number; error?: string }; lastReplyAt: number | null }>
     exportDiagnostics(): Promise<{ ok: boolean; path?: string; error?: string }>
     stopSessionAgent(sessionKey: string, clearQueue?: boolean): Promise<{ ok: boolean }>
-    sendQueuedNow(sessionKey: string): Promise<{ ok: boolean; error?: string }>
+    /** via：soft=只打断当前回合（Agent 没重启）；launching=Agent 正在拉起，等它起来；relaunch/hard=重新拉起 */
+    sendQueuedNow(sessionKey: string): Promise<{ ok: boolean; error?: string; via?: "soft" | "launching" | "relaunch" | "hard" }>
     setSessionModel(sessionKey: string, model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
     listSessionTabs(): Promise<{ ok: boolean; chatId?: string; activeKey?: string; tabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]; error?: string }>
     listDashboardTree(): Promise<{
@@ -260,12 +262,12 @@ declare global {
     listProjects(): Promise<{
       id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
       featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string
-      metadata?: Record<string, string>; groupChatId?: string
+      metadata?: Record<string, string>; groupChatId?: string; watchBugs?: boolean
     }[]>
     deleteProject(projectId: string): Promise<{ ok: boolean; name?: string; error?: string }>
     updateProject(patch: {
       id: string; name?: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
-      status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>
+      status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
     }): Promise<{ ok: boolean; error?: string }>
     switchProject(projectId: string): Promise<{ ok: boolean; error?: string }>
     listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }>
@@ -274,7 +276,7 @@ declare global {
     onSessionAgents(cb: (list: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]) => void): () => void
     getDaemonStatus(): Promise<DaemonStatus>
     getLogBuffer(): Promise<string[]>
-    getQueueMessages(): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string }[]>
+    getQueueMessages(): Promise<{ index: number; fileId: string; preview: string; status?: "pending" | "processing"; sessionKey?: string; chatType?: string; timestamp?: number; senderOpenId?: string; sessionLabel?: string; channelName?: string; audience?: "main" | "others" }[]>
     deleteQueueMessage(fileId: string): Promise<boolean>
     clearQueueMessages(): Promise<number>
     listModels(): Promise<{ ok: boolean; models: { id: string; label: string; current: boolean }[]; error?: string }>
@@ -287,7 +289,10 @@ declare global {
     validateCron(expression: string): Promise<boolean>
     previewCronNextRuns(expression: string): Promise<{ ok: true; runs: string[] } | { ok: false; error: string }>
     triggerScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
+    cancelAiScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
     getScheduledTaskStatus(): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>>
+    getSessionSchedules(sessionKey: string): Promise<SessionScheduleItemType[]>
+    deleteScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void
     getMcpServers(): Promise<McpServerEntry[]>
     saveMcpServer(name: string, entry: Record<string, unknown>): Promise<{ ok: boolean }>

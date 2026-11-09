@@ -17,6 +17,9 @@ import {
 import { parseChatKey, channelIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
+import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
+import { aiScheduleStateFile, readAiScheduleRuns } from "../src/shared/ai-schedule-state.js"
+import { buildSessionSchedules, removeUserTask } from "../src/shared/session-schedule-build.js"
 import { resetChangedTaskModelOverrides } from "../src/shared/task-model-reset.js"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
@@ -75,13 +78,14 @@ import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalCo
 import { discoverCursorClawInstalls, migrateFromCursorClaw, inspectCursorClawSections } from "./cursor-claw-migrate"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, DEFAULT_NODE_GROUP_ID, canEnterProjectFromChat } from "../src/shared/project-types.js"
+import { bugWatchUnsupportedReason } from "../src/shared/project-bug-watch.js"
 import {
   readGitBranch,
   formatSessionLabel,
   resolveWorkspaceFromSessionKey,
   dirBaseName,
 } from "../src/shared/session-label.js"
-import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToMainSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
+import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
 import { forwardAppChatEvent } from "./app-chat"
 import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 import {
@@ -91,14 +95,14 @@ import {
   pushChannelRuntimeToDaemon,
 } from "./workspace-switch"
 import {
-  isSessionAgentRunning, stopSessionAgent, stopAllSessionAgents,
-  dispatchSessionAgents, launchSessionAgent, launchIndependentAgent,
+  isSessionAgentRunning, stopSessionAgent, stopAllSessionAgents, interruptSessionTurn,
+  dispatchSessionAgents, launchSessionAgent, triggerScheduledTaskNow,
   notifyChatFallback,
   getSessionAgentList, handleChatCommand, clearMessageQueue, getQueueMessages, deleteQueueMessage, formatSessionStatusBlock,
   listMainSessionTabs, listDashboardTree, resolveSessionModels, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache, rememberP2pNames,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
-  formatCurrentSessionBlock, currentResourceIdForSession,
+  formatCurrentSessionBlock, currentResourceIdForSession, scheduleContextForSession,
 } from "./session-dispatcher"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import {
@@ -106,6 +110,7 @@ import {
   previewSessionCleanup, runSessionCleanup,
   previewChannelModelImpact, clearOthersModelOverrides, stopOthersFollowingDefault,
 } from "./session-manager"
+import { sendQueuedNowFlow, type SendQueuedNowResult } from "./send-queued-now"
 
 export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
 export { getLogBuffer } from "./ui-logger"
@@ -1164,23 +1169,22 @@ export async function clearSessionQueue(sessionKey: string): Promise<number> {
 }
 
 /**
- * 暂存区「立即发送」：打断当前回合，把排队中的消息交给重新拉起的 Agent。
- * 排队的消息本来就在队列里，只要停掉当前 Agent、再触发一次调度，新拉起的 Agent 一上来就会领到它们
+ * 暂存区「立即发送」：让排队中的消息现在就交给 Agent。
+ * 优先软打断（只取消当前回合，Agent 不重启，自己回去领排队的消息）；
+ * 引擎不支持/不适用/超时才退回「停止 + 重新拉起」。流程见 send-queued-now.ts
  */
-export async function sendQueuedNow(sessionKey: string): Promise<{ ok: boolean; error?: string }> {
-  const target = normalizeSessionKey(sessionKey) || sessionKey
-  const mine = (await getQueueMessages()).filter((m) => (normalizeSessionKey(m.sessionKey) || m.sessionKey) === target)
-  if (!mine.some((m) => m.status !== "processing")) return { ok: false, error: "没有排队中的消息" }
-  // 被打断的那一回合的消息（已投递、待确认）要先确认掉，否则重新拉起后会被当成没做完的活再投递一遍
-  for (const m of mine) {
-    if (m.status !== "processing") continue
-    try { await deleteQueueMessage(m.fileId) } catch { /* ignore */ }
-  }
-  if (isSessionAgentRunning(sessionKey)) await stopSessionAgent(sessionKey)
-  await dispatchSessionAgents()
-  // 调度正好在进行中时上面那次会直接返回；稍后补一次，避免消息等到下一轮轮询
-  setTimeout(() => { void dispatchSessionAgents().catch(() => {}) }, 1500)
-  return { ok: true }
+export function sendQueuedNow(sessionKey: string): Promise<SendQueuedNowResult> {
+  return sendQueuedNowFlow(sessionKey, {
+    getQueue: getQueueMessages,
+    deleteMessage: deleteQueueMessage,
+    normalizeKey: normalizeSessionKey,
+    isRunning: isSessionAgentRunning,
+    interruptTurn: interruptSessionTurn,
+    stopAgent: stopSessionAgent,
+    dispatch: dispatchSessionAgents,
+    later: (fn, ms) => { setTimeout(fn, ms) },
+    log: (level, msg) => broadcastLog(`[Queue] ${msg}`, level),
+  })
 }
 
 export async function applySessionModelChange(
@@ -1414,9 +1418,8 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           if (!isAdmin) { await denyNonAdmin(); break }
           await handleFeishuTaskCommand(
             lock.port, claimed.messageId, rawCmd,
-            (task, content) => launchIndependentAgent(task.id, task.name, content, "task", undefined, task.channelId, task.model, task.modelParams, task.resourceId),
+            (task) => triggerScheduledTaskNow(task),
             claimed.chatId,
-            async (content, preferredChatId) => enqueueToMainSession(lock.port, content, preferredChatId ?? claimed.chatId),
             patchTarget,
           )
           break
@@ -2008,6 +2011,7 @@ export function initDaemonManager(): void {
       workspaceType: p.workspaceType,
       metadata: p.metadata,
       groupChatId: p.groupChatId,
+      watchBugs: p.watchBugs === true,
     }))
   })
   ipcMain.handle("project:delete", async (_e, projectId: string) => {
@@ -2040,6 +2044,7 @@ export function initDaemonManager(): void {
     groupId?: string
     groupIds?: string[]
     metadata?: Record<string, string>
+    watchBugs?: boolean
   }) => {
     initProjectStore(app.getPath("userData"))
     const p = getProject(String(patch?.id || "").trim())
@@ -2053,6 +2058,16 @@ export function initDaemonManager(): void {
     if (typeof patch.storyUrl === "string") p.storyUrl = patch.storyUrl.trim() || undefined
     if (typeof patch.productDocUrl === "string") p.productDocUrl = patch.productDocUrl.trim() || undefined
     if (typeof patch.techDocUrl === "string") p.techDocUrl = patch.techDocUrl.trim() || undefined
+    if (typeof patch.watchBugs === "boolean") {
+      if (patch.watchBugs) {
+        // 需求链接不是 wk-dm 的产品需求时开了也只会空转，直接说清楚
+        const why = bugWatchUnsupportedReason(p.storyUrl)
+        if (why) return { ok: false, error: `不能开启自动盯缺陷：${why}` }
+        p.watchBugs = true
+      } else {
+        delete p.watchBugs
+      }
+    }
     if (patch.metadata !== undefined) {
       if (patch.metadata && typeof patch.metadata === "object") {
         const meta: Record<string, string> = {}
@@ -2233,9 +2248,16 @@ export function initDaemonManager(): void {
     return { ok: true }
   })
 
-  ipcMain.handle("scheduled-tasks:get", () => readTasksFromFile())
-  ipcMain.handle("scheduled-tasks:save", (_, tasks: ScheduledTask[]) => {
+  ipcMain.handle("scheduled-tasks:get", () => {
+    const tasks = readTasksFromFile()
+    // AI 排程的已触发次数记在单独的状态文件里，随列表带给设置页显示
+    const runs = tasks.some(isAiTask) ? readAiScheduleRuns(aiScheduleStateFile(app.getPath("userData"))) : {}
+    return tasks.map((t) => (isAiTask(t) ? { ...t, runCount: runs[t.id] ?? 0 } : t))
+  })
+  ipcMain.handle("scheduled-tasks:save", (_, saved: ScheduledTask[]) => {
     const before = readTasksFromFile()
+    // AI 排程不归设置页管：以文件为准（界面快照可能落后于 AI 刚建 / 刚被清理的排程）
+    const tasks = mergeSavedTasksKeepingAi(saved, before)
     writeTasksToFile(tasks)
     // 改过通道 / 供应商 / 模型的任务，把会话里登记的旧覆盖作废，下次触发按新设置重新登记
     try {
@@ -2254,28 +2276,58 @@ export function initDaemonManager(): void {
   })
 
   ipcMain.handle("scheduled-tasks:trigger", async (_, taskId: string) => {
-    const tasks = readTasksFromFile()
-    const task = tasks.find((t) => t.id === taskId)
+    const task = readTasksFromFile().find((t) => t.id === taskId)
     if (!task) return { ok: false, error: "任务不存在" }
-    const nowStr = new Date().toLocaleString("zh-CN")
-    const content = `[定时任务: ${task.name}] (手动触发: ${nowStr})\n\n${task.content}`
+    if (!readLockFile()?.port) return { ok: false, error: "守护进程未运行" }
+    if (task.independent !== false) clearAgentFailStreaks(task.id)
+    // 投到哪（独立会话 / 绑定的 Agent 会话 / 通知方式）由 daemon 按任务配置定，与 cron 触发同一套
+    return triggerScheduledTaskNow(task)
+  })
+
+  // 取消 AI 排程：走 daemon（正在跑的先停用，不直接删）；daemon 不在就直接改文件
+  ipcMain.handle("scheduled-tasks:cancel-ai", async (_, taskId: string) => {
+    const task = readTasksFromFile().find((t) => t.id === taskId && isAiTask(t))
+    if (!task) return { ok: false, error: "排程不存在（可能已结束并被清理）" }
     const lock = readLockFile()
-    if (!lock?.port) return { ok: false, error: "守护进程未运行" }
-    if (task.independent !== false) {
-      clearAgentFailStreaks(task.id)
-      // 与 cron 触发同一套入队逻辑，失败由调度器按队列重拉
-      return enqueueToSession(lock.port, task.id, content, "task", {
-        channelId: task.channelId,
-        model: task.model,
-        modelParams: task.modelParams,
-        resourceId: task.resourceId,
-      })
+    if (lock?.port) {
+      try {
+        const r = (await httpPost(`http://127.0.0.1:${lock.port}/api/ai-task-cancel`, { taskId }, 5000)) as { ok?: boolean; error?: string } | null
+        return r?.ok ? { ok: true } : { ok: false, error: r?.error ?? "取消失败" }
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) }
+      }
     }
-    const result = await enqueueToMainSession(lock.port, content, undefined, task.channelId)
-    return result
+    writeTasksToFile(readTasksFromFile().filter((t) => t.id !== taskId))
+    return { ok: true }
   })
 
   ipcMain.handle("scheduled-tasks:get-status", () => getIndependentTaskStatuses())
+
+  // 对话页「这个会话的定时」：绑定到该会话的任务（AI 给自己排的 + 设置页里投给它的），连同下次触发时间一起算好
+  ipcMain.handle("scheduled-tasks:for-session", (_, sessionKey: string) => {
+    if (typeof sessionKey !== "string" || !sessionKey.trim()) return []
+    const tasks = readTasksFromFile()
+    if (tasks.length === 0) return []
+    const runs = tasks.some(isAiTask) ? readAiScheduleRuns(aiScheduleStateFile(app.getPath("userData"))) : {}
+    const running = new Set(Object.entries(getIndependentTaskStatuses()).filter(([, s]) => s.running).map(([id]) => id))
+    return buildSessionSchedules({
+      tasks,
+      ctx: scheduleContextForSession(sessionKey),
+      aiRuns: runs,
+      now: Date.now(),
+      channels: getChannels(),
+      runningTaskIds: running,
+    })
+  })
+
+  // 删除用户建的任务（对话页快捷操作）。在主进程里「读—删—写」一气呵成，不像设置页那样拿界面快照整份覆盖。
+  // AI 排程不走这里：它要走 daemon 的取消（在跑的先停用，不直接删）。
+  ipcMain.handle("scheduled-tasks:delete", (_, taskId: string) => {
+    const r = removeUserTask(readTasksFromFile(), taskId)
+    if (!r.ok) return { ok: false, error: r.error }
+    writeTasksToFile(r.tasks)
+    return { ok: true }
+  })
 
   // ── 项目流程组 ──────────────────────────────────────
   ipcMain.handle("project-node-groups:get", () => {

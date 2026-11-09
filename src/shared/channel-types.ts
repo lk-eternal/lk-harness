@@ -67,7 +67,7 @@ export interface MessageChannel {
   digitalIdentity: string;
   // 工作目录（主用户私聊时使用；空 = 回退全局兜底）
   workspaceDir: string;
-  /** 该通道的常用目录（可切换会话来源）；undefined = 未迁移，回退全局 favoriteWorkspaces */
+  /** 该通道的常用目录（可切换会话来源）；undefined = 未迁移，回退全局 favoriteWorkspaces（应用内通道除外：没有就是空） */
   favoriteWorkspaces?: string[];
   /** 保留会话：run 结束后保留上下文（记录 agentId），新消息 Resume 延续对话（默认 true）
    * @deprecated 通道级旧字段，仅作主用户值回退；新代码按人群读 resolveChannelSessionFlags */

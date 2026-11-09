@@ -1,7 +1,6 @@
 import { meegleAuthenticated, runMeegleJson } from "./meegle-cli.js"
 
 const PROJECT_SPACE = "wk-dm"
-const CACHE_TTL_MS = 10 * 60 * 1000
 
 const STORY_MQL =
   "SELECT `工作项id`, `需求名称`, `需求状态` FROM `wk-dm`.`产品需求` WHERE any_match(all_participate_persons(), x -> x = current_login_user()) AND in_progress_nodes_name() is not null LIMIT 50"
@@ -25,8 +24,6 @@ export type FeishuProjectFormDefaults = {
   storyUrl: string
   relatedDocs: string
 }
-
-const listCache = new Map<string, { at: number; items: FeishuProjectPickItem[] }>()
 
 type MoqlRow = Record<string, string | number | undefined>
 
@@ -122,11 +119,11 @@ function rowToPickItem(row: MoqlRow, typeLabel: string, urlPathType: string, wor
   }
 }
 
-export async function listFeishuProjectsForPicker(cacheKey: string): Promise<FeishuProjectPickItem[] | null> {
-  if (!cacheKey) return null
-  const hit = listCache.get(cacheKey)
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.items
-
+/**
+ * 每次都实时查询，不做缓存：用户常见操作是「先去飞书项目里把自己加成负责人，再回来发 /p new」，
+ * 缓存会让这次重试拿到旧列表。查询只有两条 MQL，并行执行，开销可以接受。
+ */
+export async function listFeishuProjectsForPicker(): Promise<FeishuProjectPickItem[] | null> {
   if (!(await meegleAuthenticated())) return null
 
   try {
@@ -151,7 +148,6 @@ export async function listFeishuProjectsForPicker(cacheKey: string): Promise<Fei
       }
     }
     items.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"))
-    listCache.set(cacheKey, { at: Date.now(), items })
     return items
   } catch {
     return null

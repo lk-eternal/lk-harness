@@ -10,13 +10,15 @@ import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
 import { composerDraftKey, discardComposerDraft } from "../components/chat/composer-drafts"
 import QueuedStrip from "../components/chat/QueuedStrip"
+import { sendNowOutcome, type SendNowOutcome } from "../components/chat/queued-strip-text"
+import SessionSchedules from "../components/chat/SessionSchedules"
 import DirPicker from "../components/chat/DirPicker"
 import ModelPicker, { type ModelChoice } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
-import { appChatSessionId, appChatSessionName, chatStreamItems, isQueuedUserItem } from "../../shared/app-chat-types"
+import { appChatSessionId, appChatSessionName, chatStreamItems, isQueuedUserItem, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
@@ -124,7 +126,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
         channelId: c.channelId,
         name: appCfgs.get(c.channelId)?.name ?? c.name,
         agentResourceId: appCfgs.get(c.channelId)?.agentResourceId,
-        tabs: c.mainTabs,
+        tabs: visibleChatTabs(c.mainTabs),
         activeKey: c.activeKey,
       })), deletedRef.current))
       setTreeError(tree.ok ? "" : (tree.error ?? "读取会话失败"))
@@ -299,12 +301,13 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (!r.ok) setActionError(r.error ?? "删除失败")
   }
 
-  /** 暂存区「立即发送」：打断当前回合，排队的消息交给重新拉起的 Agent */
-  const sendQueuedNow = async () => {
-    if (!selected) return
+  /** 暂存区「立即发送」：打断当前回合，排队的消息交给 Agent（一般不用重启 Agent）；返回值用来显示交接提示 */
+  const sendQueuedNow = async (): Promise<SendNowOutcome> => {
+    if (!selected) return "none"
     const r = await window.electronAPI.sendQueuedNow(selected)
     if (!r.ok) setActionError(r.error ?? "发送失败")
     window.setTimeout(() => { void refresh() }, 600)
+    return sendNowOutcome(r)
   }
 
   /** 停止并清空本会话排队消息，等价于 /x -c */
@@ -482,7 +485,12 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   draftKey={composerDraftKey(selected)}
                   disabled={!selected}
                   busy={busy}
-                  top={<QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />}
+                  top={
+                    <>
+                      <SessionSchedules sessionKey={selected} active={active} confirm={showConfirm} onOpenSettings={() => onSettings("tasks")} />
+                      <QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />
+                    </>
+                  }
                   footer={
                     <>
                       <DirPicker

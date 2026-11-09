@@ -10,7 +10,7 @@ import { workspaceDirFromSessionKey } from "../src/shared/channel-types.js"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
-import { boundedCall, createTimeoutMessage, resumeTimeoutMessage } from "./bounded-call"
+import { boundedCall, createTimeoutMessage, hedgedCall, resumeTimeoutMessage } from "./bounded-call"
 import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
 import { getAgentResource } from "./config-store"
@@ -106,6 +106,12 @@ export interface SdkSessionAgent extends StreamCardHost {
   todoSnapshot: StreamTodoItem[] | null
   /** 最近一次 status 事件（含 RUNNING/ERROR 等），结束诊断与断线挂起判定用 */
   lastStatus?: { status: string; message?: string }
+  /**
+   * 「立即发送」软打断本轮：只对当前这一轮有效（worker 在回合返回后立刻清掉）。
+   * 置位后：取消引发的 CANCELLED 不再把流式卡挂起（卡由 finishInterruptedTurn 封成「已打断」），
+   * 取消引发的错误状态也不算回合失败。
+   */
+  interruptRequested?: boolean
   /** poll 已见 messageId：非阻塞 poll 区分新消息 vs 重投 */
   seenMessageIds: Set<string>
   /** 已成功跑完 worker 回合的 messageId：黑洞重投时跳过重复处理 */
@@ -284,6 +290,12 @@ const FORCE_SEND_TIMEOUT_MS = 30_000
  * （实测一次 Resume 挂了 3 分 12 秒，期间用户没有任何回应，随后的重试 1.5 秒就成功）；正常的 Resume 约 1.5 秒。
  */
 export const SDK_LAUNCH_TIMEOUT_MS = 45_000
+/**
+ * Resume 超过这么久还没返回，就并行再发起一次，先返回的用、另一个释放（总时限不变，仍是 SDK_LAUNCH_TIMEOUT_MS）。
+ * Resume 是长尾：本机 133 次里 97% 在 6 秒内，偶尔卡 12 秒、33 秒（「立即发送」后新 Agent 迟迟不起来就是这种），
+ * 而重试通常几秒就好。Resume 只是创建一个本地句柄，重复发起没有副作用，所以可以并行。
+ */
+export const SDK_RESUME_HEDGE_MS = 6_000
 const REATTACH_PROBE_MS = 1500
 
 async function tryReattachActiveRun(
@@ -852,6 +864,10 @@ async function streamRunEvents(session: SdkSessionAgent, run: Run): Promise<void
     }
   } finally {
     if (session.abortController.signal.aborted) return
+    // 软打断取消的回合：卡不在这里刷/挂起，由 worker 紧接着调 finishInterruptedTurn 封成「已打断」
+    // （这里再刷一帧非 finish 的，可能比 finish 晚到，把卡重新写回「进行中」）。
+    // 取消没赶上、回合其实自然结束了（FINISHED）的，仍走下面的正常收口
+    if (session.interruptRequested && session.lastStatus?.status === "CANCELLED") return
     // run 结束：落最终内容并关闭 streaming_mode（飞书 CardKit）
     // 全程无 thinking/tool/text 则不建空卡
     try {
@@ -948,6 +964,7 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
     case "status": {
       flushSdkLog(session)
       const isErr = event.status === "ERROR" || event.status === "EXPIRED"
+      const interruptedCancel = event.status === "CANCELLED" && session.interruptRequested === true
       // 含 RUNNING：换模等待依赖 lastStatus，不能只记终态
       session.lastStatus = { status: event.status, message: event.message }
       const lvl = isErr ? "ERROR" as const : "INFO" as const
@@ -958,6 +975,8 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
         sealRunningTools(stream)
         if (event.status === "FINISHED") {
           void flushStreamCard(session, true)
+        } else if (interruptedCancel) {
+          // 软打断：不刷帧也不挂起，等 finishInterruptedTurn 一次封口（见 streamRunEvents finally）
         } else if (shouldSuspendStreamCard(session, event.status)) {
           // 断线/取消：刷最后一帧但不 finish，Daemon 侧保留 card 供 Resume 接续
           stream.suspended = true
@@ -1250,7 +1269,17 @@ export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): 
   // 发送途中被停止：那时 session.run 还没登记，stopSdkWorker 没有 run 可取消；这里补一刀，
   // 否则事件流要等到下一个事件才发现已 abort
   if (session.abortController.signal.aborted) void run.cancel().catch(() => undefined)
+  // 「立即发送」恰好点在 send 返回之前：那时 session.run 还没登记，软打断的 cancel 没有对象，这里补一刀
+  else if (session.interruptRequested) void run.cancel().catch(() => undefined)
   return startRunLifecycle(session, run, { workerHosted: true })
+}
+
+/**
+ * 「立即发送」软打断了这一轮：把这一轮的流式卡封成「已打断」，下一轮开新卡。
+ * 与 /stop 用同一套收口（避免 Resume/续写后旧卡与新卡叠内容）；卡已正常结束则什么都不做。
+ */
+export async function finishInterruptedTurn(session: SdkSessionAgent): Promise<void> {
+  await sealStreamCardForStop(session)
 }
 
 export async function unregisterSdkSessionForWorker(session: SdkSessionAgent, aborted: boolean): Promise<void> {
@@ -1373,7 +1402,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     const sdkPort = resolveDaemonPortForPrompt()
     const includeAdmin = opts.includeAdmin === true
-    // 有卡片承载输出的一律走 interactive（无 send_text）；只有无卡片的定时任务走 task（有 send_text）
+    // 有卡片承载输出的一律走 interactive（无 send_result）；只有无卡片的独立定时任务走 task（有 send_result）
     const mcpEndpoint = chatType === "task" ? "task" : "interactive"
     // 项目工具硬切：仅项目会话额外挂载 lk-harness-project，其余会话无 project_*
     const includeProject = chatType === "project" || !!projectIdFromSessionKey(sessionKey)
@@ -1389,19 +1418,25 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     if (!wantResume) forgetResumable(sessionKey)
     const resumable = wantResume ? getResumableMap().get(sessionKey) : undefined
     // 超时放弃之后才返回的 Agent 没人接手，必须释放，否则就是一个没人管的实例
-    const releaseLateAgent = (what: string) => (late: SDKAgent): void => {
-      pushUiLog("SDK", "INFO", `[${sessionKey}] ${what}超时后才返回，已释放这个晚到的 Agent (agentId=${late.agentId})`)
+    const releaseLateAgent = (what: string) => (late: SDKAgent, why: "timeout" | "superseded" = "timeout"): void => {
+      const reason = why === "superseded" ? "并行重试已有结果，已释放这个多余的 Agent" : "超时后才返回，已释放这个晚到的 Agent"
+      pushUiLog("SDK", "INFO", `[${sessionKey}] ${what}${reason} (agentId=${late.agentId})`)
       try { late.close() } catch { /* best-effort */ }
     }
     let agent: SDKAgent | undefined
     if (resumable && resumable.workspaceDir === workspaceDir) {
       try {
         pushUiLog("SDK", "INFO", `[${sessionKey}] Resume 恢复会话 (agentId=${resumable.agentId}, model=${JSON.stringify(modelSelection)}, 新连接/上下文保留)`)
-        agent = await boundedCall(
-          Agent.resume(resumable.agentId, agentBaseOpts),
-          SDK_LAUNCH_TIMEOUT_MS,
-          resumeTimeoutMessage(SDK_LAUNCH_TIMEOUT_MS),
-          releaseLateAgent("Resume"),
+        // 每次调用各给一份选项副本：两次并行的 Resume 互不干扰
+        agent = await hedgedCall(
+          () => Agent.resume(resumable.agentId, { ...agentBaseOpts }),
+          {
+            hedgeAfterMs: SDK_RESUME_HEDGE_MS,
+            timeoutMs: SDK_LAUNCH_TIMEOUT_MS,
+            timeoutMessage: resumeTimeoutMessage(SDK_LAUNCH_TIMEOUT_MS),
+            onLate: releaseLateAgent("Resume"),
+            onHedge: (n) => pushUiLog("SDK", "WARN", `[${sessionKey}] Resume ${SDK_RESUME_HEDGE_MS / 1000}s 还没返回，并行再发起第 ${n} 次（先返回的用，另一个释放）`),
+          },
         )
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e)

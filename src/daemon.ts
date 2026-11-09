@@ -50,11 +50,34 @@ import {
   resolveChannelAudience,
   resolveDaemonSessionFlags,
   APP_CHANNEL_CHAT_ID,
+  CHANNEL_TYPE_LABELS,
   type DaemonChannelConfig,
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, isIndependentTaskSessionKey, taskCardFooter, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import {
+  TASK_RESULT_TOOL,
+  TaskRunTracker,
+  chooseNewTaskChannel,
+  describeManagedTaskOutcome,
+  formatAiSelfReminder,
+  formatTaskImResult,
+  formatTaskResultForAgent,
+  normalizeTaskDelivery,
+  taskMissingResultText,
+} from "./shared/task-delivery.js";
+import { resolveProjectAgentTarget } from "./shared/task-agent-target.js";
+import {
+  AI_SCHEDULE_LIMITS,
+  aiTasksOwnedBy,
+  buildAiScheduleTask,
+  describeAiTask,
+  evaluateAiTaskFire,
+  isAiTask,
+  isAiTaskLive,
+  type AiScheduleOwner,
+} from "./shared/ai-schedule.js";
 import { createTempChatSession } from "./shared/temp-chat-session.js";
 import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { resolveMcpSendSessionKey } from "./shared/mcp-outbound-session-key.js";
@@ -67,6 +90,11 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { z } from "zod";
 import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
+import { registerScheduleTools, type ScheduleApi } from "./server-schedule.js";
+import { aiScheduleStateFile, readAiScheduleRuns, writeAiScheduleRuns } from "./shared/ai-schedule-state.js";
+import { createBugWatcher, createMeegleBugSource, type BugWatchDeps } from "./daemon-bug-watch.js";
+import { bugWatchStateFile, readBugWatchState, writeBugWatchState } from "./shared/project-bug-watch-state.js";
+import { meegleAuthenticated, runMeegleJson } from "./shared/meegle-cli.js";
 import { registerDiffTools } from "./server-diff.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
@@ -853,6 +881,7 @@ function confirmSessionDone(sessionKey: string): number {
     addReactionToMessages(ids, sessionKey, "DONE");
     log("INFO", `完成确认: 删除 ${done.length} 条队列消息, DONE 表情 ${ids.length} 条, session=${sessionKey}`);
   }
+  onTaskSessionConfirmed(sessionKey, done);
   return done.length;
 }
 
@@ -3555,36 +3584,30 @@ const MCP_SEND_NO_ROUTE = "[send_failed] 须在 Harness 调度的 Agent 会话�
 function resolveSendSessionKeyForMcp(): string | undefined {
   return resolveMcpSendSessionKey(
     getMcpInvokerSessionKey(),
-    readTasksSafe(),
-    (task) => {
-      const rt = pickChannel(task.channelId);
-      return rt ? channelDefaultChatId(rt) : null;
-    },
+    readTasksSafe().map(withResolvedChannel),
+    taskOutboundMainChatId,
   );
 }
 
-export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boolean }): void {
-  if (opts?.sendText !== false) {
+export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: boolean }): void {
+  if (opts?.taskResult === true) {
     s.tool(
-      "send_text",
-      "发送文本消息到飞书/微信。飞书群聊中 @ 其他成员或机器人：在 text 中使用 `<at user_id=\"ou_xxx\">名字</at>`（open_id 从收到消息的 @名字(open_id=ou_xxx) 内联标注获取）。",
+      TASK_RESULT_TOOL,
+      [
+        "提交定时任务这一次运行的结果，结果按任务设置送达（不通知 / Agent 会话 / IM）。",
+        "没什么要汇报的传 quiet=true，不发消息。",
+        "飞书群里 @ 成员：在 text 中使用 `<at user_id=\"ou_xxx\">名字</at>`。",
+      ].join("\n"),
       {
-        text: z.string().describe("要发送的消息内容"),
-        message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
+        text: z.string().optional().describe("结果正文（Markdown）。quiet=true 时可省略"),
+        quiet: z.boolean().optional().describe("true = 这次没有需要通知的内容，不发任何消息"),
       },
-      async ({ text, message_id }) => {
+      async ({ text, quiet }) => {
         try {
-          const routeKey = resolveSendSessionKeyForMcp();
-          if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-          const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), { text, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
-          if (!r?.ok) {
-            const detail = r?.error?.trim() || "消息发送失败";
-            log("WARN", `send_text 发送失败: message_id=${message_id} error=${detail.slice(0, 160)}`);
-            return { content: [{ type: "text" as const, text: `[send_failed] ${detail}` }] };
-          }
-          return { content: [{ type: "text" as const, text: "消息已发送" }] };
+          const r = await submitTaskResult(getMcpInvokerSessionKey(), { text, quiet });
+          return { content: [{ type: "text" as const, text: r.message }] };
         } catch (e: any) {
-          log("ERROR", `send_text 异常: ${e?.message ?? e}`);
+          log("ERROR", `${TASK_RESULT_TOOL} 异常: ${e?.message ?? e}`);
           return { content: [{ type: "text" as const, text: `[error] ${e?.message ?? "unknown error"}` }] };
         }
       },
@@ -3658,15 +3681,22 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { sendText?: boo
 }
 
 function createTaskMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-task", version: PKG_VERSION, description: "定时任务等无流式卡会话 – 含 send_text / 媒体 / 提问" });
-  registerAgentOutboundTools(s, { sendText: true });
+  const s = new McpServer({ name: "lk-harness-task", version: PKG_VERSION, description: `独立定时任务会话 – 含 ${TASK_RESULT_TOOL} / 媒体 / 提问` });
+  registerAgentOutboundTools(s, { taskResult: true });
   return s;
 }
 
-/** 交互会话模式：无 send_text，保留 send_question / 媒体 / Diff（输出由流式卡片承载） */
+/** 交互会话模式：无 send_result，保留 send_question / 媒体 / Diff（输出由流式卡片承载） */
 function createInteractiveMcpServer(): McpServer {
-  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: "交互会话 – 提问/媒体/Diff（无 send_text）" });
-  registerAgentOutboundTools(s, { sendText: false });
+  const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: `交互会话 – 提问/媒体/Diff（无 ${TASK_RESULT_TOOL}）` });
+  registerAgentOutboundTools(s, { taskResult: false });
+  return s;
+}
+
+/** AI 自排程：仅主用户主会话 / 项目会话挂载（见 buildBuiltinMcpServers） */
+function createScheduleMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-schedule", version: PKG_VERSION, description: "AI 自排程 – 给当前会话排定时任务" });
+  registerScheduleTools(s, aiScheduleApi, getMcpInvokerSessionKey);
   return s;
 }
 
@@ -3691,11 +3721,16 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-project") {
+        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-project" || pathname === "/mcp-schedule") {
           const isTask = pathname === "/mcp-task";
           const isInteractive = pathname === "/mcp-interactive";
           const isProject = pathname === "/mcp-project";
-          const srv = isInteractive ? createInteractiveMcpServer() : isTask ? createTaskMcpServer() : isProject ? createProjectMcpServer() : createAdminMcpServer();
+          const isSchedule = pathname === "/mcp-schedule";
+          const srv = isInteractive ? createInteractiveMcpServer()
+            : isTask ? createTaskMcpServer()
+            : isProject ? createProjectMcpServer()
+            : isSchedule ? createScheduleMcpServer()
+            : createAdminMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           if (isTask || isInteractive) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
           res.on("close", () => {
@@ -3703,7 +3738,7 @@ function startHttpServer(): Promise<number> {
             if (isTask || isInteractive) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
-          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-task")
+          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-task" || isSchedule)
             ? (req.headers["x-harness-session-key"] as string | undefined)
             : undefined;
           await runWithMcpInvokerSessionKey(invokerSk, async () => { await transport.handleRequest(req, res); });
@@ -3869,7 +3904,10 @@ function startHttpServer(): Promise<number> {
               ...(boundChat ? { chatId: boundChat } : {}),
               ...senderMeta,
             };
-            pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, queueMeta);
+            const pushed = pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, queueMeta);
+            // 独立任务会话的消息：记入运行记账，回合结束时才能对账「AI 有没有提交结果」
+            const queuedTask = pushed ? findScheduledTaskBySessionKey(normalized, readTasksSafe()) : undefined;
+            if (queuedTask && queuedTask.independent !== false) taskRuns.queued(queuedTask.id);
             trackMessageSession(effectiveId, normalized);
             rememberSessionKey(normalized);
             broadcastQueueEvent(chatIdFromSessionKey(normalized) || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined));
@@ -3880,6 +3918,51 @@ function startHttpServer(): Promise<number> {
             pushMessage(content, effectiveId, undefined, undefined, senderOpenId || undefined, undefined, senderType ? { senderType } : undefined);
           }
           json(res, { ok: true, queueLength: getFileQueueLength() });
+          return;
+        }
+
+        // 手动触发定时任务（设置页「立即执行」）：与 cron 触发同一套入队逻辑，但不经 AI 排程的次数 / 合并关卡
+        if (method === "POST" && pathname === "/api/task-trigger") {
+          const body = JSON.parse(await readBody(req));
+          const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
+          const task = taskId ? readTasksSafe().find((t) => t.id === taskId) : undefined;
+          if (!task) { json(res, { ok: false, error: "任务不存在" }); return; }
+          const nowStr = new Date().toLocaleString("zh-CN");
+          const r = enqueueScheduledTaskMessage(task, `[定时任务: ${task.name}] (手动触发: ${nowStr})\n\n${task.content}`);
+          json(res, r);
+          return;
+        }
+
+        // 立刻跑一轮缺陷监控（可只查一个项目）：返回每个项目这一轮的结果，便于排查「为什么没通知」
+        if (method === "POST" && pathname === "/api/bug-watch-run") {
+          const body = JSON.parse((await readBody(req)) || "{}");
+          const projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined;
+          json(res, { ok: true, ...(await bugWatcher.runNow({ projectId })) });
+          return;
+        }
+
+        // 设置页取消 AI 排程：与 AI 自己 schedule_cancel 同一套（在跑的先停用，不直接删）
+        if (method === "POST" && pathname === "/api/ai-task-cancel") {
+          const body = JSON.parse(await readBody(req));
+          const taskId = typeof body.taskId === "string" ? body.taskId.trim() : "";
+          let tasks: ScheduledTask[];
+          try {
+            tasks = readTasks();
+          } catch (e) {
+            json(res, { ok: false, error: e instanceof Error ? e.message : String(e) });
+            return;
+          }
+          const target = tasks.find((t) => t.id === taskId && isAiTask(t));
+          if (!target) { json(res, { ok: false, error: "排程不存在（可能已结束并被清理）" }); return; }
+          json(res, { ok: true, ...cancelAiTaskRecord(tasks, target) });
+          return;
+        }
+
+        // 立刻检查一轮项目缺陷（调试 / 测试用；平时由定时器按间隔跑）
+        if (method === "POST" && pathname === "/api/bug-watch-run") {
+          const body = JSON.parse((await readBody(req)) || "{}");
+          const projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined;
+          json(res, { ok: true, ...(await bugWatcher.runNow({ projectId })) });
           return;
         }
 
@@ -4206,10 +4289,48 @@ async function handleSkillsAdmin(method: string, req: http.IncomingMessage, res:
   return false;
 }
 
+/**
+ * 对话里让 AI 管理任务时，告诉它「这个任务实际会去哪」（所属通道、投给哪个会话、是不是它自己所在的会话）。
+ * invokerSessionKey = 调用 manage_tasks 的会话；没有就不判断「是不是当前会话」。
+ */
+function describeManagedTask(task: ScheduledTask, invokerSessionKey?: string): string {
+  const t = withResolvedChannel(task);
+  const rt = t.channelId ? channels.get(t.channelId) : undefined;
+  const toMainSession = !t.targetProjectId?.trim() && (t.independent === false || resolveTaskNotify(t) === "agent");
+  let mainSessionKey: string | null | undefined;
+  let mainSessionIsInvoker: boolean | undefined;
+  if (toMainSession) {
+    const target = resolveTaskAgentTarget(t);
+    mainSessionKey = target.ok ? target.sessionKey : null;
+    const invoker = normalizeSessionKey(invokerSessionKey);
+    if (target.ok && invoker) {
+      const a = normalizeSessionKey(target.sessionKey);
+      // Windows / macOS 文件系统不区分大小写
+      mainSessionIsInvoker = a === invoker || (process.platform !== "linux" && a.toLowerCase() === invoker.toLowerCase());
+    }
+  }
+  return describeManagedTaskOutcome(
+    t,
+    {
+      channelName: (id) => (id ? channels.get(id)?.cfg.name : undefined),
+      projectName: (id) => getProject(id)?.name,
+    },
+    {
+      channelName: rt?.cfg.name,
+      channelKind: rt ? CHANNEL_TYPE_LABELS[rt.cfg.type] : undefined,
+      channelIsExternalIm: !!rt && rt.cfg.type !== "app",
+      mainSessionKey,
+      mainSessionIsInvoker,
+    },
+  );
+}
+
 async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
     try {
-      json(res, { ok: true, tasks: readTasks() });
+      const invoker = new URL(req.url ?? "", "http://localhost").searchParams.get("invoker") ?? undefined;
+      const tasks = readTasks().map((t) => ({ ...t, summary: describeManagedTask(t, invoker) }));
+      json(res, { ok: true, tasks });
     } catch (e) {
       json(res, { ok: false, error: e instanceof Error ? e.message : String(e) }, 503);
     }
@@ -4217,10 +4338,16 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
   }
   if (method === "POST") {
     const body = JSON.parse(await readBody(req));
-    const { action, id, name, cron, content, enabled, independent, channelId, model, modelParams } = body as {
+    const { action, id, name, cron, content, enabled, independent, channelId, model, modelParams, notify, invokerSessionKey } = body as {
       action: string; id?: string; name?: string; cron?: string; content?: string; enabled?: boolean; independent?: boolean
-      channelId?: string; model?: string; modelParams?: string
+      channelId?: string; model?: string; modelParams?: string; notify?: string
+      /** 调用 manage_tasks 的会话（admin MCP 带来）：用来选所属通道、判断「是不是当前会话」 */
+      invokerSessionKey?: string
     };
+    if (notify !== undefined && !isTaskNotify(notify)) {
+      json(res, { ok: false, error: "notify 只能是 none / agent / im" }, 400);
+      return true;
+    }
     let tasks: ScheduledTask[];
     try {
       tasks = readTasks();
@@ -4231,14 +4358,19 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
 
     if (action === "add") {
       if (!name || !cron || !content) { json(res, { ok: false, error: "name, cron, content required" }, 400); return true; }
-      const newTask: ScheduledTask = {
+      // 独立任务默认「通知到 IM」（发到所属通道的主用户私聊）：对话里让 AI 建的任务，用户期望做完能收到结果
+      // 所属通道：AI 没法指定，默认是它自己所在的通道，不是「第一个通道」（见 chooseNewTaskChannel）
+      const invokerChannelId = invokerSessionKey ? channelIdFromSessionKey(normalizeSessionKey(invokerSessionKey)) : undefined;
+      const newTask: ScheduledTask = normalizeTaskDelivery({
         id: crypto.randomUUID(), name: name.trim(), cron: cron.trim(), content,
         enabled: enabled ?? true, independent: independent ?? true,
-        channelId: channelId || channels.keys().next().value, model, modelParams,
-      };
+        channelId: chooseNewTaskChannel({ explicit: channelId, invokerChannelId, channelIds: [...channels.keys()] }),
+        model, modelParams,
+        ...(notify ? { notify } : { notify: "im" as const }),
+      });
       tasks.push(newTask);
       writeTasks(tasks);
-      json(res, { ok: true, task: newTask });
+      json(res, { ok: true, task: newTask, summary: describeManagedTask(newTask, invokerSessionKey) });
       return true;
     }
     if (!id) { json(res, { ok: false, error: "id required" }, 400); return true; }
@@ -4254,8 +4386,10 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
       if (channelId !== undefined) tasks[idx].channelId = channelId;
       if (model !== undefined) tasks[idx].model = model;
       if (modelParams !== undefined) tasks[idx].modelParams = modelParams;
+      if (notify !== undefined) tasks[idx].notify = notify;
+      tasks[idx] = normalizeTaskDelivery(tasks[idx]);
       writeTasks(tasks);
-      json(res, { ok: true, task: tasks[idx] });
+      json(res, { ok: true, task: tasks[idx], summary: describeManagedTask(tasks[idx], invokerSessionKey) });
       return true;
     }
     if (action === "delete") {
@@ -4267,7 +4401,7 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
     if (action === "toggle") {
       tasks[idx].enabled = !tasks[idx].enabled;
       writeTasks(tasks);
-      json(res, { ok: true, task: tasks[idx] });
+      json(res, { ok: true, task: tasks[idx], summary: describeManagedTask(tasks[idx], invokerSessionKey) });
       return true;
     }
     json(res, { ok: false, error: "unknown action" }, 400);
@@ -4738,7 +4872,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       });
     }
     const draft = chatKey ? getProjectNewDraft(chatKey) : undefined;
-    const items = chatKey ? await listFeishuProjectsForPicker(chatKey) : null;
+    const items = chatKey ? await listFeishuProjectsForPicker() : null;
     if (draft) {
       if (items?.length) {
         draft.step = "feishu_pick";
@@ -5109,6 +5243,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       const ids = done.filter((mid) => mid && !mid.startsWith("internal_"));
       if (ids.length > 0) addReactionToMessages(ids, sk, "DONE");
       log("INFO", `强制确认 claimed: ${done.length} 条, DONE ${ids.length} 条, session=${sk}`);
+      onTaskSessionConfirmed(sk, done);
     }
     json(res, { ok: true, confirmed: done.length });
     return true;
@@ -5487,56 +5622,488 @@ function removeLockFile(): void {
 
 // ── 主函数 ───────────────────────────────────────────────
 
-/** 定时任务入队：独立 → taskId 会话队列；非独立 → 主会话。失败重试共用调度器。 */
-function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): void {
+// ── 定时任务：投递 / 结果提交 / 运行记账 / AI 自排程 ─────────────
+// 纯规则（通知方式推断、文案、校验、AI 排程限制）在 shared/task-delivery.ts、shared/ai-schedule.ts；
+// 这里只做落地：找会话、写队列、发消息、读写任务文件。
+
+/** 一次运行 = 任务消息入队 → AI 提交结果(send_result) → 这批消息确认处理完时对账 */
+const taskRuns = new TaskRunTracker();
+
+/** 所属通道没填 = 第一个可用通道（与设置页「默认」一致）；拼出站 chatKey 必须有明确通道 id */
+function withResolvedChannel(task: ScheduledTask): ScheduledTask {
+  if (task.channelId?.trim()) return task;
+  const rt = pickChannel(undefined);
+  return rt ? { ...task, channelId: rt.cfg.id } : task;
+}
+
+/** 任务出站（结果 / 图片 / 文件）用的通道：通知到 IM 时是发送通道，其余是所属通道；通道不存在返回 null */
+function taskOutboundRuntime(task: ScheduledTask): ChannelRuntime | null {
+  const channelId = taskOutboundChannelId(task);
+  return channelId ? (channels.get(channelId) ?? null) : null;
+}
+
+/** 出站通道的主用户私聊 id（供 resolveTaskOutboundChatKey 在没填聊天 ID 时用） */
+function taskOutboundMainChatId(task: ScheduledTask): string | null {
+  const rt = taskOutboundRuntime(task);
+  return rt ? (rt.cfg.mainUserChatId ?? channelDefaultChatId(rt)) : null;
+}
+
+function taskOutboundChatKey(task: ScheduledTask): string | undefined {
+  const t = withResolvedChannel(task);
+  return resolveTaskOutboundChatKey(t, taskOutboundMainChatId(t));
+}
+
+type TaskAgentTarget =
+  | { ok: true; sessionKey: string; chatKey: string; chatType: "p2p" | "project"; label: string }
+  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已完成） */ retire: boolean };
+
+/** 任务绑定的 Agent 会话：空 = 所属通道的主会话（不跟随当前 active 的项目会话），否则 = 该项目的会话 */
+function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
+  const projectId = task.targetProjectId?.trim();
+  if (projectId) {
+    const r = resolveProjectAgentTarget(projectId, getProject(projectId));
+    return r.ok ? { ...r, chatType: "project" } : r;
+  }
   const rt = pickChannel(task.channelId);
   const target = rt ? channelDefaultChatId(rt) : null;
-  const notifyChatKey = rt && target ? makeChatKey(rt.cfg.id, target) : undefined;
-  const internalMsgId = `internal_${task.id}_${Date.now()}`;
+  if (!rt || !target) return { ok: false, retire: false, error: "通道无主用户且无私聊记录，找不到主会话" };
+  const wsDir = channelWorkspaceDir(rt);
+  if (!wsDir) return { ok: false, retire: false, error: `通道「${rt.cfg.name}」未配置工作目录，找不到主会话` };
+  const chatKey = makeChatKey(rt.cfg.id, target);
+  const sessionKey = normalizeSessionKey(`${chatKey}::${wsDir}`) || `${chatKey}::${wsDir}`;
+  return { ok: true, sessionKey, chatKey, chatType: "p2p", label: "主会话" };
+}
 
-  if (task.independent !== false) {
-    const outboundChatKey = rt
-      ? resolveTaskOutboundChatKey(task, rt.cfg.mainUserChatId ?? target)
-      : resolveTaskOutboundChatKey(task);
-    if (!outboundChatKey) {
-      log("WARN", `定时任务「${task.name}」跳过: 未配置会话 ID 且通道无主用户绑定`);
-      return;
-    }
+/** 往 Agent 会话队列投一条消息（走文件队列：崩溃可重投，由 dispatcher 拉起 / 唤醒 Agent） */
+function pushToAgentSession(target: Extract<TaskAgentTarget, { ok: true }>, content: string, messageId: string): boolean {
+  const sessionKey = normalizeSessionKey(target.sessionKey) || target.sessionKey;
+  const meta: QueueMessageMeta = target.chatType === "project" ? { chatType: "project", chatId: target.chatKey } : { chatType: "p2p" };
+  if (!pushToFileQueue(content, messageId, `daemon-${process.pid}`, sessionKey, false, meta)) return false;
+  trackMessageSession(messageId, sessionKey);
+  rememberSessionKey(sessionKey);
+  broadcastQueueEvent(target.chatKey);
+  return true;
+}
+
+/**
+ * 定时任务入队：
+ *  - 非独立运行：任务内容直接投进绑定的 Agent 会话（主会话 / 项目会话）。
+ *  - 独立运行：投进任务自己的会话队列（会话 key = task.id），由全新 Agent 执行；
+ *    结果由 AI 调 send_result 交付，出站目标见 taskOutboundChatKey。
+ * 失败重试共用调度器；返回值给手动触发用，cron 触发只看日志。
+ */
+function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok: boolean; error?: string } {
+  const internalMsgId = `internal_${task.id}_${Date.now()}`;
+  const fail = (error: string) => {
+    log("WARN", `定时任务「${task.name}」${error}`);
+    return { ok: false, error };
+  };
+
+  if (task.independent === false) {
+    const target = resolveTaskAgentTarget(task);
+    if (!target.ok) return fail(`未投递: ${target.error}`);
+    if (!pushToAgentSession(target, content, internalMsgId)) return fail("未投递: 写入会话队列失败");
+    log("INFO", `定时任务已直投${target.label}: ${task.name} → ${target.sessionKey}`);
+    return { ok: true };
+  }
+
+  const t = withResolvedChannel(task);
+  const outboundChatKey = taskOutboundChatKey(t);
+  if (resolveTaskNotify(t) === "im" && !outboundChatKey) {
+    return fail("跳过: 找不到结果发送目标（发送通道不存在，或没填聊天 ID 且该通道未绑定主用户）");
+  }
+  if (outboundChatKey) {
     rememberSessionKey(outboundChatKey);
     log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
     sessionToChatMap.set(task.id, outboundChatKey);
-    const override = taskSessionOverride(task, rt?.cfg.agentResourceId);
-    if (override) {
-      try {
-        setSessionOverride(task.id, override);
-      } catch (e: unknown) {
-        log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-    pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, task.id, false, { chatType: "task" });
-    trackMessageSession(internalMsgId, task.id);
-    rememberSessionKey(task.id);
-    broadcastQueueEvent(outboundChatKey);
-    log("INFO", `定时任务已直投独立会话队列: ${task.name} → ${task.id}`);
-    return;
-  }
-
-  if (rt && target && notifyChatKey) {
-    const wsDir = channelWorkspaceDir(rt);
-    if (!wsDir) {
-      log("WARN", `定时任务「${task.name}」跳过直投: 通道 ${rt.cfg.name} 未配置工作目录`);
-    } else {
-      const mainSessionKey = normalizeSessionKey(`${notifyChatKey}::${wsDir}`) || `${notifyChatKey}::${wsDir}`;
-      pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, mainSessionKey, false, { chatType: "p2p" });
-      trackMessageSession(internalMsgId, mainSessionKey);
-      rememberSessionKey(mainSessionKey);
-      broadcastQueueEvent(notifyChatKey);
-      log("INFO", `定时任务已直投主会话: ${task.name} → ${mainSessionKey}`);
-    }
   } else {
-    log("WARN", `定时任务「${task.name}」消息无法入队: 通道无主用户且无私聊记录`);
+    log("INFO", `定时任务「${task.name}」没有可用的出站聊天（所属通道未绑定主用户）：send_image / send_file 不可用`);
+  }
+  const rt = pickChannel(t.channelId);
+  const override = taskSessionOverride(task, rt?.cfg.agentResourceId);
+  if (override) {
+    try {
+      setSessionOverride(task.id, override);
+    } catch (e: unknown) {
+      log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (!pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, task.id, false, { chatType: "task" })) {
+    return fail("未投递: 写入会话队列失败");
+  }
+  taskRuns.queued(task.id);
+  trackMessageSession(internalMsgId, task.id);
+  rememberSessionKey(task.id);
+  broadcastQueueEvent(outboundChatKey);
+  log("INFO", `定时任务已直投独立会话队列: ${task.name} → ${task.id}`);
+  return { ok: true };
+}
+
+/** 把一段文字按任务的通知方式送出去。kind=notice 是系统提示（如「AI 没提交结果」），不套「汇报」外壳 */
+async function deliverTaskText(
+  task: ScheduledTask,
+  text: string,
+  kind: "result" | "notice",
+): Promise<{ ok: true; where: string } | { ok: false; error: string }> {
+  const mode = resolveTaskNotify(task);
+  if (mode === "agent") {
+    const target = resolveTaskAgentTarget(task);
+    if (!target.ok) return { ok: false, error: target.error };
+    const body = kind === "result" ? formatTaskResultForAgent(task, text) : text;
+    if (!pushToAgentSession(target, body, `internal_taskresult_${task.id}_${Date.now()}`)) {
+      return { ok: false, error: "写入会话队列失败" };
+    }
+    log("INFO", `定时任务「${task.name}」结果已投进${target.label}队列 len=${text.length}`);
+    return { ok: true, where: `「${target.label}」的队列` };
+  }
+  if (mode === "im") {
+    const routeKey = taskOutboundChatKey(task);
+    if (!routeKey) return { ok: false, error: "找不到发送目标：发送通道不存在，或没填聊天 ID 且该通道未绑定主用户" };
+    const body = kind === "result" ? formatTaskImResult(task, text) : text;
+    const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), {
+      text: body,
+      session_key: routeKey,
+      invoker_session_key: task.id,
+    });
+    if (!r?.ok) return { ok: false, error: r?.error?.trim() || "消息发送失败" };
+    return { ok: true, where: "IM" };
+  }
+  return { ok: true, where: "（不通知，仅记录）" };
+}
+
+/** send_result：独立任务本次运行的结果。成功才记账，失败让 AI 能重试；重复提交拒绝 */
+async function submitTaskResult(
+  invoker: string | undefined,
+  p: { text?: string; quiet?: boolean },
+): Promise<{ ok: boolean; message: string }> {
+  const sk = invoker?.trim();
+  const task = sk ? findScheduledTaskBySessionKey(sk, readTasksSafe()) : undefined;
+  if (!task || task.independent === false) {
+    return { ok: false, message: `[send_failed] ${TASK_RESULT_TOOL} 只能在独立运行的定时任务会话里调用` };
+  }
+  const text = (p.text ?? "").trim();
+  const quiet = p.quiet === true;
+  if (!quiet && !text) {
+    return { ok: false, message: "[send_failed] 没有 text：写结果正文，或传 quiet=true 表示这次没有需要通知的内容" };
+  }
+  if (taskRuns.alreadySubmitted(task.id)) {
+    return { ok: false, message: "[send_failed] 本次运行已经提交过结果，不要重复提交，直接结束。" };
+  }
+  if (quiet) {
+    taskRuns.submitted(task.id, true);
+    log("INFO", `定时任务「${task.name}」本次无需通知（quiet）`);
+    return { ok: true, message: "已记录：这次没有需要通知的内容。任务到此结束。" };
+  }
+  const r = await deliverTaskText(task, text, "result");
+  if (!r.ok) {
+    log("WARN", `定时任务「${task.name}」结果投递失败: ${r.error}`);
+    return { ok: false, message: `[send_failed] ${r.error}` };
+  }
+  taskRuns.submitted(task.id, false);
+  log("INFO", `定时任务「${task.name}」已提交结果 → ${r.where} len=${text.length}${resolveTaskNotify(task) === "none" ? ` 内容: ${text.slice(0, 120)}` : ""}`);
+  return { ok: true, message: `结果已处理 → ${r.where}。任务到此结束，不要再发别的。` };
+}
+
+/**
+ * 一批消息被确认处理完（回合成功结束）：若是独立任务会话，对账 AI 有没有提交结果。
+ * 开了通知却什么都没提交 → 给接收方一句兜底提示，免得任务静默「成功」而没人知道。
+ * 回合失败不走这里（消息留在 .claimed 里由调度器重投），失败通知另议。
+ */
+function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
+  if (doneIds.length === 0) return;
+  const task = findScheduledTaskBySessionKey(sessionKey, readTasksSafe());
+  if (!task || task.independent === false) return;
+  if (!doneIds.some((id) => id.startsWith(`internal_${task.id}_`))) return;
+  const hasPending = getFileQueueMessages(sessionKey).some((v) => v.status === "pending");
+  const outcome = taskRuns.finished(task.id, hasPending);
+  if (outcome !== "missing") return;
+  log("WARN", `定时任务「${task.name}」运行结束但没有提交结果（未调用 ${TASK_RESULT_TOOL}）`);
+  if (resolveTaskNotify(task) === "none") return;
+  deliverTaskText(task, taskMissingResultText(task), "notice")
+    .then((r) => { if (!r.ok) log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`); })
+    .catch((e: unknown) => log("WARN", `定时任务「${task.name}」兜底提示异常: ${e instanceof Error ? e.message : String(e)}`));
+}
+
+// ── AI 自排程 ────────────────────────────────────────────
+// 排程本身是普通的 scheduled-tasks.json 条目（createdBy=ai），调度器照常触发；
+// 区别在触发前的关卡：次数 / 过期 / 目标有效 / 上一次没跑完不叠加。累计次数记在单独的状态文件里，
+// 不改任务文件（改了会触发调度器重载）。
+
+const AI_SCHEDULE_STATE_FILE = aiScheduleStateFile(APP_DATA_DIR || ".");
+
+function readAiRuns(): Record<string, number> {
+  return readAiScheduleRuns(AI_SCHEDULE_STATE_FILE);
+}
+
+function writeAiRuns(runs: Record<string, number>): void {
+  try {
+    writeAiScheduleRuns(AI_SCHEDULE_STATE_FILE, runs);
+  } catch (e: unknown) {
+    log("WARN", `AI 排程次数状态写入失败: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+/** 这个排程的上一次运行还没结束（独立运行：在跑或队列里还有消息）。只有独立运行有「在跑」的概念 */
+function isAiTaskBusy(task: ScheduledTask): boolean {
+  if (task.independent === false) return false;
+  return taskRuns.isActive(task.id) || getFileQueueLength(task.id) > 0;
+}
+
+/** 从任务文件里删掉一批 AI 排程（读不出文件时什么都不动，避免把整份任务写成空） */
+function removeAiTasks(ids: string[]): boolean {
+  if (ids.length === 0) return true;
+  let tasks: ScheduledTask[];
+  try {
+    tasks = readTasks();
+  } catch (e: unknown) {
+    log("WARN", `清理 AI 排程失败（任务文件读取失败）: ${e instanceof Error ? e.message : String(e)}`);
+    return false;
+  }
+  const drop = new Set(ids);
+  const kept = tasks.filter((t) => !(drop.has(t.id) && isAiTask(t)));
+  if (kept.length === tasks.length) return true;
+  writeTasks(kept);
+  const runs = readAiRuns();
+  let changed = false;
+  for (const id of ids) {
+    if (id in runs) { delete runs[id]; changed = true; }
+  }
+  if (changed) writeAiRuns(runs);
+  return true;
+}
+
+/** 调度器触发入口：用户的任务原样入队；AI 排程先过关卡 */
+function fireScheduledTask(task: ScheduledTask, content: string): void {
+  if (!isAiTask(task)) {
+    enqueueScheduledTaskMessage(task, content);
+    return;
+  }
+  const runs = readAiRuns();
+  const decision = evaluateAiTaskFire(task, runs[task.id] ?? 0, Date.now());
+  if (!decision.fire) {
+    if (!isAiTaskBusy(task) && removeAiTasks([task.id])) log("INFO", `AI 排程「${task.name}」${decision.retire}，已作废并清理`);
+    return;
+  }
+  if (task.independent === false || resolveTaskNotify(task) === "agent") {
+    const target = resolveTaskAgentTarget(task);
+    if (!target.ok) {
+      if (target.retire) {
+        if (!isAiTaskBusy(task) && removeAiTasks([task.id])) log("INFO", `AI 排程「${task.name}」目标已失效（${target.error}），已作废并清理`);
+      } else {
+        log("INFO", `AI 排程「${task.name}」本次跳过: ${target.error}`);
+      }
+      return;
+    }
+    // 提醒还没被会话处理掉就不再叠一条（会话忙 / 挂起时避免提醒堆积）
+    if (task.independent === false && getFileQueueMessages(target.sessionKey).some((v) => v.messageId?.startsWith(`internal_${task.id}_`))) {
+      log("INFO", `AI 排程「${task.name}」本次跳过: 上一条提醒还在会话队列里没处理`);
+      return;
+    }
+  }
+  if (isAiTaskBusy(task)) {
+    log("INFO", `AI 排程「${task.name}」本次跳过: 上一次运行还没结束`);
+    return;
+  }
+  const message = task.independent === false
+    ? formatAiSelfReminder(task, task.content, { run: decision.run, maxRuns: task.maxRuns })
+    : content;
+  const r = enqueueScheduledTaskMessage(task, message);
+  if (r.ok) {
+    runs[task.id] = decision.run;
+    writeAiRuns(runs);
+  }
+}
+
+/** 定期清理：用完 / 过期 / 被取消 / 目标失效的 AI 排程，以及已不存在任务的次数记录 */
+function sweepAiTasks(): void {
+  let tasks: ScheduledTask[];
+  try {
+    tasks = readTasks();
+  } catch {
+    return;
+  }
+  const runs = readAiRuns();
+  const now = Date.now();
+  const dead: string[] = [];
+  for (const t of tasks) {
+    if (!isAiTask(t) || isAiTaskBusy(t)) continue;
+    if (!t.enabled || !isAiTaskLive(t, runs[t.id] ?? 0, now)) { dead.push(t.id); continue; }
+    if (t.independent === false || resolveTaskNotify(t) === "agent") {
+      const target = resolveTaskAgentTarget(t);
+      if (!target.ok && target.retire) dead.push(t.id);
+    }
+  }
+  if (dead.length > 0) {
+    log("INFO", `清理 AI 排程 ${dead.length} 个（用完 / 过期 / 已取消 / 目标失效）`);
+    removeAiTasks(dead);
+  }
+  const ids = new Set(tasks.map((t) => t.id));
+  const stale = Object.keys(runs).filter((id) => !ids.has(id));
+  if (stale.length > 0) {
+    for (const id of stale) delete runs[id];
+    writeAiRuns(runs);
+  }
+}
+
+type ScheduleOwnerCheck = { ok: true; owner: AiScheduleOwner } | { ok: false; error: string };
+
+/** 调用者是谁决定排程归谁：只有主用户的主会话和项目会话可以给自己排程；AI 无法自报身份 */
+function classifyScheduleOwner(invoker: string | undefined): ScheduleOwnerCheck {
+  const raw = invoker?.trim();
+  if (!raw) return { ok: false, error: "须在 Harness 调度的 Agent 会话中调用" };
+  const sessionKey = normalizeSessionKey(raw) || raw;
+  const chatKey = chatIdFromSessionKey(sessionKey);
+  const parsed = parseChatKey(chatKey);
+  const channelId = parsed.channelId || undefined;
+
+  const projectId = projectIdFromSessionKey(sessionKey);
+  if (projectId) {
+    const project = getProject(projectId);
+    if (!project) return { ok: false, error: "这个项目已不存在，不能排程" };
+    if (project.status !== "active") {
+      return { ok: false, error: `项目「${project.name}」${project.status === "paused" ? "已暂停" : "已完成"}，不能排程` };
+    }
+    return { ok: true, owner: { sessionKey, kind: "project", projectId, ...(channelId ? { channelId } : {}) } };
+  }
+
+  const rt = channelId ? channels.get(channelId) : undefined;
+  const mainChat = rt?.cfg.mainUserEnabled ? rt.cfg.mainUserChatId : undefined;
+  const wsDir = rt ? channelWorkspaceDir(rt) : "";
+  const mainSessionKey = rt && mainChat && wsDir
+    ? (normalizeSessionKey(`${makeChatKey(rt.cfg.id, mainChat)}::${wsDir}`) || `${makeChatKey(rt.cfg.id, mainChat)}::${wsDir}`)
+    : "";
+  if (rt && mainSessionKey && sessionKey === mainSessionKey) {
+    return { ok: true, owner: { sessionKey, kind: "main", channelId: rt.cfg.id } };
+  }
+  return { ok: false, error: "只有主用户的主会话和项目会话可以给自己排程（定时任务、临时对话、群聊、其他工作目录的会话不行）" };
+}
+
+const aiScheduleApi: ScheduleApi = {
+  create(invoker, input) {
+    const o = classifyScheduleOwner(invoker);
+    if (!o.ok) return o;
+    let tasks: ScheduledTask[];
+    try {
+      tasks = readTasks();
+    } catch (e: unknown) {
+      return { ok: false, error: `任务文件暂时读不了，稍后再试（${e instanceof Error ? e.message : String(e)}）` };
+    }
+    const runs = readAiRuns();
+    const now = Date.now();
+    const active = aiTasksOwnedBy(tasks, o.owner.sessionKey).filter((t) => isAiTaskLive(t, runs[t.id] ?? 0, now)).length;
+    const r = buildAiScheduleTask(input, o.owner, { now, activeCount: active, id: `ai-${randomUUID().slice(0, 10)}` });
+    if (!r.ok) return r;
+    writeTasks([...tasks, r.task]);
+    log("INFO", `AI 排程已创建: 「${r.task.name}」${r.task.cron} ${r.task.independent === false ? "[提醒本会话]" : "[独立运行→投回本会话]"} owner=${o.owner.sessionKey}`);
+    const limit = [
+      r.task.maxRuns !== undefined ? `最多 ${r.task.maxRuns} 次` : "",
+      r.task.expiresAt !== undefined ? `${new Date(r.task.expiresAt).toLocaleString("zh-CN", { hour12: false })} 过期` : "",
+    ].filter(Boolean).join("，");
+    return {
+      ok: true,
+      text: [
+        `已创建排程「${r.task.name}」 id=${r.task.id}`,
+        `cron: ${r.task.cron}（${limit}）`,
+        `接下来几次触发: ${r.nextRuns.join(" / ")}`,
+        r.task.independent === false
+          ? "到点会把提醒原文发回本会话，由你自己接着做。"
+          : "到点由全新 Agent 执行，它用 send_result 交回的结论会作为一条消息投进本会话。",
+      ].join("\n"),
+    };
+  },
+
+  list(invoker) {
+    const o = classifyScheduleOwner(invoker);
+    if (!o.ok) return o;
+    let tasks: ScheduledTask[];
+    try {
+      tasks = readTasks();
+    } catch (e: unknown) {
+      return { ok: false, error: `任务文件暂时读不了，稍后再试（${e instanceof Error ? e.message : String(e)}）` };
+    }
+    const mine = aiTasksOwnedBy(tasks, o.owner.sessionKey);
+    if (mine.length === 0) return { ok: true, text: "本会话没有 AI 排程。" };
+    const runs = readAiRuns();
+    const now = Date.now();
+    return { ok: true, text: [`本会话的 AI 排程（${mine.length} 个，上限 ${AI_SCHEDULE_LIMITS.maxActivePerSession}）:`, ...mine.map((t) => describeAiTask(t, runs[t.id] ?? 0, now))].join("\n") };
+  },
+
+  cancel(invoker, id) {
+    const o = classifyScheduleOwner(invoker);
+    if (!o.ok) return o;
+    let tasks: ScheduledTask[];
+    try {
+      tasks = readTasks();
+    } catch (e: unknown) {
+      return { ok: false, error: `任务文件暂时读不了，稍后再试（${e instanceof Error ? e.message : String(e)}）` };
+    }
+    const target = aiTasksOwnedBy(tasks, o.owner.sessionKey).find((t) => t.id === id.trim());
+    if (!target) return { ok: false, error: `本会话没有 id=${id} 的 AI 排程（用 schedule_list 看现有的）` };
+    const { busy } = cancelAiTaskRecord(tasks, target);
+    return {
+      ok: true,
+      text: busy ? `已取消「${target.name}」：不会再触发（上一次运行还没结束，随后自动清理）。` : `已取消「${target.name}」。`,
+    };
+  },
+};
+
+/**
+ * 取消一个 AI 排程（AI 自己取消 / 设置页取消共用）。上一次运行还没结束就先停用：
+ * 直接删会让还在跑的任务找不到自己（send_result 认不出调用者），随后由定期清理删除。
+ */
+function cancelAiTaskRecord(tasks: ScheduledTask[], target: ScheduledTask): { busy: boolean } {
+  if (isAiTaskBusy(target)) {
+    writeTasks(tasks.map((t) => (t.id === target.id ? { ...t, enabled: false } : t)));
+    log("INFO", `AI 排程「${target.name}」已取消（上一次运行未结束，先停用，稍后清理）`);
+    return { busy: true };
+  }
+  removeAiTasks([target.id]);
+  log("INFO", `AI 排程「${target.name}」已取消`);
+  return { busy: false };
+}
+
+// ── 项目缺陷监控 ────────────────────────────────────────
+// 编排与规则在 daemon-bug-watch.ts / shared/project-bug-watch.ts；这里只接真实的外部动作：
+// 飞书项目 CLI、项目会话队列、项目群通知、去重记录文件。
+
+const BUG_WATCH_STATE_FILE = bugWatchStateFile(APP_DATA_DIR || ".");
+
+const bugWatchDeps: BugWatchDeps = {
+  now: () => Date.now(),
+  listProjects: () => listProjects(),
+  authenticated: () => meegleAuthenticated(),
+  ...createMeegleBugSource(runMeegleJson),
+  loadState: () => readBugWatchState(BUG_WATCH_STATE_FILE),
+  saveState: (state) => writeBugWatchState(BUG_WATCH_STATE_FILE, state),
+  deliverToSession(project, text) {
+    const target = resolveProjectAgentTarget(project.id, getProject(project.id));
+    if (!target.ok) return { ok: false, error: target.error };
+    if (!pushToAgentSession({ ...target, chatType: "project" }, text, `internal_bugwatch_${project.id}_${Date.now()}`)) {
+      return { ok: false, error: "写入会话队列失败" };
+    }
+    return { ok: true };
+  },
+  async notifyGroup(project, text) {
+    const full = getProject(project.id);
+    const target = resolveProjectAgentTarget(project.id, full);
+    // 项目专属群优先；没有独立群的项目，消息发到它的会话所在的聊天
+    const chatKey = full?.groupChatId || full?.notifyChatId || (target.ok ? target.chatKey : "");
+    if (!chatKey) return;
+    await replyToMessage(`internal_bugwatch_notice_${project.id}_${Date.now()}`, text, chatKey, undefined, undefined, {
+      sessionKey: target.ok ? target.sessionKey : undefined,
+    });
+  },
+  log: (level, msg) => log(level, msg),
+};
+
+/** LK_BUG_WATCH_INTERVAL_MS：调试 / 测试用，缩短（或拉长）检查间隔；不设就用默认的 10 分钟 */
+const bugWatchIntervalOverride = Number(process.env.LK_BUG_WATCH_INTERVAL_MS);
+const bugWatcher = createBugWatcher(
+  bugWatchDeps,
+  Number.isFinite(bugWatchIntervalOverride) && bugWatchIntervalOverride > 0
+    ? { intervalMs: bugWatchIntervalOverride, firstDelayMs: bugWatchIntervalOverride }
+    : {},
+);
 
 export async function daemonMain(): Promise<void> {
   if (CHANNEL_CONFIGS.length === 0) {
@@ -5552,6 +6119,7 @@ export async function daemonMain(): Promise<void> {
 
   const cleanup = () => {
     stopDaemonScheduledTasks();
+    bugWatcher.stop();
     removeLockFile();
     process.exit(0);
   };
@@ -5601,8 +6169,10 @@ export async function daemonMain(): Promise<void> {
 
   setDaemonSchedulerLogger((msg) => { log("INFO", msg); });
   startDaemonScheduledTasks((task, content) => {
-    enqueueScheduledTaskMessage(task, content);
+    fireScheduledTask(task, content);
   });
+  setInterval(sweepAiTasks, 60_000).unref();
+  bugWatcher.start();
 
   log("INFO", `Daemon 就绪 ✓ port=${daemonPort}`);
 }
