@@ -78,6 +78,10 @@ function channel(id: string, type: "app" | "feishu") {
 /** 全局有常用目录、两个通道都是迁移之后才建的（自己没存过列表），换一套全新的模块实例 */
 async function boot() {
   vi.resetModules()
+  // 会话 tab 要读会话级的模型覆盖；这个存储没初始化就抛错（真实应用启动时会初始化）。
+  // 不能靠本机恰好设了 APP_DATA_DIR 环境变量混过去——那样读的是真实数据目录，CI 上则直接报错
+  const overrides = await import("../src/shared/session-overrides-store")
+  overrides.initSessionOverridesStore(userData)
   const config = await import("../electron/config-store")
   config.saveConfig({
     channels: [channel(APP, "app"), channel(FEISHU, "feishu")] as never,
