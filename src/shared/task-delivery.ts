@@ -26,13 +26,16 @@ export interface TaskDeliveryLabels {
 
 // ── 目标描述 ───────────────────────────────────────────
 
-/** 「Agent 会话」目标的显示名：空 = 所属通道的主会话 */
+/**
+ * 「Agent 会话」目标的显示名：绑了项目 = 该项目的会话；
+ * AI 自己排的程 = 创建它的会话（可能是主会话，也可能是应用内的其他会话）；其余 = 所属通道的主会话。
+ */
 export function taskAgentTargetLabel(
-  task: Pick<ScheduledTask, "targetProjectId">,
+  task: Pick<ScheduledTask, "targetProjectId" | "createdBy">,
   labels: Pick<TaskDeliveryLabels, "projectName">,
 ): string {
   const pid = task.targetProjectId?.trim();
-  if (!pid) return "主会话";
+  if (!pid) return task.createdBy === "ai" ? "创建它的会话" : "主会话";
   const name = labels.projectName(pid);
   return name ? `项目「${name}」的会话` : "项目（已不存在）的会话";
 }
@@ -56,7 +59,7 @@ function shortChatId(raw: string): string {
 
 /** 设置页里一句话说清「这个任务怎么跑、结果去哪」 */
 export function describeTaskDelivery(
-  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId">,
+  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
   labels: TaskDeliveryLabels,
 ): string {
   if (task.independent === false) {
@@ -118,7 +121,7 @@ export interface ManagedTaskPlacement {
  * 只写「已创建」，AI 就会凭 independent=false 自己编出「在当前会话中运行」——实际投给的是所属通道的主会话。
  */
 export function describeManagedTaskOutcome(
-  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId">,
+  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
   labels: TaskDeliveryLabels,
   placement: ManagedTaskPlacement,
 ): string {
@@ -267,7 +270,7 @@ export function shouldNoticeMissingResult(task: Pick<ScheduledTask, "independent
  * 再按通知方式说清结果去哪。非独立任务（内容进已有会话）不需要。
  */
 export function buildTaskProtocolSection(
-  task: Pick<ScheduledTask, "name" | "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId">,
+  task: Pick<ScheduledTask, "name" | "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
   labels: TaskDeliveryLabels,
 ): string {
   if (task.independent === false) return "";

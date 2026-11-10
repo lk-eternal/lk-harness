@@ -223,6 +223,18 @@ describe("describeTaskDelivery：设置页文案", () => {
   it("旧任务按推断的方式描述", () => {
     expect(describeTaskDelivery(task({ notifyChatId: "oc_x" }), labels)).toContain("发到聊天")
   })
+
+  it("AI 自己排的程：去向是创建它的会话（可能是应用内的其他会话），不写死「主会话」", () => {
+    const reminder = describeTaskDelivery(task({ independent: false, createdBy: "ai" }), labels)
+    expect(reminder).toContain("「创建它的会话」")
+    expect(reminder).not.toContain("主会话")
+    const fresh = describeTaskDelivery(task({ notify: "agent", createdBy: "ai" }), labels)
+    expect(fresh).toContain("「创建它的会话」的队列")
+    // 项目会话建的排程仍说清是哪个项目
+    expect(describeTaskDelivery(task({ notify: "agent", createdBy: "ai", targetProjectId: "p1" }), labels)).toContain("项目「数英满班率」的会话")
+    // 用户自己建的任务不变
+    expect(describeTaskDelivery(task({ independent: false, createdBy: "user" }), labels)).toContain("「主会话」")
+  })
 })
 
 describe("resolveProjectAgentTarget：项目会话能不能当投递目标", () => {
@@ -322,6 +334,12 @@ describe("buildTaskProtocolSection：独立任务的提示词", () => {
     const s = buildTaskProtocolSection(task({ notify: "agent", targetProjectId: "p1" }), labels)
     expect(s).toContain("项目「数英满班率」的会话")
     expect(s).toContain("路径写在 `text` 里")
+  })
+
+  it("通知到 Agent + AI 自己排的程：结果投回创建它的会话，不说成主会话", () => {
+    const s = buildTaskProtocolSection(task({ notify: "agent", createdBy: "ai" }), labels)
+    expect(s).toContain("结果会投进「创建它的会话」")
+    expect(s).not.toContain("主会话")
   })
 
   it("不通知：说清结果只记录，图片文件用 send_image / send_file", () => {

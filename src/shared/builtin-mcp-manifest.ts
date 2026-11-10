@@ -43,7 +43,7 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
     {
       key: "lk-harness-schedule",
       title: "LK Harness AI 自排程",
-      scope: "仅主用户主会话 / 项目会话可用",
+      scope: "仅主用户的会话 / 项目会话可用（飞书 / 微信里只有主会话）",
       tools: withDocs("lk-harness-schedule", [
         { name: "schedule_create", description: "给自己排一个定时任务（限次数 / 过期，到点自动执行）。" },
         { name: "schedule_list", description: "列出本会话名下的 AI 排程。" },

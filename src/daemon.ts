@@ -78,7 +78,7 @@ import {
   evaluateAiTaskFire,
   isAiTask,
   isAiTaskLive,
-  type AiScheduleOwner,
+  classifyAiScheduleOwner,
 } from "./shared/ai-schedule.js";
 import { createTempChatSession } from "./shared/temp-chat-session.js";
 import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
@@ -3695,7 +3695,7 @@ function createInteractiveMcpServer(): McpServer {
   return s;
 }
 
-/** AI 自排程：仅主用户主会话 / 项目会话挂载（见 buildBuiltinMcpServers） */
+/** AI 自排程：主用户会话 / 项目会话挂载（见 buildBuiltinMcpServers）；具体谁能排由 classifyAiScheduleOwner 判定 */
 function createScheduleMcpServer(): McpServer {
   const s = new McpServer({ name: "lk-harness-schedule", version: PKG_VERSION, description: "AI 自排程 – 给当前会话排定时任务" });
   registerScheduleTools(s, aiScheduleApi, getMcpInvokerSessionKey);
@@ -5664,14 +5664,32 @@ function taskOutboundChatKey(task: ScheduledTask): string | undefined {
 
 type TaskAgentTarget =
   | { ok: true; sessionKey: string; chatKey: string; chatType: "p2p" | "project"; label: string }
-  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已完成） */ retire: boolean };
+  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已完成 / 创建排程的会话被删） */ retire: boolean };
 
-/** 任务绑定的 Agent 会话：空 = 所属通道的主会话（不跟随当前 active 的项目会话），否则 = 该项目的会话 */
+/** AI 排程的创建者是应用内的非主会话（其他目录 / 临时会话）时返回它的会话键，其余返回空 */
+function aiChatOwnerSessionKey(task: ScheduledTask): string {
+  if (!isAiTask(task) || !task.ownerSessionKey) return "";
+  const c = classifyScheduleOwner(task.ownerSessionKey);
+  return c.ok && c.owner.kind === "chat" ? c.owner.sessionKey : "";
+}
+
+/**
+ * 任务绑定的 Agent 会话：
+ *  - 项目会话的排程 = 该项目的会话；
+ *  - 应用内其他会话（其他目录 / 临时会话）建的 AI 排程 = 创建它的那个会话，那个会话被删了就作废；
+ *  - 其余（含用户建的任务）= 所属通道的主会话（不跟随当前 active 的项目会话）。
+ */
 function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
   const projectId = task.targetProjectId?.trim();
   if (projectId) {
     const r = resolveProjectAgentTarget(projectId, getProject(projectId));
     return r.ok ? { ...r, chatType: "project" } : r;
+  }
+  const ownerKey = aiChatOwnerSessionKey(task);
+  if (ownerKey) {
+    // pushToFileQueue 会把被删会话的目录重新建出来，所以先看它还在不在
+    if (!hasSessionQueueDir(ownerKey)) return { ok: false, retire: true, error: "创建这个排程的会话已被删除" };
+    return { ok: true, sessionKey: ownerKey, chatKey: chatIdFromSessionKey(ownerKey), chatType: "p2p", label: "创建它的会话" };
   }
   const rt = pickChannel(task.channelId);
   const target = rt ? channelDefaultChatId(rt) : null;
@@ -5696,7 +5714,7 @@ function pushToAgentSession(target: Extract<TaskAgentTarget, { ok: true }>, cont
 
 /**
  * 定时任务入队：
- *  - 非独立运行：任务内容直接投进绑定的 Agent 会话（主会话 / 项目会话）。
+ *  - 非独立运行：任务内容直接投进绑定的 Agent 会话（主会话 / 项目会话 / 创建 AI 排程的那个会话）。
  *  - 独立运行：投进任务自己的会话队列（会话 key = task.id），由全新 Agent 执行；
  *    结果由 AI 调 send_result 交付，出站目标见 taskOutboundChatKey。
  * 失败重试共用调度器；返回值给手动触发用，cron 触发只看日志。
@@ -5958,37 +5976,22 @@ function sweepAiTasks(): void {
   }
 }
 
-type ScheduleOwnerCheck = { ok: true; owner: AiScheduleOwner } | { ok: false; error: string };
-
-/** 调用者是谁决定排程归谁：只有主用户的主会话和项目会话可以给自己排程；AI 无法自报身份 */
-function classifyScheduleOwner(invoker: string | undefined): ScheduleOwnerCheck {
-  const raw = invoker?.trim();
-  if (!raw) return { ok: false, error: "须在 Harness 调度的 Agent 会话中调用" };
-  const sessionKey = normalizeSessionKey(raw) || raw;
-  const chatKey = chatIdFromSessionKey(sessionKey);
-  const parsed = parseChatKey(chatKey);
-  const channelId = parsed.channelId || undefined;
-
-  const projectId = projectIdFromSessionKey(sessionKey);
-  if (projectId) {
-    const project = getProject(projectId);
-    if (!project) return { ok: false, error: "这个项目已不存在，不能排程" };
-    if (project.status !== "active") {
-      return { ok: false, error: `项目「${project.name}」${project.status === "paused" ? "已暂停" : "已完成"}，不能排程` };
-    }
-    return { ok: true, owner: { sessionKey, kind: "project", projectId, ...(channelId ? { channelId } : {}) } };
-  }
-
-  const rt = channelId ? channels.get(channelId) : undefined;
-  const mainChat = rt?.cfg.mainUserEnabled ? rt.cfg.mainUserChatId : undefined;
-  const wsDir = rt ? channelWorkspaceDir(rt) : "";
-  const mainSessionKey = rt && mainChat && wsDir
-    ? (normalizeSessionKey(`${makeChatKey(rt.cfg.id, mainChat)}::${wsDir}`) || `${makeChatKey(rt.cfg.id, mainChat)}::${wsDir}`)
-    : "";
-  if (rt && mainSessionKey && sessionKey === mainSessionKey) {
-    return { ok: true, owner: { sessionKey, kind: "main", channelId: rt.cfg.id } };
-  }
-  return { ok: false, error: "只有主用户的主会话和项目会话可以给自己排程（定时任务、临时对话、群聊、其他工作目录的会话不行）" };
+/** 调用者是谁决定排程归谁（规则在 classifyAiScheduleOwner），这里只把项目表和通道表接进去 */
+function classifyScheduleOwner(invoker: string | undefined) {
+  return classifyAiScheduleOwner(invoker, {
+    project: (id) => getProject(id),
+    channel: (id) => {
+      const rt = channels.get(id);
+      if (!rt) return undefined;
+      return {
+        id: rt.cfg.id,
+        type: rt.cfg.type,
+        mainUserEnabled: rt.cfg.mainUserEnabled,
+        mainUserChatId: rt.cfg.mainUserChatId,
+        workspaceDir: channelWorkspaceDir(rt),
+      };
+    },
+  });
 }
 
 const aiScheduleApi: ScheduleApi = {

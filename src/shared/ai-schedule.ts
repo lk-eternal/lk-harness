@@ -5,6 +5,8 @@
 // 这里全是无副作用函数；写文件、发消息在 daemon 里。
 
 import { CronExpressionParser } from "cron-parser";
+import { chatIdFromSessionKey, makeChatKey, normalizeSessionKey, parseChatKey } from "./channel-types.js";
+import { projectIdFromSessionKey } from "./project-types.js";
 import { isAiTask, type ScheduledTask } from "./scheduled-task-rules.js";
 
 export { isAiTask };
@@ -47,9 +49,62 @@ export interface AiScheduleInput {
 export interface AiScheduleOwner {
   /** 已规范化的会话 key */
   sessionKey: string;
-  kind: "main" | "project";
+  /** main = 通道的主会话；project = 项目会话；chat = 应用内通道里主用户的其他会话（其他目录、临时会话） */
+  kind: "main" | "project" | "chat";
   channelId?: string;
   projectId?: string;
+}
+
+/** 判定调用者归属要查的外部信息（daemon 里的项目表和通道表） */
+export interface AiScheduleOwnerEnv {
+  project(id: string): { name: string; status: string } | undefined;
+  channel(id: string): {
+    id: string;
+    /** 通道类型：app = 应用内，其余是飞书 / 微信 */
+    type: string;
+    mainUserEnabled?: boolean;
+    mainUserChatId?: string;
+    /** 通道的主目录；没配置是空串 */
+    workspaceDir: string;
+  } | undefined;
+}
+
+export type AiScheduleOwnerCheck = { ok: true; owner: AiScheduleOwner } | { ok: false; error: string };
+
+/**
+ * 调用者是谁决定排程归谁（AI 无法自报身份）：
+ *  - 活跃的项目会话；
+ *  - 通道主用户的主会话；
+ *  - 应用内通道里，主用户聊天下的其他会话（其他目录、临时会话）：应用内没有「别人」，这些都是用户自己的会话。
+ * 飞书 / 微信里主用户的其他目录会话、群聊、别人的私聊、定时任务的会话不开放。
+ */
+export function classifyAiScheduleOwner(invoker: string | undefined, env: AiScheduleOwnerEnv): AiScheduleOwnerCheck {
+  const raw = invoker?.trim();
+  if (!raw) return { ok: false, error: "须在 Harness 调度的 Agent 会话中调用" };
+  const sessionKey = normalizeSessionKey(raw) || raw;
+  const chatKey = chatIdFromSessionKey(sessionKey);
+  const channelId = parseChatKey(chatKey).channelId || undefined;
+
+  const projectId = projectIdFromSessionKey(sessionKey);
+  if (projectId) {
+    const project = env.project(projectId);
+    if (!project) return { ok: false, error: "这个项目已不存在，不能排程" };
+    if (project.status !== "active") {
+      return { ok: false, error: `项目「${project.name}」${project.status === "paused" ? "已暂停" : "已完成"}，不能排程` };
+    }
+    return { ok: true, owner: { sessionKey, kind: "project", projectId, ...(channelId ? { channelId } : {}) } };
+  }
+
+  const rt = channelId ? env.channel(channelId) : undefined;
+  const mainChat = rt?.mainUserEnabled ? rt.mainUserChatId : undefined;
+  if (rt && mainChat && chatKey === makeChatKey(rt.id, mainChat)) {
+    const mainSessionKey = rt.workspaceDir ? normalizeSessionKey(`${chatKey}::${rt.workspaceDir}`) || `${chatKey}::${rt.workspaceDir}` : "";
+    if (mainSessionKey && sessionKey === mainSessionKey) {
+      return { ok: true, owner: { sessionKey, kind: "main", channelId: rt.id } };
+    }
+    if (rt.type === "app") return { ok: true, owner: { sessionKey, kind: "chat", channelId: rt.id } };
+  }
+  return { ok: false, error: "只有主用户的会话和活跃的项目会话可以给自己排程（定时任务、群聊、别人的私聊不行；飞书 / 微信里只有主会话可以）" };
 }
 
 export type AiScheduleResult =

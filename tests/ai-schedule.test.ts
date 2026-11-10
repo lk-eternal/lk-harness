@@ -3,6 +3,7 @@ import {
   AI_SCHEDULE_LIMITS,
   aiTasksOwnedBy,
   buildAiScheduleTask,
+  classifyAiScheduleOwner,
   describeAiTask,
   everyMinutesToCron,
   evaluateAiTaskFire,
@@ -11,6 +12,7 @@ import {
   minGapMinutes,
   type AiScheduleInput,
   type AiScheduleOwner,
+  type AiScheduleOwnerEnv,
 } from "../src/shared/ai-schedule.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 
@@ -249,5 +251,92 @@ describe("归属与列表", () => {
     expect(sess).toContain("到点提醒本会话")
     expect(sess).toContain("过期")
     expect(describeAiTask(t({ maxRuns: 2 }), 2, NOW)).toContain("已作废")
+  })
+})
+
+describe("classifyAiScheduleOwner：谁能给自己排程", () => {
+  const channels: Record<string, ReturnType<AiScheduleOwnerEnv["channel"]>> = {
+    ch_app: { id: "ch_app", type: "app", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "D:\\ws" },
+    // 应用内通道但还没配置主目录
+    ch_app_nodir: { id: "ch_app_nodir", type: "app", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "" },
+    ch_app_nomain: { id: "ch_app_nomain", type: "app", mainUserEnabled: false, workspaceDir: "D:\\ws" },
+    ch_fs: { id: "ch_fs", type: "feishu", mainUserEnabled: true, mainUserChatId: "ou_main", workspaceDir: "D:\\fs" },
+  }
+  const projects: Record<string, { name: string; status: string }> = {
+    p1: { name: "活跃项目", status: "active" },
+    p2: { name: "暂停项目", status: "paused" },
+    p3: { name: "完成项目", status: "done" },
+  }
+  const env: AiScheduleOwnerEnv = { project: (id) => projects[id], channel: (id) => channels[id] }
+  const classify = (invoker: string | undefined) => classifyAiScheduleOwner(invoker, env)
+  const kindOf = (invoker: string) => {
+    const r = classify(invoker)
+    return r.ok ? r.owner.kind : "rejected"
+  }
+
+  it("通道主会话 → main", () => {
+    expect(classify("ch_app|app_main::D:\\ws")).toEqual({
+      ok: true, owner: { sessionKey: "ch_app|app_main::D:\\ws", kind: "main", channelId: "ch_app" },
+    })
+    expect(kindOf("ch_fs|ou_main::D:\\fs")).toBe("main")
+  })
+
+  it("应用内主用户的其他会话（别的工作目录 / 临时会话）→ chat，归属就是这个会话", () => {
+    expect(classify("ch_app|app_main::D:\\other")).toEqual({
+      ok: true, owner: { sessionKey: "ch_app|app_main::D:\\other", kind: "chat", channelId: "ch_app" },
+    })
+    expect(kindOf("ch_app|app_main::C:\\Users\\u\\AppData\\workspaces\\temp_1700000000000")).toBe("chat")
+    // 通道没配主目录时，主用户的会话也算（没有「主会话」可比，但这仍然是用户自己的会话）
+    expect(kindOf("ch_app_nodir|app_main::D:\\x")).toBe("chat")
+  })
+
+  it("飞书 / 微信里主用户的其他工作目录会话不开放：只有主会话可以", () => {
+    expect(kindOf("ch_fs|ou_main::D:\\elsewhere")).toBe("rejected")
+    expect(kindOf("ch_fs|ou_main")).toBe("rejected")
+  })
+
+  it.each([
+    ["应用内别人的聊天", "ch_app|app_other::D:\\ws"],
+    ["应用内别人的聊天（别的目录）", "ch_app|app_other::D:\\other"],
+    ["飞书群聊", "ch_fs|oc_group::D:\\fs"],
+    ["飞书别人的私聊", "ch_fs|ou_other::D:\\fs"],
+    ["通道没开主用户", "ch_app_nomain|app_main::D:\\ws"],
+    ["不存在的通道", "ch_ghost|app_main::D:\\ws"],
+    ["定时任务会话（裸任务 id）", "task-123"],
+    ["没有通道前缀的聊天", "app_main::D:\\ws"],
+  ])("%s → 拒绝", (_label, key) => {
+    const r = classify(key)
+    expect(r.ok).toBe(false)
+    expect(!r.ok && r.error).toContain("只有主用户的会话")
+  })
+
+  it("没有身份 → 要求在 Agent 会话中调用", () => {
+    for (const v of [undefined, "", "   "]) {
+      expect(classify(v)).toEqual({ ok: false, error: expect.stringContaining("须在 Harness 调度的 Agent 会话中调用") })
+    }
+  })
+
+  it("项目会话：活跃的 → project（带通道和项目 id）；暂停 / 完成 / 不存在 → 拒绝并说明原因", () => {
+    expect(classify("ch_app|oc_grp::project_p1")).toEqual({
+      ok: true, owner: { sessionKey: "ch_app|oc_grp::project_p1", kind: "project", projectId: "p1", channelId: "ch_app" },
+    })
+    expect(classify("ch_app|oc_grp::project_p2")).toEqual({ ok: false, error: "项目「暂停项目」已暂停，不能排程" })
+    expect(classify("ch_app|oc_grp::project_p3")).toEqual({ ok: false, error: "项目「完成项目」已完成，不能排程" })
+    expect(classify("ch_app|oc_grp::project_nope")).toEqual({ ok: false, error: "这个项目已不存在，不能排程" })
+  })
+
+  it("盘符路径里被双重转义的反斜杠先规范化：归属的会话键是规范形式", () => {
+    const r = classify("ch_app|app_main::D:\\\\ws\\\\temp")
+    expect(r.ok && r.owner.sessionKey).toBe("ch_app|app_main::D:\\ws\\temp")
+    // 双重转义的主会话也认得出来
+    expect(kindOf("ch_app|app_main::D:\\\\ws")).toBe("main")
+  })
+
+  it("chat 归属的排程：不带项目，投递目标由会话键决定", () => {
+    const owner: AiScheduleOwner = { sessionKey: "ch_app|app_main::D:\\other", kind: "chat", channelId: "ch_app" }
+    const r = buildAiScheduleTask(input(), owner, { now: NOW, activeCount: 0, id: "ai-chat" })
+    expect(r.ok).toBe(true)
+    expect(r.ok && r.task).toMatchObject({ ownerSessionKey: owner.sessionKey, channelId: "ch_app", createdBy: "ai" })
+    expect(r.ok && r.task.targetProjectId).toBeUndefined()
   })
 })

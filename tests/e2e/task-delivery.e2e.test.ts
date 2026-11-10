@@ -14,6 +14,7 @@ import { configDir } from "../../src/shared/data-paths"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../../src/shared/ai-schedule-state"
 import { initProjectStore, saveProject } from "../../src/shared/project-store"
 import { projectSessionKey, type Project } from "../../src/shared/project-types"
+import { ensureSessionEntry, purgeSessionEntry, sessionEntryDir } from "../../src/shared/session-entry-paths"
 import { startIsolatedDaemon, waitFor, sleep, type IsolatedDaemon } from "../helpers/isolated-daemon"
 
 let d: IsolatedDaemon
@@ -369,7 +370,7 @@ describe("AI 自排程工具（/mcp-schedule）", () => {
     expect(await schedule(d.sessionKey, "schedule_create", { ...OK, name: "排程6" })).toContain("已创建排程")
   })
 
-  it("身份：只有主用户主会话 / 活跃项目会话能排程；定时任务会话、别的聊天、暂停的项目、没有身份都不行", async () => {
+  it("身份：只有主用户的会话 / 活跃项目会话能排程；定时任务会话、别人的聊天、不存在的通道、暂停的项目、没有身份都不行", async () => {
     const paused = addProject("p-ai-paused", "paused")
     addProject("p-ai-done", "done")
     writeTasks([task("some-task")])
@@ -377,8 +378,9 @@ describe("AI 自排程工具（/mcp-schedule）", () => {
     const cases: Array<[string, string | undefined]> = [
       ["没有身份", undefined],
       ["定时任务会话", "some-task"],
-      ["别的聊天的会话", `ch_test|app_other::${wsDir}`],
-      ["主用户私聊但别的工作目录", `ch_test|app_main::${path.join(d.dataDir, "elsewhere")}`],
+      ["别人的聊天的会话", `ch_test|app_other::${wsDir}`],
+      ["别人的聊天（别的目录）", `ch_test|app_other::${path.join(d.dataDir, "elsewhere")}`],
+      ["不存在的通道", `ch_ghost|app_main::${wsDir}`],
       ["暂停的项目", paused],
       ["已完成的项目", projectSessionKey(GROUP, "p-ai-done")],
       ["不存在的项目", projectSessionKey(GROUP, "p-none")],
@@ -388,6 +390,65 @@ describe("AI 自排程工具（/mcp-schedule）", () => {
       expect(out, label).toContain("[schedule_failed]")
     }
     expect(readTasks().filter((t) => t.createdBy === "ai")).toEqual([])
+  })
+
+  // 应用内没有「别人」：主用户的其他会话（切到别的工作目录的会话、/c new 的临时会话）都是用户自己的，也要能自编排。
+  // 这些会话的记录目录在 Agent 跑起来之前就已存在，测试里用 ensureSessionEntry 扮演。
+  const elsewhereKey = () => `ch_test|app_main::${path.join(d.dataDir, "elsewhere")}`
+  const tempKey = () => `ch_test|app_main::${path.join(d.dataDir, "workspaces", "temp_1700000000000")}`
+  const existing = (key: string) => { ensureSessionEntry(d.dataDir, key); return key }
+
+  it("应用内的其他会话（别的工作目录 / 临时会话）也能排程，排程归属各自的会话", async () => {
+    for (const [label, key] of [["别的工作目录", elsewhereKey()], ["临时会话", tempKey()]] as const) {
+      expect(await schedule(existing(key), "schedule_create", { ...OK, name: `${label}的` }), label).toContain("已创建排程")
+    }
+    const saved = readTasks()
+    expect(saved.map((t) => t.ownerSessionKey).sort()).toEqual([elsewhereKey(), tempKey()].sort())
+    for (const t of saved) {
+      expect(t).toMatchObject({ createdBy: "ai", channelId: "ch_test", independent: true, notify: "agent" })
+      expect(t.targetProjectId).toBeUndefined()
+    }
+  })
+
+  it("其他会话和主会话互相隔离：list 看不到、cancel 取消不了对方的排程", async () => {
+    existing(tempKey())
+    await schedule(d.sessionKey, "schedule_create", { ...OK, name: "主会话的" })
+    await schedule(tempKey(), "schedule_create", { ...OK, name: "临时的" })
+    const mainId = readTasks().find((t) => t.name === "主会话的")!.id as string
+    const tempId = readTasks().find((t) => t.name === "临时的")!.id as string
+
+    const tempList = await schedule(tempKey(), "schedule_list")
+    expect(tempList).toContain("临时的")
+    expect(tempList).not.toContain("主会话的")
+    expect(await schedule(d.sessionKey, "schedule_list")).not.toContain("临时的")
+
+    expect(await schedule(tempKey(), "schedule_cancel", { id: mainId })).toContain("[schedule_failed]")
+    expect(await schedule(d.sessionKey, "schedule_cancel", { id: tempId })).toContain("[schedule_failed]")
+    expect(readTasks().map((t) => t.id).sort()).toEqual([mainId, tempId].sort())
+
+    expect(await schedule(tempKey(), "schedule_cancel", { id: tempId })).toContain("已取消")
+    expect(readTasks().map((t) => t.id)).toEqual([mainId])
+  })
+
+  it("其他会话 + 新 Agent 执行：结果交回创建它的那个会话，不进主会话", async () => {
+    const key = existing(tempKey())
+    await schedule(key, "schedule_create", OK)
+    const id = readTasks()[0].id as string
+    expect((await trigger(id)).ok).toBe(true)
+    expect((await pollKey(id)).length).toBeGreaterThan(0) // 任务在自己的独立会话里跑
+
+    expect(await sendResult(id, { text: "临时会话排程的结果" })).toContain("结果已处理")
+    expect((await pollKey(key)).some((t) => t.includes("临时会话排程的结果"))).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("其他会话 + mode=session：提醒投回创建它的那个会话，不进主会话", async () => {
+    const key = existing(elsewhereKey())
+    await schedule(key, "schedule_create", { ...OK, mode: "session" })
+    const id = readTasks()[0].id as string
+    expect((await trigger(id)).ok).toBe(true)
+    expect((await pollKey(key)).some((t) => t.includes(OK.prompt))).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
   it("list / cancel 只看得到自己会话的排程；不能取消别人的，也不能取消用户建的任务", async () => {
@@ -489,6 +550,24 @@ describe("AI 排程触发：次数 / 过期 / 合并 / 目标失效", () => {
     expect(readTasks().map((t) => t.id)).toEqual(["ai-target-paused"])
     expect(await pollKey(donePk)).toEqual([])
     expect(await pollKey(pausedPk)).toEqual([])
+  })
+
+  it("应用内其他会话建的提醒：到点投给创建它的会话，主会话不受打扰", async () => {
+    const key = `ch_test|app_main::${path.join(d.dataDir, "workspaces", "temp_1700000000001")}`
+    ensureSessionEntry(d.dataDir, key)
+    writeTasks([aiTask("ai-temp", { ownerSessionKey: key })])
+    expect(await waitFor(async () => (await pollKey(key)).some((t) => t.includes("⏰ 定时任务")), 10_000, 250)).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("创建排程的会话被删了：排程作废清理，也不把删掉的会话重新建出来", async () => {
+    const key = `ch_test|app_main::${path.join(d.dataDir, "workspaces", "temp_1700000000002")}`
+    ensureSessionEntry(d.dataDir, key)
+    purgeSessionEntry(d.dataDir, key) // 用户删掉了这个会话
+    writeTasks([aiTask("ai-orphan", { ownerSessionKey: key })])
+    expect(await waitFor(() => !readTasks().some((t) => t.id === "ai-orphan"), 15_000, 300)).toBe(true)
+    expect(fs.existsSync(sessionEntryDir(d.dataDir, key))).toBe(false)
+    expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
   it("用户建的任务不受 AI 关卡影响：不限次数、不会被清理", async () => {
