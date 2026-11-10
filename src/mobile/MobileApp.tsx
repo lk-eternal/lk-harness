@@ -18,8 +18,9 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, planDirChoice, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
 import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedHistory, replaceHistoryTail, type HistoryCursor } from "../shared/app-chat-history-page"
+import { slashMenuItems } from "../shared/command-catalog"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
@@ -32,6 +33,8 @@ import {
 } from "../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../shared/temp-workspace"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
+import QueuedStrip from "../renderer/components/chat/QueuedStrip"
+import { sendNowOutcome, type SendNowOutcome } from "../renderer/components/chat/queued-strip-text"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import useInlineModal from "../renderer/components/useInlineModal"
 import { currentModelLabel } from "./model-choice"
@@ -41,6 +44,7 @@ import {
   connectMobileEvents,
   createMobileTempSession,
   deleteMobileSession,
+  editMobileQueued,
   fetchBootstrap,
   fetchHistory,
   fetchSessionModels,
@@ -48,10 +52,12 @@ import {
   imageExtOf,
   loadMobileTheme,
   loadPairConfig,
+  removeMobileQueued,
   renameMobileSession,
   resolveBestRoute,
   savePairConfig,
   sendMobileMessage,
+  sendMobileQueuedNow,
   setMobileSessionDir,
   setMobileSessionModel,
   stopMobileSession,
@@ -66,6 +72,7 @@ import {
 } from "./api"
 import { APP_VERSION } from "./app-version"
 import { useBackToClose } from "./back-stack"
+import { composerAction } from "./composer-action"
 import { isTouchPrimary, shouldSendOnEnter } from "./enter-key"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
@@ -73,6 +80,7 @@ import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
 import { installExternalLinkHandler } from "./external-links"
 import { installNativeBackHandler } from "./native-back"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
+import SlashMenu from "./SlashMenu"
 import UpdateBanner from "./UpdateBanner"
 import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
 import { useDrawerSwipe } from "./useDrawerSwipe"
@@ -170,6 +178,17 @@ export default function MobileApp() {
 
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  // `/` 指令菜单：敲 `/` 给候选，点选填入「/指令 」。输入框失焦（点到别处）先收起，再输入或重新聚焦又出来
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  // 失焦后稍等再收起：点菜单项时部分浏览器仍会先让输入框失焦，立刻收起会让这次点击落空
+  const slashBlurTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const slashItems = !selected || !route.connected || slashDismissed ? [] : slashMenuItems(text)
+  const pickSlash = (cmd: string) => {
+    clearTimeout(slashBlurTimer.current)
+    setSlashDismissed(false)
+    setText(`${cmd} `)
+    textareaRef.current?.focus()
+  }
   const moreButtonRef = useRef<HTMLButtonElement>(null)
   /** 刚删除的会话：删除前发出的那次刷新可能晚返回，带着已删会话盖掉列表，命中这里的先不显示 */
   const deletedRef = useRef<DeletedSessions>(new Map())
@@ -586,6 +605,8 @@ export default function MobileApp() {
     items.some((it) => it.kind === "assistant" && !it.finished)
   // 电脑端暂存区里排队中的消息（Agent 还没收到）不进聊天流，投递后才出现
   const streamItems = useMemo(() => chatStreamItems(items), [items])
+  const queuedItems = useMemo(() => items.filter(isQueuedUserItem), [items])
+  const hasContent = text.trim() !== "" || pendingImages.length > 0
 
   // 会话的工作目录：用户选的优先；没选过目录的临时会话没有（它自己的临时文件夹对用户不可见）
   const workspaceDir = selected ? appChatSessionDir(selected, currentTab ? boundDirOf(currentTab) : undefined) : undefined
@@ -651,6 +672,27 @@ export default function MobileApp() {
   const handleStop = async () => {
     if (!selected || !route.activeUrl || !pairCfg.token) return
     await stopMobileSession(route.activeUrl, pairCfg.token, selected)
+  }
+
+  // 暂存区：Agent 干活时发出的消息先排在输入框上方，这里可以改、撤回、让它立刻发出
+  const handleEditQueued = async (id: string, newText: string): Promise<boolean> => {
+    if (!selected || !route.activeUrl || !pairCfg.token) return false
+    const r = await editMobileQueued(route.activeUrl, pairCfg.token, selected, id, newText)
+    if (!r.ok) setActionError(r.error ?? "修改失败")
+    return r.ok
+  }
+
+  const handleRemoveQueued = async (id: string) => {
+    if (!selected || !route.activeUrl || !pairCfg.token) return
+    const r = await removeMobileQueued(route.activeUrl, pairCfg.token, selected, id)
+    if (!r.ok) setActionError(r.error ?? "撤回失败")
+  }
+
+  const handleSendQueuedNow = async (): Promise<SendNowOutcome> => {
+    if (!selected || !route.activeUrl || !pairCfg.token) return "none"
+    const r = await sendMobileQueuedNow(route.activeUrl, pairCfg.token, selected)
+    if (!r.ok) setActionError(r.error ?? "发送失败")
+    return sendNowOutcome(r)
   }
 
   // 新建临时会话
@@ -1052,7 +1094,20 @@ export default function MobileApp() {
       )}
 
       {/* ═══ 底部输入栏（避让手势横条） ═══ */}
-      <footer className="shrink-0 border-t border-line-subtle bg-surface/95 px-3 pt-2 pb-safe backdrop-blur">
+      <footer className="relative shrink-0 border-t border-line-subtle bg-surface/95 px-3 pt-2 pb-safe backdrop-blur">
+        {/* `/` 指令菜单：贴着输入栏上沿向上展开 */}
+        <SlashMenu items={slashItems} onPick={pickSlash} />
+
+        {/* 暂存区：排队中、还没交给 Agent 的消息（和电脑端同一个组件） */}
+        <QueuedStrip
+          key={selected ?? ""}
+          items={queuedItems}
+          onEdit={handleEditQueued}
+          onRemove={handleRemoveQueued}
+          onSendNow={handleSendQueuedNow}
+          touch
+        />
+
         {/* 待发送图片缩略图列表 */}
         {pendingImages.length > 0 && (
           <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
@@ -1134,27 +1189,38 @@ export default function MobileApp() {
             rows={1}
             value={text}
             disabled={!selected || !route.connected}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => { setText(e.target.value); setSlashDismissed(false) }}
+            onFocus={() => { clearTimeout(slashBlurTimer.current); setSlashDismissed(false) }}
+            onBlur={() => { slashBlurTimer.current = setTimeout(() => setSlashDismissed(true), 200) }}
             onKeyDown={(e) => {
               // 手机软键盘上回车是换行（发送走右边的按钮）；有实体键盘时回车发送、Shift+回车换行
-              if (shouldSendOnEnter({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing }, isTouchPrimary())) {
+              const sendsOnEnter = shouldSendOnEnter({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing }, isTouchPrimary())
+              // 指令菜单开着：Tab（和实体键盘的回车，输入的还不是完整指令时）选中第一项，而不是发出半截指令
+              if (slashItems.length > 0 && !e.nativeEvent.isComposing && (e.key === "Tab" || (sendsOnEnter && text.trim() !== slashItems[0].cmd))) {
                 e.preventDefault()
-                if (!busy) void handleSend()
+                pickSlash(slashItems[0].cmd)
+                return
+              }
+              if (sendsOnEnter) {
+                e.preventDefault()
+                void handleSend()
               }
             }}
             placeholder={
-              route.connected
-                ? "发消息给电脑端 Agent…"
-                : "请先配对连接电脑端…"
+              !route.connected
+                ? "请先配对连接电脑端…"
+                : busy
+                  ? "Agent 运行中，发送的消息会排队…"
+                  : "发消息给电脑端 Agent，输入 / 查看指令…"
             }
             className="max-h-[120px] min-h-[38px] flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 text-[14px] leading-snug text-fg focus:border-blue-500 focus:outline-none disabled:opacity-50"
           />
 
-          {busy ? (
+          {composerAction(busy, hasContent) === "stop" ? (
             <button
               type="button"
               onClick={() => void handleStop()}
-              title="停止当前回合"
+              title="停止并清空排队消息"
               className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-rose-600 text-white shadow-sm transition active:scale-90"
             >
               <Square size={15} fill="currentColor" />
@@ -1162,13 +1228,9 @@ export default function MobileApp() {
           ) : (
             <button
               type="button"
-              disabled={
-                !selected ||
-                !route.connected ||
-                (!text.trim() && pendingImages.length === 0)
-              }
+              disabled={!selected || !route.connected || !hasContent}
               onClick={() => void handleSend()}
-              title="发送"
+              title={busy ? "发送（排队）" : "发送"}
               className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm transition active:scale-90 disabled:opacity-40"
             >
               <Send size={16} />

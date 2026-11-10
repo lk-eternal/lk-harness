@@ -363,6 +363,21 @@ export async function stopMobileSession(baseUrl: string, token: string, sessionK
   return await callApi(baseUrl, token, "/api/mobile/stop", { sessionKey })
 }
 
+/** 暂存区：改一条还在排队的消息的正文；已被 Agent 领走时 ok=false */
+export async function editMobileQueued(baseUrl: string, token: string, sessionKey: string, messageId: string, text: string): Promise<{ ok: boolean; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/queue-edit", { sessionKey, messageId, text })
+}
+
+/** 暂存区：撤回一条还在排队的消息 */
+export async function removeMobileQueued(baseUrl: string, token: string, sessionKey: string, messageId: string): Promise<{ ok: boolean; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/queue-remove", { sessionKey, messageId })
+}
+
+/** 暂存区「立即发送」：打断当前回合，让排队的消息马上交给 Agent。via 说明走的哪条路（见 queued-strip-text.ts） */
+export async function sendMobileQueuedNow(baseUrl: string, token: string, sessionKey: string): Promise<{ ok: boolean; error?: string; via?: "soft" | "launching" | "relaunch" | "hard" }> {
+  return await callApi(baseUrl, token, "/api/mobile/queue-send-now", { sessionKey })
+}
+
 /** 带 dir 时新会话直接选好这个工作目录（目录得是电脑上真实存在的，电脑端会校验） */
 export async function createMobileTempSession(baseUrl: string, token: string, channelId: string, dir?: string): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
   return await callApi(baseUrl, token, "/api/mobile/new-session", { channelId, ...(dir !== undefined ? { dir } : {}) })

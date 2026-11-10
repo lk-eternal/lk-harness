@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react"
 import { ArrowUp, ImagePlus, Square, X } from "lucide-react"
-import { primaryCommands } from "../../../shared/command-catalog"
+import { slashMenuItems, slashQueryOf } from "../../../shared/command-catalog"
 import { composerDrafts } from "./composer-drafts"
 import { ImageLightbox } from "./ImageLightbox"
 
@@ -44,10 +44,9 @@ export default function Composer({ draftKey, disabled, busy, top, footer, onSend
 
   const hasContent = text.trim().length > 0 || images.length > 0
 
-  // 只在输入的是"/指令"本身（尚未出现空格）时给菜单
-  const commands = useMemo(() => primaryCommands(), [])
-  const slashQuery = /^\/[^\s]*$/.test(text) ? text.toLowerCase() : null
-  const menuItems = slashQuery === null || menuClosed ? [] : commands.filter((c) => c.cmd.startsWith(slashQuery))
+  // 只在输入的是"/指令"本身（尚未出现空格）时给菜单（规则与手机端共用）
+  const slashQuery = slashQueryOf(text)
+  const menuItems = useMemo(() => (menuClosed ? [] : slashMenuItems(text)), [menuClosed, text])
 
   useLayoutEffect(() => {
     const el = textareaRef.current

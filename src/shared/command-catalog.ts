@@ -34,3 +34,17 @@ export function primaryCommands(): { cmd: string; desc: string }[] {
     .filter(([, desc]) => !desc.startsWith("同 "))
     .map(([cmd, desc]) => ({ cmd, desc }));
 }
+
+/**
+ * 输入框里 `/` 指令菜单的查询词：只在输入的是「/指令」本身（尚未出现空格）时有值，
+ * 否则返回 null（不显示菜单）。小写化，匹配不区分大小写。桌面和手机端输入框共用。
+ */
+export function slashQueryOf(text: string): string | null {
+  return /^\/[^\s]*$/.test(text) ? text.toLowerCase() : null;
+}
+
+/** 输入框的指令菜单候选：单个 `/` 给全部主指令，继续输入按前缀过滤；不是指令输入时为空 */
+export function slashMenuItems(text: string): { cmd: string; desc: string }[] {
+  const q = slashQueryOf(text);
+  return q === null ? [] : primaryCommands().filter((c) => c.cmd.startsWith(q));
+}

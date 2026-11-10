@@ -11,14 +11,16 @@ import { randomBytes, timingSafeEqual } from "node:crypto"
 import QRCode from "qrcode"
 import { getAgentResource, getConfig, saveConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
-import { applySessionModelChange, clearSessionQueue } from "./daemon-manager"
+import { applySessionModelChange, clearSessionQueue, sendQueuedNow } from "./daemon-manager"
 import { listDashboardTree, resolveSessionModels, stopSessionAgent } from "./session-dispatcher"
 import {
   callAppChatDaemon,
   clearAppChatRecords,
   createAppChatTempSession,
   deleteAppChatSession,
+  editQueuedAppChatMessage,
   readAppChatImage,
+  removeQueuedAppChatMessage,
   renameAppChatSession,
   saveAppChatImage,
   sendAppChatMessage,
@@ -413,6 +415,18 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       await clearSessionQueue(sessionKey)
       await stopSessionAgent(sessionKey)
       sendJson(res, 200, { ok: true })
+      return
+    }
+    case "/api/mobile/queue-edit": {
+      sendJson(res, 200, await editQueuedAppChatMessage(String(body.sessionKey ?? ""), String(body.messageId ?? ""), String(body.text ?? "")))
+      return
+    }
+    case "/api/mobile/queue-remove": {
+      sendJson(res, 200, await removeQueuedAppChatMessage(String(body.sessionKey ?? ""), String(body.messageId ?? "")))
+      return
+    }
+    case "/api/mobile/queue-send-now": {
+      sendJson(res, 200, await sendQueuedNow(String(body.sessionKey ?? "")))
       return
     }
     case "/api/mobile/new-session": {
