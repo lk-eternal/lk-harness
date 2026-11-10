@@ -1,0 +1,52 @@
+/* 预览面板：带行号的代码/文本视图、图片透明底。代码配色变量在 chat-markdown.css（.preview-code 共用） */
+
+.preview-code {
+  margin: 0;
+  padding: 0.75rem 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: transparent;
+  counter-reset: ln;
+  tab-size: 4;
+  /* 不换行时让每行撑到最长那行的宽度，选中背景和横向滚动才完整 */
+  width: max-content;
+  min-width: 100%;
+}
+.preview-code.wrap {
+  width: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.preview-code code { display: block; background: transparent; padding: 0; font: inherit; }
+
+.preview-code .pl {
+  display: block;
+  position: relative;
+  min-height: 1.55em;
+  padding: 0 1rem 0 4.1rem;
+}
+/* 行号用伪元素画：复制代码时不会带上行号 */
+.preview-code .pl::before {
+  counter-increment: ln;
+  content: counter(ln);
+  position: absolute;
+  left: 0;
+  width: 3.2rem;
+  padding-right: 0.7rem;
+  text-align: right;
+  color: var(--color-fg-faint);
+  user-select: none;
+  white-space: nowrap;
+}
+.preview-code .pl:hover { background: color-mix(in srgb, var(--color-raised) 55%, transparent); }
+
+/* 透明图片的棋盘格底 */
+.preview-checker {
+  background-color: var(--color-surface);
+  background-image:
+    linear-gradient(45deg, var(--color-raised) 25%, transparent 25%, transparent 75%, var(--color-raised) 75%),
+    linear-gradient(45deg, var(--color-raised) 25%, transparent 25%, transparent 75%, var(--color-raised) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}

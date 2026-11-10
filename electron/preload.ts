@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
+import type { PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
@@ -186,6 +187,25 @@ const api = {
   appChatSaveImageAs: (file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }> => ipcRenderer.invoke("app-chat:save-image-as", file),
   appChatOpenFile: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:open-file", file),
   appChatShowInFolder: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:show-in-folder", file),
+  previewFileOpen: (sessionKey: string, file: string): Promise<PreviewOpenResult> => ipcRenderer.invoke("preview:file-open", sessionKey, file),
+  previewFileText: (token: string): Promise<PreviewTextResult> => ipcRenderer.invoke("preview:file-text", token),
+  previewWebOpen: (tabId: string, url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("preview-web:open", tabId, url),
+  previewWebNav: (tabId: string, action: PreviewWebNav): Promise<{ ok: boolean }> => ipcRenderer.invoke("preview-web:nav", tabId, action),
+  previewWebBounds: (tabId: string | null, rect: PreviewRect | null): void => ipcRenderer.send("preview-web:bounds", tabId, rect),
+  previewWebClose: (tabId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("preview-web:close", tabId),
+  previewWebSnapshot: (tabId: string): Promise<{ ok: true; dataUrl: string } | { ok: false }> => ipcRenderer.invoke("preview-web:snapshot", tabId),
+  previewWebClearData: (): Promise<{ ok: boolean }> => ipcRenderer.invoke("preview-web:clear-data"),
+  previewOpenExternalUrl: (url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("preview:open-external-url", url),
+  onPreviewWebState: (cb: (state: PreviewWebState) => void) => {
+    const handler = (_: unknown, state: PreviewWebState) => cb(state)
+    ipcRenderer.on("preview-web:state", handler)
+    return () => ipcRenderer.removeListener("preview-web:state", handler)
+  },
+  onPreviewWebOpenTab: (cb: (payload: PreviewWebOpenTab) => void) => {
+    const handler = (_: unknown, payload: PreviewWebOpenTab) => cb(payload)
+    ipcRenderer.on("preview-web:open-tab", handler)
+    return () => ipcRenderer.removeListener("preview-web:open-tab", handler)
+  },
   appChatTitles: (): Promise<Record<string, string>> => ipcRenderer.invoke("app-chat:get-titles"),
   onAppChatTitles: (cb: (titles: Record<string, string>) => void) => {
     const handler = (_: unknown, titles: Record<string, string>) => cb(titles)

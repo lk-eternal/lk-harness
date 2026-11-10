@@ -18,6 +18,14 @@ import type {
   AppChatSendPayload as AppChatSendPayloadType,
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
+import type {
+  PreviewOpenResult as PreviewOpenResultType,
+  PreviewRect as PreviewRectType,
+  PreviewTextResult as PreviewTextResultType,
+  PreviewWebNav as PreviewWebNavType,
+  PreviewWebOpenTab as PreviewWebOpenTabType,
+  PreviewWebState as PreviewWebStateType,
+} from "../shared/preview-types"
 
 declare global {
   type AgentResource = AgentResourceType
@@ -222,6 +230,20 @@ declare global {
     appChatSaveImageAs(file: string): Promise<{ ok: boolean; canceled?: boolean; error?: string }>
     appChatOpenFile(file: string): Promise<{ ok: boolean; error?: string }>
     appChatShowInFolder(file: string): Promise<{ ok: boolean; error?: string }>
+    /** 校验这个文件能给这个会话看（会话记录里出现过，或在工作目录内）后登记预览令牌 */
+    previewFileOpen(sessionKey: string, file: string): Promise<PreviewOpenResultType>
+    previewFileText(token: string): Promise<PreviewTextResultType>
+    /** 打开（或让已有标签页跳转到）网页；加载结果经 onPreviewWebState 推回 */
+    previewWebOpen(tabId: string, url: string): Promise<{ ok: boolean; error?: string }>
+    previewWebNav(tabId: string, action: PreviewWebNavType): Promise<{ ok: boolean }>
+    /** 让这个标签页的原生网页视图显示在给定位置、其余全部隐藏；tabId 或 rect 为 null 就全部隐藏 */
+    previewWebBounds(tabId: string | null, rect: PreviewRectType | null): void
+    previewWebClose(tabId: string): Promise<{ ok: boolean }>
+    previewWebSnapshot(tabId: string): Promise<{ ok: true; dataUrl: string } | { ok: false }>
+    previewWebClearData(): Promise<{ ok: boolean }>
+    previewOpenExternalUrl(url: string): Promise<{ ok: boolean; error?: string }>
+    onPreviewWebState(cb: (state: PreviewWebStateType) => void): () => void
+    onPreviewWebOpenTab(cb: (payload: PreviewWebOpenTabType) => void): () => void
     appChatTitles(): Promise<Record<string, string>>
     onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void

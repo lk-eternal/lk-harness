@@ -3,6 +3,8 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { Check, Copy } from "lucide-react"
+import { opensInApp } from "../preview/link-mode"
+import { usePreview } from "../preview/PreviewContext"
 import "./chat-markdown.css"
 
 /** 取 React 子树的纯文本（高亮后代码被拆成 span，复制要还原原文） */
@@ -34,7 +36,7 @@ export function CopyButton({ text, className = "" }: { text: string; className?:
   )
 }
 
-function CodeBlock({ children }: { children?: ReactNode }) {
+export function CodeBlock({ children }: { children?: ReactNode }) {
   const code = Array.isArray(children) ? children[0] : children
   const className = typeof code === "object" && code && "props" in code ? String((code.props as { className?: string }).className ?? "") : ""
   const lang = /language-([\w+#-]+)/.exec(className)?.[1] ?? ""
@@ -49,10 +51,25 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   )
 }
 
-/** 只放行 http(s)：Agent 输出不可信，file:/自定义协议链接一律不可点（外链由主进程交给系统浏览器） */
-function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
+/**
+ * 只放行 http(s)：Agent 输出不可信，file:/自定义协议链接一律不可点。
+ * 在应用内的预览面板里打开，还是交给系统浏览器（由主进程处理 target=_blank），按预览设置决定，按住 Ctrl/⌘ 点则反过来。
+ */
+export function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const preview = usePreview()
   if (href && /^https?:\/\//i.test(href)) {
-    return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        onClick={(e) => {
+          if (!opensInApp({ available: preview.available, mode: preview.linkMode, modifierHeld: e.ctrlKey || e.metaKey })) return
+          e.preventDefault()
+          preview.openUrl(href)
+        }}
+      >{children}</a>
+    )
   }
   return <span className="text-fg-3">{children}</span>
 }
@@ -67,9 +84,9 @@ const components: Components = {
   ),
 }
 
-const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm]
+export const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm]
 // detect:false 只高亮显式标注语言的代码块，不做昂贵且常猜错的自动识别
-const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [
+export const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [
   [rehypeHighlight, { detect: false, ignoreMissing: true }],
 ]
 

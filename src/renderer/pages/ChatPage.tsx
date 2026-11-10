@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { GitBranch, Loader2, MessageCircle, MoreHorizontal, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Check, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -10,6 +10,8 @@ import ChatItemList from "../components/chat/ChatItemList"
 import Composer from "../components/chat/Composer"
 import { composerDraftKey, discardComposerDraft } from "../components/chat/composer-drafts"
 import QueuedStrip from "../components/chat/QueuedStrip"
+import PreviewPanel from "../components/preview/PreviewPanel"
+import { PreviewContext, usePreviewController } from "../components/preview/PreviewContext"
 import { sendNowOutcome, type SendNowOutcome } from "../components/chat/queued-strip-text"
 import SessionSchedules from "../components/chat/SessionSchedules"
 import DirPicker from "../components/chat/DirPicker"
@@ -199,6 +201,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     return () => window.clearTimeout(t)
   }, [actionError])
 
+  const preview = usePreviewController(selected)
   const { items: allItems, loading, error: historyError, hasMore, loadingEarlier, loadEarlier } = useAppChatItems(selected)
   /** 排队中的消息（Agent 还没收到）只在输入框上方的暂存区出现，投递后才进聊天流 */
   const items = useMemo(() => chatStreamItems(allItems), [allItems])
@@ -396,6 +399,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const noChannel = loaded && views.length === 0
 
   return (
+    <PreviewContext.Provider value={preview.api}>
     <div className="flex h-screen flex-col">
       <TitleBar center={<PageTabs page="chat" onChange={onSwitchPage} />} actions={<TitleActions onSettings={onSettings} active={active} />}>
         <TitleBrand />
@@ -487,10 +491,29 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   <div className="min-w-0 flex-1">
                     <SessionTitle key={selected} name={sessionName(tab)} onRename={(name) => void renameSession(name)} />
                   </div>
+                  <button
+                    type="button"
+                    onClick={preview.togglePanel}
+                    title={preview.state.tabs.length === 0 ? "打开内置浏览器" : preview.state.open ? "收起预览面板" : "展开预览面板"}
+                    className={`relative rounded p-1 transition hover:bg-raised hover:text-fg-soft ${preview.state.open ? "bg-raised text-accent" : "text-fg-muted"}`}
+                  >
+                    <PanelRight size={15} />
+                    {preview.state.tabs.length > 0 && !preview.state.open && (
+                      <span className="absolute -right-1 -top-1 min-w-3.5 rounded-full bg-blue-600 px-1 text-center text-[9px] leading-[14px] text-white">{preview.state.tabs.length}</span>
+                    )}
+                  </button>
                   <div className="relative shrink-0" ref={moreMenuRef}>
                     <button type="button" onClick={() => setMoreMenuOpen((o) => !o)} title="更多" className="rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-soft"><MoreHorizontal size={15} /></button>
                     {moreMenuOpen && (
-                      <div className="absolute right-0 top-full z-20 mt-1 w-40 rounded border border-line bg-page py-1 shadow-lg">
+                      <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded border border-line bg-page py-1 shadow-lg">
+                        <p className="px-3 pb-0.5 pt-1 text-[11px] text-fg-faint">点击链接时用</p>
+                        {([["internal", "内置浏览器"], ["external", "系统浏览器"]] as const).map(([mode, label]) => (
+                          <button key={mode} type="button" onClick={() => { preview.setLinkMode(mode); setMoreMenuOpen(false) }} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-surface">
+                            <span className="flex w-3 justify-center">{preview.linkMode === mode && <Check size={12} className="text-accent" />}</span>{label}
+                          </button>
+                        ))}
+                        <p className="px-3 pb-1 text-[10px] leading-snug text-fg-faint">按住 Ctrl 点击则用另一个</p>
+                        <div className="my-1 border-t border-line-subtle" />
                         <button type="button" onClick={() => void clearSession()} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-danger hover:bg-surface"><Trash2 size={12} />清空本会话记录</button>
                       </div>
                     )}
@@ -549,9 +572,11 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
               </div>
             )}
           </section>
+          <PreviewPanel controller={preview} visible={active} />
         </div>
       )}
       {ModalPortal}
     </div>
+    </PreviewContext.Provider>
   )
 }

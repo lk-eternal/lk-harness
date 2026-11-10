@@ -51,6 +51,8 @@ import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
 import { initAppChat } from "./app-chat"
+import { initFilePreview, registerPreviewScheme } from "./file-preview"
+import { initPreviewBrowser } from "./preview-browser"
 import { initMobileServer, stopMobileServer } from "./mobile-server"
 import { broadcastLog } from "./ui-logger"
 
@@ -64,6 +66,8 @@ if (profileName) {
 // NODE_USE_ENV_PROXY 必须在 Node 发出首个请求前就在环境里（initDaemonManager 里再赋已晚）。
 // 这里只管提前注入；后续代理变更仍走 syncMainProcessProxyEnv。
 bootstrapProxyEnv()
+// 预览协议要在 app ready 之前声明
+registerPreviewScheme()
 
 let mainWindow: BrowserWindow | null = null
 let closeConfirmDialogOpen = false
@@ -482,6 +486,8 @@ app.whenReady().then(() => {
   warmModelsDevCatalog()
   initToolbox()
   initAppChat()
+  initFilePreview()
+  initPreviewBrowser()
   initMobileServer()
 })
 

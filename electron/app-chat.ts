@@ -18,6 +18,7 @@ import { createTempChatSession } from "../src/shared/temp-chat-session"
 import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import { parseHistoryQuery, type HistoryQuery } from "../src/shared/app-chat-history-page"
+import { canOpenWithDefaultApp } from "../src/shared/preview-kinds"
 
 /** 与飞书下载图片同目录，沿用 `[图片已保存: …]` 约定，Daemon 的媒体缓存清理一并覆盖 */
 const IMAGE_DIR = path.join(os.tmpdir(), "lk-harness-images")
@@ -30,12 +31,6 @@ const IMAGE_MIME: Record<string, string> = {
   ".bmp": "image/bmp",
 }
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024
-/** 「打开」只放行文档/媒体类扩展名；Agent 发来的可执行文件只能「所在位置」，防一键运行 */
-const OPENABLE_EXTS = new Set([
-  ".txt", ".md", ".log", ".json", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".sql",
-  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".zip",
-  ...Object.keys(IMAGE_MIME),
-])
 
 export async function callAppChatDaemon(action: string, body: object): Promise<AppChatResult> {
   const lock = readLockFile()
@@ -258,7 +253,7 @@ async function saveImageAs(file: string): Promise<{ ok: boolean; canceled?: bool
 }
 
 async function openFile(file: string): Promise<{ ok: boolean; error?: string }> {
-  if (!OPENABLE_EXTS.has(path.extname(file).toLowerCase())) return { ok: false, error: "该类型文件不允许直接打开，请用「所在位置」" }
+  if (!canOpenWithDefaultApp(file)) return { ok: false, error: "该类型文件不允许直接打开，请用「所在位置」" }
   if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
   const failure = await shell.openPath(file)
   return failure ? { ok: false, error: failure } : { ok: true }

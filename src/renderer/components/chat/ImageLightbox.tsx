@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import type { MouseEvent, PointerEvent, ReactNode, WheelEvent } from "react"
 import { createPortal } from "react-dom"
 import { Maximize, X, ZoomIn, ZoomOut } from "lucide-react"
+import { useOverlayPresence } from "../overlay-presence"
 
 interface Point { x: number; y: number }
 
@@ -53,6 +54,7 @@ function clampView(view: View, stage: HTMLElement, img: HTMLElement): View {
 
 /** 全屏图片查看器：滚轮/双指缩放、拖动平移、双击切换适配与放大；点空白处或 Esc 关闭 */
 export function ImageLightbox({ src, onClose, actions }: { src: string; onClose: () => void; actions?: ReactNode }) {
+  useOverlayPresence()
   const stageRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const viewRef = useRef(FIT)

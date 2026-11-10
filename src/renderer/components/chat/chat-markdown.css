@@ -61,8 +61,9 @@
 .chat-md pre { margin: 0; }
 .chat-md pre code.hljs { display: block; overflow-x: auto; padding: 0; background: transparent; }
 
-/* 代码高亮配色：深色取自 highlight.js github-dark，浅色取自 github */
-.chat-md {
+/* 代码高亮配色：深色取自 highlight.js github-dark，浅色取自 github（预览面板的代码视图共用） */
+.chat-md,
+.preview-code {
   --hljs-fg: #c9d1d9;
   --hljs-keyword: #ff7b72;
   --hljs-entity: #d2a8ff;
@@ -79,7 +80,8 @@
   --hljs-del-bg: #67060c;
 }
 @media (prefers-color-scheme: light) {
-  .chat-md {
+  .chat-md,
+  .preview-code {
     --hljs-fg: #24292e;
     --hljs-keyword: #d73a49;
     --hljs-entity: #6f42c1;

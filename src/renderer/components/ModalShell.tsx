@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { useOverlayPresence } from "./overlay-presence"
 
 interface ModalShellProps {
   title: string
@@ -10,6 +11,7 @@ interface ModalShellProps {
  * 与 Dashboard / 设置页一致的深色弹层容器（替代系统 MessageBox）。
  */
 export function ModalShell({ title, children, footer }: ModalShellProps) {
+  useOverlayPresence()
   return (
     <div
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4"
