@@ -13,9 +13,11 @@ import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
+import { initSessionOverridesStore, patchSessionRecord } from "../src/shared/session-overrides-store"
 import { createTempChatSession } from "../src/shared/temp-chat-session"
 import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
+import { parseHistoryQuery, type HistoryQuery } from "../src/shared/app-chat-history-page"
 
 /** 与飞书下载图片同目录，沿用 `[图片已保存: …]` 约定，Daemon 的媒体缓存清理一并覆盖 */
 const IMAGE_DIR = path.join(os.tmpdir(), "lk-harness-images")
@@ -99,13 +101,64 @@ function seedNewSessionDefaultModel(channelId: string, sessionKey: string): void
   } catch { /* 记录读写失败就退回通道默认模型，不影响新建会话 */ }
 }
 
-/** 新建应用内临时会话：只建好临时目录并返回会话键，会话在第一条消息发出时才真正建立 */
-export function createAppChatTempSession(channelId: string): AppChatResult {
+/** 用户选的工作目录必须真实存在且是目录；返回规范化后的绝对路径（去掉末尾分隔符） */
+function checkPickedDir(dir: string | undefined): { ok: true; dir: string } | { ok: false; error: string } {
+  const d = dir?.trim()
+  if (!d || !path.isAbsolute(d)) return { ok: false, error: "请选择一个有效的目录" }
+  try {
+    if (!fs.statSync(d).isDirectory()) return { ok: false, error: `不是目录：${d}` }
+  } catch {
+    return { ok: false, error: `目录不存在：${d}` }
+  }
+  return { ok: true, dir: path.resolve(d) }
+}
+
+/** 把工作目录记到会话上：此后 Agent 以它为 cwd 启动（见 SessionOverrideRecord.boundDir） */
+function bindSessionDir(sessionKey: string, dir: string): void {
+  initSessionOverridesStore(app.getPath("userData"))
+  patchSessionRecord(sessionKey, { boundDir: dir })
+}
+
+/**
+ * 新建应用内临时会话：只建好临时目录并返回会话键，会话在第一条消息发出时才真正建立。
+ * 带 dir 时会话直接选好这个工作目录（目录与会话不是一一对应，已有会话在用同一个目录也照样新建）。
+ */
+export function createAppChatTempSession(channelId: string, dir?: string): AppChatResult {
   if (getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的通道" }
+  const picked = dir === undefined ? undefined : checkPickedDir(dir)
+  if (picked && !picked.ok) return { ok: false, error: picked.error }
   try {
     const { sessionKey } = createTempChatSession(app.getPath("userData"), makeChatKey(channelId, APP_CHANNEL_CHAT_ID))
-    seedNewSessionDefaultModel(channelId, sessionKey)
+    try {
+      seedNewSessionDefaultModel(channelId, sessionKey)
+      if (picked) bindSessionDir(sessionKey, picked.dir)
+    } catch (e: unknown) {
+      removeTempWorkspace(sessionKey)
+      throw e
+    }
     return { ok: true, sessionKey }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * 给还没开始的临时会话选工作目录（或改选）。会话一开始就不能再换：
+ * SDK 的续聊要求 cwd 不变，换了目录 Agent 的上下文就接不上，所以开始后换目录要新建会话。
+ * 键里带真实目录的会话（常用目录、主目录）目录就是它的身份，也不能改。
+ */
+export async function setAppChatSessionDir(sessionKey: string, dir: string): Promise<AppChatResult> {
+  const channelId = channelIdFromSessionKey(sessionKey)
+  if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
+  if (!isTempChatWorkspace(workspaceDirFromSessionKey(sessionKey))) return { ok: false, error: "这个会话的目录是固定的，要换目录请新建会话" }
+  const picked = checkPickedDir(dir)
+  if (!picked.ok) return { ok: false, error: picked.error }
+  const active = await callAppChatDaemon("last-active", { sessionKeys: [sessionKey] })
+  if (!active.ok) return { ok: false, error: active.error ?? "无法确认会话状态，请稍后再试" }
+  if (Object.keys(active.times ?? {}).length > 0) return { ok: false, error: "会话已经开始，不能再换目录；要换目录请新建会话" }
+  try {
+    bindSessionDir(sessionKey, picked.dir)
+    return { ok: true }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -212,7 +265,7 @@ async function openFile(file: string): Promise<{ ok: boolean; error?: string }> 
 }
 
 export function initAppChat(): void {
-  ipcMain.handle("app-chat:history", (_e, sessionKey: string) => callAppChatDaemon("history", { sessionKey }))
+  ipcMain.handle("app-chat:history", (_e, sessionKey: string, query?: HistoryQuery) => callAppChatDaemon("history", { sessionKey, ...parseHistoryQuery(query) }))
   ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => sendAppChatMessage(payload))
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearAppChatRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
@@ -220,7 +273,8 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameAppChatSession(sessionKey, name))
   ipcMain.handle("app-chat:queue-edit", (_e, sessionKey: string, messageId: string, text: string) => editQueuedAppChatMessage(sessionKey, messageId, text))
   ipcMain.handle("app-chat:queue-remove", (_e, sessionKey: string, messageId: string) => removeQueuedAppChatMessage(sessionKey, messageId))
-  ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string) => createAppChatTempSession(channelId))
+  ipcMain.handle("app-chat:new-temp-session", (_e, channelId: string, dir?: string) => createAppChatTempSession(channelId, dir))
+  ipcMain.handle("app-chat:set-session-dir", (_e, sessionKey: string, dir: string) => setAppChatSessionDir(sessionKey, dir))
   ipcMain.handle("app-chat:usage", (_e, channelId: string) => callAppChatDaemon("usage", { channelId }))
   ipcMain.handle("app-chat:last-active", (_e, sessionKeys: string[]) => callAppChatDaemon("last-active", { sessionKeys }))
   ipcMain.handle("app-chat:save-image", (_e, bytes: ArrayBuffer, ext: string) => saveAppChatImage(bytes, ext))

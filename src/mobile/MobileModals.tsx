@@ -20,8 +20,7 @@ import {
   X,
 } from "lucide-react"
 import type { AgentResource } from "../shared/channel-types"
-import { workspaceDirFromSessionKey } from "../shared/channel-types"
-import { isTempChatWorkspace } from "../shared/temp-workspace"
+import { appChatSessionDir, sameChatDir, type ChatDirOption } from "../shared/app-chat-types"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import { modelSlug } from "../renderer/model-utils"
 import { formatTimeAgo } from "../renderer/time-ago"
@@ -177,12 +176,11 @@ export function SessionDrawer({
                     const on = sameChatSession(t.sessionKey, selected)
                     const status = sessionStatus(t.sessionKey, t.running)
                     const at = activeAt(t)
-                    const wsDir = workspaceDirFromSessionKey(t.sessionKey)
-                    const isTemp = isTempChatWorkspace(wsDir)
+                    const wsDir = appChatSessionDir(t.sessionKey, t.boundDir)
                     const subText =
                       status === "working"
                         ? "AI 正在回复..."
-                        : !isTemp && wsDir
+                        : wsDir
                           ? dirName(wsDir)
                           : "临时对话"
                     const deletable = !!t.removable && t.kind !== "project"
@@ -617,51 +615,58 @@ function ModelSheetBody({
 export function DirSheet({
   open,
   onClose,
-  tabs,
-  selected,
-  sessionName,
+  options,
+  currentDir,
+  canRebind,
   onSelect,
 }: {
   open: boolean
   onClose: () => void
-  tabs: MobileChatTab[]
-  selected: string | null
-  sessionName: (t: MobileChatTab) => string
-  onSelect: (sessionKey: string) => void
+  options: ChatDirOption[]
+  currentDir: string | undefined
+  /** 当前会话还能不能直接改目录（还没开始的临时会话可以；否则选目录会用它新开一个会话） */
+  canRebind: boolean
+  onSelect: (dir: string) => void
 }) {
   useBackToClose(open, onClose)
   const { panelRef, grip } = useSheetDrag(onClose)
   if (!open) return null
-  const dirTabs = tabs.filter((t) => !isTempChatWorkspace(workspaceDirFromSessionKey(t.sessionKey)))
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col justify-end">
       <div onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-[2px]" />
       <div ref={panelRef} className="relative z-10 flex max-h-[70vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
         {grip}
-        <div className="flex items-center justify-between px-4 pb-2.5 pt-1">
+        <div className="flex items-center justify-between px-4 pb-1 pt-1">
           <div className="flex items-center gap-2">
             <FolderOpen size={16} className="text-accent" />
-            <span className="text-sm font-semibold text-fg">切换工作区目录会话</span>
+            <span className="text-sm font-semibold text-fg">选择工作目录</span>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1 text-fg-muted">
             <X size={16} />
           </button>
         </div>
+        <p className="px-4 pb-2.5 text-[11px] leading-relaxed text-fg-muted">
+          {canRebind
+            ? "为这个会话选择工作目录，多个会话可以共用同一个目录"
+            : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
+        </p>
 
         <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-4 pb-4">
-          {dirTabs.length === 0 ? (
-            <p className="py-6 text-center text-xs text-fg-muted">暂无已打开的目录会话</p>
+          {options.length === 0 ? (
+            <p className="py-6 text-center text-xs text-fg-muted">
+              电脑上还没有用过的工作目录，请先在电脑端选一个
+            </p>
           ) : (
-            dirTabs.map((t) => {
-              const on = sameChatSession(t.sessionKey, selected)
-              const ws = workspaceDirFromSessionKey(t.sessionKey)
+            options.map((o) => {
+              const on = sameChatDir(o.dir, currentDir)
               return (
                 <button
-                  key={t.sessionKey}
+                  key={o.dir}
                   type="button"
+                  aria-current={on ? "true" : undefined}
                   onClick={() => {
-                    onSelect(t.sessionKey)
+                    onSelect(o.dir)
                     onClose()
                   }}
                   className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-left transition ${
@@ -671,16 +676,8 @@ export function DirSheet({
                   }`}
                 >
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-xs font-medium">{sessionName(t)}</span>
-                      {t.branch && (
-                        <span className="inline-flex items-center gap-0.5 rounded bg-raised px-1.5 py-0.5 text-[10px] text-fg-muted">
-                          <GitBranch size={10} />
-                          {t.branch}
-                        </span>
-                      )}
-                    </div>
-                    {ws && <p className="mt-0.5 truncate font-mono text-[10px] text-fg-muted">{ws}</p>}
+                    <span className="block truncate text-xs font-medium">{o.name}</span>
+                    <p className="mt-0.5 truncate font-mono text-[10px] text-fg-muted">{o.dir}</p>
                   </div>
                   {on && <Check size={14} className="shrink-0 text-accent" />}
                 </button>

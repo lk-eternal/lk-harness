@@ -17,6 +17,10 @@ const tab = (over: Partial<MobileChatTab> = {}): MobileChatTab => ({
   ...over,
 })
 
+const dirProps = (over: Partial<Parameters<typeof DirSheet>[0]> = {}): Parameters<typeof DirSheet>[0] => ({
+  open: true, onClose: noop, options: [], currentDir: undefined, canRebind: true, onSelect: noop, ...over,
+})
+
 describe("底部弹层都带可拖动的抓手", () => {
   it("模型弹层", () => {
     const html = renderToStaticMarkup(
@@ -29,9 +33,7 @@ describe("底部弹层都带可拖动的抓手", () => {
   })
 
   it("目录弹层", () => {
-    const html = renderToStaticMarkup(
-      createElement(DirSheet, { open: true, onClose: noop, tabs: [], selected: null, sessionName: () => "", onSelect: noop }),
-    )
+    const html = renderToStaticMarkup(createElement(DirSheet, dirProps()))
     expect((html.match(/data-sheet-grip/g) ?? []).length).toBe(1)
   })
 
@@ -46,19 +48,50 @@ describe("底部弹层都带可拖动的抓手", () => {
   })
 
   it("关着的时候什么都不渲染", () => {
-    const html = renderToStaticMarkup(
-      createElement(DirSheet, { open: false, onClose: noop, tabs: [], selected: null, sessionName: () => "", onSelect: noop }),
-    )
+    const html = renderToStaticMarkup(createElement(DirSheet, dirProps({ open: false })))
     expect(html).toBe("")
   })
 
   it("抓手是触摸专用的拖动区：不触发浏览器滚动，高度足够手指按住", () => {
-    const html = renderToStaticMarkup(
-      createElement(DirSheet, { open: true, onClose: noop, tabs: [], selected: null, sessionName: () => "", onSelect: noop }),
-    )
+    const html = renderToStaticMarkup(createElement(DirSheet, dirProps()))
     const grip = /<div data-sheet-grip[^>]*>/.exec(html)?.[0] ?? ""
     expect(grip).toContain("touch-none")
     expect(grip).toContain("py-2.5")
+  })
+})
+
+describe("目录弹层：选工作目录（目录不是会话的身份，多个会话可以共用）", () => {
+  const options = [
+    { name: "lk", dir: "D:\\ws\\lk" },
+    { name: "proj-a", dir: "D:\\work\\proj-a" },
+  ]
+  const buttons = (html: string) => html.match(/<button[^>]*>(?:(?!<\/button>).)*<\/button>/gs)?.filter((b) => b.includes("font-mono")) ?? []
+
+  it("每个目录一项，显示目录名和完整路径；只有当前目录打勾（路径写法不同也算同一个）", () => {
+    const items = buttons(renderToStaticMarkup(createElement(DirSheet, dirProps({ options, currentDir: "d:/work/proj-a/" }))))
+    expect(items).toHaveLength(2)
+    expect(items[0]).toContain(">lk<")
+    expect(items[0]).toContain("D:\\ws\\lk")
+    expect(items[0]).not.toContain("aria-current")
+    expect(items[1]).toContain(">proj-a<")
+    expect(items[1]).toContain('aria-current="true"')
+  })
+
+  it("还没选目录的会话：没有哪一项打勾", () => {
+    expect(renderToStaticMarkup(createElement(DirSheet, dirProps({ options })))).not.toContain("aria-current")
+  })
+
+  it("会话还没开始：提示是给这个会话选目录；已经开始：提示选目录会新开一个会话", () => {
+    expect(renderToStaticMarkup(createElement(DirSheet, dirProps({ options, canRebind: true })))).toContain("为这个会话选择工作目录")
+    const started = renderToStaticMarkup(createElement(DirSheet, dirProps({ options, canRebind: false })))
+    expect(started).toContain("新开一个会话")
+    expect(started).not.toContain("为这个会话选择工作目录")
+  })
+
+  it("电脑上还没有用过的目录：说明要先在电脑端选一个（手机浏览不了电脑的文件）", () => {
+    const html = renderToStaticMarkup(createElement(DirSheet, dirProps()))
+    expect(html).toContain("请先在电脑端选一个")
+    expect(buttons(html)).toHaveLength(0)
   })
 })
 
@@ -174,5 +207,33 @@ describe("会话抽屉里的删除按钮", () => {
   it("不可删除的会话不出现删除按钮", () => {
     expect(render([tab({ removable: false })])).not.toContain("删除会话")
     expect(render([tab({ kind: "project" })])).not.toContain("删除会话")
+  })
+})
+
+describe("会话抽屉里的会话副标题：工作目录", () => {
+  const TEMP = "chan::C:\\Users\\me\\AppData\\Roaming\\lk-harness\\workspaces\\temp_1730000000000"
+  const render = (tabs: MobileChatTab[]) =>
+    renderToStaticMarkup(
+      createElement(SessionDrawer, {
+        open: true, onClose: noop, hostname: "pc", route,
+        views: [{ channelId: "c1", name: "通道", tabs }],
+        selected: null, sessionName: () => "会话名", sessionStatus: () => "idle",
+        activeAt: () => undefined, usageBytes: null, onSelect: noop, onNewTemp: noop,
+        onDelete: noop, onClearAll: noop, onOpenPair: noop,
+      }),
+    )
+
+  it("临时会话选了目录：副标题是那个目录名（原来一律写「临时对话」）", () => {
+    const html = render([tab({ sessionKey: TEMP, boundDir: "D:\\work\\proj-a" })])
+    expect(html).toContain(">proj-a<")
+    expect(html).not.toContain("临时对话")
+  })
+
+  it("临时会话没选目录：仍是「临时对话」", () => {
+    expect(render([tab({ sessionKey: TEMP })])).toContain("临时对话")
+  })
+
+  it("常用目录会话：副标题是键里的目录名", () => {
+    expect(render([tab({ sessionKey: "chan::D:\\ws\\lk" })])).toContain(">lk<")
   })
 })

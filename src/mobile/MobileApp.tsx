@@ -18,7 +18,8 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { appChatSessionId, appChatSessionName, chatStreamItems, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, planDirChoice, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedHistory, replaceHistoryTail, type HistoryCursor } from "../shared/app-chat-history-page"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
@@ -51,6 +52,7 @@ import {
   resolveBestRoute,
   savePairConfig,
   sendMobileMessage,
+  setMobileSessionDir,
   setMobileSessionModel,
   stopMobileSession,
   uploadMobileImage,
@@ -101,6 +103,8 @@ export default function MobileApp() {
   const [serverViews, setServerViews] = useState<MobileChannelView[]>([])
   const [drafts, setDrafts] = useState<DraftSession[]>([])
   const [draftModels, setDraftModels] = useState<Record<string, TabModel>>({})
+  /** 刚给会话选的工作目录：草稿会话不在服务端的会话树里，选完到服务端带回来之前先用本地的 */
+  const [pickedDirs, setPickedDirs] = useState<Record<string, string>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [quickModels, setQuickModels] = useState<MobileQuickModel[]>([])
@@ -124,6 +128,22 @@ export default function MobileApp() {
   // 当前会话消息与输入状态
   const [items, setItems] = useState<AppChatItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  // 历史按页加载：items 只是最近的一段，hasMore 表示更早的还在电脑端；cursorRef 是已加载部分的最早一条
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingEarlier, setLoadingEarlier] = useState(false)
+  const cursorRef = useRef<HistoryCursor | undefined>(undefined)
+  const loadingEarlierRef = useRef(false)
+  // 加载窗口每重置一次（换会话、被清空、补漏接不上）加一：往前翻页在途时窗口变了，返回的旧页要丢掉
+  const historyGenRef = useRef(0)
+  const itemsRef = useRef<AppChatItem[]>([])
+  itemsRef.current = items
+  const resetLoadWindow = useCallback((cursor: HistoryCursor | undefined, more: boolean) => {
+    historyGenRef.current += 1
+    loadingEarlierRef.current = false
+    setLoadingEarlier(false)
+    cursorRef.current = cursor
+    setHasMore(more)
+  }, [])
   const [actionError, setActionError] = useState("")
   /** App（APK）有新版本时的提示；网页版由电脑端直接提供，版本天然一致，不查 */
   const [update, setUpdate] = useState<PendingUpdate | null>(null)
@@ -346,7 +366,8 @@ export default function MobileApp() {
           })
           if (sameChatSession(ev.sessionKey, selectedRef.current)) {
             liveBufferRef.current?.set(ev.item.id, ev.item)
-            setItems((prev) => upsertItems(prev, [ev.item]))
+            // 落在还没加载的更早区域的旧项（如旧问题卡收口）不并入，否则列表顶部凭空多出一条、和窗口之间缺一段
+            setItems((prev) => (isBeyondLoadedWindow(ev.item, cursorRef.current, prev) ? prev : upsertItems(prev, [ev.item])))
           } else if (ev.item.kind === "assistant" && ev.item.finished) {
             setUnreadIds((prev) => new Set(prev).add(appChatSessionId(ev.sessionKey)))
           }
@@ -376,7 +397,10 @@ export default function MobileApp() {
         const hit = ev.sessionKey
           ? sameChatSession(ev.sessionKey, cur)
           : !!ev.channelId && !!cur && ev.channelId === channelIdFromSessionKey(cur)
-        if (hit) setItems([])
+        if (hit) {
+          resetLoadWindow(undefined, false)
+          setItems([])
+        }
       }
     }
 
@@ -405,7 +429,7 @@ export default function MobileApp() {
       window.clearInterval(timer)
       window.clearTimeout(refreshTimer)
     }
-  }, [route.connected, route.activeUrl, pairCfg.token, refreshBootstrap])
+  }, [route.connected, route.activeUrl, pairCfg.token, refreshBootstrap, resetLoadWindow])
 
   // 选中会话变化：清除未读绿点，收起重命名
   useEffect(() => {
@@ -420,11 +444,13 @@ export default function MobileApp() {
     })
   }, [selected])
 
-  // 拉取当前会话历史；实时流重连（resyncTick）后再拉一次，补回断线期间错过的消息
+  // 拉取当前会话历史（只要最近一页，更早的点「加载更早的消息」再取）；
+  // 实时流重连（resyncTick）后再拉一次，补回断线期间错过的消息
   useEffect(() => {
     setActionError("")
     if (!selected) {
       historyKeyRef.current = ""
+      resetLoadWindow(undefined, false)
       setItems([])
       return
     }
@@ -439,10 +465,11 @@ export default function MobileApp() {
     liveBufferRef.current = live
     let cancelled = false
     if (fresh) {
+      resetLoadWindow(undefined, false)
       setHistoryLoading(true)
       setItems([])
     }
-    void fetchHistory(route.activeUrl, pairCfg.token, selected).then((r) => {
+    void fetchHistory(route.activeUrl, pairCfg.token, selected, { limit: HISTORY_PAGE_LIMIT }).then((r) => {
       if (cancelled) return
       liveBufferRef.current = null
       setHistoryLoading(false)
@@ -450,16 +477,52 @@ export default function MobileApp() {
         setActionError(r.error ?? "读取历史消息失败")
         return
       }
-      // 回复进度也要用并入实时流之后的列表算：拉取期间先到的收口事件，不能被更早生成的旧快照盖回「还在回复」
-      const merged = upsertItems(r.items ?? [], [...live.values()])
-      setItems(merged)
-      setActivity((prev) => ({ ...prev, [id]: activityFromItems(merged) }))
+      const page = r.items ?? []
+      const pageCursor = historyCursorOf(page)
+      // 回复进度也要用并入实时流之后的列表算：拉取期间先到的收口事件，不能被更早生成的旧快照盖回「还在回复」；
+      // 比这一页起点还早的实时旧项不并入
+      const tail = upsertItems(page, [...live.values()].filter((it) => !isBeyondLoadedWindow(it, pageCursor, page)))
+      if (!fresh && keepsLoadedHistory(cursorRef.current, itemsRef.current, tail)) {
+        // 补漏：用户已经往前翻出来的更早记录保留，只换最近这一段
+        setItems((prev) => replaceHistoryTail(prev, tail))
+      } else {
+        resetLoadWindow(pageCursor, !!r.hasMore)
+        setItems(tail)
+      }
+      setActivity((prev) => ({ ...prev, [id]: activityFromItems(tail) }))
     })
     return () => {
       cancelled = true
       if (liveBufferRef.current === live) liveBufferRef.current = null
     }
-  }, [selected, route.connected, route.activeUrl, pairCfg.token, resyncTick])
+  }, [selected, route.connected, route.activeUrl, pairCfg.token, resyncTick, resetLoadWindow])
+
+  // 往前翻一页：以已加载的最早一条为游标，把更早的一页接到列表顶部
+  const loadEarlier = useCallback(async () => {
+    const cursor = cursorRef.current
+    const key = selectedRef.current
+    if (!key || !cursor || loadingEarlierRef.current || !route.activeUrl || !pairCfg.token) return
+    const gen = historyGenRef.current
+    loadingEarlierRef.current = true
+    setLoadingEarlier(true)
+    const r = await fetchHistory(route.activeUrl, pairCfg.token, key, {
+      limit: HISTORY_PAGE_LIMIT,
+      beforeId: cursor.id,
+      beforeTs: cursor.ts,
+    })
+    // 期间换了会话或窗口被重置：这一页不属于当前列表（重置时加载状态已经清掉）
+    if (gen !== historyGenRef.current) return
+    loadingEarlierRef.current = false
+    setLoadingEarlier(false)
+    if (!r.ok) {
+      setActionError(r.error ?? "读取历史消息失败")
+      return
+    }
+    const page = r.items ?? []
+    cursorRef.current = historyCursorOf(page) ?? cursor
+    setHasMore(!!r.hasMore)
+    setItems((prev) => upsertItems(prev, page))
+  }, [route.activeUrl, pairCfg.token])
 
   useEffect(() => {
     const el = textareaRef.current
@@ -479,10 +542,13 @@ export default function MobileApp() {
     [activity, unreadIds, selected],
   )
 
+  /** 用户给会话选的工作目录：服务端带回来的优先，刚选还没刷新到的用本地的 */
+  const boundDirOf = useCallback((t: MobileChatTab): string | undefined => t.boundDir ?? pickedDirs[t.sessionKey], [pickedDirs])
+
   const sessionName = useCallback(
-    // 和桌面端对话页、工作台共用同一条命名规则：标题 > 临时会话叫「新会话」 > 目录名（不带「（主）」和分支）
-    (t: MobileChatTab): string => appChatSessionName(t.sessionKey, titles, t.label) ?? t.label,
-    [titles],
+    // 和桌面端对话页、工作台共用同一条命名规则：标题 > 选了目录的显示目录名 > 临时会话叫「新会话」 > 目录名（不带「（主）」和分支）
+    (t: MobileChatTab): string => appChatSessionName(t.sessionKey, titles, t.label, boundDirOf(t)) ?? t.label,
+    [titles, boundDirOf],
   )
 
   const activeAt = useCallback(
@@ -521,9 +587,16 @@ export default function MobileApp() {
   // 电脑端暂存区里排队中的消息（Agent 还没收到）不进聊天流，投递后才出现
   const streamItems = useMemo(() => chatStreamItems(items), [items])
 
-  const workspaceDir = selected ? workspaceDirFromSessionKey(selected) : undefined
-  const isTemp = isTempChatWorkspace(workspaceDir)
+  // 会话的工作目录：用户选的优先；没选过目录的临时会话没有（它自己的临时文件夹对用户不可见）
+  const workspaceDir = selected ? appChatSessionDir(selected, currentTab ? boundDirOf(currentTab) : undefined) : undefined
+  const isTemp = !workspaceDir && isTempChatWorkspace(selected ? workspaceDirFromSessionKey(selected) : undefined)
   const workspaceLabel = isTemp ? "临时会话" : dirName(workspaceDir)
+  // 目录菜单：这个通道里各会话在用的目录（电脑上的真实目录，手机选不了电脑上没用过的目录）
+  const dirOptions = useMemo(() => chatDirOptions(ownerView?.tabs ?? [], boundDirOf), [ownerView, boundDirOf])
+  // 草稿会话还没发过消息，可以直接改目录；其它（服务端已有的、或这里已经有记录的）目录定了不能换，
+  // 选目录会用它新开一个会话。注意不能用 lastActive 判断：新建草稿时会把它写成当前时间
+  const sessionStarted = !!selected && (!drafts.some((d) => sameChatSession(d.sessionKey, selected)) || items.length > 0)
+  const canRebindDir = !!selected && canRebindSessionDir(selected, sessionStarted)
 
   // 同模型有好几档推理参数：名字要按模型 + 参数找，否则几档都显示成同一个名字
   const modelLabel = useMemo(
@@ -594,6 +667,36 @@ export default function MobileApp() {
     setSelected(key)
   }
 
+  // 给当前会话选工作目录：还没开始的草稿会话直接改它的目录；其它用这个目录新开一个会话（目录不是会话的身份，多个会话可以共用）
+  const handleChooseDir = async (dir: string) => {
+    if (!selected || !ownerView || !route.activeUrl || !pairCfg.token) return
+    const plan = planDirChoice({ sessionKey: selected, started: sessionStarted, currentDir: workspaceDir, chosen: dir })
+    if (plan === "same") return
+    setActionError("")
+    if (plan === "rebind") {
+      const r = await setMobileSessionDir(route.activeUrl, pairCfg.token, selected, dir)
+      if (!r.ok) {
+        setActionError(r.error ?? "设置目录失败")
+        return
+      }
+      const tabKey = currentTab?.sessionKey ?? selected
+      setPickedDirs((prev) => ({ ...prev, [tabKey]: dir }))
+      void refreshBootstrap(route.activeUrl, pairCfg.token)
+      return
+    }
+    const channelId = ownerView.channelId
+    const r = await createMobileTempSession(route.activeUrl, pairCfg.token, channelId, dir)
+    const key = r.sessionKey
+    if (!r.ok || !key) {
+      setActionError(r.error ?? "创建会话失败")
+      return
+    }
+    setDrafts((prev) => [...prev, { channelId, sessionKey: key }])
+    setPickedDirs((prev) => ({ ...prev, [key]: dir }))
+    setLastActive((prev) => ({ ...prev, [appChatSessionId(key)]: Date.now() }))
+    setSelected(key)
+  }
+
   // 删除会话
   const handleDeleteSession = async (t: MobileChatTab) => {
     if (!route.activeUrl || !pairCfg.token) return
@@ -601,8 +704,11 @@ export default function MobileApp() {
     const id = appChatSessionId(key)
     // 还没发过消息的草稿会话没有什么可丢的，不再确认
     if (!drafts.some((d) => sameChatSession(d.sessionKey, key))) {
+      const boundDir = boundDirOf(t)
       const effect = isTempChatWorkspace(workspaceDirFromSessionKey(key))
-        ? "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
+        ? boundDir
+          ? `会停止 Agent、清除上下文和聊天记录。「${dirName(boundDir) ?? boundDir}」里的文件不会被删除。`
+          : "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
         : t.kind === "main"
           ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
           : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
@@ -646,6 +752,7 @@ export default function MobileApp() {
     const name = currentTab ? sessionName(currentTab) : "当前会话"
     if (!await showConfirm("清空本会话记录", `确定清空「${name}」在应用内的对话记录吗？\n只删除本页记录（会话名随之重置），Agent 的会话上下文不受影响。`, "清空")) return
     await clearMobileSession(route.activeUrl, pairCfg.token, { sessionKey: selected })
+    resetLoadWindow(undefined, false)
     setItems([])
   }
 
@@ -656,6 +763,7 @@ export default function MobileApp() {
     for (const v of views) {
       await clearMobileSession(route.activeUrl, pairCfg.token, { channelId: v.channelId })
     }
+    resetLoadWindow(undefined, false)
     setItems([])
     await refreshBootstrap(route.activeUrl, pairCfg.token)
   }
@@ -903,6 +1011,9 @@ export default function MobileApp() {
           key={selected}
           items={streamItems}
           loading={historyLoading}
+          hasMore={hasMore}
+          loadingEarlier={loadingEarlier}
+          onLoadEarlier={() => void loadEarlier()}
           busy={busy}
           workspaceName={workspaceLabel}
           sessionKey={selected}
@@ -1102,10 +1213,10 @@ export default function MobileApp() {
       <DirSheet
         open={dirSheetOpen}
         onClose={() => setDirSheetOpen(false)}
-        tabs={allTabs}
-        selected={selected}
-        sessionName={sessionName}
-        onSelect={setSelected}
+        options={dirOptions}
+        currentDir={workspaceDir}
+        canRebind={canRebindDir}
+        onSelect={(dir) => void handleChooseDir(dir)}
       />
 
       <PairSheet

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { appChatSessionId, appChatSessionName } from "../src/shared/app-chat-types.js"
+import { appChatSessionDir, appChatSessionId, appChatSessionName, sameChatDir } from "../src/shared/app-chat-types.js"
 import { withAppChatNames, type DashboardChannelNode, type DashboardSessionNode, type SessionGroupId } from "../src/shared/dashboard-tree.js"
 
 const APP = "ch_app"
@@ -39,6 +39,43 @@ describe("appChatSessionName：应用内会话叫什么（对话页和工作台�
   it("空标题当作没有标题", () => {
     const key = keyOf(APP, "D:\\ws\\lk")
     expect(appChatSessionName(key, { [appChatSessionId(key)]: "" }, "x")).toBe("lk")
+  })
+
+  it("临时会话选了目录：没有标题时显示所选目录名，不再叫「新会话」；有标题仍用标题", () => {
+    const key = keyOf(APP, TEMP_DIR)
+    expect(appChatSessionName(key, {}, "temp_1730000000000", "D:\\work\\proj-a")).toBe("proj-a")
+    expect(appChatSessionName(key, { [appChatSessionId(key)]: "查日志" }, "x", "D:\\work\\proj-a")).toBe("查日志")
+  })
+})
+
+describe("appChatSessionDir：会话的工作目录（给用户看的）", () => {
+  it("选的目录优先于会话键里的目录", () => {
+    expect(appChatSessionDir(keyOf(APP, TEMP_DIR), "D:\\work\\proj-a")).toBe("D:\\work\\proj-a")
+    expect(appChatSessionDir(keyOf(APP, "D:\\ws\\lk"), "D:\\work\\proj-a")).toBe("D:\\work\\proj-a")
+  })
+
+  it("没选目录时：键里是真实目录就是它，临时会话的临时文件夹对用户不可见", () => {
+    expect(appChatSessionDir(keyOf(APP, "D:\\ws\\lk"))).toBe("D:\\ws\\lk")
+    expect(appChatSessionDir(keyOf(APP, TEMP_DIR))).toBeUndefined()
+  })
+
+  it("项目、定时任务这类不是目录的会话没有目录", () => {
+    expect(appChatSessionDir("ch_app|chat::project_abc123")).toBeUndefined()
+    expect(appChatSessionDir("temp_12345678")).toBeUndefined()
+  })
+})
+
+describe("sameChatDir：目录是不是同一个", () => {
+  it("分隔符、末尾斜杠、大小写不算区别", () => {
+    expect(sameChatDir("D:\\Work\\Proj", "d:/work/proj/")).toBe(true)
+    expect(sameChatDir("/home/me/proj", "/home/me/proj/")).toBe(true)
+  })
+
+  it("不同目录、空值都不算同一个（空对空也不算，没选目录不能「匹配」没选目录）", () => {
+    expect(sameChatDir("D:\\work\\a", "D:\\work\\b")).toBe(false)
+    expect(sameChatDir("D:\\work\\a", "D:\\work\\a-old")).toBe(false)
+    expect(sameChatDir(undefined, undefined)).toBe(false)
+    expect(sameChatDir("D:\\work\\a", undefined)).toBe(false)
   })
 })
 

@@ -20,13 +20,17 @@ export type ResolveSessionWorkspaceOpts = {
   sessionKey: string
   /** 主用户 p2p 裸 chatKey 时回落通道主目录 */
   mainWorkspaceDir?: string
+  /** 用户给会话选的工作目录（会话记录里的 boundDir），有就优先于会话键里的目录 */
+  boundDir?: string
 }
 
 /** launch / reset / 展示共用的 Agent cwd（不含项目 worktree、不含显式 workingDirectory） */
 export function resolveSessionWorkspaceDir(opts: ResolveSessionWorkspaceOpts): string | undefined {
-  const { userDataDir, sessionKey, mainWorkspaceDir } = opts
+  const { userDataDir, sessionKey, mainWorkspaceDir, boundDir } = opts
   const sk = sessionKey.trim()
   if (!sk) return undefined
+
+  if (boundDir?.trim()) return path.normalize(boundDir.trim())
 
   const fromKey = workspaceDirFromSessionKey(sk)
   if (fromKey) return path.normalize(fromKey)

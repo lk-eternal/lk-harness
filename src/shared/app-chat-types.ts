@@ -161,6 +161,10 @@ export interface AppChatResult {
   ok: boolean;
   error?: string;
   items?: AppChatItem[];
+  /** 历史分页：返回的这一页之前还有更早的记录（见 app-chat-history-page.ts）；整段历史时没有这个字段 */
+  hasMore?: boolean;
+  /** references-path：这个路径是不是出现在该会话的记录里 */
+  owned?: boolean;
   bytes?: number;
   /** 会话最近一条记录的时间戳，键为 appChatSessionId；没有记录的会话不出现 */
   times?: Record<string, number>;
@@ -183,18 +187,81 @@ export function appChatSessionId(sessionKey: string): string {
 }
 
 /**
+ * 应用内会话的工作目录（给用户看的那个）：用户给会话选的目录（boundDir）优先；
+ * 否则是会话键里的目录，但临时会话键里的目录只是它自己的临时文件夹，对用户不可见，视为没有指定目录。
+ */
+export function appChatSessionDir(sessionKey: string, boundDir?: string): string | undefined {
+  if (boundDir) return boundDir;
+  const dir = workspaceDirFromSessionKey(sessionKey);
+  return isTempChatWorkspace(dir) ? undefined : dir;
+}
+
+/** 两个目录路径是不是同一个：分隔符、末尾斜杠、大小写都不算区别（Windows 路径混写不分裂） */
+export function sameChatDir(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  const norm = (d: string) => d.replace(/[\\/]+/g, "/").replace(/\/$/, "").toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * 在会话里选目录会发生什么：还没开始的临时会话可以直接改它的目录（true）；
+ * 已经开始的（SDK 续聊要求 cwd 不变）、或键里带真实目录的（目录就是会话身份）不能改，只能用该目录新开一个会话（false）。
+ */
+export function canRebindSessionDir(sessionKey: string, started: boolean): boolean {
+  return !started && isTempChatWorkspace(workspaceDirFromSessionKey(sessionKey));
+}
+
+/** 在会话里选了一个目录之后要做什么（桌面端和手机端共用这一条规则） */
+export type DirChoice = "same" | "rebind" | "new-session";
+
+/** 已经是这个目录：什么都不做；会话还能改目录：改它；否则（已经开始、或目录是会话身份）：用该目录新开一个会话 */
+export function planDirChoice(opts: {
+  sessionKey: string;
+  started: boolean;
+  currentDir: string | undefined;
+  chosen: string;
+}): DirChoice {
+  if (sameChatDir(opts.chosen, opts.currentDir)) return "same";
+  return canRebindSessionDir(opts.sessionKey, opts.started) ? "rebind" : "new-session";
+}
+
+export interface ChatDirOption {
+  name: string;
+  dir: string;
+}
+
+/**
+ * 目录菜单：通道里各会话在用的目录，去重后一个目录一项。
+ * 目录不是会话的身份——同一个目录可以有多个会话，菜单里仍只列一次；还没选目录的临时会话不贡献选项。
+ */
+export function chatDirOptions<T extends { kind: string; sessionKey: string }>(
+  tabs: readonly T[],
+  boundDirOf: (tab: T) => string | undefined,
+): ChatDirOption[] {
+  const dirs: string[] = [];
+  for (const t of tabs) {
+    if (t.kind !== "main" && t.kind !== "dir") continue;
+    const dir = appChatSessionDir(t.sessionKey, boundDirOf(t));
+    if (dir && !dirs.some((d) => sameChatDir(d, dir))) dirs.push(dir);
+  }
+  return dirs.map((dir) => ({ name: dir.split(/[\\/]/).filter(Boolean).pop() ?? dir, dir }));
+}
+
+/**
  * 应用内会话在界面上叫什么（对话页的会话列表、工作台的会话清单共用这一条规则）：
- * 摘要标题（或手动改的名字）优先；还没有时，临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支）；
+ * 摘要标题（或手动改的名字）优先；还没有时，选了目录的会话显示目录名，没选目录的临时会话叫「新会话」，
+ * 其它显示键里的目录名（不带「（主）」和分支）；
  * 连目录都取不到（项目、定时任务这类不是目录的会话）就用 fallback。
  */
 export function appChatSessionName(
   sessionKey: string,
   titles: Readonly<Record<string, string>>,
   fallback?: string,
+  boundDir?: string,
 ): string | undefined {
   const title = titles[appChatSessionId(sessionKey)];
   if (title) return title;
-  const dir = workspaceDirFromSessionKey(sessionKey);
-  if (isTempChatWorkspace(dir)) return "新会话";
+  const dir = boundDir || workspaceDirFromSessionKey(sessionKey);
+  if (!boundDir && isTempChatWorkspace(dir)) return "新会话";
   return dir?.split(/[\\/]/).filter(Boolean).pop() ?? fallback;
 }

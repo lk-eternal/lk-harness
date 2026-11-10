@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
+import type { HistoryQuery } from "../src/shared/app-chat-history-page"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
@@ -168,14 +169,15 @@ const api = {
   getToolboxStatus: (): Promise<{ larkCli: { installed: boolean; version?: string; loggedIn?: boolean; userName?: string }; meegle: { installed: boolean; version?: string } }> => ipcRenderer.invoke("toolbox:status"),
   installToolboxTool: (key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:install", key),
   loginLarkCli: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:login-lark"),
-  appChatHistory: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:history", sessionKey),
+  appChatHistory: (sessionKey: string, query?: HistoryQuery): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:history", sessionKey, query),
   appChatSend: (payload: AppChatSendPayload): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:send", payload),
   appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
   appChatDeleteSession: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:delete-session", sessionKey),
   appChatRenameSession: (sessionKey: string, name: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:rename-session", sessionKey, name),
   appChatQueueEdit: (sessionKey: string, messageId: string, text: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:queue-edit", sessionKey, messageId, text),
   appChatQueueRemove: (sessionKey: string, messageId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:queue-remove", sessionKey, messageId),
-  appChatNewTempSession: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:new-temp-session", channelId),
+  appChatNewTempSession: (channelId: string, dir?: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:new-temp-session", channelId, dir),
+  appChatSetSessionDir: (sessionKey: string, dir: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:set-session-dir", sessionKey, dir),
   appChatUsage: (channelId: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:usage", channelId),
   appChatLastActive: (sessionKeys: string[]): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:last-active", sessionKeys),
   appChatSaveImage: (bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> => ipcRenderer.invoke("app-chat:save-image", bytes, ext),
@@ -218,7 +220,7 @@ const api = {
       channelId: string
       name: string
       mainUserChatId?: string
-      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; model?: string; modelParams?: string; resourceId?: string }[]
+      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
       activeKey?: string
     }[]
     running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]

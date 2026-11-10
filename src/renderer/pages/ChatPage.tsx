@@ -18,9 +18,9 @@ import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import useOutsideClose from "../hooks/useOutsideClose"
-import { appChatSessionId, appChatSessionName, chatStreamItems, isQueuedUserItem, visibleChatTabs } from "../../shared/app-chat-types"
+import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
-import { APP_CHANNEL_CHAT_ID, makeChatKey, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
+import { workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
@@ -85,6 +85,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [serverViews, setViews] = useState<AppChannelView[]>([])
   const [drafts, setDrafts] = useState<DraftSession[]>([])
   const [draftModels, setDraftModels] = useState<Record<string, TabModel>>({})
+  /** 刚给会话选的工作目录：草稿会话不在服务端会话树里，已有的会话要等下一次刷新才带上 boundDir，这里先顶上 */
+  const [pickedDirs, setPickedDirs] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
   const [selected, setSelected] = useState<string | null>(null)
@@ -197,7 +199,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     return () => window.clearTimeout(t)
   }, [actionError])
 
-  const { items: allItems, loading, error: historyError } = useAppChatItems(selected)
+  const { items: allItems, loading, error: historyError, hasMore, loadingEarlier, loadEarlier } = useAppChatItems(selected)
   /** 排队中的消息（Agent 还没收到）只在输入框上方的暂存区出现，投递后才进聊天流 */
   const items = useMemo(() => chatStreamItems(allItems), [allItems])
   const queuedItems = useMemo(() => allItems.filter(isQueuedUserItem), [allItems])
@@ -205,21 +207,22 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
-  /** 当前会话的目录；临时会话的目录对用户不可见，视为没有指定目录 */
-  const workspaceDir = selected && !isTempChatWorkspace(workspaceDirFromSessionKey(selected)) ? workspaceDirFromSessionKey(selected) : undefined
-  /** 会话名：摘要标题；还没有时临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
-  const sessionName = (t: ChatTab) => appChatSessionName(t.sessionKey, titles, t.label) ?? t.label
+  /** 用户给会话选的工作目录：服务端带回来的优先，刚选还没刷新到的用本地的 */
+  const boundDirOf = (t: ChatTab): string | undefined => t.boundDir ?? pickedDirs[t.sessionKey]
+  /** 会话的工作目录；没选过目录的临时会话没有，它自己的临时文件夹对用户不可见 */
+  const dirOf = (t: ChatTab): string | undefined => appChatSessionDir(t.sessionKey, boundDirOf(t))
+  const workspaceDir = tab ? dirOf(tab) : undefined
+  /** 会话名：摘要标题；还没有时选了目录的显示目录名，没选的临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
+  const sessionName = (t: ChatTab) => appChatSessionName(t.sessionKey, titles, t.label, boundDirOf(t)) ?? t.label
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
   /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
   const sortAt = (t: ChatTab) => activeAt(t) ?? tempWorkspaceCreatedAt(workspaceDirFromSessionKey(t.sessionKey)) ?? 0
   const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => sortAt(b) - sortAt(a))
-  /** 同一通道里有真实目录的会话，供输入框的目录菜单切换 */
-  const dirOptions = (ownerView?.tabs ?? [])
-    .filter((t) => (t.kind === "main" || t.kind === "dir") && !isTempTab(t))
-    .flatMap((t) => {
-      const dir = workspaceDirFromSessionKey(t.sessionKey)
-      return dir ? [{ sessionKey: t.sessionKey, name: dirName(dir) ?? dir, dir }] : []
-    })
+  /** 目录菜单：这个通道里各会话在用的目录（去重）。目录不是会话的身份，同一个目录可以有多个会话 */
+  const dirOptions = chatDirOptions(ownerView?.tabs ?? [], boundDirOf)
+  /** 还没开始的临时会话可以直接改它的目录；开始了或目录是会话身份的，选目录只能用该目录新开一个会话 */
+  const sessionStarted = !!tab && (activeAt(tab) !== undefined || allItems.length > 0)
+  const canRebindDir = !!tab && canRebindSessionDir(tab.sessionKey, sessionStarted)
   const modelLabel = tab?.model
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
@@ -255,8 +258,11 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const deleteSession = async (t: ChatTab) => {
     // 还没发过消息的草稿会话没有什么可丢的，不再确认
     const isDraft = drafts.some((d) => sameChatSession(d.sessionKey, t.sessionKey))
+    const boundDir = boundDirOf(t)
     const effect = isTempTab(t)
-      ? "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
+      ? boundDir
+        ? `会停止 Agent、清除上下文和聊天记录。「${dirName(boundDir) ?? boundDir}」里的文件不会被删除。`
+        : "会停止 Agent、清除上下文和聊天记录，并删除这个会话的临时文件夹（其中生成的文件也会一并删除）。"
       : t.kind === "main"
         ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
         : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
@@ -333,7 +339,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 新会话 = 临时会话：用应用建的临时目录，不用先选目录；已有还没聊过的临时会话就直接用它 */
   const newSession = async (channelId: string) => {
     const idle = views.find((v) => v.channelId === channelId)?.tabs.find((t) => {
-      if (!isTempTab(t) || activeAt(t) !== undefined) return false
+      if (!isTempTab(t) || boundDirOf(t) || activeAt(t) !== undefined) return false
       return !(sameChatSession(t.sessionKey, selected) && items.length > 0)
     })
     if (idle) { setSelected(idle.sessionKey); return }
@@ -356,20 +362,32 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (emptyChannelId) void newSession(emptyChannelId)
   }, [emptyChannelId])
 
-  /** 选一个目录并加入该通道的常用目录，打开（或新建）该目录的会话，会话在首次发送时由 Agent 侧建立 */
-  const openDirSession = async (channelId: string) => {
+  /**
+   * 给当前会话选工作目录：还没开始的临时会话直接改它的目录；其它会话（已经开始、或目录就是会话身份的）
+   * 目录定了不能换，就用这个目录新开一个会话。目录不是会话的身份，已有会话在用同一个目录也照样新开。
+   */
+  const chooseDir = async (dir: string) => {
+    if (!selected || !ownerView) return
+    const plan = planDirChoice({ sessionKey: selected, started: sessionStarted, currentDir: workspaceDir, chosen: dir })
+    if (plan === "same") return
+    if (plan === "rebind") {
+      const r = await window.electronAPI.appChatSetSessionDir(selected, dir)
+      if (!r.ok) { setActionError(r.error ?? "设置目录失败"); return }
+      setPickedDirs((prev) => ({ ...prev, [selected]: dir }))
+      void refresh()
+      return
+    }
+    const r = await window.electronAPI.appChatNewTempSession(ownerView.channelId, dir)
+    const sessionKey = r.sessionKey
+    if (!r.ok || !sessionKey) { setActionError(r.error ?? "新建会话失败"); return }
+    setDrafts((prev) => [...prev, { channelId: ownerView.channelId, sessionKey }])
+    setPickedDirs((prev) => ({ ...prev, [sessionKey]: dir }))
+    setSelected(sessionKey)
+  }
+
+  const pickNewDir = async () => {
     const dir = await window.electronAPI.selectDirectory()
-    if (!dir) return
-    const r = await window.electronAPI.addChannelFavoriteWorkspace(channelId, dir)
-    if (!r.ok) { setActionError(r.error ?? "添加目录失败"); return }
-    const target = `${appChatSessionId(makeChatKey(channelId, APP_CHANNEL_CHAT_ID))}::${dir.replace(/[\\/]+/g, "/").toLowerCase()}`
-    deletedRef.current.delete(target) // 刚删掉的目录会话被重新打开：刷新前就要撤掉墓碑，不然新会话会被藏着
-    await refresh()
-    const fresh = (await window.electronAPI.listDashboardTree()).channels
-      .find((c) => c.channelId === channelId)?.mainTabs
-      .find((t) => appChatSessionId(t.sessionKey) === target)
-    if (fresh) setSelected(fresh.sessionKey)
-    else setActionError("目录已添加，但会话列表中暂未出现，请稍后刷新")
+    if (dir) await chooseDir(dir)
   }
 
   // 会话进程在线 ≠ AI 在干活（回复完 Agent 仍挂在 poll 上）：以未收口的回合卡 / 待处理的用户消息为准
@@ -408,7 +426,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                           <button
                             type="button"
                             onClick={() => setSelected(t.sessionKey)}
-                            title={(isTempTab(t) ? undefined : workspaceDirFromSessionKey(t.sessionKey)) ?? sessionName(t)}
+                            title={dirOf(t) ?? sessionName(t)}
                             className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
                             {status === "working" ? (
@@ -479,7 +497,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   </div>
                 </div>
 
-                <ChatItemList key={selected} items={items} loading={loading} busy={busy} workspaceName={dirName(workspaceDir)} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
+                <ChatItemList key={selected} items={items} loading={loading} hasMore={hasMore} loadingEarlier={loadingEarlier} onLoadEarlier={() => void loadEarlier()} busy={busy} workspaceName={dirName(workspaceDir)} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer
                   draftKey={composerDraftKey(selected)}
@@ -496,9 +514,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                       <DirPicker
                         currentName={dirName(workspaceDir)}
                         options={dirOptions}
-                        isCurrent={(key) => sameChatSession(key, selected)}
-                        onSelect={setSelected}
-                        onPickNew={() => { if (ownerView) void openDirSession(ownerView.channelId) }}
+                        isCurrent={(dir) => sameChatDir(dir, workspaceDir)}
+                        onSelect={(dir) => void chooseDir(dir)}
+                        onPickNew={() => void pickNewDir()}
+                        hint={canRebindDir ? "为这个会话选择工作目录，多个会话可以共用同一个目录" : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
                       />
                       {tab.branch && (
                         <span className="inline-flex items-center gap-1 px-1 text-[12.5px] text-fg-muted" title="当前分支"><GitBranch size={14} />{tab.branch}</span>

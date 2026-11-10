@@ -1,6 +1,7 @@
 import { useRef } from "react"
 import { ArrowDown, Loader2, MessageCircle } from "lucide-react"
 import type { AppChatItem } from "../../../shared/app-chat-types"
+import { useKeepScrollOnPrepend } from "../../hooks/useKeepScrollOnPrepend"
 import { useStickToBottom } from "../../hooks/useStickToBottom"
 import AssistantTurn from "./AssistantTurn"
 import { FileCard, LocalImage, NoticePill, QuestionCard, UserBubble } from "./ItemViews"
@@ -9,6 +10,10 @@ import Markdown from "./Markdown"
 interface Props {
   items: AppChatItem[]
   loading: boolean
+  /** 已加载的最早一条之前还有更早的记录：列表顶部给「加载更早的消息」 */
+  hasMore: boolean
+  loadingEarlier: boolean
+  onLoadEarlier: () => void
   /** AI 正在工作；最后一条是用户消息时补一个"正在处理"占位，覆盖流式卡出现前的空窗 */
   busy: boolean
   /** 会话的目录名；临时会话没有指定目录，为空 */
@@ -31,10 +36,17 @@ function EmptyChat({ workspaceName }: { workspaceName?: string }) {
   )
 }
 
-export default function ChatItemList({ items, loading, busy, workspaceName, onAnswer, onCommand }: Props) {
+export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, onAnswer, onCommand }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { sentinelRef, atBottom, scrollToBottom } = useStickToBottom(scrollRef, [items])
   const waiting = busy && items.length > 0 && items[items.length - 1].kind === "user"
+
+  // 往前加载一页是把记录插在顶部，要保住用户正在看的位置
+  const keepScroll = useKeepScrollOnPrepend(scrollRef, items)
+  const loadEarlier = () => {
+    keepScroll()
+    onLoadEarlier()
+  }
 
   return (
     <div className="relative min-h-0 flex-1">
@@ -42,6 +54,17 @@ export default function ChatItemList({ items, loading, busy, workspaceName, onAn
         <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
           {loading && items.length === 0 && <p className="text-center text-xs text-fg-faint">加载中…</p>}
           {!loading && items.length === 0 && <EmptyChat workspaceName={workspaceName} />}
+          {hasMore && items.length > 0 && (
+            <button
+              type="button"
+              onClick={loadEarlier}
+              disabled={loadingEarlier}
+              className="flex items-center gap-1.5 self-center rounded-full border border-line-subtle px-3 py-1 text-xs text-fg-muted transition hover:border-line hover:text-fg-2 disabled:opacity-60"
+            >
+              {loadingEarlier && <Loader2 size={12} className="animate-spin" />}
+              {loadingEarlier ? "加载中…" : "加载更早的消息"}
+            </button>
+          )}
           {items.map((it) => {
             switch (it.kind) {
               case "user": return <UserBubble key={it.id} item={it} />

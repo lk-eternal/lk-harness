@@ -13,6 +13,7 @@ import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessag
 import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
+import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
@@ -4609,7 +4610,7 @@ function dropQueuedAppItems(sessionKey: string, messageIds: string[]): void {
 
 async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const body = JSON.parse(await readBody(req)) as {
-    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string; messageId?: string;
+    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string; messageId?: string; path?: string;
   };
   const sessionKey = normalizeSessionKey(body.sessionKey);
 
@@ -4642,9 +4643,16 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   if (!rt) { json(res, { ok: false, error: "会话不属于应用内对话通道" }, 400); return true; }
 
   if (pathname === "/api/app-chat/history") {
-    // 暂存区与真实队列对账，再把历史交出去
+    // 暂存区与真实队列对账，再把历史交出去；带 limit 只给最近一页（见 app-chat-history-page.ts），不带就是整段
     if (appChat.hasQueued(sessionKey)) appChat.reconcileQueued(sessionKey, listPendingMessageIds(sessionKey));
-    json(res, { ok: true, items: appChat.list(sessionKey) });
+    const page = pageChatHistory(appChat.list(sessionKey), parseHistoryQuery(body));
+    json(res, { ok: true, items: page.items, hasMore: page.hasMore });
+    return true;
+  }
+
+  // 手机端取图片/文件前的归属校验：只回一个是/否，不必把整段历史传过去
+  if (pathname === "/api/app-chat/references-path") {
+    json(res, { ok: true, owned: appChat.referencesPath(sessionKey, typeof body.path === "string" ? body.path : "") });
     return true;
   }
 

@@ -22,7 +22,13 @@ export interface SessionOverrideRecord {
   resourceId?: string
   thinkingLevel?: string
   agentId?: string
+  /** SDK 续聊记录里的 cwd：上次拉起时 Agent 实际所在的目录（不是用户选的，见 boundDir） */
   workspaceDir?: string
+  /**
+   * 用户给这个会话选的工作目录：只用于应用内的临时会话（会话键里的目录只是它自己的临时文件夹）。
+   * 有它就用它当 Agent 的 cwd，所以多个会话可以共用同一个目录；会话开始后不再更换（SDK 的续聊要求 cwd 不变）。
+   */
+  boundDir?: string
   rulesHash?: string
   daemonPort?: number
   streamCardId?: string
@@ -194,6 +200,7 @@ function isRecordEmpty(r: SessionOverrideRecord): boolean {
     && !r.thinkingLevel
     && !r.agentId
     && !r.workspaceDir
+    && !r.boundDir
     && !r.rulesHash
     && r.daemonPort === undefined
     && !r.streamCardId

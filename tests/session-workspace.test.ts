@@ -34,6 +34,13 @@ describe("session-workspace", () => {
     })).toBe(isolatedSessionWorkspaceDir(userData, "task-uuid-1"))
   })
 
+  it("resolveSessionWorkspaceDir：会话选的目录（boundDir）优先于会话键里的目录", () => {
+    const tempKey = "ch_a|oc_1::C:\\AppData\\workspaces\\temp_1790070973658"
+    expect(resolveSessionWorkspaceDir({ userDataDir: userData, sessionKey: tempKey, boundDir: "D:\\work\\proj" })).toBe("D:\\work\\proj")
+    expect(resolveSessionWorkspaceDir({ userDataDir: userData, sessionKey: tempKey, boundDir: "  " })).toBe("C:\\AppData\\workspaces\\temp_1790070973658")
+    expect(resolveSessionWorkspaceDir({ userDataDir: userData, sessionKey: tempKey })).toBe("C:\\AppData\\workspaces\\temp_1790070973658")
+  })
+
   it("resolveSessionWorkspaceDir uses main dir for bare chatKey only", () => {
     expect(resolveSessionWorkspaceDir({
       userDataDir: userData,

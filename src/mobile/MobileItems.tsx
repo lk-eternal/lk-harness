@@ -3,6 +3,7 @@ import { ArrowDown, Download, FileText, ImageOff, Loader2, Sparkles, Terminal } 
 import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/app-chat-types"
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
+import { useKeepScrollOnPrepend } from "../renderer/hooks/useKeepScrollOnPrepend"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
@@ -167,6 +168,9 @@ export default function MobileItemList({
   items,
   loading,
   busy,
+  hasMore,
+  loadingEarlier,
+  onLoadEarlier,
   workspaceName,
   sessionKey,
   baseUrl,
@@ -176,6 +180,10 @@ export default function MobileItemList({
 }: {
   items: AppChatItem[]
   loading: boolean
+  /** 已加载的最早一条之前还有更早的记录：列表顶部给「加载更早的消息」 */
+  hasMore: boolean
+  loadingEarlier: boolean
+  onLoadEarlier: () => void
   busy: boolean
   workspaceName?: string
   sessionKey: string
@@ -203,6 +211,13 @@ export default function MobileItemList({
     const nearBottom = dist < 72
     stickRef.current = nearBottom
     setShowScrollBottom(!nearBottom && items.length > 0)
+  }
+
+  // 往前加载一页是把记录插在顶部，要保住用户正在看的位置
+  const keepScroll = useKeepScrollOnPrepend(containerRef, items)
+  const loadEarlier = () => {
+    keepScroll()
+    onLoadEarlier()
   }
 
   useEffect(() => {
@@ -255,6 +270,17 @@ export default function MobileItemList({
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-4 pb-2">
+            {hasMore && (
+              <button
+                type="button"
+                onClick={loadEarlier}
+                disabled={loadingEarlier}
+                className="flex items-center gap-1.5 self-center rounded-full border border-line-subtle px-3 py-1.5 text-xs text-fg-muted transition active:bg-raised disabled:opacity-60"
+              >
+                {loadingEarlier && <Loader2 size={12} className="animate-spin" />}
+                {loadingEarlier ? "加载中…" : "加载更早的消息"}
+              </button>
+            )}
             {items.map((item) => {
               switch (item.kind) {
                 case "user":

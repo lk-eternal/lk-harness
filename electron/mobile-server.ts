@@ -22,12 +22,14 @@ import {
   renameAppChatSession,
   saveAppChatImage,
   sendAppChatMessage,
+  setAppChatSessionDir,
   subscribeAppChatEvent,
 } from "./app-chat"
 import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
 import type { AppChatSendPayload } from "../src/shared/app-chat-types"
+import { parseHistoryQuery } from "../src/shared/app-chat-history-page"
 import { computeChallengeProof, createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
 import { MOBILE_NONCE_PATTERN } from "../src/shared/mobile-challenge.js"
 import { createMobileUpdateInfoProvider } from "./mobile-update-info"
@@ -242,17 +244,9 @@ async function isAuthorizedMediaPath(targetPath: string, sessionKey?: string): P
     return true
   }
   if (!sessionKey) return false
-  const history = await callAppChatDaemon("history", { sessionKey })
-  if (!history.ok || !history.items) return false
-  for (const item of history.items) {
-    if ((item.kind === "file" || item.kind === "image") && path.resolve(item.path).toLowerCase() === resolved.toLowerCase()) {
-      return true
-    }
-    if (item.kind === "user" && item.images?.some((p) => path.resolve(p).toLowerCase() === resolved.toLowerCase())) {
-      return true
-    }
-  }
-  return false
+  // 在 daemon 里比对：每张图、每个文件都要校验一次，拉整段历史（大会话几 MB）再逐条比太重
+  const r = await callAppChatDaemon("references-path", { sessionKey, path: resolved })
+  return r.ok && r.owned === true
 }
 
 function resolveMobileWebDir(): string | null {
@@ -400,7 +394,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   switch (pathname) {
     case "/api/mobile/history": {
       const sessionKey = String(body.sessionKey ?? "")
-      sendJson(res, 200, await callAppChatDaemon("history", { sessionKey }))
+      sendJson(res, 200, await callAppChatDaemon("history", { sessionKey, ...parseHistoryQuery(body) }))
       return
     }
     case "/api/mobile/send": {
@@ -423,7 +417,12 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
     case "/api/mobile/new-session": {
       const channelId = String(body.channelId ?? "")
-      sendJson(res, 200, createAppChatTempSession(channelId))
+      sendJson(res, 200, createAppChatTempSession(channelId, typeof body.dir === "string" ? body.dir : undefined))
+      return
+    }
+    case "/api/mobile/set-session-dir": {
+      const sessionKey = String(body.sessionKey ?? "")
+      sendJson(res, 200, await setAppChatSessionDir(sessionKey, String(body.dir ?? "")))
       return
     }
     case "/api/mobile/rename-session": {

@@ -18,6 +18,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 export interface ChatItem {
   id: string
   kind: string
+  ts?: number
   text?: string
   queued?: boolean
   interrupted?: boolean

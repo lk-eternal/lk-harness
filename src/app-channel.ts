@@ -190,6 +190,19 @@ export class AppChat {
     return this.entry(sessionKey).items.at(-1)?.ts;
   }
 
+  /**
+   * 这个会话的记录里是不是出现过这个文件/图片路径（回复里的文件、图片，用户发的图片）。
+   * 手机端取每张图、每个文件之前都要校验一次：在这里直接查，不用把整段历史（大会话几 MB）拉过去再逐条比。
+   */
+  referencesPath(sessionKey: string, targetPath: string): boolean {
+    if (!targetPath) return false;
+    const same = (p: string) => path.resolve(p).toLowerCase() === path.resolve(targetPath).toLowerCase();
+    return this.entry(sessionKey).items.some((item) =>
+      ((item.kind === "file" || item.kind === "image") && same(item.path)) ||
+      (item.kind === "user" && !!item.images?.some(same)),
+    );
+  }
+
   /** queued=true：Agent 正在干活，这条消息要排队，界面放进暂存区而不是聊天流 */
   addUser(sessionKey: string, id: string, text: string, images?: string[], queued?: boolean): void {
     this.upsert(this.entry(sessionKey), {

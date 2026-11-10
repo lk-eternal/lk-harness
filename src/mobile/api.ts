@@ -2,6 +2,7 @@ import { hmac } from "@noble/hashes/hmac.js"
 import { sha256 } from "@noble/hashes/sha2.js"
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js"
 import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
+import type { HistoryQuery } from "../shared/app-chat-history-page"
 import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
 import { challengeMessage } from "../shared/mobile-challenge"
@@ -35,6 +36,8 @@ export interface MobileChatTab {
   modelParams?: string
   resourceId?: string
   branch?: string
+  /** 用户给这个会话选的工作目录（应用内临时会话）；没选过缺省，此时目录要看会话键 */
+  boundDir?: string
 }
 
 export interface MobileChannelView {
@@ -338,8 +341,14 @@ export async function fetchUpdateInfo(baseUrl: string, token: string): Promise<M
   return await callApi<MobileUpdateInfo>(baseUrl, token, "/api/mobile/update-info", undefined, "GET")
 }
 
-export async function fetchHistory(baseUrl: string, token: string, sessionKey: string): Promise<{ ok: boolean; items?: AppChatItem[]; error?: string }> {
-  return await callApi(baseUrl, token, "/api/mobile/history", { sessionKey })
+/** 带 query.limit 只给最近一页（返回 hasMore），query.before* 往前翻页；不带 query 是整段历史（老版本电脑端只认这种） */
+export async function fetchHistory(
+  baseUrl: string,
+  token: string,
+  sessionKey: string,
+  query?: HistoryQuery,
+): Promise<{ ok: boolean; items?: AppChatItem[]; hasMore?: boolean; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/history", { sessionKey, ...query })
 }
 
 export async function sendMobileMessage(
@@ -354,8 +363,14 @@ export async function stopMobileSession(baseUrl: string, token: string, sessionK
   return await callApi(baseUrl, token, "/api/mobile/stop", { sessionKey })
 }
 
-export async function createMobileTempSession(baseUrl: string, token: string, channelId: string): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
-  return await callApi(baseUrl, token, "/api/mobile/new-session", { channelId })
+/** 带 dir 时新会话直接选好这个工作目录（目录得是电脑上真实存在的，电脑端会校验） */
+export async function createMobileTempSession(baseUrl: string, token: string, channelId: string, dir?: string): Promise<{ ok: boolean; sessionKey?: string; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/new-session", { channelId, ...(dir !== undefined ? { dir } : {}) })
+}
+
+/** 给还没开始的临时会话选（或改选）工作目录；会话开始后电脑端会拒绝 */
+export async function setMobileSessionDir(baseUrl: string, token: string, sessionKey: string, dir: string): Promise<{ ok: boolean; error?: string }> {
+  return await callApi(baseUrl, token, "/api/mobile/set-session-dir", { sessionKey, dir })
 }
 
 export async function renameMobileSession(baseUrl: string, token: string, sessionKey: string, name: string): Promise<{ ok: boolean; titles?: Record<string, string>; error?: string }> {

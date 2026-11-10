@@ -17,6 +17,7 @@ import type {
   AppChatResult as AppChatResultType,
   AppChatSendPayload as AppChatSendPayloadType,
 } from "../shared/app-chat-types"
+import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
 
 declare global {
   type AgentResource = AgentResourceType
@@ -201,14 +202,18 @@ declare global {
     getToolboxStatus(): Promise<{ larkCli: { installed: boolean; version?: string; loggedIn?: boolean; userName?: string }; meegle: { installed: boolean; version?: string }; nodeOk?: boolean; nodeVersion?: string }>
     installToolboxTool(key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }>
     loginLarkCli(): Promise<{ ok: boolean; error?: string }>
-    appChatHistory(sessionKey: string): Promise<AppChatResultType>
+    /** 带 query.limit 只给最近一页（返回 hasMore），query.before* 往前翻页；不带 query 是整段历史 */
+    appChatHistory(sessionKey: string, query?: HistoryQueryType): Promise<AppChatResultType>
     appChatSend(payload: AppChatSendPayloadType): Promise<AppChatResultType>
     appChatClear(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResultType>
     appChatDeleteSession(sessionKey: string): Promise<AppChatResultType>
     appChatRenameSession(sessionKey: string, name: string): Promise<AppChatResultType>
     appChatQueueEdit(sessionKey: string, messageId: string, text: string): Promise<AppChatResultType>
     appChatQueueRemove(sessionKey: string, messageId: string): Promise<AppChatResultType>
-    appChatNewTempSession(channelId: string): Promise<AppChatResultType>
+    /** 带 dir 时新会话直接选好这个工作目录 */
+    appChatNewTempSession(channelId: string, dir?: string): Promise<AppChatResultType>
+    /** 给还没开始的临时会话选（或改选）工作目录；会话开始后不能再换 */
+    appChatSetSessionDir(sessionKey: string, dir: string): Promise<AppChatResultType>
     appChatUsage(channelId: string): Promise<AppChatResultType>
     appChatLastActive(sessionKeys: string[]): Promise<AppChatResultType>
     appChatSaveImage(bytes: ArrayBuffer, ext: string): Promise<{ ok: true; path: string } | { ok: false; error: string }>
@@ -240,7 +245,7 @@ declare global {
         channelId: string
         name: string
         mainUserChatId?: string
-        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; branch?: string; model?: string; modelParams?: string; resourceId?: string }[]
+        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; branch?: string; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
         activeKey?: string
       }[]
       running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]

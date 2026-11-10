@@ -44,7 +44,7 @@ import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
-import { getSessionRecord, initSessionOverridesStore } from "../src/shared/session-overrides-store.js"
+import { findStoredSessionKey, getSessionRecord, initSessionOverridesStore, readOverridesSnapshot, withOverridesSnapshot } from "../src/shared/session-overrides-store.js"
 import { resolveLaunchModel, resolveSessionResourceId } from "../src/shared/launch-model.js"
 import { taskTabModel } from "../src/shared/task-tab-model.js"
 import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
@@ -556,6 +556,11 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const skipIdentity = useMain || projectOwned || chatType === "task" || chatType === "temp"
 
   let workDir: string
+  // 用户给会话选的目录（应用内临时会话）：目录没了不能悄悄建一个空的顶上，也不能退回临时文件夹让 Agent 在错的地方干活
+  const boundDir = (p.workingDirectory || boundProject?.worktreePath) ? undefined : getSessionRecord(sessionKey)?.boundDir
+  if (boundDir && !(fs.existsSync(boundDir) && fs.statSync(boundDir).isDirectory())) {
+    return { ok: false, error: `会话选的目录不存在或不是目录：${boundDir}` }
+  }
   if (p.workingDirectory) {
     workDir = p.workingDirectory
     if (!fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
@@ -568,6 +573,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
       userDataDir: app.getPath("userData"),
       sessionKey,
       mainWorkspaceDir: mainWs,
+      boundDir,
     }) ?? ""
     if (workDir && !fs.existsSync(workDir)) fs.mkdirSync(workDir, { recursive: true })
   }
@@ -811,6 +817,23 @@ function buildSessionListForChat(
   return out
 }
 
+/**
+ * 用户给会话选的工作目录（应用内临时会话）：读一遍盘，返回按会话键查的函数，列会话时每个会话不用各读一遍。
+ * 只用于展示，读不出来就当都没选。
+ */
+function boundDirReader(): (sessionKey: string) => string | undefined {
+  try {
+    initSessionOverridesStore(app.getPath("userData"))
+    const sessions = readOverridesSnapshot().sessions
+    return (sessionKey) => {
+      const key = findStoredSessionKey(sessions, sessionKey)
+      return key ? sessions[key]?.boundDir : undefined
+    }
+  } catch {
+    return () => undefined
+  }
+}
+
 function sessionListEntryToStatus(
   entry: SessionListEntry,
   index: number,
@@ -823,7 +846,7 @@ function sessionListEntryToStatus(
   const modelFields = tabModelFor(entry.sessionKey, entry.running)
   const s = entry.running ?? {
     sessionKey: entry.sessionKey,
-    workspaceDir: workspaceDirFromSessionKey(entry.sessionKey),
+    workspaceDir: boundDirReader()(entry.sessionKey) ?? workspaceDirFromSessionKey(entry.sessionKey),
     model: modelFields.model || override?.model || channelModel.model,
     modelParams: modelFields.modelParams ?? override?.modelParams ?? channelModel.modelParams,
   }
@@ -879,6 +902,7 @@ export function currentResourceIdForSession(sessionKey: string): string {
 function tabLabelForSession(
   sessionKey: string,
   running?: { workspaceDir?: string; chatName?: string },
+  boundDir?: string,
 ): string {
   const task = scheduledTaskForSessionKey(sessionKey)
   if (task) return formatScheduledTaskLabel(task.name)
@@ -891,7 +915,7 @@ function tabLabelForSession(
   if (sessionKey.startsWith("temp_")) {
     return `临时 ${sessionKey.slice(5, 13)}`
   }
-  const ws = workspaceDirFromSessionKey(sessionKey) || running?.workspaceDir
+  const ws = boundDir || workspaceDirFromSessionKey(sessionKey) || running?.workspaceDir
   if (ws) {
     const channel = resolveChannelForSession(sessionKey)
     const mainDir = effectiveWorkspaceDir(channel)
@@ -988,6 +1012,7 @@ export async function formatCurrentSessionBlock(
       userDataDir: app.getPath("userData"),
       sessionKey,
       mainWorkspaceDir: effectiveWorkspaceDir(channel),
+      boundDir: rec?.boundDir,
     })
   const chatType = matched?.chatType
     ?? (sessionKey.startsWith("temp_") ? "temp" : scheduledTaskForSessionKey(sessionKey) ? "task" : undefined)
@@ -1088,13 +1113,15 @@ export type SessionTabItem = {
   removable?: boolean
   /** 工作目录所在 git 仓库的当前分支；非目录会话或不是仓库时缺省 */
   branch?: string
+  /** 用户给这个会话选的工作目录（应用内临时会话）；没选过缺省，此时目录要看会话键 */
+  boundDir?: string
   model?: string
   modelParams?: string
   resourceId?: string
 }
 
-function tabBranchFor(sessionKey: string, running?: { workspaceDir?: string }): string | undefined {
-  const ws = workspaceDirFromSessionKey(sessionKey) || running?.workspaceDir
+function tabBranchFor(sessionKey: string, running?: { workspaceDir?: string }, boundDir?: string): string | undefined {
+  const ws = boundDir || workspaceDirFromSessionKey(sessionKey) || running?.workspaceDir
   return ws ? readGitBranchCached(ws) : undefined
 }
 
@@ -1124,17 +1151,27 @@ export function resolveSessionModels(sessionKeys: string[]): Record<string, Retu
 
 async function buildTabsForChat(chatId: string, port: number): Promise<{ activeKey?: string; tabs: SessionTabItem[] }> {
   const activeKey = (await getCurrentActiveSession(port, chatId)) ?? undefined
-  const list = buildSessionListForChat(chatId, activeKey)
-  const tabs: SessionTabItem[] = list.map((entry) => ({
-    sessionKey: entry.sessionKey,
-    label: tabLabelForSession(entry.sessionKey, entry.running),
-    kind: sessionTabKind(entry.sessionKey),
-    running: isSessionAgentRunning(entry.sessionKey),
-    current: entry.current,
-    removable: isDeletableSession(entry.sessionKey, chatId) || sessionTabKind(entry.sessionKey) === "project",
-    branch: tabBranchFor(entry.sessionKey, entry.running),
-    ...tabModelFor(entry.sessionKey, entry.running),
-  }))
+  // 整段只读、同步：每个 tab 要查好几次会话记录（模型、所属通道、目录），不共用一份快照，
+  // 每查一次就把全部会话的 state.json 读一遍（几百个会话就是 N×N 次读文件，会卡住主进程）。
+  // 对话页和手机端每隔几秒就刷新一次会话树，这里慢了整个界面都跟着慢
+  const tabs: SessionTabItem[] = withOverridesSnapshot(() => {
+    const list = buildSessionListForChat(chatId, activeKey)
+    const boundDirOf = boundDirReader()
+    return list.map((entry) => {
+      const boundDir = boundDirOf(entry.sessionKey)
+      return {
+        sessionKey: entry.sessionKey,
+        label: tabLabelForSession(entry.sessionKey, entry.running, boundDir),
+        kind: sessionTabKind(entry.sessionKey),
+        running: isSessionAgentRunning(entry.sessionKey),
+        current: entry.current,
+        removable: isDeletableSession(entry.sessionKey, chatId) || sessionTabKind(entry.sessionKey) === "project",
+        branch: tabBranchFor(entry.sessionKey, entry.running, boundDir),
+        ...(boundDir ? { boundDir } : {}),
+        ...tabModelFor(entry.sessionKey, entry.running),
+      }
+    })
+  })
   return { activeKey, tabs: disambiguateTabLabels(tabs) }
 }
 
@@ -1145,7 +1182,7 @@ async function buildTabsForChat(chatId: string, port: number): Promise<{ activeK
 function disambiguateTabLabels(tabs: SessionTabItem[]): SessionTabItem[] {
   const dirOf = new Map<string, string>()
   for (const t of tabs) {
-    const ws = workspaceDirFromSessionKey(t.sessionKey)
+    const ws = t.boundDir || workspaceDirFromSessionKey(t.sessionKey)
     if (ws) dirOf.set(t.sessionKey, ws)
   }
   const dupLabels = new Set(
@@ -1384,7 +1421,8 @@ export async function handleChatCommand(
       }
     const qAll = await getQueueMessages()
     const now = Date.now()
-    const blocks = list.map((entry, i) => sessionListEntryToStatus(entry, i + 1, qAll, now))
+    // 每个会话都要查记录（模型、通道、目录）：共用一份快照，不各读一遍盘
+    const blocks = withOverridesSnapshot(() => list.map((entry, i) => sessionListEntryToStatus(entry, i + 1, qAll, now)))
     const chatBtns: { label: string; cmd: string }[] = [{ label: "🔄 刷新", cmd: "/c ls" }]
     if (chatId) {
       const mainKey = resolveMainSessionKey(chatId)
