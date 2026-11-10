@@ -268,10 +268,21 @@ describe("兜底提示：独立任务跑完却没有提交结果", () => {
     await confirm(id)
   }
 
-  it("通知到 Agent：没提交 → 目标会话收到「没有提交结果」", async () => {
+  it("通知到 Agent：没提交 = 没有要汇报的，不唤醒目标会话（事故：每小时巡检无事也被「没有提交结果」打扰）", async () => {
     writeTasks([task("f-agent", { notify: "agent" })])
     await runTurn("f-agent")
-    expect(await waitFor(async () => (await pollKey(d.sessionKey)).some((t) => t.includes("没有提交结果")))).toBe(true)
+    await sleep(800)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+    expect(await chatHas("没有提交结果")).toBe(false)
+  })
+
+  it("通知到 Agent：没提交之后下一次有结果，照常送达（不会因为上一次静默而吞掉）", async () => {
+    writeTasks([task("f-agent-next", { notify: "agent" })])
+    await runTurn("f-agent-next")
+    await runTurn("f-agent-next", { text: "这次有缺陷" })
+    const msgs = await pollKey(d.sessionKey)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]).toContain("这次有缺陷")
   })
 
   it("通知到 IM：没提交 → 聊天里收到提示", async () => {

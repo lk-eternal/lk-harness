@@ -246,9 +246,18 @@ export function formatTaskImResult(task: Pick<ScheduledTask, "name">, text: stri
   return `⏰ **${task.name}**\n\n${text.trim()}`;
 }
 
-/** AI 没提交结果时发给接收方的一句话（只在通知到 Agent / IM 时发） */
+/** AI 没提交结果时发给接收方的一句话（只在通知到 IM 时发） */
 export function taskMissingResultText(task: Pick<ScheduledTask, "name">): string {
   return `⏰ **${task.name}** 已运行结束，但没有提交结果。`;
+}
+
+/**
+ * 跑完却没提交结果，要不要给接收方发 {@link taskMissingResultText}。
+ * 只有 IM：那里有人等着看结果，什么都没收到就分不清是「没事」还是「没跑成」。
+ * 通知到 Agent 的任务多是盯进度 / 查缺陷，没事就不用汇报；兜底提示会白白唤醒目标会话、让它在聊天里回一句废话。
+ */
+export function shouldNoticeMissingResult(task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId">): boolean {
+  return resolveTaskNotify(task) === "im";
 }
 
 // ── 独立任务会话的提示词 ───────────────────────────────
@@ -266,7 +275,9 @@ export function buildTaskProtocolSection(
   const lines = [
     `## 定时任务「${task.name}」`,
     "",
-    `独立运行：你的回复不会直接发给任何人，做完后调用 \`${TASK_RESULT_TOOL}\` 提交结果（\`text\` 是结果正文；没什么要汇报的传 \`quiet=true\`）。`,
+    mode === "agent"
+      ? `独立运行：你的回复不会直接发给任何人。有要汇报的调用 \`${TASK_RESULT_TOOL}\` 提交（\`text\` 是结果正文）；没有就直接结束。`
+      : `独立运行：你的回复不会直接发给任何人，做完后调用 \`${TASK_RESULT_TOOL}\` 提交结果（\`text\` 是结果正文；没什么要汇报的传 \`quiet=true\`）。`,
   ];
   if (mode === "im") {
     lines.push(`结果会${taskImTargetLabel(task, labels)}。图片 / 文件可用 \`send_image\` / \`send_file\` 发到同一处。`);

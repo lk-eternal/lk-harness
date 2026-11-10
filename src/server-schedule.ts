@@ -24,8 +24,8 @@ export function registerScheduleTools(s: McpServer, api: ScheduleApi, invoker: (
     "schedule_create",
     [
       "给自己排一个定时任务，到点自动执行（如等 CI、盯缺陷、定期检查）。",
-      'mode="fresh"（默认）：每次由新 Agent 执行，结果投回本会话；mode="session"：到点提醒本会话自己做。',
-      "prompt 要自包含：执行者看不到当前对话。",
+      'mode="fresh"（默认）：每次由新 Agent 执行，有结论才投回本会话，没事可报时它可以静默；mode="session"：到点提醒本会话自己做。',
+      "prompt 要自包含：执行者看不到当前对话；fresh 模式下写明什么情况下才汇报。",
     ].join("\n"),
     {
       name: z.string().describe("排程名称"),

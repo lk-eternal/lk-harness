@@ -182,6 +182,20 @@ export function shouldIncludeAdminMcp(
 
 export type HarnessMcpEndpoint = "task" | "interactive";
 
+/**
+ * AI 自排程工具是否挂载：主用户会话 / 项目会话才有，无卡片的独立任务不挂；
+ * 排程绑定调用者会话，没有调用者身份就不挂。
+ * 提示词里「自排程」那一段与工具挂载共用这个判定，保证挂了的会话一定被告知、没挂的不会被误导。
+ */
+export function shouldMountScheduleMcp(o: {
+  includeAdmin: boolean
+  includeProject: boolean
+  endpoint: HarnessMcpEndpoint
+  sessionKey?: string
+}): boolean {
+  return (o.includeAdmin || o.includeProject) && o.endpoint !== "task" && !!o.sessionKey?.trim()
+}
+
 export function buildBuiltinMcpServers(
   port: number | null,
   includeAdmin: boolean,
@@ -202,8 +216,7 @@ export function buildBuiltinMcpServers(
       }
     }
     if (includeProject) servers[PROJECT_MCP_KEY] = { url: `${base}/mcp-project` }
-    // AI 自排程：主用户会话 / 项目会话才有；排程绑定调用者会话，没有调用者身份就不挂（挂了也无法确定归属）
-    if ((includeAdmin || includeProject) && endpoint !== "task" && sk) {
+    if (shouldMountScheduleMcp({ includeAdmin, includeProject, endpoint, sessionKey: sk })) {
       servers[SCHEDULE_MCP_KEY] = { url: `${base}/mcp-schedule`, ...invokerHeaders }
     }
   }

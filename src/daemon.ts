@@ -65,6 +65,7 @@ import {
   formatTaskImResult,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
+  shouldNoticeMissingResult,
   taskMissingResultText,
 } from "./shared/task-delivery.js";
 import { resolveProjectAgentTarget } from "./shared/task-agent-target.js";
@@ -5806,7 +5807,8 @@ async function submitTaskResult(
 
 /**
  * 一批消息被确认处理完（回合成功结束）：若是独立任务会话，对账 AI 有没有提交结果。
- * 开了通知却什么都没提交 → 给接收方一句兜底提示，免得任务静默「成功」而没人知道。
+ * 通知到 IM 却什么都没提交 → 给接收方一句兜底提示，免得任务静默「成功」而没人知道；
+ * 其余方式没提交就是没有要汇报的，只记日志（见 shouldNoticeMissingResult）。
  * 回合失败不走这里（消息留在 .claimed 里由调度器重投），失败通知另议。
  */
 function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
@@ -5817,8 +5819,11 @@ function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
   const hasPending = getFileQueueMessages(sessionKey).some((v) => v.status === "pending");
   const outcome = taskRuns.finished(task.id, hasPending);
   if (outcome !== "missing") return;
+  if (!shouldNoticeMissingResult(task)) {
+    log("INFO", `定时任务「${task.name}」运行结束，没有提交结果（视为无需汇报）`);
+    return;
+  }
   log("WARN", `定时任务「${task.name}」运行结束但没有提交结果（未调用 ${TASK_RESULT_TOOL}）`);
-  if (resolveTaskNotify(task) === "none") return;
   deliverTaskText(task, taskMissingResultText(task), "notice")
     .then((r) => { if (!r.ok) log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`); })
     .catch((e: unknown) => log("WARN", `定时任务「${task.name}」兜底提示异常: ${e instanceof Error ? e.message : String(e)}`));

@@ -7,6 +7,8 @@ import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, getProjectNodes, projectGroupIds } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
+import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
+import { shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
@@ -31,7 +33,7 @@ function stripFrontmatter(raw: string): string {
   return raw.slice(end + 4).trim()
 }
 
-let cachedProtocol: { port: string; admin: boolean; body: string } | null = null
+let cachedProtocol: { port: string; admin: boolean; schedule: boolean; body: string } | null = null
 
 export function clearProtocolTemplateCache(): void {
   cachedProtocol = null
@@ -85,28 +87,34 @@ function substituteDaemonPort(raw: string, port: string): string {
     .replace(/Daemon 端口为 [`']19528[`']/g, `Daemon 端口为 \`${port}\``)
 }
 
-function substituteAdminSection(raw: string, includeAdmin: boolean): string {
-  const section = includeAdmin ? getAdminMcpProtocolSection() : ""
-  return raw.replace(/\{\{ADMIN_MCP_SECTION\}\}/g, section)
+function substituteToolSections(raw: string, includeAdmin: boolean, includeSchedule: boolean): string {
+  const admin = includeAdmin ? getAdminMcpProtocolSection() : ""
+  const schedule = includeSchedule ? `\n\n${AI_SCHEDULE_PROMPT_SECTION}\n` : ""
+  return raw
+    .replace(/\{\{ADMIN_MCP_SECTION\}\}/g, () => admin)
+    .replace(/\{\{SCHEDULE_MCP_SECTION\}\}/g, () => schedule)
 }
 
 /** 会话协议（无 poll，由 harness Session Worker 代管） */
-export function loadProtocol(daemonPort?: number | null, includeAdmin = false): string {
+export function loadProtocol(daemonPort?: number | null, includeAdmin = false, includeSchedule = false): string {
   const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin) return cachedProtocol.body
+  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin && cachedProtocol.schedule === includeSchedule) return cachedProtocol.body
   const tplPath = getRuleTemplatePath()
   if (!fs.existsSync(tplPath)) throw new Error(`协议模板缺失: ${tplPath}`)
   let raw = fs.readFileSync(tplPath, "utf-8")
   raw = substituteDaemonPort(raw, port)
-  raw = substituteAdminSection(raw, includeAdmin)
+  raw = substituteToolSections(raw, includeAdmin, includeSchedule)
   const body = stripFrontmatter(raw)
-  cachedProtocol = { port, admin: includeAdmin, body }
+  cachedProtocol = { port, admin: includeAdmin, schedule: includeSchedule, body }
   return body
 }
 
+function isProjectSession(meta?: LaunchMeta, sessionKey?: string): boolean {
+  return meta?.chatType === "project" || !!sessionKey?.includes("::project_")
+}
+
 export function shouldSkipDigitalIdentity(meta?: LaunchMeta, sessionKey?: string, useMainWorkspace?: boolean): boolean {
-  const isProject = meta?.chatType === "project" || !!sessionKey?.includes("::project_")
-  return !!useMainWorkspace || isProject || meta?.chatType === "task" || meta?.chatType === "temp"
+  return !!useMainWorkspace || isProjectSession(meta, sessionKey) || meta?.chatType === "task" || meta?.chatType === "temp"
 }
 
 function resolveDigitalIdentity(skipIdentity: boolean, override?: string): string {
@@ -163,8 +171,18 @@ function appendTaskAndMeta(
   if (ctx.meta?.chatType) parts.push(`[chat_type=${ctx.meta.chatType}]`)
 }
 
-function ctxIncludeAdmin(ctx: PromptAssemblyContext): boolean {
+function ctxIncludeAdmin(ctx: Pick<PromptAssemblyContext, "includeAdmin">): boolean {
   return ctx.includeAdmin === true
+}
+
+/** 自排程段：与 lk-harness-schedule 工具的挂载条件同一个判定（主用户会话 / 项目会话） */
+function ctxIncludeSchedule(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "includeAdmin">): boolean {
+  return shouldMountScheduleMcp({
+    includeAdmin: ctxIncludeAdmin(ctx),
+    includeProject: isProjectSession(ctx.meta, ctx.sessionKey),
+    endpoint: ctx.meta?.chatType === "task" ? "task" : "interactive",
+    sessionKey: ctx.sessionKey,
+  })
 }
 
 /**
@@ -190,7 +208,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const includeAdmin = ctxIncludeAdmin(ctx)
   const h = createHash("md5")
-  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin))
+  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin, ctxIncludeSchedule(ctx)))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
   const scope = resolvePromptRuleScope(ctx)
@@ -208,7 +226,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
   const parts: string[] = []
   parts.push("---")
-  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx)))
+  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) {

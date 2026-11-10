@@ -53,6 +53,15 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
     expect(groupNames("lk-harness-schedule")).toEqual(["schedule_cancel", "schedule_create", "schedule_list"])
   })
 
+  it("schedule_create 的说明同样告诉调用者：fresh 没事可报可静默、prompt 里写明何时汇报", () => {
+    const s = new McpServer({ name: "t", version: "0" })
+    registerSchedule(s)
+    const desc: string = (s as any)._registeredTools.schedule_create.description
+    expect(desc).toContain("有结论才投回本会话")
+    expect(desc).toContain("静默")
+    expect(desc).toContain("写明什么情况下才汇报")
+  })
+
   it("manifest 通用组 ⊆ task 端点实注册", () => {
     const task = namesOf(registerAgentOutboundTools as Register, { taskResult: true })
     for (const n of groupNames("lk-harness")) expect(task).toContain(n)

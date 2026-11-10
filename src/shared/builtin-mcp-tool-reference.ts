@@ -60,10 +60,10 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
       summary: "给自己排一个定时任务，到点自动执行。绑定调用它的会话。",
       params: [
         { name: "name", required: true, type: "string", description: "排程名称" },
-        { name: "prompt", required: true, type: "string", description: "到点要执行的内容（自包含）" },
+        { name: "prompt", required: true, type: "string", description: "到点要执行的内容（自包含；fresh 模式下写明什么情况下才汇报）" },
         { name: "every_minutes", type: "number", description: "每隔多少分钟触发一次，与 cron 二选一" },
         { name: "cron", type: "string", description: "cron 表达式（5 段，本地时区），与 every_minutes 二选一" },
-        { name: "mode", type: "enum", enumValues: ["fresh", "session"], description: "fresh（默认）：每次新 Agent 执行，结果投回本会话；session：到点提醒本会话自己做" },
+        { name: "mode", type: "enum", enumValues: ["fresh", "session"], description: "fresh（默认）：每次新 Agent 执行，有结论才投回本会话，没事可报时可以静默；session：到点提醒本会话自己做" },
         { name: "max_runs", type: "number", description: "最多触发几次，与 expires_in_hours 二选一必填" },
         { name: "expires_in_hours", type: "number", description: "多少小时后过期，与 max_runs 二选一必填" },
       ],

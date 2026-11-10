@@ -9,6 +9,14 @@ import { isAiTask, type ScheduledTask } from "./scheduled-task-rules.js";
 
 export { isAiTask };
 
+/** 嵌入宿主协议的「自排程」段：挂载了 lk-harness-schedule 的会话（主用户会话、项目会话）才会收到 */
+export const AI_SCHEDULE_PROMPT_SECTION = [
+  "### AI 自排程（lk-harness-schedule）",
+  "",
+  "**schedule_create / schedule_list / schedule_cancel** — 给**你当前所在的会话**自己排定时任务（等 CI、定期检查、隔天复查）。",
+  "- `mode=fresh`（默认）：每次由新 Agent 执行，有结论才投回本会话，没事可报时它可以静默（prompt 里写明什么情况下才汇报）；`mode=session`：到点提醒本会话自己做。",
+].join("\n");
+
 export const AI_SCHEDULE_LIMITS = {
   /** 同一会话同时存在的 AI 排程数 */
   maxActivePerSession: 5,

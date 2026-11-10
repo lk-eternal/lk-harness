@@ -18,6 +18,7 @@ import {
   formatTaskImResult,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
+  shouldNoticeMissingResult,
   taskMissingResultText,
   validateTaskDelivery,
   type TaskDeliveryCheckEnv,
@@ -274,6 +275,15 @@ describe("消息文案", () => {
     const t = taskMissingResultText({ name: "周报编写" })
     expect(t).toBe("⏰ **周报编写** 已运行结束，但没有提交结果。")
   })
+
+  it("没提交结果要不要提示：只有通知到 IM（含旧任务按聊天 ID 推断为 IM）；Agent / 不通知 / 非独立都不提示", () => {
+    expect(shouldNoticeMissingResult({ notify: "im" })).toBe(true)
+    expect(shouldNoticeMissingResult({ notifyChatId: "oc_x" })).toBe(true)
+    expect(shouldNoticeMissingResult({ notify: "agent" })).toBe(false)
+    expect(shouldNoticeMissingResult({ notify: "none" })).toBe(false)
+    expect(shouldNoticeMissingResult({})).toBe(false)
+    expect(shouldNoticeMissingResult({ independent: false, notify: "im" })).toBe(false)
+  })
 })
 
 describe("buildTaskProtocolSection：独立任务的提示词", () => {
@@ -281,14 +291,25 @@ describe("buildTaskProtocolSection：独立任务的提示词", () => {
     expect(buildTaskProtocolSection(task({ independent: false }), labels)).toBe("")
   })
 
-  it("所有模式都先说清：回复不直接送达，做完用 send_result，没事用 quiet", () => {
+  it("所有模式都先说清：回复不直接送达，用 send_result 提交结果", () => {
     for (const notify of ["none", "agent", "im"] as const) {
       const s = buildTaskProtocolSection(task({ notify }), labels)
       expect(s).toContain("你的回复不会直接发给任何人")
       expect(s).toContain("`send_result`")
-      expect(s).toContain("quiet=true")
       expect(s).toContain("周报编写")
     }
+  })
+
+  it("IM / 不通知：没事可报用 quiet（IM 里什么都不交会收到「没有提交结果」）", () => {
+    for (const notify of ["none", "im"] as const) {
+      expect(buildTaskProtocolSection(task({ notify }), labels)).toContain("quiet=true")
+    }
+  })
+
+  it("通知到 Agent：没有要汇报的就直接结束，不用提交任何东西", () => {
+    const s = buildTaskProtocolSection(task({ notify: "agent" }), labels)
+    expect(s).toContain("没有就直接结束")
+    expect(s).not.toContain("quiet")
   })
 
   it("通知到 IM：说清发到哪", () => {

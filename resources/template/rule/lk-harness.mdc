@@ -22,4 +22,4 @@ alwaysApply: true
 必填：`file_path`（本地绝对路径）  
 可选：`message_id`
 
-{{ADMIN_MCP_SECTION}}
+{{ADMIN_MCP_SECTION}}{{SCHEDULE_MCP_SECTION}}
