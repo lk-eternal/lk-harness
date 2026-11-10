@@ -11,6 +11,7 @@ import { getConfig } from "./config-store"
 import { syncMainProcessProxyEnv } from "./agent-env"
 import { DownloadRetryExhausted, errorMessage as downloadErrorMessage } from "./resumable-download"
 import { createRotatingFetch, formatRetryNotice, pickWindowsInstaller, prefetchInstaller } from "./update-prefetch"
+import { macInstallerUrl, summarizeBrewFailure } from "./brew-update"
 
 const execFileAsync = promisify(execFile)
 
@@ -82,6 +83,8 @@ export interface UpdaterApplyResult {
   ok: boolean
   error?: string
   message?: string
+  /** 自动更新失败时的手动下载直链（目前只有 macOS 的 brew 失败会给） */
+  downloadUrl?: string
 }
 
 let mainWindowGetter: (() => BrowserWindow | null) | null = null
@@ -596,47 +599,70 @@ function getBrewExecutable(): string | null {
   return null
 }
 
-const BREW_MANUAL_GUIDE = [
-  "手动更新方法（在终端中执行）：",
-  `  brew untap ${HOMEBREW_TAP}`,
-  `  brew tap ${HOMEBREW_TAP}`,
-  `  brew install --cask ${HOMEBREW_CASK}（首次安装；已用 brew 装过改用下一条升级）`,
-  `  brew upgrade --cask ${HOMEBREW_CASK}（已通过 brew 安装的用户）`,
-  "  xattr -cr /Applications/LK\\ Harness.app",
-  "",
-  `FAQ: https://github.com/${HOMEBREW_TAP}`,
-].join("\n")
+/** 不用 brew 的更新办法放在最前面：brew 自己的环境问题（目录权限、不受支持的平台）我们修不了 */
+function brewFailureGuide(version: string): string {
+  return [
+    "不用 brew 也能更新：",
+    `  1. 下载安装包（已按本机芯片选好）：${macInstallerUrl(RELEASES_BASE, version, process.arch)}`,
+    "  2. 打开 dmg，把 LK Harness 拖进「应用程序」覆盖旧版",
+    "  3. 终端执行：xattr -cr /Applications/LK\\ Harness.app",
+    "",
+    "用 brew 更新（在终端中执行）：",
+    `  brew untap ${HOMEBREW_TAP}`,
+    `  brew tap ${HOMEBREW_TAP}`,
+    `  brew install --cask ${HOMEBREW_CASK}（首次安装；已用 brew 装过改用下一条升级）`,
+    `  brew upgrade --cask ${HOMEBREW_CASK}（已通过 brew 安装的用户）`,
+    "  xattr -cr /Applications/LK\\ Harness.app",
+    "",
+    `FAQ: https://github.com/${HOMEBREW_TAP}`,
+  ].join("\n")
+}
 
-async function runBrewUpgrade(): Promise<UpdaterApplyResult> {
+function brewFailureResult(version: string, headline: string, detail: string): UpdaterApplyResult {
+  return {
+    ok: false,
+    error: `${[headline, detail].filter(Boolean).join("\n")}\n\n${brewFailureGuide(version)}`,
+    downloadUrl: macInstallerUrl(RELEASES_BASE, version, process.arch),
+  }
+}
+
+async function runBrewUpgrade(version: string): Promise<UpdaterApplyResult> {
   const brew = getBrewExecutable()
   if (!brew) {
-    return { ok: false, error: `未找到 Homebrew（/opt/homebrew 或 /usr/local）\n\n${BREW_MANUAL_GUIDE}` }
+    return brewFailureResult(version, "未找到 Homebrew（/opt/homebrew 或 /usr/local）。", "")
   }
   const brewEnv = {
     ...process.env,
     PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`,
   }
+  let step = "brew"
+  const run = (args: string[], timeout: number) => {
+    step = `brew ${args.join(" ")}`
+    return execFileAsync(brew, args, { timeout, env: brewEnv })
+  }
   try {
-    await execFileAsync(brew, ["tap", HOMEBREW_TAP], { timeout: 120_000, env: brewEnv })
-    await execFileAsync(brew, ["update"], { timeout: 300_000, env: brewEnv })
+    await run(["tap", HOMEBREW_TAP], 120_000)
+    await run(["update"], 300_000)
     // dmg 直装用户 brew 未登记 cask：先查在册才 upgrade，否则 install
     let installed = false
     try {
-      await execFileAsync(brew, ["list", "--cask", HOMEBREW_CASK], { timeout: 60_000, env: brewEnv })
+      await run(["list", "--cask", HOMEBREW_CASK], 60_000)
       installed = true
     } catch { /* 未安装，走 install */ }
     if (installed) {
-      await execFileAsync(brew, ["upgrade", "--cask", HOMEBREW_CASK], { timeout: 600_000, env: brewEnv })
+      await run(["upgrade", "--cask", HOMEBREW_CASK], 600_000)
     } else {
-      await execFileAsync(brew, ["install", "--cask", HOMEBREW_CASK], { timeout: 600_000, env: brewEnv })
+      await run(["install", "--cask", HOMEBREW_CASK], 600_000)
     }
     return {
       ok: true,
       message: "更新已完成，请重启应用。",
     }
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    return { ok: false, error: `brew 执行失败：${msg}\n\n${BREW_MANUAL_GUIDE}` }
+    // execFile 的错误带 stderr，brew 的原因在里面；message 是「Command failed: …」加同样的内容
+    const stderr = (e as { stderr?: unknown }).stderr
+    const output = typeof stderr === "string" && stderr.trim() ? stderr : e instanceof Error ? e.message : String(e)
+    return brewFailureResult(version, `${step} 没有成功：`, summarizeBrewFailure(output))
   }
 }
 
@@ -911,14 +937,18 @@ async function runStartupUpdateCheck(): Promise<void> {
       })
       return
     }
-    const result = await runBrewUpgrade()
-    await showAppModal({
+    const result = await runBrewUpgrade(rel.version)
+    const choice = await showAppModal({
       variant: result.ok ? "info" : "error",
       title: result.ok ? "完成" : "更新失败",
       message: result.ok ? (result.message ?? "请重启应用。") : (result.error ?? "未知错误"),
-      buttons: ["确定"],
-      defaultId: 0,
+      buttons: result.downloadUrl ? ["关闭", "下载安装包"] : ["确定"],
+      defaultId: result.downloadUrl ? 1 : 0,
+      cancelId: 0,
     })
+    if (choice === 1 && result.downloadUrl) {
+      await shell.openExternal(result.downloadUrl)
+    }
     return
   }
 
@@ -1056,7 +1086,7 @@ export function registerUpdaterIpc(): void {
     }
 
     if (process.platform === "darwin") {
-      return runBrewUpgrade()
+      return runBrewUpgrade(rel.version)
     }
 
     if (process.platform === "win32") {

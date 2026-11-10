@@ -132,6 +132,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateCheck, setUpdateCheck] = useState<Awaited<ReturnType<typeof window.electronAPI.checkAppUpdate>> | null>(null)
   const [updateMsg, setUpdateMsg] = useState<string | null>(null)
+  /** 自动更新失败时给的手动下载直链 */
+  const [updateDownloadUrl, setUpdateDownloadUrl] = useState<string | null>(null)
   const [updateDownloadPct, setUpdateDownloadPct] = useState<number | null>(null)
   const [updateDownloading, setUpdateDownloading] = useState(false)
   const updateDownloadingRef = useRef(false)
@@ -327,6 +329,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const handleCheckUpdate = async () => {
     setUpdateBusy(true)
     setUpdateMsg(null)
+    setUpdateDownloadUrl(null)
     setUpdateCheck(null)
     setUpdateDownloadPct(null)
     setUpdateDownloading(false)
@@ -352,6 +355,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const handleApplyUpdate = async () => {
     setUpdateBusy(true)
     setUpdateMsg("正在连接更新服务器…")
+    setUpdateDownloadUrl(null)
     try {
       const res = await window.electronAPI.applyAppUpdate()
       if (res.ok) {
@@ -361,6 +365,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)
         setUpdateMsg(res.error ?? "更新失败")
+        setUpdateDownloadUrl(res.downloadUrl ?? null)
       }
     } finally {
       setUpdateBusy(false)
@@ -1004,6 +1009,16 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 {updateMsg && (
                   <div className="space-y-2">
                     <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface/50 px-3 py-2 text-xs text-fg-3">{updateMsg}</p>
+                    {updateDownloadUrl && (
+                      <a
+                        href={updateDownloadUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
+                      >
+                        <Download size={13} />下载安装包
+                      </a>
+                    )}
                     {updateDownloading && (
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-raised">
                         <div

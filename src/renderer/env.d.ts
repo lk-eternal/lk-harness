@@ -163,7 +163,7 @@ declare global {
           releaseNotes: string
         }
     >
-    applyAppUpdate(): Promise<{ ok: boolean; error?: string; message?: string }>
+    applyAppUpdate(): Promise<{ ok: boolean; error?: string; message?: string; downloadUrl?: string }>
     onUpdaterProgress(cb: (percent: number) => void): () => void
     onUpdaterError(cb: (message: string) => void): () => void
     onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
