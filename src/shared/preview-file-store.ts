@@ -49,10 +49,45 @@ function error(status: number): ServeResult {
   return { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } };
 }
 
-export function createPreviewFileStore(maxEntries = 300): PreviewFileStore {
+export interface PreviewFileStoreOptions {
+  /**
+   * 令牌多久没被用到就失效（毫秒）；不填就一直有效，直到被淘汰。
+   * 手机端用它：令牌要放进 HTTP 链接（图片、音视频、网页的 src 带不了请求头），不能长期有效。
+   * 用一次续一次：正在播放的长视频会不断用到令牌，不会播到一半失效。
+   */
+  ttlMs?: number;
+  now?: () => number;
+}
+
+export function createPreviewFileStore(maxEntries = 300, options: PreviewFileStoreOptions = {}): PreviewFileStore {
+  const { ttlMs } = options;
+  const now = options.now ?? Date.now;
   const byToken = new Map<string, PreviewFileEntry>();
   const byKey = new Map<string, string>();
+  /** 令牌的失效时间；没设 ttlMs 时不用 */
+  const expires = new Map<string, number>();
   const keyOf = (file: string, scopeDir: boolean) => `${scopeDir ? "dir" : "file"}|${file}`;
+
+  const drop = (token: string): void => {
+    const gone = byToken.get(token);
+    if (!gone) return;
+    byToken.delete(token);
+    expires.delete(token);
+    byKey.delete(keyOf(gone.file, gone.scopeDir));
+  };
+
+  /** 取一个还有效的令牌；有效就顺便续期，过期了就清掉 */
+  const alive = (token: string): PreviewFileEntry | undefined => {
+    const entry = byToken.get(token);
+    if (!entry) return undefined;
+    if (ttlMs === undefined) return entry;
+    if ((expires.get(token) ?? 0) <= now()) {
+      drop(token);
+      return undefined;
+    }
+    expires.set(token, now() + ttlMs);
+    return entry;
+  };
 
   /** 令牌指向的真实文件：目录令牌按请求路径找，且不能走出目录 */
   const resolveTarget = (entry: PreviewFileEntry, relPath: string): string | number => {
@@ -80,8 +115,11 @@ export function createPreviewFileStore(maxEntries = 300): PreviewFileStore {
     register(realFile, opts) {
       const scopeDir = opts?.scopeDir === true;
       const key = keyOf(realFile, scopeDir);
+      // 过期的顺手清掉：不再用的令牌不该占着名额
+      const t = now();
+      for (const [token, at] of expires) if (at <= t) drop(token);
       const existing = byKey.get(key);
-      if (existing) {
+      if (existing && alive(existing)) {
         // 重新放到最新：淘汰按最近使用算
         const entry = byToken.get(existing)!;
         byToken.delete(existing);
@@ -91,16 +129,12 @@ export function createPreviewFileStore(maxEntries = 300): PreviewFileStore {
       const token = crypto.randomBytes(12).toString("hex");
       byToken.set(token, { token, file: realFile, scopeDir });
       byKey.set(key, token);
-      while (byToken.size > maxEntries) {
-        const oldest = byToken.keys().next().value as string;
-        const gone = byToken.get(oldest)!;
-        byToken.delete(oldest);
-        byKey.delete(keyOf(gone.file, gone.scopeDir));
-      }
+      if (ttlMs !== undefined) expires.set(token, t + ttlMs);
+      while (byToken.size > maxEntries) drop(byToken.keys().next().value as string);
       return token;
     },
 
-    lookup: (token) => byToken.get(token),
+    lookup: (token) => alive(token),
 
     urlFor(token) {
       const entry = byToken.get(token);
@@ -108,7 +142,7 @@ export function createPreviewFileStore(maxEntries = 300): PreviewFileStore {
     },
 
     serve(token, relPath, opts) {
-      const entry = byToken.get(token);
+      const entry = alive(token);
       if (!entry) return error(403);
       const target = resolveTarget(entry, relPath);
       if (typeof target === "number") return error(target);

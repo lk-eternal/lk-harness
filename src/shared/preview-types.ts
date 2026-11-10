@@ -69,5 +69,10 @@ export const PREVIEW_MAX_TEXT_BYTES = 2 * 1024 * 1024;
 /** 整个读进界面解析的文档（docx / xlsx）的大小上限：解析在界面线程上跑，再大会卡 */
 export const PREVIEW_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 
+/** 文件超过 maxBytes 不读时给用户的说明（电脑端主进程和手机端读取共用同一句话） */
+export function documentTooLargeMessage(size: number, maxBytes = PREVIEW_MAX_DOCUMENT_BYTES): string {
+  return `文件有 ${(size / 1024 / 1024).toFixed(1)} MB，超过应用内预览的上限（${Math.round(maxBytes / 1024 / 1024)} MB），请用其他程序打开`;
+}
+
 /** 一次最多检查多少个路径（对话文字里认出来的路径交给主进程确认能不能预览）：一条回复里能冒出来的数量有限，超出的直接当没有 */
 export const PREVIEW_CHECK_MAX_PATHS = 60;

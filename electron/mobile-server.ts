@@ -34,6 +34,9 @@ import type { AppChatSendPayload } from "../src/shared/app-chat-types"
 import { parseHistoryQuery } from "../src/shared/app-chat-history-page"
 import { computeChallengeProof, createFileTicketStore, isPathInside } from "../src/shared/mobile-access.js"
 import { MOBILE_NONCE_PATTERN } from "../src/shared/mobile-challenge.js"
+import { handleMobilePreviewRequest } from "../src/shared/mobile-preview-http.js"
+import { PREVIEW_CHECK_MAX_PATHS } from "../src/shared/preview-types.js"
+import { mobilePreview } from "./file-preview"
 import { createMobileUpdateInfoProvider } from "./mobile-update-info"
 import { fetchLatestRelease } from "./updater"
 import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
@@ -328,6 +331,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return
   }
 
+  // 预览文件的内容：图片、音视频、网页的 src 带不了 Authorization 头，凭 preview-open 发的短时令牌（在路径里）鉴权
+  if (handleMobilePreviewRequest(mobilePreview.serve, req, res, pathname, setCors)) return
+
   // 挑战应答：手机在把令牌发给明文 http 地址之前，先确认对面是持有同一令牌的电脑端，所以这条不需要令牌。
   // 应答是令牌的 HMAC，推不出令牌本身
   if (req.method === "GET" && pathname === "/api/mobile/challenge") {
@@ -490,6 +496,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return
     }
     case "/api/mobile/file-ticket": {
+      // 预览页里的下载：凭预览令牌换票据。预览打开时已经校验过权限（工作目录里的文件不一定在会话记录里出现过），这里不用再按路径校验
+      if (typeof body.previewToken === "string") {
+        const file = mobilePreview.fileOf(body.previewToken)
+        if (!file || !fs.existsSync(file)) {
+          sendJson(res, 404, { ok: false, error: "预览已失效，请重新打开" })
+          return
+        }
+        sendJson(res, 200, { ok: true, ticket: fileTickets.issue(path.resolve(file)) })
+        return
+      }
       const filePath = String(body.path ?? "")
       const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined
       if (!await isAuthorizedMediaPath(filePath, sessionKey) || !fs.existsSync(filePath)) {
@@ -497,6 +513,24 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         return
       }
       sendJson(res, 200, { ok: true, ticket: fileTickets.issue(path.resolve(filePath)) })
+      return
+    }
+    // 文件预览：和电脑端同一套校验（文件在会话记录里出现过或在工作目录内），读取结果的形状也一样
+    case "/api/mobile/preview-open": {
+      sendJson(res, 200, await mobilePreview.open(String(body.sessionKey ?? ""), String(body.path ?? "")))
+      return
+    }
+    case "/api/mobile/preview-check": {
+      const paths = Array.isArray(body.paths) ? body.paths.slice(0, PREVIEW_CHECK_MAX_PATHS).map(String) : []
+      sendJson(res, 200, { ok: true, paths: await mobilePreview.check(String(body.sessionKey ?? ""), paths) })
+      return
+    }
+    case "/api/mobile/preview-text": {
+      sendJson(res, 200, await mobilePreview.text(String(body.token ?? "")))
+      return
+    }
+    case "/api/mobile/preview-zip": {
+      sendJson(res, 200, await mobilePreview.zip(String(body.token ?? "")))
       return
     }
     case "/api/mobile/upload-image": {

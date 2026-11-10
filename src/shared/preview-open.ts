@@ -11,7 +11,7 @@ import { baseName, previewTypeOf } from "./preview-kinds.js";
 import { isPathInside, type PreviewFileStore } from "./preview-file-store.js";
 import { decodePreviewText } from "./preview-text.js";
 import {
-  PREVIEW_CHECK_MAX_PATHS, PREVIEW_MAX_DOCUMENT_BYTES, PREVIEW_MAX_TEXT_BYTES,
+  PREVIEW_CHECK_MAX_PATHS, PREVIEW_MAX_DOCUMENT_BYTES, PREVIEW_MAX_TEXT_BYTES, documentTooLargeMessage,
   type PreviewBytesResult, type PreviewOpenResult, type PreviewTextResult, type PreviewZipResult,
 } from "./preview-types.js";
 import { ZipFormatError, readZipListing } from "./preview-zip.js";
@@ -145,7 +145,7 @@ export async function readPreviewBytesByToken(
   try {
     const size = (await fs.promises.stat(entry.file)).size;
     if (size > maxBytes) {
-      return fail(`文件有 ${(size / 1024 / 1024).toFixed(1)} MB，超过应用内预览的上限（${Math.round(maxBytes / 1024 / 1024)} MB），请用其他程序打开`);
+      return fail(documentTooLargeMessage(size, maxBytes));
     }
     return { ok: true, bytes: new Uint8Array(await fs.promises.readFile(entry.file)) };
   } catch {

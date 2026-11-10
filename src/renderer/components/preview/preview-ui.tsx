@@ -1,7 +1,21 @@
-import type { ReactNode } from "react"
+import { Component, type ReactNode } from "react"
 import { FileQuestion, Loader2 } from "lucide-react"
 import { formatBytes } from "../../../shared/preview-text"
 import "./preview.css"
+
+/**
+ * 懒加载的查看器加载失败（网络断了、资源缺失）或渲染时出错，显示 fallback，而不是让整个界面白屏。
+ * 注意：React.lazy 加载失败的结果会被缓存，重新渲染也不会重试，要恢复得重新进入页面。
+ */
+export class LoadBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children
+  }
+}
 
 /** 视图切换（预览 / 源码 这类）：一组互斥的小按钮 */
 export function Segmented<T extends string>({ value, options, onChange }: {

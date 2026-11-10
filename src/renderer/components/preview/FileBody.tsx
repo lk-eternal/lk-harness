@@ -4,11 +4,20 @@ import type { PreviewFileInfo } from "../../../shared/preview-types"
 import ArchiveView from "./ArchiveView"
 import { ImageView, MediaView, PdfView } from "./MediaViewers"
 import { CodeView, CsvView, HtmlView, MarkdownView } from "./TextViewers"
-import { FileNotice, Loading } from "./preview-ui"
+import { FileNotice, LoadBoundary, Loading } from "./preview-ui"
 
 // Word / Excel 的解析库体积大，只在真的打开这类文件时才加载
 const DocxView = lazy(() => import("./DocxView"))
 const XlsxView = lazy(() => import("./XlsxView"))
+
+/** 加载中显示转圈；加载失败显示说明和这个环境里能做的操作，不白屏 */
+function LazyViewer({ info, actions, children }: { info: PreviewFileInfo; actions?: ReactNode; children: ReactNode }) {
+  return (
+    <LoadBoundary fallback={<FileNotice file={info} reason="查看器加载失败，请检查网络后重新打开这个文件">{actions}</FileNotice>}>
+      <Suspense fallback={<Loading />}>{children}</Suspense>
+    </LoadBoundary>
+  )
+}
 
 /**
  * 按文件类型选查看器。电脑端的预览面板和手机端的预览页共用这里。
@@ -28,8 +37,8 @@ export default function FileBody({ info, kind, actions, line }: { info: PreviewF
     case "audio": return <MediaView info={info} video={false} />
     case "video": return <MediaView info={info} video />
     case "archive": return <ArchiveView info={info} actions={actions} />
-    case "docx": return <Suspense fallback={<Loading />}><DocxView info={info} actions={actions} /></Suspense>
-    case "xlsx": return <Suspense fallback={<Loading />}><XlsxView info={info} actions={actions} /></Suspense>
+    case "docx": return <LazyViewer info={info} actions={actions}><DocxView info={info} actions={actions} /></LazyViewer>
+    case "xlsx": return <LazyViewer info={info} actions={actions}><XlsxView info={info} actions={actions} /></LazyViewer>
     case "unsupported": return <FileNotice file={info} reason={unsupportedReason(info.name)}>{actions}</FileNotice>
   }
 }

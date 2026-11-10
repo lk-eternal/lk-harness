@@ -1,14 +1,17 @@
-import { useEffect, useRef, useState } from "react"
-import { ArrowDown, Download, FileText, ImageOff, Loader2, Sparkles, Terminal } from "lucide-react"
+import { useEffect, useRef, useState, type ComponentProps } from "react"
+import { ArrowDown, Download, Eye, FileText, ImageOff, Loader2, Sparkles, Terminal } from "lucide-react"
 import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/app-chat-types"
+import { previewTypeOf } from "../shared/preview-kinds"
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import { useKeepScrollOnPrepend } from "../renderer/hooks/useKeepScrollOnPrepend"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
+import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
 import { useBackToClose } from "./back-stack"
-import { startFileDownload } from "./native-browser"
+import { MobilePreviewProvider } from "./MobilePreview"
+import { useFileDownload } from "./use-file-download"
 
 function MobileRemoteImage({
   baseUrl,
@@ -123,22 +126,11 @@ function MobileFileCard({
   token: string
   sessionKey: string
 }) {
-  const [downloading, setDownloading] = useState(false)
-  const [error, setError] = useState("")
-
-  const handleDownload = async () => {
-    if (downloading) return
-    setDownloading(true)
-    setError("")
-    try {
-      const url = await requestMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey)
-      await startFileDownload(url, item.name)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "下载失败")
-    } finally {
-      setDownloading(false)
-    }
-  }
+  const { downloading, error, start } = useFileDownload()
+  const preview = usePreview()
+  // 手机上 PDF 显示不了（Android WebView 不能内嵌 PDF），不给预览按钮，直接下载
+  const kind = previewTypeOf(item.name).kind
+  const canPreview = preview.available && kind !== "unsupported" && kind !== "pdf"
 
   return (
     <div className="rounded-xl border border-line bg-surface/70 px-3.5 py-2.5">
@@ -150,11 +142,22 @@ function MobileFileCard({
           <p className="truncate text-sm font-medium text-fg-soft" title={item.name}>{item.name}</p>
           <p className="truncate text-[11px] text-fg-faint" title={item.path}>{item.path}</p>
         </div>
+        {canPreview && (
+          <button
+            type="button"
+            onClick={() => preview.openFile({ path: item.path, name: item.name })}
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95"
+          >
+            <Eye size={13} />预览
+          </button>
+        )}
         <button
           type="button"
           disabled={downloading}
-          onClick={() => void handleDownload()}
-          className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95 disabled:opacity-60"
+          onClick={() => void start(() => requestMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey), item.name)}
+          className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition active:scale-95 disabled:opacity-60 ${
+            canPreview ? "border border-line text-fg-2" : "bg-blue-600 text-white"
+          }`}
         >
           {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}下载
         </button>
@@ -164,7 +167,16 @@ function MobileFileCard({
   )
 }
 
-export default function MobileItemList({
+/** 消息列表外面套一层文件预览：消息里的文件卡、文字里的路径都经它打开全屏预览页 */
+export default function MobileItemList(props: ComponentProps<typeof MobileItemListBody>) {
+  return (
+    <MobilePreviewProvider baseUrl={props.baseUrl} token={props.token} sessionKey={props.sessionKey}>
+      <MobileItemListBody {...props} />
+    </MobilePreviewProvider>
+  )
+}
+
+function MobileItemListBody({
   items,
   loading,
   busy,

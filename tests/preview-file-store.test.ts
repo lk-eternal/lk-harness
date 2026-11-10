@@ -298,6 +298,115 @@ describe("令牌淘汰", () => {
   })
 })
 
+describe("令牌有效期（手机端用，令牌在 HTTP 链接里）", () => {
+  const MIN = 60_000
+  const setup = (ttlMs = 30 * MIN) => {
+    let t = 1_000_000
+    const store = createPreviewFileStore(300, { ttlMs, now: () => t })
+    return { store, advance: (ms: number) => { t += ms } }
+  }
+  /** 只看状态码；响应带的文件流要读完，否则测试结束删临时目录时它还没打开完 */
+  const statusOf = async (r: ReturnType<ReturnType<typeof createPreviewFileStore>["serve"]>) => {
+    await readBody(r.body)
+    return r.status
+  }
+
+  it("没设 ttlMs（电脑端）：令牌一直有效", async () => {
+    const store = createPreviewFileStore(300, { now: () => Number.MAX_SAFE_INTEGER })
+    const token = store.register(bigFile)
+    expect(store.lookup(token)).toBeDefined()
+    expect(await statusOf(store.serve(token, "/x"))).toBe(200)
+  })
+
+  it("过了有效期没人用，令牌失效：lookup 取不到、serve 403", () => {
+    const { store, advance } = setup()
+    const token = store.register(bigFile)
+    advance(30 * MIN - 1)
+    expect(store.lookup(token)).toBeDefined()
+    advance(30 * MIN + 1)
+    expect(store.lookup(token)).toBeUndefined()
+    expect(store.serve(token, "/x").status).toBe(403)
+  })
+
+  it("刚好到期的那一刻就失效", () => {
+    const { store, advance } = setup(MIN)
+    const token = store.register(bigFile)
+    advance(MIN)
+    expect(store.lookup(token)).toBeUndefined()
+  })
+
+  it("用一次续一次：正在使用的令牌不会到期（长视频一直在发 Range 请求）", async () => {
+    const { store, advance } = setup()
+    const token = store.register(bigFile)
+    for (let i = 0; i < 5; i++) {
+      advance(20 * MIN)
+      expect(await statusOf(store.serve(token, "/x", { range: "bytes=0-9" }))).toBe(206)
+    }
+    expect(store.lookup(token)).toBeDefined()
+  })
+
+  it("lookup 也算使用，同样续期", () => {
+    const { store, advance } = setup()
+    const token = store.register(bigFile)
+    advance(25 * MIN)
+    expect(store.lookup(token)).toBeDefined()
+    advance(25 * MIN)
+    expect(store.lookup(token)).toBeDefined()
+  })
+
+  it("失效后重新登记同一个文件：得到新令牌，旧令牌仍然不能用", () => {
+    const { store, advance } = setup()
+    const old = store.register(bigFile)
+    advance(31 * MIN)
+    const fresh = store.register(bigFile)
+    expect(fresh).not.toBe(old)
+    expect(store.lookup(old)).toBeUndefined()
+    expect(store.lookup(fresh)).toBeDefined()
+  })
+
+  it("旧令牌过期后被查询过，之后重新登记的新令牌仍然稳定（再登记得到同一个）", () => {
+    const { store, advance } = setup()
+    const old = store.register(bigFile)
+    advance(31 * MIN)
+    expect(store.lookup(old)).toBeUndefined()
+    const fresh = store.register(bigFile)
+    expect(store.register(bigFile)).toBe(fresh)
+    expect(store.lookup(fresh)).toBeDefined()
+  })
+
+  it("还在有效期内重新登记：同一个令牌，并续期", () => {
+    const { store, advance } = setup()
+    const token = store.register(bigFile)
+    advance(20 * MIN)
+    expect(store.register(bigFile)).toBe(token)
+    advance(20 * MIN)
+    expect(store.lookup(token)).toBeDefined()
+  })
+
+  it("登记时顺手清掉过期的：名额满了挤掉的是过期的，不是还在用的", () => {
+    let t = 0
+    const store = createPreviewFileStore(2, { ttlMs: 60_000, now: () => t })
+    const a = store.register(bigFile) // 登记最早，但后面一直有人用
+    t = 10_000
+    const b = store.register(emptyFile) // 之后没人用，到 70s 过期
+    t = 50_000
+    expect(store.lookup(a)).toBeDefined() // a 续期到 110s
+    t = 75_000
+    const c = store.register(path.join(site, "index.html"))
+    expect(store.lookup(b)).toBeUndefined()
+    expect(store.lookup(a)).toBeDefined()
+    expect(store.lookup(c)).toBeDefined()
+  })
+
+  it("目录令牌也有有效期，过期后同目录的资源也读不了", async () => {
+    const { store, advance } = setup()
+    const token = store.register(path.join(site, "index.html"), { scopeDir: true })
+    expect(await statusOf(store.serve(token, "/style.css"))).toBe(200)
+    advance(31 * MIN)
+    expect(store.serve(token, "/style.css").status).toBe(403)
+  })
+})
+
 /** it.runIf 要在收集阶段就知道条件；这里提前探测一次能不能建目录链接 */
 function canLinkAtCollect(): boolean {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "lk-link-probe-"))

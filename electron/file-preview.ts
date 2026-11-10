@@ -7,7 +7,9 @@ import { callAppChatDaemon } from "./app-chat"
 import { getChannel } from "./config-store"
 import { channelIdFromSessionKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionOverridesStore, getSessionRecord } from "../src/shared/session-overrides-store"
+import { MOBILE_PREVIEW_TOKEN_TTL_MS, mobilePreviewPath } from "../src/shared/mobile-preview"
 import { PREVIEW_SCHEME, createPreviewFileStore } from "../src/shared/preview-file-store"
+import type { PreviewOpenResult } from "../src/shared/preview-types"
 import {
   createPreviewChecker, createPreviewOpener, listZipByToken, readPreviewBytesByToken, readPreviewTextByToken,
   type PreviewOpenDeps,
@@ -41,6 +43,26 @@ const openDeps: PreviewOpenDeps = {
 }
 const openPreviewFile = createPreviewOpener(store, openDeps)
 const checkPreviewPaths = createPreviewChecker(openDeps)
+
+// 手机端：另起一个令牌仓库。令牌要写进 HTTP 链接（经局域网/公网网关访问），所以有有效期，
+// 也不能和电脑端界面里用的 lkfile 令牌混在一起——后者没有有效期，也不该能被网关读到
+const mobileStore = createPreviewFileStore(300, { ttlMs: MOBILE_PREVIEW_TOKEN_TTL_MS })
+const openMobilePreviewFile = createPreviewOpener(mobileStore, openDeps)
+
+/** 手机网关用：权限校验、路径确认、读取都和电脑端同一套逻辑，只是令牌仓库和链接格式不同 */
+export const mobilePreview = {
+  /** 返回的 url 是网关上的路径（不含地址），手机端自己拼上当前连接的地址 */
+  async open(sessionKey: string, file: string): Promise<PreviewOpenResult> {
+    const r = await openMobilePreviewFile(sessionKey, file)
+    return r.ok ? { ...r, url: mobilePreviewPath(r.token, r.name) } : r
+  },
+  check: checkPreviewPaths,
+  /** 预览令牌对应的真实文件；令牌失效返回 undefined（预览页里的「下载」凭它换下载票据） */
+  fileOf: (token: string) => mobileStore.lookup(token)?.file,
+  text: (token: string) => readPreviewTextByToken(mobileStore, token),
+  zip: (token: string) => listZipByToken(mobileStore, token),
+  serve: (token: string, relPath: string, opts: { range?: string | null; method?: string }) => mobileStore.serve(token, relPath, opts),
+}
 
 export function initFilePreview(): void {
   protocol.handle(PREVIEW_SCHEME, (request) => {

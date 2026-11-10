@@ -6,6 +6,12 @@ import type { HistoryQuery } from "../shared/app-chat-history-page"
 import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
 import { challengeMessage } from "../shared/mobile-challenge"
+import { mobilePreviewPath } from "../shared/mobile-preview"
+import {
+  PREVIEW_MAX_DOCUMENT_BYTES, documentTooLargeMessage,
+  type PreviewBytesResult, type PreviewOpenResult, type PreviewTextResult, type PreviewZipResult,
+} from "../shared/preview-types"
+import type { PreviewHost } from "../renderer/components/preview/preview-host"
 import { drainSseFrames } from "./sse-parse"
 
 const PAIR_STORAGE_KEY = "lk-harness:mobile-pair:v1"
@@ -487,6 +493,12 @@ export async function fetchMobileImageDataUrl(baseUrl: string, token: string, fi
   return null
 }
 
+async function requestDownloadTicketUrl(baseUrl: string, token: string, body: Record<string, unknown>): Promise<string> {
+  const res = await callApi<{ ok: boolean; ticket?: string; error?: string }>(baseUrl, token, "/api/mobile/file-ticket", body)
+  if (!res.ok || !res.ticket) throw new Error(res.error ?? "无法获取下载链接")
+  return `${trimUrl(baseUrl)}/api/mobile/file?ticket=${encodeURIComponent(res.ticket)}`
+}
+
 /** 先带令牌换一张短时下载票据，再返回凭票据下载的链接（令牌不进 URL） */
 export async function requestMobileFileDownloadUrl(
   baseUrl: string,
@@ -494,12 +506,65 @@ export async function requestMobileFileDownloadUrl(
   filePath: string,
   sessionKey?: string,
 ): Promise<string> {
-  const res = await callApi<{ ok: boolean; ticket?: string; error?: string }>(baseUrl, token, "/api/mobile/file-ticket", {
-    path: filePath,
-    ...(sessionKey ? { sessionKey } : {}),
-  })
-  if (!res.ok || !res.ticket) throw new Error(res.error ?? "无法获取下载链接")
-  return `${trimUrl(baseUrl)}/api/mobile/file?ticket=${encodeURIComponent(res.ticket)}`
+  return await requestDownloadTicketUrl(baseUrl, token, { path: filePath, ...(sessionKey ? { sessionKey } : {}) })
+}
+
+/** 预览页里的下载：凭预览令牌换票据（打开预览时电脑端已校验过这个文件能不能给这个会话看） */
+export async function requestMobilePreviewDownloadUrl(baseUrl: string, token: string, previewToken: string): Promise<string> {
+  return await requestDownloadTicketUrl(baseUrl, token, { previewToken })
+}
+
+// ── 文件预览：接口由电脑端网关提供，查看器和电脑端共用（见 renderer/components/preview）──────────
+
+const OLD_DESKTOP_PREVIEW = "电脑端版本过旧，不支持文件预览，请把电脑端升级到最新版本"
+
+/** 旧版电脑端没有预览接口，网关对没见过的接口回「未知接口」，换成用户看得懂的说法 */
+function previewError<T extends ApiResult>(r: T): T {
+  return !r.ok && r.error === "未知接口" ? { ...r, error: OLD_DESKTOP_PREVIEW } : r
+}
+
+/** 打开一个文件的预览（电脑端校验权限并发令牌）；返回的 url 已补全成可以直接当 src 用的完整地址 */
+export async function openMobilePreview(baseUrl: string, token: string, sessionKey: string, filePath: string): Promise<PreviewOpenResult> {
+  const r = previewError(await callApi<PreviewOpenResult>(baseUrl, token, "/api/mobile/preview-open", { sessionKey, path: filePath }))
+  return r.ok ? { ...r, url: `${trimUrl(baseUrl)}${r.url}` } : r
+}
+
+/**
+ * 批量确认对话文字里的路径能不能预览：返回和输入一一对应的数组，能预览的是电脑上的绝对路径，不能的是 null。
+ * 失败（断网、旧版电脑端）一律当作都不能预览：路径只是显示成普通文字，不打扰对话。
+ */
+export async function checkMobilePreviewPaths(baseUrl: string, token: string, sessionKey: string, paths: string[]): Promise<(string | null)[]> {
+  const r = await callApi<{ ok: boolean; paths?: (string | null)[] }>(baseUrl, token, "/api/mobile/preview-check", { sessionKey, paths })
+  return r.ok && Array.isArray(r.paths) ? r.paths : paths.map(() => null)
+}
+
+/** 查看器读文件内容的方式（手机端）：文本、压缩包清单走接口；docx / xlsx 要整个文件，直接按预览链接下载 */
+export function createMobilePreviewHost(baseUrl: string, token: string): PreviewHost {
+  return {
+    fileText: async (fileToken) => previewError(await callApi<PreviewTextResult>(baseUrl, token, "/api/mobile/preview-text", { token: fileToken })),
+    fileZip: async (fileToken) => previewError(await callApi<PreviewZipResult>(baseUrl, token, "/api/mobile/preview-zip", { token: fileToken })),
+    fileBytes: async (fileToken): Promise<PreviewBytesResult> => {
+      let res: Response
+      try {
+        res = await fetch(`${trimUrl(baseUrl)}${mobilePreviewPath(fileToken, "file")}`, { cache: "no-store" })
+      } catch {
+        return { ok: false, error: "无法连接到电脑端，请检查网络" }
+      }
+      if (res.status === 403) return { ok: false, error: "预览已失效，请重新打开" }
+      if (!res.ok) return { ok: false, error: `读取文件失败（HTTP ${res.status}）` }
+      // 超过上限不读：解析在手机上跑，再大会卡死；也省得白白下载
+      const size = Number(res.headers.get("content-length"))
+      if (size > PREVIEW_MAX_DOCUMENT_BYTES) {
+        void res.body?.cancel().catch(() => undefined)
+        return { ok: false, error: documentTooLargeMessage(size) }
+      }
+      try {
+        return { ok: true, bytes: new Uint8Array(await res.arrayBuffer()) }
+      } catch {
+        return { ok: false, error: "读取文件失败，连接中断" }
+      }
+    },
+  }
 }
 
 /** 服务端每 20s 发一次心跳；超过这个时长没收到任何数据，说明链路已静默断开（切网络、休眠） */
