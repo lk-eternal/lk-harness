@@ -2,6 +2,7 @@
 
 import type { PreviewKind } from "./preview-kinds.js";
 import type { PreviewEncoding } from "./preview-text.js";
+import type { ZipListing } from "./preview-zip.js";
 
 /** 打开本地文件预览的结果：文件校验通过后登记了令牌，界面凭 url 加载、凭 token 读文本 */
 export type PreviewOpenResult =
@@ -22,6 +23,16 @@ export type PreviewFileInfo = Extract<PreviewOpenResult, { ok: true }>;
 
 export type PreviewTextResult =
   | { ok: true; text: string; encoding: PreviewEncoding; size: number; truncated: boolean }
+  | { ok: false; error: string };
+
+/** 整个文件的字节（docx / xlsx 要整个交给界面解析） */
+export type PreviewBytesResult =
+  | { ok: true; bytes: Uint8Array }
+  | { ok: false; error: string };
+
+/** 压缩包的文件清单 */
+export type PreviewZipResult =
+  | ({ ok: true; size: number } & ZipListing)
   | { ok: false; error: string };
 
 /** 内置浏览器一个标签页当前的状态，主进程在变化时推给界面 */
@@ -54,3 +65,9 @@ export interface PreviewRect {
 }
 
 export const PREVIEW_MAX_TEXT_BYTES = 2 * 1024 * 1024;
+
+/** 整个读进界面解析的文档（docx / xlsx）的大小上限：解析在界面线程上跑，再大会卡 */
+export const PREVIEW_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
+/** 一次最多检查多少个路径（对话文字里认出来的路径交给主进程确认能不能预览）：一条回复里能冒出来的数量有限，超出的直接当没有 */
+export const PREVIEW_CHECK_MAX_PATHS = 60;

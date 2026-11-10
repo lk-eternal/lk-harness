@@ -10,6 +10,9 @@ export type PreviewKind =
   | "pdf"
   | "audio"
   | "video"
+  | "docx"
+  | "xlsx"
+  | "archive"
   | "unsupported";
 
 export interface PreviewType {
@@ -89,6 +92,10 @@ const CSV_EXTS = new Set(["csv", "tsv"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "avif"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus", "weba"]);
 const VIDEO_EXTS = new Set(["mp4", "m4v", "webm", "ogv", "mov", "mkv"]);
+const DOCX_EXTS = new Set(["docx"]);
+const XLSX_EXTS = new Set(["xlsx", "xlsm"]);
+/** 只列文件清单：这些都是 zip 结构（jar/apk/whl/vsix 也是），不解压、不运行里面的东西 */
+const ARCHIVE_EXTS = new Set(["zip", "jar", "war", "apk", "whl", "vsix"]);
 
 /** 路径或文件名里的文件名部分（Windows 与 POSIX 分隔符都认） */
 export function baseName(file: string): string {
@@ -118,6 +125,9 @@ export function previewTypeOf(file: string): PreviewType {
   if (IMAGE_EXTS.has(ext)) return { kind: "image" };
   if (AUDIO_EXTS.has(ext)) return { kind: "audio" };
   if (VIDEO_EXTS.has(ext)) return { kind: "video" };
+  if (DOCX_EXTS.has(ext)) return { kind: "docx" };
+  if (XLSX_EXTS.has(ext)) return { kind: "xlsx" };
+  if (ARCHIVE_EXTS.has(ext)) return { kind: "archive" };
   const lang = CODE_LANGS[ext];
   if (lang) return { kind: "code", lang };
   if (TEXT_EXTS.has(ext)) return { kind: "text" };
@@ -140,6 +150,29 @@ export function isTextKind(kind: PreviewKind): boolean {
   return kind === "text" || kind === "code" || kind === "markdown" || kind === "html" || kind === "csv";
 }
 
+/** 内容要整个读进界面、在界面里解析的类型（Office 新格式） */
+export function isDocumentKind(kind: PreviewKind): boolean {
+  return kind === "docx" || kind === "xlsx";
+}
+
+/** 说明「为什么不能在应用内预览」，给不支持的文件的兜底页用；不认识的类型给通用说法 */
+export function unsupportedReason(file: string): string {
+  switch (fileExt(file)) {
+    case "pptx": case "ppt": case "pps": case "ppsx": case "odp": case "key":
+      return "演示文稿暂不支持在应用内预览";
+    case "doc": case "dot": case "rtf": case "odt": case "pages": case "wps":
+      return "这种文档格式暂不支持在应用内预览（.docx 可以）";
+    case "xls": case "ods": case "numbers": case "et":
+      return "这种表格格式暂不支持在应用内预览（.xlsx 可以）";
+    case "7z": case "rar": case "tar": case "gz": case "tgz": case "bz2": case "xz":
+      return "这种压缩格式暂不支持在应用内查看（.zip 可以）";
+    case "exe": case "msi": case "dll": case "so": case "dylib": case "bin": case "dmg": case "iso":
+      return "这是程序或二进制文件，不能预览";
+    default:
+      return "暂不支持在应用内预览这种文件";
+  }
+}
+
 const MIME: Record<string, string> = {
   html: "text/html; charset=utf-8", htm: "text/html; charset=utf-8", xhtml: "application/xhtml+xml; charset=utf-8",
   css: "text/css; charset=utf-8",
@@ -149,6 +182,11 @@ const MIME: Record<string, string> = {
   csv: "text/csv; charset=utf-8", tsv: "text/tab-separated-values; charset=utf-8",
   xml: "application/xml; charset=utf-8",
   pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xlsm: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  zip: "application/zip", jar: "application/java-archive", war: "application/java-archive",
+  apk: "application/vnd.android.package-archive", whl: "application/zip", vsix: "application/zip",
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
   bmp: "image/bmp", svg: "image/svg+xml", ico: "image/x-icon", avif: "image/avif",
   mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", oga: "audio/ogg", m4a: "audio/mp4",
@@ -169,7 +207,7 @@ export function previewMime(file: string): string {
  */
 const OPEN_WITH_DEFAULT_APP = new Set([
   "txt", "md", "log", "json", "csv", "tsv", "xml", "yaml", "yml", "sql",
-  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "rtf", "odt", "ods", "odp",
   "png", "jpg", "jpeg", "gif", "webp", "bmp",
   "mp3", "wav", "ogg", "m4a", "aac", "flac", "opus",
   "mp4", "m4v", "webm", "mov", "mkv", "avi", "wmv",

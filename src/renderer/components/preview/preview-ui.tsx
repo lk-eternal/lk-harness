@@ -1,4 +1,6 @@
 import type { ReactNode } from "react"
+import { FileQuestion, Loader2 } from "lucide-react"
+import { formatBytes } from "../../../shared/preview-text"
 import "./preview.css"
 
 /** 视图切换（预览 / 源码 这类）：一组互斥的小按钮 */
@@ -52,4 +54,27 @@ export function ViewerNotice({ children }: { children: ReactNode }) {
 
 export function CenterMessage({ children }: { children: ReactNode }) {
   return <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-fg-muted">{children}</div>
+}
+
+export function Loading() {
+  return <CenterMessage><Loader2 size={18} className="animate-spin" /></CenterMessage>
+}
+
+/** 说明页里的操作按钮样式 */
+export const NOTICE_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"
+/** 主操作（说明页里最该点的那个） */
+export const NOTICE_BUTTON_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg border border-blue-500 px-3 py-1.5 text-xs text-accent-soft transition hover:bg-blue-500/10"
+
+/** 文件没法在应用内显示时的说明页：文件名、原因，下面放这个环境里能做的操作（用默认程序打开、下载等） */
+export function FileNotice({ file, reason, children }: { file: { name: string; size: number }; reason: string; children?: ReactNode }) {
+  return (
+    <CenterMessage>
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-raised text-fg-3"><FileQuestion size={30} /></div>
+      <div>
+        <p className="break-all text-sm font-medium text-fg-soft">{file.name}</p>
+        <p className="mt-1 text-xs text-fg-faint">{formatBytes(file.size)} · {reason}</p>
+      </div>
+      {children}
+    </CenterMessage>
+  )
 }

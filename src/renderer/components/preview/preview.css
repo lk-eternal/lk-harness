@@ -40,6 +40,11 @@
   white-space: nowrap;
 }
 .preview-code .pl:hover { background: color-mix(in srgb, var(--color-raised) 55%, transparent); }
+/* 从对话里的 file.ts:42 点进来时定位到的那一行 */
+.preview-code .pl.hit {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+}
 
 /* 透明图片的棋盘格底 */
 .preview-checker {

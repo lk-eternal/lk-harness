@@ -1,10 +1,13 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
+import AdmZip from "adm-zip"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createPreviewFileStore } from "../src/shared/preview-file-store"
-import { createPreviewOpener, readPreviewTextByToken, type PreviewOpenDeps } from "../src/shared/preview-open"
-import { PREVIEW_MAX_TEXT_BYTES } from "../src/shared/preview-types"
+import {
+  createPreviewChecker, createPreviewOpener, listZipByToken, readPreviewBytesByToken, readPreviewTextByToken, type PreviewOpenDeps,
+} from "../src/shared/preview-open"
+import { PREVIEW_CHECK_MAX_PATHS, PREVIEW_MAX_DOCUMENT_BYTES, PREVIEW_MAX_TEXT_BYTES } from "../src/shared/preview-types"
 
 let root: string
 let work: string
@@ -158,6 +161,85 @@ describe("createPreviewOpener：能不能看", () => {
   })
 })
 
+describe("createPreviewChecker", () => {
+  function checker(over: Partial<PreviewOpenDeps> & { referenced?: string[] } = {}) {
+    const asked: string[] = []
+    const check = createPreviewChecker({
+      isAppSession: over.isAppSession ?? ((key) => key === SESSION),
+      isReferenced: over.isReferenced ?? (async (_key, file) => { asked.push(file); return (over.referenced ?? []).includes(file) }),
+      workDir: over.workDir ?? (() => work),
+    })
+    return { check, asked }
+  }
+
+  it("相对路径按工作目录解析，返回绝对路径；不存在的、目录、工作目录之外的是 null，数量和顺序与输入一致", async () => {
+    const { check } = checker()
+    const out = await check(SESSION, ["notes.txt", "./sub/main.ts", "gone.txt", "dir", path.join(elsewhere, "c.txt"), path.join(work, "a.md")])
+    expect(out).toEqual([
+      path.join(work, "notes.txt"),
+      path.join(work, "sub", "main.ts"),
+      null,
+      null,
+      null,
+      path.join(work, "a.md"),
+    ])
+  })
+
+  it("绝对路径里的 .. 和多余分隔符先规整，返回规整后的路径（界面拿它去开文件、去重）", async () => {
+    const { check } = checker()
+    const messy = `${work}${path.sep}sub${path.sep}..${path.sep}${path.sep}notes.txt`
+    expect(await check(SESSION, [messy])).toEqual([path.join(work, "notes.txt")])
+  })
+
+  it("..  跳出工作目录的相对路径：不放行", async () => {
+    const { check } = checker()
+    expect(await check(SESSION, ["../elsewhere/c.txt", "sub/../../elsewhere/c.txt"])).toEqual([null, null])
+  })
+
+  it("工作目录之外但会话记录里出现过的绝对路径：放行", async () => {
+    const file = path.join(elsewhere, "c.txt")
+    const { check } = checker({ referenced: [file] })
+    expect(await check(SESSION, [file])).toEqual([file])
+  })
+
+  it("工作目录里的文件不用查会话记录（批量检查时省掉守护进程的往返）", async () => {
+    const { check, asked } = checker()
+    await check(SESSION, ["notes.txt", "sub/main.ts"])
+    expect(asked).toEqual([])
+  })
+
+  it("工作目录之外的才去查记录，查出错就当没有", async () => {
+    const boom = async () => { throw new Error("daemon down") }
+    const { check } = checker({ isReferenced: boom })
+    expect(await check(SESSION, [path.join(elsewhere, "c.txt"), "notes.txt"])).toEqual([null, path.join(work, "notes.txt")])
+  })
+
+  it("不是应用内会话、没有工作目录时的相对路径：全是 null，不抛错", async () => {
+    expect(await checker().check("feishu:x:dir:work", ["notes.txt", path.join(work, "notes.txt")])).toEqual([null, null])
+    expect(await checker({ workDir: () => undefined }).check(SESSION, ["notes.txt"])).toEqual([null])
+  })
+
+  it("~ 开头、空串、含 NUL、过长、不是字符串：null", async () => {
+    const { check } = checker()
+    expect(await check(SESSION, ["~/x.txt", "", "a\0b.txt", "a".repeat(601) + ".txt", 42 as unknown as string, undefined as unknown as string])).toEqual([null, null, null, null, null, null])
+  })
+
+  it("超过数量上限的部分一律是 null；参数不是数组返回空数组", async () => {
+    const { check } = checker()
+    const many = Array.from({ length: PREVIEW_CHECK_MAX_PATHS + 5 }, () => "notes.txt")
+    const out = await check(SESSION, many)
+    expect(out).toHaveLength(many.length)
+    expect(out.slice(0, PREVIEW_CHECK_MAX_PATHS).every((p) => p === path.join(work, "notes.txt"))).toBe(true)
+    expect(out.slice(PREVIEW_CHECK_MAX_PATHS)).toEqual([null, null, null, null, null])
+    expect(await check(SESSION, "notes.txt" as unknown as string[])).toEqual([])
+  })
+
+  it.runIf(canLink)("工作目录里指向目录外的链接：按真实位置判断，不放行", async () => {
+    const { check } = checker()
+    expect(await check(SESSION, ["escape/c.txt"])).toEqual([null])
+  })
+})
+
 describe("readPreviewTextByToken", () => {
   const registerFile = (name: string, content: Buffer | string) => {
     const store = createPreviewFileStore()
@@ -209,5 +291,99 @@ describe("readPreviewTextByToken", () => {
     const { store, token, file } = registerFile("t-gone.txt", "x")
     fs.rmSync(file)
     expect(await readPreviewTextByToken(store, token)).toEqual({ ok: false, error: "读取文件失败，可能已被移动或删除" })
+  })
+})
+
+describe("readPreviewBytesByToken", () => {
+  const registerFile = (name: string, content: Buffer | string) => {
+    const store = createPreviewFileStore()
+    const file = path.join(root, name)
+    fs.writeFileSync(file, content)
+    return { store, file, token: store.register(file) }
+  }
+
+  it("读出整个文件的字节（二进制原样）", async () => {
+    const { store, token } = registerFile("b-doc.bin", Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 255, 128]))
+    const r = await readPreviewBytesByToken(store, token)
+    if (!r.ok) throw new Error(r.error)
+    expect(Array.from(r.bytes)).toEqual([0x50, 0x4b, 0x03, 0x04, 0, 255, 128])
+  })
+
+  it("没登记过 / 不是字符串的令牌：预览已失效", async () => {
+    const store = createPreviewFileStore()
+    expect(await readPreviewBytesByToken(store, "nope")).toEqual({ ok: false, error: "预览已失效，请重新打开" })
+    expect((await readPreviewBytesByToken(store, undefined as unknown as string)).ok).toBe(false)
+  })
+
+  it("超过上限不读，说清楚文件多大、上限多少", async () => {
+    const { store, token } = registerFile("b-big.bin", Buffer.alloc(3 * 1024 * 1024))
+    const r = await readPreviewBytesByToken(store, token, 2 * 1024 * 1024)
+    expect(r).toEqual({ ok: false, error: "文件有 3.0 MB，超过应用内预览的上限（2 MB），请用其他程序打开" })
+  })
+
+  it("刚好等于上限可以读", async () => {
+    const { store, token } = registerFile("b-edge.bin", Buffer.alloc(1024))
+    expect((await readPreviewBytesByToken(store, token, 1024)).ok).toBe(true)
+  })
+
+  it("默认上限是 25 MB", async () => {
+    expect(PREVIEW_MAX_DOCUMENT_BYTES).toBe(25 * 1024 * 1024)
+  })
+
+  it("文件在登记之后被删：读取失败", async () => {
+    const { store, token, file } = registerFile("b-gone.bin", "x")
+    fs.rmSync(file)
+    expect(await readPreviewBytesByToken(store, token)).toEqual({ ok: false, error: "读取文件失败，可能已被移动或删除" })
+  })
+})
+
+describe("listZipByToken", () => {
+  const registerZip = (name: string, build: (z: AdmZip) => void) => {
+    const store = createPreviewFileStore()
+    const file = path.join(root, name)
+    const z = new AdmZip()
+    build(z)
+    fs.writeFileSync(file, z.toBuffer())
+    return { store, file, token: store.register(file) }
+  }
+
+  it("列出真实文件里的清单，并带上文件大小", async () => {
+    const { store, token, file } = registerZip("z-ok.zip", (z) => {
+      z.addFile("a.txt", Buffer.from("hello"))
+      z.addFile("dir/b.txt", Buffer.from("world!"))
+    })
+    const r = await listZipByToken(store, token)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.size).toBe(fs.statSync(file).size)
+    expect(r.total).toBe(2)
+    expect(r.truncated).toBe(false)
+    expect(r.entries.map((e) => [e.name, e.size])).toEqual([["a.txt", 5], ["dir/b.txt", 6]])
+  })
+
+  it("没登记过的令牌：预览已失效", async () => {
+    expect(await listZipByToken(createPreviewFileStore(), "nope")).toEqual({ ok: false, error: "预览已失效，请重新打开" })
+  })
+
+  it("不是 zip（改了扩展名的文本）：说清楚是文件格式不对", async () => {
+    const store = createPreviewFileStore()
+    const file = path.join(root, "z-fake.zip")
+    fs.writeFileSync(file, "this is plain text pretending to be a zip archive, nothing more")
+    const r = await listZipByToken(store, store.register(file))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain("不是有效的 zip 文件")
+  })
+
+  it("空文件、过短的文件：同样是格式不对，不抛到界面", async () => {
+    const store = createPreviewFileStore()
+    const file = path.join(root, "z-empty.zip")
+    fs.writeFileSync(file, "")
+    const r = await listZipByToken(store, store.register(file))
+    expect(r.ok).toBe(false)
+  })
+
+  it("文件在登记之后被删：读取失败", async () => {
+    const { store, token, file } = registerZip("z-gone.zip", (z) => z.addFile("a", Buffer.from("x")))
+    fs.rmSync(file)
+    expect(await listZipByToken(store, token)).toEqual({ ok: false, error: "读取文件失败，可能已被移动或删除" })
   })
 })

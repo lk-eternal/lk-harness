@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react"
 import {
-  ArrowLeft, ArrowRight, Check, ChevronsRight, Copy, ExternalLink, FileCode, FileText, Film, FolderOpen,
+  ArrowLeft, ArrowRight, Check, ChevronsRight, Copy, ExternalLink, FileArchive, FileCode, FileText, Film, FolderOpen,
   Globe, Image as ImageIcon, Loader2, MoreHorizontal, Music, Plus, RotateCw, Table, X,
 } from "lucide-react"
 import { canOpenWithDefaultApp, previewTypeOf, type PreviewKind } from "../../../shared/preview-kinds"
@@ -32,7 +32,8 @@ function useWindowWidth(): number {
 
 const KIND_ICON: Record<PreviewKind, typeof FileText> = {
   text: FileText, code: FileCode, markdown: FileText, html: FileCode, csv: Table,
-  image: ImageIcon, pdf: FileText, audio: Music, video: Film, unsupported: FileText,
+  image: ImageIcon, pdf: FileText, audio: Music, video: Film, docx: FileText, xlsx: Table,
+  archive: FileArchive, unsupported: FileText,
 }
 
 function TabIcon({ tab }: { tab: PreviewTab }) {

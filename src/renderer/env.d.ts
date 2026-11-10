@@ -19,12 +19,14 @@ import type {
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
 import type {
+  PreviewBytesResult as PreviewBytesResultType,
   PreviewOpenResult as PreviewOpenResultType,
   PreviewRect as PreviewRectType,
   PreviewTextResult as PreviewTextResultType,
   PreviewWebNav as PreviewWebNavType,
   PreviewWebOpenTab as PreviewWebOpenTabType,
   PreviewWebState as PreviewWebStateType,
+  PreviewZipResult as PreviewZipResultType,
 } from "../shared/preview-types"
 
 declare global {
@@ -233,6 +235,10 @@ declare global {
     /** 校验这个文件能给这个会话看（会话记录里出现过，或在工作目录内）后登记预览令牌 */
     previewFileOpen(sessionKey: string, file: string): Promise<PreviewOpenResultType>
     previewFileText(token: string): Promise<PreviewTextResultType>
+    previewFileBytes(token: string): Promise<PreviewBytesResultType>
+    previewFileZip(token: string): Promise<PreviewZipResultType>
+    /** 批量检查对话里出现的路径能不能预览（相对路径按工作目录解析）：能的是绝对路径，不能的是 null，和输入一一对应 */
+    previewFileCheck(sessionKey: string, paths: string[]): Promise<(string | null)[]>
     /** 打开（或让已有标签页跳转到）网页；加载结果经 onPreviewWebState 推回 */
     previewWebOpen(tabId: string, url: string): Promise<{ ok: boolean; error?: string }>
     previewWebNav(tabId: string, action: PreviewWebNavType): Promise<{ ok: boolean }>

@@ -10,6 +10,8 @@ export interface FileTab {
   sessionKey: string
   path: string
   name: string
+  /** 要定位到的行号（从对话里的 src/app.ts:42 点开时有）；代码和文本查看器据此滚动并高亮那一行 */
+  line?: number
   /** 用户选了「按文本打开」：不认识的类型也当文本读 */
   asText?: boolean
   /** 递增即重新读取（再次点开同一文件、手动刷新） */
@@ -46,7 +48,7 @@ export const INITIAL_PREVIEW_STATE: PreviewState = { tabs: [], activeId: null, o
 export const MAX_PREVIEW_TABS = 12
 
 export type PreviewAction =
-  | { type: "openFile"; id: string; sessionKey: string; path: string; name: string }
+  | { type: "openFile"; id: string; sessionKey: string; path: string; name: string; line?: number }
   | { type: "openWeb"; id: string; url: string }
   | { type: "openBlankWeb"; id: string }
   | { type: "navigateWeb"; id: string; url: string }
@@ -83,11 +85,14 @@ export function previewReducer(state: PreviewState, action: PreviewAction): Prev
     case "openFile": {
       const existing = state.tabs.find((t): t is FileTab => t.kind === "file" && norm(t.path) === norm(action.path))
       if (existing) {
-        // 再次点开同一个文件：切过去并重新读取，Agent 可能刚改过它
-        const tabs = state.tabs.map((t) => (t.id === existing.id ? { ...existing, sessionKey: action.sessionKey, reload: existing.reload + 1 } : t))
+        // 再次点开同一个文件：切过去并重新读取，Agent 可能刚改过它；行号以这一次为准（没带就回到顶部）
+        const tabs = state.tabs.map((t) => (t.id === existing.id ? { ...existing, sessionKey: action.sessionKey, line: action.line, reload: existing.reload + 1 } : t))
         return withActive(state, tabs, existing.id)
       }
-      const tab: FileTab = { id: action.id, kind: "file", sessionKey: action.sessionKey, path: action.path, name: action.name, reload: 0 }
+      const tab: FileTab = {
+        id: action.id, kind: "file", sessionKey: action.sessionKey, path: action.path, name: action.name, reload: 0,
+        ...(action.line ? { line: action.line } : {}),
+      }
       return withActive(state, [...state.tabs, tab], tab.id)
     }
     case "openWeb": {

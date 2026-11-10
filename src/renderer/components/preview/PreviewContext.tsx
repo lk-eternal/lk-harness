@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import { baseName } from "../../../shared/preview-kinds"
 import { normalizeAddressInput } from "../../../shared/preview-url"
 import type { LinkMode } from "./link-mode"
+import { createPathResolver } from "./path-resolver"
 import { INITIAL_PREVIEW_STATE, previewReducer, removedWebTabIds, type PreviewState } from "./preview-tabs"
 
 export type { LinkMode }
@@ -10,11 +11,15 @@ export type { LinkMode }
 export interface PreviewApi {
   available: boolean
   linkMode: LinkMode
-  openFile(file: { path: string; name?: string }): void
+  openFile(file: { path: string; name?: string; line?: number }): void
   openUrl(url: string): void
+  /** 对话文字里出现的路径能不能预览：能就返回绝对路径，不能返回 null（带缓存，同一时刻的多个请求合并成一次主进程调用） */
+  resolvePath(raw: string): Promise<string | null>
 }
 
-const UNAVAILABLE: PreviewApi = { available: false, linkMode: "external", openFile: () => undefined, openUrl: () => undefined }
+const UNAVAILABLE: PreviewApi = {
+  available: false, linkMode: "external", openFile: () => undefined, openUrl: () => undefined, resolvePath: async () => null,
+}
 
 export const PreviewContext = createContext<PreviewApi>(UNAVAILABLE)
 
@@ -106,14 +111,19 @@ export function usePreviewController(sessionKey: string | null): PreviewControll
     writeStored(WIDTH_KEY, String(Math.round(w)))
   }, [])
 
-  const openFile = useCallback((file: { path: string; name?: string }) => {
+  const openFile = useCallback((file: { path: string; name?: string; line?: number }) => {
     const key = sessionRef.current
     if (!key) return
-    dispatch({ type: "openFile", id: newTabId(), sessionKey: key, path: file.path, name: file.name || baseName(file.path) })
+    dispatch({ type: "openFile", id: newTabId(), sessionKey: key, path: file.path, name: file.name || baseName(file.path), line: file.line })
   }, [])
   const openUrl = useCallback((url: string) => dispatch({ type: "openWeb", id: newTabId(), url }), [])
+  // 缓存跟着会话走：换会话工作目录就变了，同一个相对路径指向的文件也不同
+  const resolvePath = useMemo(
+    () => (sessionKey ? createPathResolver((paths) => window.electronAPI.previewFileCheck(sessionKey, paths)) : async () => null),
+    [sessionKey],
+  )
 
-  const api = useMemo<PreviewApi>(() => ({ available: true, linkMode, openFile, openUrl }), [linkMode, openFile, openUrl])
+  const api = useMemo<PreviewApi>(() => ({ available: true, linkMode, openFile, openUrl, resolvePath }), [linkMode, openFile, openUrl, resolvePath])
 
   const openBlankBrowser = useCallback(() => dispatch({ type: "openBlankWeb", id: newTabId() }), [])
   const togglePanel = useCallback(() => {

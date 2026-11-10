@@ -131,8 +131,14 @@ body {
 
 ::-webkit-scrollbar {
   width: 6px;
+  /* 横向滚动条的粗细；不设的话横向的是系统默认粗细，和竖向的细条不一致 */
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* 横竖滚动条交汇处的小方块（表格、代码预览里会出现），默认是白的 */
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {

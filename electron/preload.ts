@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
-import type { PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState } from "../src/shared/preview-types"
+import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
@@ -189,6 +189,9 @@ const api = {
   appChatShowInFolder: (file: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("app-chat:show-in-folder", file),
   previewFileOpen: (sessionKey: string, file: string): Promise<PreviewOpenResult> => ipcRenderer.invoke("preview:file-open", sessionKey, file),
   previewFileText: (token: string): Promise<PreviewTextResult> => ipcRenderer.invoke("preview:file-text", token),
+  previewFileBytes: (token: string): Promise<PreviewBytesResult> => ipcRenderer.invoke("preview:file-bytes", token),
+  previewFileZip: (token: string): Promise<PreviewZipResult> => ipcRenderer.invoke("preview:file-zip", token),
+  previewFileCheck: (sessionKey: string, paths: string[]): Promise<(string | null)[]> => ipcRenderer.invoke("preview:file-check", sessionKey, paths),
   previewWebOpen: (tabId: string, url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("preview-web:open", tabId, url),
   previewWebNav: (tabId: string, action: PreviewWebNav): Promise<{ ok: boolean }> => ipcRenderer.invoke("preview-web:nav", tabId, action),
   previewWebBounds: (tabId: string | null, rect: PreviewRect | null): void => ipcRenderer.send("preview-web:bounds", tabId, rect),

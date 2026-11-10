@@ -43,6 +43,18 @@
 .chat-md a:hover { color: var(--color-accent-soft); }
 .chat-md strong { font-weight: 600; color: var(--color-fg); }
 
+/* 文字里确认能预览的文件路径：是 span 不是按钮，这样还能照常选中复制 */
+.chat-md .lk-path {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.chat-md .lk-path:hover { color: var(--color-accent-soft); text-decoration-style: solid; }
+.chat-md .lk-path:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; border-radius: 3px; }
+.chat-md .lk-path > code { color: inherit; }
+
 .chat-md code {
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }

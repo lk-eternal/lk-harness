@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
-  baseName, canOpenWithDefaultApp, fileExt, isPreviewable, isTextKind, previewLanguages, previewMime, previewTypeOf,
+  baseName, canOpenWithDefaultApp, fileExt, isDocumentKind, isPreviewable, isTextKind, previewLanguages, previewMime, previewTypeOf,
+  unsupportedReason,
 } from "../src/shared/preview-kinds"
 
 describe("previewTypeOf", () => {
@@ -19,6 +20,13 @@ describe("previewTypeOf", () => {
     ["song.mp3", "audio", undefined],
     ["clip.mp4", "video", undefined],
     ["clip.webm", "video", undefined],
+    ["report.docx", "docx", undefined],
+    ["REPORT.DOCX", "docx", undefined],
+    ["sheet.xlsx", "xlsx", undefined],
+    ["macro.xlsm", "xlsx", undefined],
+    ["bundle.zip", "archive", undefined],
+    ["app.jar", "archive", undefined],
+    ["app.apk", "archive", undefined],
     ["app.ts", "code", "typescript"],
     ["App.TSX", "code", "typescript"],
     ["main.py", "code", "python"],
@@ -45,7 +53,7 @@ describe("previewTypeOf", () => {
   })
 
   it("不认识的类型一律 unsupported，不当文本读", () => {
-    for (const f of ["a.exe", "a.zip", "a.docx", "a.xlsx", "a.pptx", "a.doc", "a.bin", "archive.tar.gz", "noext", "x."]) {
+    for (const f of ["a.exe", "a.pptx", "a.doc", "a.xls", "a.ppt", "a.7z", "a.rar", "a.bin", "archive.tar.gz", "noext", "x."]) {
       expect(previewTypeOf(f).kind, f).toBe("unsupported")
     }
   })
@@ -70,7 +78,29 @@ describe("kind 辅助判断", () => {
     expect(isPreviewable("unsupported")).toBe(false)
     expect(isPreviewable("pdf")).toBe(true)
     for (const k of ["text", "code", "markdown", "html", "csv"] as const) expect(isTextKind(k)).toBe(true)
-    for (const k of ["image", "pdf", "audio", "video", "unsupported"] as const) expect(isTextKind(k)).toBe(false)
+    for (const k of ["image", "pdf", "audio", "video", "docx", "xlsx", "archive", "unsupported"] as const) expect(isTextKind(k)).toBe(false)
+  })
+  it("isDocumentKind：只有要整个读进界面解析的 Office 新格式", () => {
+    expect(isDocumentKind("docx")).toBe(true)
+    expect(isDocumentKind("xlsx")).toBe(true)
+    for (const k of ["text", "pdf", "archive", "csv", "unsupported"] as const) expect(isDocumentKind(k)).toBe(false)
+  })
+  it("docx / xlsx / 压缩包都算能预览", () => {
+    for (const k of ["docx", "xlsx", "archive"] as const) expect(isPreviewable(k)).toBe(true)
+  })
+})
+
+describe("unsupportedReason", () => {
+  it("说得出具体原因，并指向能预览的近亲格式", () => {
+    expect(unsupportedReason("a.pptx")).toContain("演示文稿")
+    expect(unsupportedReason("a.doc")).toContain(".docx")
+    expect(unsupportedReason("a.xls")).toContain(".xlsx")
+    expect(unsupportedReason("a.7z")).toContain(".zip")
+    expect(unsupportedReason("setup.exe")).toContain("程序")
+  })
+  it("不认识的类型给通用说法", () => {
+    expect(unsupportedReason("a.weird")).toBe("暂不支持在应用内预览这种文件")
+    expect(unsupportedReason("noext")).toBe("暂不支持在应用内预览这种文件")
   })
 })
 

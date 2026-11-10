@@ -34,6 +34,23 @@ describe("打开文件", () => {
   it("不同路径是不同标签页", () => {
     expect(ids(run([file("a", "/w/a.txt"), file("b", "/w/b.txt")]))).toEqual(["a", "b"])
   })
+
+  it("带行号打开：记在标签页上；不带行号就没有这个字段", () => {
+    const withLine = run([{ ...(file("a", "/w/a.ts") as Extract<PreviewAction, { type: "openFile" }>), line: 42 }])
+    expect(withLine.tabs[0]).toMatchObject({ line: 42 })
+    expect("line" in run([file("b", "/w/b.ts")]).tabs[0]).toBe(false)
+  })
+
+  it("再次点开同一个文件：行号以最近一次为准，没带行号就清掉，回到顶部", () => {
+    const open = (id: string, line?: number): PreviewAction => ({ ...(file(id, "/w/a.ts") as Extract<PreviewAction, { type: "openFile" }>), line })
+    let s = run([open("a", 10)])
+    expect(s.tabs[0]).toMatchObject({ line: 10, reload: 0 })
+    s = run([open("x", 99)], s)
+    expect(s.tabs[0]).toMatchObject({ line: 99, reload: 1 })
+    s = run([open("y")], s)
+    expect((s.tabs[0] as { line?: number }).line).toBeUndefined()
+    expect(s.tabs[0]).toMatchObject({ reload: 2 })
+  })
 })
 
 describe("网页标签页", () => {

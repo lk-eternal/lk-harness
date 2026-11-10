@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import { Loader2 } from "lucide-react"
 import { fileExt } from "../../../shared/preview-kinds"
@@ -6,6 +6,7 @@ import { detectDelimiter, formatBytes, parseCsv } from "../../../shared/preview-
 import { PREVIEW_MAX_TEXT_BYTES, type PreviewFileInfo, type PreviewTextResult } from "../../../shared/preview-types"
 import { CodeBlock, SafeLink, remarkPlugins, rehypePlugins } from "../chat/Markdown"
 import { toCodeLines } from "./code-highlight"
+import { usePreviewHost } from "./preview-host"
 import { CenterMessage, Segmented, ViewerBar, ViewerNotice } from "./preview-ui"
 
 type TextState =
@@ -15,19 +16,20 @@ type TextState =
 
 /** 经主进程读文本内容；enabled 为假时不读（比如 HTML 只在看源码时才需要文本） */
 function useFileText(token: string, enabled: boolean): TextState {
+  const host = usePreviewHost()
   const [state, setState] = useState<TextState>({ status: "loading" })
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
     setState({ status: "loading" })
-    window.electronAPI.previewFileText(token).then((r) => {
+    host.fileText(token).then((r) => {
       if (cancelled) return
       setState(r.ok ? { ...r, status: "ready" } : { status: "error", error: r.error })
     }).catch((e: unknown) => {
       if (!cancelled) setState({ status: "error", error: e instanceof Error ? e.message : String(e) })
     })
     return () => { cancelled = true }
-  }, [token, enabled])
+  }, [host, token, enabled])
   return state
 }
 
@@ -45,14 +47,22 @@ function TruncatedNotice({ state }: { state: Extract<TextState, { status: "ready
 }
 
 /** 带行号的文本；认识的语言做语法高亮 */
-function CodeText({ text, lang, wrap }: { text: string; lang?: string; wrap: boolean }) {
+function CodeText({ text, lang, wrap, line }: { text: string; lang?: string; wrap: boolean; line?: number }) {
   const code = useMemo(() => toCodeLines(text, lang), [text, lang])
+  // 要定位的行（从对话里的 file.ts:42 点进来）：高亮并滚到视野中间；超出文件行数就当没带
+  const hit = line !== undefined && line >= 1 && line <= code.lines.length ? line : undefined
+  const hitRef = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    hitRef.current?.scrollIntoView({ block: "center" })
+  }, [hit, code])
   return (
     <>
       {code.cutOff && <ViewerNotice>内容太长，只显示前 {code.lines.length.toLocaleString()} 行。</ViewerNotice>}
       <pre className={`preview-code hljs ${wrap ? "wrap" : ""}`}>
         <code>
-          {code.lines.map((html, i) => <span key={i} className="pl" dangerouslySetInnerHTML={{ __html: html }} />)}
+          {code.lines.map((html, i) => (
+            <span key={i} ref={i + 1 === hit ? hitRef : undefined} className={i + 1 === hit ? "pl hit" : "pl"} dangerouslySetInnerHTML={{ __html: html }} />
+          ))}
         </code>
       </pre>
     </>
@@ -72,7 +82,7 @@ function sourceSummary(state: Extract<TextState, { status: "ready" }>, lang?: st
 }
 
 /** 纯文本、代码、日志、配置 */
-export function CodeView({ info }: { info: PreviewFileInfo }) {
+export function CodeView({ info, line }: { info: PreviewFileInfo; line?: number }) {
   const state = useFileText(info.token, true)
   const [wrap, setWrap] = useState(info.kind === "text")
   if (state.status !== "ready") return <TextStatus state={state} />
@@ -83,7 +93,7 @@ export function CodeView({ info }: { info: PreviewFileInfo }) {
         <span className="ml-auto">{sourceSummary(state, info.lang)}</span>
       </ViewerBar>
       <TruncatedNotice state={state} />
-      <div className="min-h-0 flex-1 overflow-auto"><CodeText text={state.text} lang={info.lang} wrap={wrap} /></div>
+      <div className="min-h-0 flex-1 overflow-auto"><CodeText text={state.text} lang={info.lang} wrap={wrap} line={line} /></div>
     </div>
   )
 }

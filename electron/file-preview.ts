@@ -8,7 +8,10 @@ import { getChannel } from "./config-store"
 import { channelIdFromSessionKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionOverridesStore, getSessionRecord } from "../src/shared/session-overrides-store"
 import { PREVIEW_SCHEME, createPreviewFileStore } from "../src/shared/preview-file-store"
-import { createPreviewOpener, readPreviewTextByToken } from "../src/shared/preview-open"
+import {
+  createPreviewChecker, createPreviewOpener, listZipByToken, readPreviewBytesByToken, readPreviewTextByToken,
+  type PreviewOpenDeps,
+} from "../src/shared/preview-open"
 
 const store = createPreviewFileStore()
 
@@ -25,7 +28,7 @@ function sessionWorkDir(sessionKey: string): string | undefined {
   return getSessionRecord(sessionKey)?.boundDir || workspaceDirFromSessionKey(sessionKey) || undefined
 }
 
-const openPreviewFile = createPreviewOpener(store, {
+const openDeps: PreviewOpenDeps = {
   isAppSession: (sessionKey) => {
     const channelId = channelIdFromSessionKey(sessionKey)
     return !!channelId && getChannel(channelId)?.type === "app"
@@ -35,7 +38,9 @@ const openPreviewFile = createPreviewOpener(store, {
     return r.ok && r.owned === true
   },
   workDir: sessionWorkDir,
-})
+}
+const openPreviewFile = createPreviewOpener(store, openDeps)
+const checkPreviewPaths = createPreviewChecker(openDeps)
 
 export function initFilePreview(): void {
   protocol.handle(PREVIEW_SCHEME, (request) => {
@@ -45,5 +50,8 @@ export function initFilePreview(): void {
     return new Response(body, { status: result.status, headers: result.headers })
   })
   ipcMain.handle("preview:file-open", (_e, sessionKey: string, file: string) => openPreviewFile(sessionKey, file))
+  ipcMain.handle("preview:file-check", (_e, sessionKey: string, paths: string[]) => checkPreviewPaths(sessionKey, paths))
   ipcMain.handle("preview:file-text", (_e, token: string) => readPreviewTextByToken(store, token))
+  ipcMain.handle("preview:file-bytes", (_e, token: string) => readPreviewBytesByToken(store, token))
+  ipcMain.handle("preview:file-zip", (_e, token: string) => listZipByToken(store, token))
 }
