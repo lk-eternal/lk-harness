@@ -348,11 +348,6 @@ const api = {
   pickImportConfigFile: (): Promise<{ ok: boolean; filePath?: string; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }> => ipcRenderer.invoke("config:pick-import-file"),
   getLocalConfigSectionStats: (): Promise<{ id: string; label: string; count: number }[]> => ipcRenderer.invoke("config:local-section-stats"),
   importConfig: (filePath: string, sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }> => ipcRenderer.invoke("config:import", filePath, sections),
-  inspectCursorClawSections: (userDataPath?: string): Promise<{ ok: boolean; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }> => ipcRenderer.invoke("config:inspect-cursor-claw", userDataPath),
-  discoverCursorClawInstalls: (): Promise<{ label: string; userDataPath: string }[]> => ipcRenderer.invoke("config:discover-cursor-claw"),
-  migrateFromCursorClaw: (userDataPath: string | undefined, sections: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }> =>
-    ipcRenderer.invoke("config:migrate-from-cursor-claw", userDataPath ?? "", sections),
-
   flowHub: {
     getCatalog: (force?: boolean): Promise<{ ok: true; catalog: import("../src/shared/flow-hub-types").FlowHubCatalog } | { ok: false; error: string }> =>
       ipcRenderer.invoke("flow-hub:get-catalog", force),

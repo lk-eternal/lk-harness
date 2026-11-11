@@ -199,9 +199,6 @@ declare global {
     pickImportConfigFile(): Promise<{ ok: boolean; filePath?: string; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }>
     getLocalConfigSectionStats(): Promise<{ id: string; label: string; count: number }[]>
     importConfig(filePath: string, sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
-    inspectCursorClawSections(userDataPath?: string): Promise<{ ok: boolean; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }>
-    discoverCursorClawInstalls(): Promise<{ label: string; userDataPath: string }[]>
-    migrateFromCursorClaw(userDataPath?: string, sections?: string[]): Promise<{ ok: boolean; error?: string; warnings?: string[] }>
     flowHub: {
       getCatalog(force?: boolean): Promise<{ ok: true; catalog: import("../shared/flow-hub-types").FlowHubCatalog } | { ok: false; error: string }>
       listNodes(): Promise<{ ok: true; nodes: import("../shared/flow-hub-types").FlowHubBrowsableNode[] } | { ok: false; error: string }>

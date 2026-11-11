@@ -75,7 +75,6 @@ import {
   uploadNode,
 } from "./flow-hub-service"
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
-import { discoverCursorClawInstalls, migrateFromCursorClaw, inspectCursorClawSections } from "./cursor-claw-migrate"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
 import { createProjectFromApp, deleteProjectByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
@@ -2418,28 +2417,6 @@ export function initDaemonManager(): void {
   })
 
   ipcMain.handle("config:local-section-stats", () => getLocalConfigSectionStats())
-
-  ipcMain.handle("config:inspect-cursor-claw", (_e, userDataPath?: string) => {
-    const pathArg = userDataPath?.trim() || discoverCursorClawInstalls()[0]?.userDataPath
-    if (!pathArg) return { ok: false, error: "未检测到本机 Cursor Claw 数据目录" }
-    return inspectCursorClawSections(pathArg)
-  })
-
-  ipcMain.handle("config:discover-cursor-claw", () => discoverCursorClawInstalls())
-
-  ipcMain.handle("config:migrate-from-cursor-claw", async (_e, userDataPath: string, sections: ConfigSection[]) => {
-    const pathArg = String(userDataPath ?? "").trim() || discoverCursorClawInstalls()[0]?.userDataPath
-    if (!pathArg) return { ok: false, error: "未检测到本机 Cursor Claw 数据目录" }
-    const r = migrateFromCursorClaw(pathArg, sections)
-    if (!r.ok) return r
-    broadcastLog("[Config] 已从 Cursor Claw 迁移配置，正在重启 Daemon...")
-    await stopDaemon()
-    await new Promise((resolve) => setTimeout(resolve, 800))
-    const started = await startDaemon()
-    if (!started.ok) broadcastLog(`[Config] Daemon 重启失败: ${started.error}`, "ERROR")
-    broadcastStatus(await getDaemonStatus())
-    return r
-  })
 
   ipcMain.handle("flow-hub:get-catalog", async (_e, force?: boolean) => fetchCatalog(!!force))
   ipcMain.handle("flow-hub:list-nodes", async () => listHubNodes())

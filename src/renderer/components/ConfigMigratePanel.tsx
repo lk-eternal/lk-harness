@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react"
-import { Download, Upload, ArrowRightLeft, X } from "lucide-react"
+import { useState } from "react"
+import { Download, Upload, X } from "lucide-react"
 
 type SectionId = string
-type ModalMode = "export" | "import" | "migrate" | null
+type ModalMode = "export" | "import" | null
 
 interface SectionItem {
   id: SectionId
@@ -14,7 +14,7 @@ interface Props {
   showAlert: (title: string, message: string) => void | Promise<void>
   showConfirm: (title: string, message: string, okLabel?: string, cancelLabel?: string) => Promise<boolean>
   onMigrateSuccess?: () => void
-  /** settings=三按钮；wizard=仅导入+迁移 */
+  /** settings=导出+导入；wizard=仅导入 */
   variant?: "settings" | "wizard"
 }
 
@@ -25,17 +25,10 @@ function countLabel(item: SectionItem): string | null {
 
 export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, variant = "settings" }: Props) {
   const [busy, setBusy] = useState("")
-  const [hasClaw, setHasClaw] = useState(false)
   const [modal, setModal] = useState<ModalMode>(null)
   const [modalItems, setModalItems] = useState<SectionItem[]>([])
   const [selected, setSelected] = useState<Set<SectionId>>(() => new Set())
   const [importPath, setImportPath] = useState("")
-
-  useEffect(() => {
-    void window.electronAPI.discoverCursorClawInstalls()
-      .then((list) => setHasClaw(list.length > 0))
-      .catch(() => setHasClaw(false))
-  }, [])
 
   const openModal = (mode: ModalMode, items: SectionItem[], extra?: { importPath?: string }) => {
     setModal(mode)
@@ -62,16 +55,11 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
 
   const pickedSections = (): SectionId[] => modalItems.filter((i) => selected.has(i.id)).map((i) => i.id)
 
-  const modalTitle = modal === "export" ? "导出配置"
-    : modal === "import" ? "导入配置"
-      : modal === "migrate" ? "从 Cursor Claw 迁移"
-        : ""
+  const modalTitle = modal === "export" ? "导出配置" : modal === "import" ? "导入配置" : ""
 
   const modalHint = modal === "export"
     ? "勾选要导出的模块。导出文件含明文密钥，请妥善保管。"
-    : modal === "import"
-      ? "已识别配置包内的模块，勾选要导入的项（**仅新增**，本地已存在的 skill/规则/MCP/通道等会跳过）。"
-      : "已识别 Cursor Claw 中可迁移的模块，勾选要写入的项（**仅新增**，本地已存在项会跳过）。"
+    : "已识别配置包内的模块，勾选要导入的项（**仅新增**，本地已存在的 skill/规则/MCP/通道等会跳过）。"
 
   const confirmModal = async () => {
     const s = pickedSections()
@@ -110,23 +98,6 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
       } finally {
         setBusy("")
       }
-      return
-    }
-    if (modal === "migrate") {
-      closeModal()
-      setBusy("migrate")
-      try {
-        const r = await window.electronAPI.migrateFromCursorClaw(undefined, s)
-        if (!r.ok) {
-          await showAlert("迁移失败", r.error ?? "未知错误")
-          return
-        }
-        const warn = r.warnings?.length ? `\n\n提示：\n${r.warnings.join("\n")}` : ""
-        await showAlert("迁移成功", `已从 Cursor Claw 写入所选模块。${warn}`)
-        onMigrateSuccess?.()
-      } finally {
-        setBusy("")
-      }
     }
   }
 
@@ -134,7 +105,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
     <>
       <div className="space-y-3">
         {variant === "settings" && (
-          <p className="text-xs text-fg-faint">导出/导入 LK Harness 配置包；或从 Cursor Claw 一键迁移。</p>
+          <p className="text-xs text-fg-faint">导出/导入 LK Harness 配置包。</p>
         )}
         <div className={`flex flex-wrap gap-2 ${variant === "wizard" ? "justify-center" : ""}`}>
           {variant === "settings" && (
@@ -179,34 +150,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
           >
             <Upload size={16} /> 导入配置
           </button>
-          <button
-            type="button"
-            disabled={!!busy || !hasClaw}
-            onClick={async () => {
-              setBusy("inspect-migrate")
-              try {
-                const r = await window.electronAPI.inspectCursorClawSections()
-                if (!r.ok) {
-                  await showAlert("无法迁移", r.error ?? "未知错误")
-                  return
-                }
-                if (!r.items?.length) {
-                  await showAlert("无法迁移", "未识别到可迁移模块。")
-                  return
-                }
-                openModal("migrate", r.items)
-              } finally {
-                setBusy("")
-              }
-            }}
-            className="flex items-center gap-2 rounded-lg border border-amber-700/60 bg-amber-500/10 px-4 py-2 text-sm transition hover:border-amber-500 disabled:opacity-50"
-          >
-            <ArrowRightLeft size={16} /> 从 Cursor Claw 迁移
-          </button>
         </div>
-        {!hasClaw && variant === "settings" && (
-          <p className="text-xs text-fg-faint">未检测到 Cursor Claw 数据目录。</p>
-        )}
       </div>
 
       {modal && (
