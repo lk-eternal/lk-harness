@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -22,6 +22,7 @@ import ModelPicker, { type ModelChoice } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
+import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarCollapsed } from "../components/chat/sidebar-state"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
@@ -229,6 +230,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const items = useMemo(() => chatStreamItems(allItems), [allItems])
   const queuedItems = useMemo(() => allItems.filter(isQueuedUserItem), [allItems])
   const sessionStatus = useSessionActivity(active ? selected : null)
+  const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
@@ -442,6 +444,22 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const busy = !!tab?.running && (hasLiveTurn || items[items.length - 1]?.kind === "user")
   const noChannel = loaded && views.length === 0
 
+  // 收起会话栏后看不到别的会话的绿点（有新回复），在开关按钮上补一个
+  const unreadElsewhere = countUnreadElsewhere(views.flatMap((v) => v.tabs), (key) => sameChatSession(key, selected), sessionStatus)
+  const sidebarToggle = (
+    <button
+      type="button"
+      onClick={toggleSidebar}
+      title={sidebarToggleTitle(sidebarCollapsed, unreadElsewhere)}
+      aria-label="会话栏"
+      aria-expanded={!sidebarCollapsed}
+      className={`relative shrink-0 rounded p-1 transition hover:bg-raised hover:text-fg-soft ${sidebarCollapsed ? "text-fg-muted" : "bg-raised text-accent"}`}
+    >
+      <PanelLeft size={15} />
+      {sidebarCollapsed && unreadElsewhere > 0 && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
+    </button>
+  )
+
   return (
     <PreviewContext.Provider value={preview.api}>
     <div className="flex h-screen flex-col">
@@ -456,8 +474,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
-          {/* 左：会话列表 */}
-          <aside className="flex w-60 shrink-0 flex-col border-r border-line-subtle bg-surface">
+          {/* 左：会话列表（可收起；用 hidden 而不是卸载，展开后列表滚动位置还在） */}
+          <aside className={`${sidebarCollapsed ? "hidden" : "flex"} w-60 shrink-0 flex-col border-r border-line-subtle bg-surface`}>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
               {views.map((v) => (
                 <div key={v.channelId}>
@@ -542,6 +560,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
             {selected && tab ? (
               <>
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-subtle px-6">
+                  {sidebarToggle}
                   <div className="min-w-0 flex-1">
                     <SessionTitle key={selected} name={sessionName(tab)} onRename={(name) => void renameSession(name)} />
                   </div>
@@ -636,9 +655,13 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 />
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">
-                {loaded ? "← 选择会话，或新建一个" : "加载中…"}
-              </div>
+              <>
+                {/* 没选中会话时也要有开关：会话栏收起的话，这里是唯一能把它展开的地方 */}
+                <div className="flex h-12 shrink-0 items-center border-b border-line-subtle px-6">{sidebarToggle}</div>
+                <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">
+                  {emptySessionHint(loaded, sidebarCollapsed)}
+                </div>
+              </>
             )}
           </section>
           <PreviewPanel controller={preview} visible={active} />
