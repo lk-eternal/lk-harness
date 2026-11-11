@@ -19,7 +19,7 @@ import { sessionPiDir } from "../src/shared/session-entry-paths.js"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
 import { assembleProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
-import { piAdditionalSkillPaths } from "./skill-paths"
+import { getSkillCatalog } from "./skill-catalog"
 import { countPiPhysicalTurns, turnsFromPiMessages } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { buildPiHostMcpConfig } from "./pi-mcp-config"
@@ -104,7 +104,13 @@ export function readPiSessionTurns(sessionKey: string): TranscriptTurn[] {
   } catch { return [] }
 }
 
-function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
+/**
+ * 不让 Pi 自己扫 Skill 目录并生成清单：名单由 buildAppendSystemPrompt 统一给（和 SDK 引擎一致）。
+ * 开着的话 Pi 会再列一份自己扫到的，两份对不上，还多占上下文。
+ */
+export const PI_SKILL_LOADING = { noSkills: true } as const
+
+export function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
   const blocks = assembleProtocolBlocks({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
@@ -114,6 +120,10 @@ function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
     notifySessionKey: opts.notifySessionKey,
     taskMessage: opts.taskMessage,
   })
+  // 本机 Skill 名单：和 SDK 引擎同一份文本。Pi 自带的清单已关（见 noSkills），免得两份名单对不上；
+  // system prompt 每个请求都在，不用像 SDK 那样考虑「只给一次」
+  const skills = getSkillCatalog()
+  if (skills.text) blocks.push("---", skills.text)
   return [blocks.join("\n")]
 }
 
@@ -186,7 +196,7 @@ export async function createHarnessPiSession(
     agentDir,
     settingsManager,
     appendSystemPrompt: buildAppendSystemPrompt(opts),
-    additionalSkillPaths: piAdditionalSkillPaths(),
+    ...PI_SKILL_LOADING,
     ...(mcpAdapter ? { extensionFactories: [mcpAdapter] } : {}),
   })
   await resourceLoader.reload()

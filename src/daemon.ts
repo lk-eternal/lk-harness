@@ -57,6 +57,7 @@ import {
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
+import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
 import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import {
   TASK_RESULT_TOOL,
@@ -4256,16 +4257,15 @@ async function handleRulesAdmin(method: string, req: http.IncomingMessage, res: 
   return false;
 }
 
+/** manage_skills 的读写都在 shared/skill-admin.ts（带路径校验，能在临时目录里测）；这里只负责回 HTTP */
+function sendSkillResult(res: http.ServerResponse, r: SkillAdminResult<object>): void {
+  if (r.ok) json(res, r);
+  else json(res, { ok: false, error: r.error }, r.status);
+}
+
 async function handleSkillsAdmin(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   if (method === "GET") {
-    if (!fs.existsSync(SKILLS_DIR)) { json(res, { ok: true, skills: [] }); return true; }
-    const dirs = fs.readdirSync(SKILLS_DIR, { withFileTypes: true }).filter((d) => d.isDirectory());
-    const skills = dirs.map((d) => {
-      const skillFile = path.join(SKILLS_DIR, d.name, "SKILL.md");
-      const preview = fs.existsSync(skillFile) ? fs.readFileSync(skillFile, "utf-8").split("\n")[0].slice(0, 80) : "";
-      return { name: d.name, preview };
-    });
-    json(res, { ok: true, skills });
+    json(res, { ok: true, skills: listHarnessSkills(SKILLS_DIR) });
     return true;
   }
   if (method === "POST") {
@@ -4274,25 +4274,17 @@ async function handleSkillsAdmin(method: string, req: http.IncomingMessage, res:
 
     if (action === "read") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      const fp = path.join(SKILLS_DIR, name, "SKILL.md");
-      if (!fs.existsSync(fp)) { json(res, { ok: false, error: "not found" }, 404); return true; }
-      json(res, { ok: true, content: fs.readFileSync(fp, "utf-8") });
+      sendSkillResult(res, readHarnessSkill(SKILLS_DIR, name));
       return true;
     }
     if (action === "save") {
       if (!name || content === undefined) { json(res, { ok: false, error: "name and content required" }, 400); return true; }
-      const dir = path.join(SKILLS_DIR, name.trim());
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf-8");
-      json(res, { ok: true, message: `${name} saved` });
+      sendSkillResult(res, saveHarnessSkill(SKILLS_DIR, name, content));
       return true;
     }
     if (action === "delete") {
       if (!name) { json(res, { ok: false, error: "name required" }, 400); return true; }
-      const dir = path.join(SKILLS_DIR, name);
-      if (!fs.existsSync(dir)) { json(res, { ok: false, error: "not found" }, 404); return true; }
-      fs.rmSync(dir, { recursive: true, force: true });
-      json(res, { ok: true, message: `${name} deleted` });
+      sendSkillResult(res, await deleteHarnessSkill(SKILLS_DIR, name));
       return true;
     }
     json(res, { ok: false, error: "unknown action" }, 400);

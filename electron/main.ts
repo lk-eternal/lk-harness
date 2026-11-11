@@ -40,7 +40,10 @@ import {
   resolveSkillDir,
   resolveSkillFile,
   resolveRootAbs,
+  deleteSkill,
+  deleteSkillEntry,
 } from "./skill-store"
+import { linkTargetOf } from "../src/shared/safe-remove.js"
 import {
   listHarnessRules,
   saveHarnessRule,
@@ -342,15 +345,10 @@ function registerIpcHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle("skills:delete-file", (_, rootId: string, skillPath: string, relativePath: string) => {
-    const filePath = resolveSkillFile(String(rootId), skillPath, relativePath)
-    if (!filePath) return { ok: false, error: "路径无效" }
-    if (!fs.existsSync(filePath)) return { ok: false, error: "文件不存在" }
-    const stat = fs.statSync(filePath)
-    if (stat.isDirectory()) fs.rmSync(filePath, { recursive: true, force: true })
-    else fs.unlinkSync(filePath)
-    return { ok: true }
-  })
+  // 删除的实现和保险（不删根目录、不顺着链接删）都在 skill-store，那边能在临时目录里测
+  ipcMain.handle("skills:delete-file", (_, rootId: string, skillPath: string, relativePath: string) => (
+    deleteSkillEntry(String(rootId), String(skillPath), String(relativePath))
+  ))
 
   ipcMain.handle("skills:save", (_, rootId: string, skillPath: string, content: string) => {
     const dir = resolveSkillDir(String(rootId), skillPath)
@@ -371,10 +369,12 @@ function registerIpcHandlers(): void {
     return { ok: true }
   })
 
-  ipcMain.handle("skills:delete", (_, rootId: string, skillPath: string) => {
-    const dir = resolveSkillDir(String(rootId), skillPath)
-    if (dir && fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true })
-    return { ok: true }
+  ipcMain.handle("skills:delete", (_, rootId: string, skillPath: string) => deleteSkill(String(rootId), String(skillPath)))
+
+  // 删除前问一下：这个 Skill 是不是指向别处的链接（是则返回真实路径，空串是悬空链接，null 是普通文件夹）
+  ipcMain.handle("skills:link-target", (_, rootId: string, skillPath: string) => {
+    const dir = resolveSkillDir(String(rootId), String(skillPath))
+    return dir ? linkTargetOf(dir) : null
   })
 
   ipcMain.handle("models:list", async () => {

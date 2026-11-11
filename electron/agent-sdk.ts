@@ -59,6 +59,9 @@ import { modelSlugFromParams, rememberModelLabel } from "../src/shared/model-uti
 import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
 import { ensureSessionEntry, sessionSdkJsonlDir } from "../src/shared/session-entry-paths.js"
+import { planSkillInjection } from "../src/shared/skill-catalog.js"
+import { getSkillCatalog } from "./skill-catalog"
+
 export interface SdkSessionAgent extends StreamCardHost {
   agent: SDKAgent
   /** 当前活跃 run；null 仅出现在 send 前的短暂窗口（run 结束即整体释放） */
@@ -109,6 +112,8 @@ export interface SdkSessionAgent extends StreamCardHost {
   workerActive?: boolean
   /** 账本超限 rollover：unregister 时不再写 resume */
   ledgerRollover?: boolean
+  /** 这个账本里 AI 已经拿到的 Skill 名单的指纹；没有 = 还没给过（新账本，或上次没送达） */
+  skillsHash?: string
 }
 
 const sdkSessions = new Map<string, SdkSessionAgent>()
@@ -125,6 +130,8 @@ interface ResumeEntry {
   workspaceDir: string
   updatedAt: number
   rulesHash?: string
+  /** 这个账本里 AI 已经拿到的 Skill 名单的指纹：和现在的名单不一样就补发一次 */
+  skillsHash?: string
   /** Resume 时记录的 Daemon 端口，用于检测端口漂移 */
   daemonPort?: number
   /** 最近一次飞书流式卡 cardId；进程重启后用于收口孤儿卡，避免 Resume 再建一张重复卡 */
@@ -157,6 +164,7 @@ function getResumableMap(): Map<string, ResumeEntry> {
       workspaceDir: e.workspaceDir,
       updatedAt: e.updatedAt,
       rulesHash: e.rulesHash,
+      skillsHash: e.skillsHash,
       daemonPort: e.daemonPort,
       streamCardId: e.streamCardId,
     })
@@ -177,6 +185,7 @@ function rememberResumable(session: SdkSessionAgent): void {
     agentId: session.agentId,
     workspaceDir: session.workspaceDir,
     rulesHash: promptHashForSession(session),
+    skillsHash: session.skillsHash,
     daemonPort: resolveDaemonPortForPrompt() ?? undefined,
     streamCardId: session.streamAgg?.cardId ?? prev?.streamCardId,
   })
@@ -194,7 +203,8 @@ function patchResumableStreamCard(sessionKey: string, streamCardId: string | und
 
 export function forgetResumable(sessionKey: string): void {
   ensureModelStore()
-  clearSessionRecordFields(sessionKey, ["agentId", "workspaceDir"])
+  // skillsHash 是「这个账本里 AI 拿到的名单版本」，账本丢了它也跟着作废
+  clearSessionRecordFields(sessionKey, ["agentId", "workspaceDir", "skillsHash"])
 }
 
 let sdkIdleHandler: ((sessionKey: string) => void) | null = null
@@ -1235,6 +1245,8 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       todoSnapshot: null,
       patchStreamCardId: (cardId, patchOpts) => patchResumableStreamCard(sessionKey, cardId, patchOpts),
       processedMessageIds: new Set<string>(),
+      // 续上的账本里 AI 已经拿过哪一版 Skill 名单；全新账本什么都没给过
+      skillsHash: resumed ? resumable?.skillsHash : undefined,
     }
 
     sdkSessions.set(sessionKey, session)
@@ -1302,6 +1314,14 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       return { ok: true }
     }
 
+    // Skill 名单：账本是新的、或名单和 AI 手里那份不一样时，随第一轮给一次。之后的轮次不再带——
+    // 账本最多 15 次 run 就会滚动重开，名单不会被后面的内容挤到太远；名单变了会按指纹补发
+    const skills = getSkillCatalog()
+    const skillCatalog = planSkillInjection(skills, session.skillsHash)
+    if (skillCatalog) {
+      pushUiLog("SDK", "INFO", `[${sessionKey}] 本轮带上 Skill 名单（${skills.count} 个，${skillCatalog.reason === "changed" ? "名单有变化" : "账本新开"}，hash=${skills.hash}）`)
+    }
+
     pushUiLog("SDK", "INFO", `[${sessionKey}] ${resumed ? "恢复" : "启动"} Session Worker (persistentPoll=${persistentPoll})`)
     session.workerActive = true
     void startSdkWorkerLoop(session, {
@@ -1309,6 +1329,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       promptCtx,
       taskMessage: promptCtx.taskMessage,
       historyTurns: promptCtx.historyTurns,
+      skillCatalog,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
     })
 

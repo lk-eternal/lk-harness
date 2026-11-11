@@ -35,12 +35,20 @@ export interface IsolatedDaemonOptions {
    * 用来复现「第一个通道不是用户所在的通道」：多通道时 daemon 取第一个通道当默认，任务就会悄悄投到别的通道。
    */
   leadingChannels?: Array<{ id: string; name: string }>
+  /**
+   * 把 HOME / USERPROFILE 指到数据目录下的临时目录。
+   * daemon 里有些接口读写用户目录（比如 manage_skills 的 ~/.cursor/skills），不隔离就会动到真实目录。
+   * 默认不开：其他测试不需要，行为保持原样。
+   */
+  isolatedHome?: boolean
 }
 
 export interface IsolatedDaemon {
   base: string
   dataDir: string
   wsDir: string
+  /** isolatedHome 开着时 daemon 眼里的用户目录；没开就是空串 */
+  homeDir: string
   sessionKey: string
   /** leadingChannels 对应的通道、工作目录和主会话 key（顺序一致） */
   leading: Array<{ id: string; wsDir: string; sessionKey: string }>
@@ -63,6 +71,8 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "lkh-e2e-"))
   const wsDir = path.join(dataDir, "ws-a")
   fs.mkdirSync(wsDir, { recursive: true })
+  const homeDir = opts.isolatedHome ? path.join(dataDir, "home") : ""
+  if (homeDir) fs.mkdirSync(homeDir, { recursive: true })
   const sessionKey = `ch_test|app_main::${wsDir}`
   const leading = (opts.leadingChannels ?? []).map((c) => {
     const dir = path.join(dataDir, `ws-${c.id}`)
@@ -87,6 +97,7 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
       cwd: ROOT,
       env: {
         ...process.env,
+        ...(homeDir ? { HOME: homeDir, USERPROFILE: homeDir } : {}),
         APP_DATA_DIR: dataDir,
         LARK_WORKSPACE_DIR: wsDir,
         CLAW_CHANNELS_JSON: JSON.stringify(channels),
@@ -141,7 +152,7 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
   }
 
   return {
-    base, dataDir, wsDir, sessionKey, post, get, history, users, findFile, stop,
+    base, dataDir, wsDir, homeDir, sessionKey, post, get, history, users, findFile, stop,
     leading: leading.map(({ id, wsDir: dir, sessionKey: key }) => ({ id, wsDir: dir, sessionKey: key })),
     poll: async () => (await fetch(`${base}/api/poll-message?sessionKey=${encodeURIComponent(sessionKey)}&wait=false`)).json(),
     queuedOf: async () => (await users()).filter((i) => i.queued).map((i) => i.text ?? ""),

@@ -233,14 +233,21 @@ export function hashSystemPrompt(text: string): string {
   return createHash("md5").update(text).digest("hex").slice(0, 16)
 }
 
-/** SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则） */
+/**
+ * SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则）。
+ * skillCatalog：本机 Skill 名单，只在账本新开或名单变了的那一轮给（之后的轮次不带，已经在历史里了）。
+ */
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
+  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
 ): string {
   const chunks: string[] = []
   chunks.push(...assembleProtocolBlocks(ctx))
+  if (opts?.skillCatalog) {
+    chunks.push("---")
+    chunks.push(opts.skillCatalog)
+  }
   chunks.push("---")
   chunks.push(assembleTurnPrompt(messages, ctx, {
     firstTurn: opts?.firstTurn,

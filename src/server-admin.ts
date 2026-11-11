@@ -194,7 +194,7 @@ export function registerAdminTools(mcpServer: McpServer): void {
     "管理 Harness Agent Skills。",
     {
       action: z.enum(["list", "read", "save", "delete"]).describe("list=列出; read=读取 SKILL.md; save=创建或更新; delete=删除"),
-      name: z.string().optional().describe("技能目录名；read/save/delete 必填"),
+      name: z.string().optional().describe("技能目录名（相对 ~/.cursor/skills，可用 / 分层如 group/foo；不能含 ..、绝对路径或盘符）；read/save/delete 必填"),
       content: z.string().optional().describe("SKILL.md 内容（save 时必填）"),
     },
     async ({ action, name, content }) => {

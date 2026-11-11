@@ -402,9 +402,10 @@ const api = {
   saveSkillFile: (rootId: string, skillPath: string, relativePath: string, content: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:save-file", rootId, skillPath, relativePath, content),
   deleteSkillFile: (rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:delete-file", rootId, skillPath, relativePath),
   createSkillDir: (rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:create-dir", rootId, skillPath, relativePath),
-  saveSkill: (rootId: string, skillPath: string, content: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("skills:save", rootId, skillPath, content),
-  renameSkill: (rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("skills:rename", rootId, oldPath, newPath),
-  deleteSkill: (rootId: string, skillPath: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("skills:delete", rootId, skillPath),
+  saveSkill: (rootId: string, skillPath: string, content: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:save", rootId, skillPath, content),
+  renameSkill: (rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:rename", rootId, oldPath, newPath),
+  deleteSkill: (rootId: string, skillPath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:delete", rootId, skillPath),
+  getSkillLinkTarget: (rootId: string, skillPath: string): Promise<string | null> => ipcRenderer.invoke("skills:link-target", rootId, skillPath),
   onMcpLoginComplete: (cb: (data: { serverName: string; ok: boolean }) => void) => {
     const handler = (_: unknown, data: { serverName: string; ok: boolean }) => cb(data)
     ipcRenderer.on("mcp:login-complete", handler)

@@ -364,9 +364,11 @@ declare global {
     saveSkillFile(rootId: string, skillPath: string, relativePath: string, content: string): Promise<{ ok: boolean; error?: string }>
     deleteSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
     createSkillDir(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
-    saveSkill(rootId: string, skillPath: string, content: string): Promise<{ ok: boolean }>
-    renameSkill(rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean }>
-    deleteSkill(rootId: string, skillPath: string): Promise<{ ok: boolean }>
+    saveSkill(rootId: string, skillPath: string, content: string): Promise<{ ok: boolean; error?: string }>
+    renameSkill(rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean; error?: string }>
+    deleteSkill(rootId: string, skillPath: string): Promise<{ ok: boolean; error?: string }>
+    /** 这个 Skill 是不是指向别处的链接：是则返回真实路径（空串是悬空链接），普通文件夹返回 null */
+    getSkillLinkTarget(rootId: string, skillPath: string): Promise<string | null>
     onMcpLoginComplete(cb: (data: { serverName: string; ok: boolean }) => void): () => void
     onDaemonStatus(cb: (status: DaemonStatus) => void): () => void
     onDaemonLog(cb: (line: string) => void): () => void

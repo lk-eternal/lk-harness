@@ -21,6 +21,12 @@ import type { InterruptTurnResult } from "./agent-engine/types"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
 
+/** 要随第一轮交给模型的 Skill 名单；hash 是名单指纹，交付成功后记到会话上 */
+export interface SkillCatalogInjection {
+  text: string
+  hash: string
+}
+
 interface WorkerState {
   session: SdkSessionAgent
   phase: SdkWorkerPhase
@@ -28,6 +34,8 @@ interface WorkerState {
   promptCtx: PromptAssemblyContext
   taskMessage?: string
   historyTurns?: HistoryTurn[]
+  /** 还没交给模型的 Skill 名单：第一轮带上，之后清掉 */
+  skillCatalog?: SkillCatalogInjection
   firstTurn: boolean
   abort: AbortController
   loopPromise: Promise<void>
@@ -174,6 +182,7 @@ export function startSdkWorkerLoop(
     promptCtx: PromptAssemblyContext
     taskMessage?: string
     historyTurns?: HistoryTurn[]
+    skillCatalog?: SkillCatalogInjection
     firstTurn: boolean
   },
 ): Promise<void> {
@@ -185,6 +194,7 @@ export function startSdkWorkerLoop(
     promptCtx: opts.promptCtx,
     taskMessage: opts.taskMessage,
     historyTurns: opts.historyTurns,
+    skillCatalog: opts.skillCatalog,
     firstTurn: opts.firstTurn,
     abort,
     loopPromise: Promise.resolve(),
@@ -248,10 +258,13 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
         historyTurns: state.firstTurn ? state.historyTurns : undefined,
+        skillCatalog: state.skillCatalog?.text,
       })
+      const sentCatalog = state.skillCatalog
       state.firstTurn = false
       state.taskMessage = undefined
       state.historyTurns = undefined
+      state.skillCatalog = undefined
 
       pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 
@@ -266,6 +279,10 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       const interrupted = session.interruptRequested === true
       session.interruptRequested = false
       if (abort.signal.aborted || session.abortController.signal.aborted) break
+
+      // 名单已经随这一轮交给了模型（被软打断的回合模型也看过了）：记下指纹，之后的轮次和下次 Resume 都不用再带；
+      // 回合失败没记，下次拉起会再带一次
+      if (sentCatalog && (turnResult.ok || interrupted)) session.skillsHash = sentCatalog.hash
 
       // 被软打断的回合：取消引发的错误状态不算失败，worker 继续监听
       if (!turnResult.ok && !interrupted) {

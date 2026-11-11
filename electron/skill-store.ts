@@ -2,6 +2,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { isPathInside } from "../src/shared/path-inside.js"
+import { removeNoFollow } from "../src/shared/safe-remove.js"
 
 export interface SkillRootInfo {
   id: string
@@ -47,7 +48,7 @@ function statFile(p: string): boolean {
   try { return fs.statSync(p).isFile() } catch { return false }
 }
 
-/** 递归发现�?SKILL.md 的目录（stat 识别 Windows symlink/junction�?*/
+/** 递归发现�?SKILL.md 的目录（stat 识别 Windows symlink/junction�?*/
 export function discoverSkillPaths(rootAbs: string): string[] {
   const found: string[] = []
   if (!fs.existsSync(rootAbs)) return found
@@ -131,4 +132,50 @@ export function resolveSkillFile(rootId: string, skillPath: string, relativePath
   const filePath = path.resolve(skillDir, relativePath)
   if (!isPathInside(skillDir, filePath)) return undefined
   return filePath
+}
+
+export type SkillDeleteResult = { ok: true } | { ok: false; error: string }
+
+const INVALID_PATH: SkillDeleteResult = { ok: false, error: "路径无效" }
+
+/** a 严格在 b 里面（不含 b 自己）。isPathInside 把自身也算在里面，删除绝不能这样放行 */
+function isStrictlyInside(b: string, a: string): boolean {
+  return isPathInside(b, a) && path.relative(b, a) !== ""
+}
+
+/**
+ * 删除 rootAbs 下的一个 Skill：普通文件夹整个删；链接（比如指向 ~/.agents/skills 的）只删链接，原文件夹不动。
+ * skillPath 为空或 "." 会指到 Skill 根目录自己，拒绝。
+ * 不能直接 fs.rmSync：Electron 的 Node 里它会顺着链接把原目录的内容也删了（见 shared/safe-remove.ts）。
+ */
+export async function removeSkillUnder(rootAbs: string, skillPath: string): Promise<SkillDeleteResult> {
+  const dir = path.resolve(rootAbs, String(skillPath))
+  if (!isStrictlyInside(rootAbs, dir)) return INVALID_PATH
+  const removed = await removeNoFollow(dir)
+  return removed.ok ? { ok: true } : { ok: false, error: removed.error }
+}
+
+/**
+ * 删除 Skill 里的一个文件或文件夹。relativePath 为空或 "." 会指到 Skill 文件夹自己，
+ * 那是「删除 Skill」的事，不能从这里删。
+ */
+export async function removeSkillEntryUnder(rootAbs: string, skillPath: string, relativePath: string): Promise<SkillDeleteResult> {
+  const skillDir = path.resolve(rootAbs, String(skillPath))
+  if (!isStrictlyInside(rootAbs, skillDir)) return INVALID_PATH
+  const target = path.resolve(skillDir, String(relativePath))
+  if (!isStrictlyInside(skillDir, target)) return INVALID_PATH
+  const removed = await removeNoFollow(target)
+  if (!removed.ok) return { ok: false, error: removed.error }
+  if (removed.kind === "missing") return { ok: false, error: "文件不存在" }
+  return { ok: true }
+}
+
+export function deleteSkill(rootId: string, skillPath: string): Promise<SkillDeleteResult> {
+  const rootAbs = absRoot(rootId)
+  return rootAbs ? removeSkillUnder(rootAbs, skillPath) : Promise.resolve(INVALID_PATH)
+}
+
+export function deleteSkillEntry(rootId: string, skillPath: string, relativePath: string): Promise<SkillDeleteResult> {
+  const rootAbs = absRoot(rootId)
+  return rootAbs ? removeSkillEntryUnder(rootAbs, skillPath, relativePath) : Promise.resolve(INVALID_PATH)
 }

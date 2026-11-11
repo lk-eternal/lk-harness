@@ -81,3 +81,19 @@ export function ancestorExpandKeys(rootId: string, skillPath: string, relPath: s
 export function isSameOrInside(relPath: string, target: string): boolean {
   return relPath === target || relPath.startsWith(target + "/")
 }
+
+export type SkillPathResult = { ok: true; path: string } | { ok: false; error: string }
+
+/**
+ * 校验 Skill 的路径（新建、或在编辑区里改名）。规则同 validateEntryName：可以用 / 分层，不能逃出目录、不能有非法字符。
+ * 另外不能和已有的别的 Skill 重名（大小写不敏感）：保存会直接写 SKILL.md，重名就把人家的内容盖掉了。
+ * `existing` 是目录下现有的 Skill 路径，`self` 是正在编辑的这个原来的路径（新建时为 null），和自己同名不算冲突。
+ */
+export function validateSkillPath(raw: string, existing: readonly string[], self: string | null): SkillPathResult {
+  const checked = validateEntryName(raw)
+  if (!checked.ok) return checked
+  const key = checked.name.toLowerCase()
+  const clash = existing.find((p) => p !== self && p.toLowerCase() === key)
+  if (clash) return { ok: false, error: `已经有名叫「${clash}」的 Skill，换一个路径` }
+  return { ok: true, path: checked.name }
+}
