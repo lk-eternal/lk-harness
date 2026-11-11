@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { Plus, Trash2, Loader2, LogIn, Terminal, Wrench } from "lucide-react"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { useScrollActiveIntoView } from "./panel-scroll"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 const MCP_TEMPLATE = JSON.stringify({ "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] } }, null, 2)
@@ -44,7 +45,8 @@ export default function McpPanel() {
   const [mcpLoginPending, setMcpLoginPending] = useState<Record<string, boolean>>({})
   const [builtinGroups, setBuiltinGroups] = useState<{ key: string; title: string; scope: string; tools: BuiltinTool[] }[] | null>(null)
   const [selectedBuiltinTool, setSelectedBuiltinTool] = useState<{ groupKey: string; name: string } | null>(null)
-  const [selectedKey, setSelectedKey] = useState<string | null>(null)
+  // 默认停在列表第一行「Harness 内置 MCP」，进来右边就有内容
+  const [selectedKey, setSelectedKey] = useState<string | null>(BUILTIN_KEY)
   const [draft, setDraft] = useState<McpEditForm | null>(null)
   const [originalName, setOriginalName] = useState<string | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
@@ -207,6 +209,9 @@ export default function McpPanel() {
     ? builtinGroups.find((g) => g.key === selectedBuiltinTool.groupKey)?.tools.find((t) => t.name === selectedBuiltinTool.name)
     : undefined
 
+  const listRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(listRef, selectedKey, servers.length)
+
   return (
     <>
       <div className={PANEL_ROOT}>
@@ -217,24 +222,25 @@ export default function McpPanel() {
             <span className="truncate text-[10px] text-fg-faint">{builtinGroups ? `只读 · ${builtinGroups.reduce((n, g) => n + g.tools.length, 0)} 个工具` : "只读"}</span>
           </button>
           <p className="shrink-0 px-1 py-0.5 text-[10px] font-medium text-fg-faint">自定义</p>
-          <div className={PANEL_LIST}>
+          <div className={PANEL_ADD_BAR}>
+            <button type="button" onClick={() => void openAdd()} className={PANEL_ADD_BTN}>
+              <Plus size={14} />添加
+            </button>
+          </div>
+          <div ref={listRef} className={PANEL_LIST}>
             {servers.map((s) => {
               const key = mcpKey(s.name)
               const rawStatus = mcpStatus[s.name]
               const isReady = rawStatus === "ready" || rawStatus === "enabled"
               const statusText = s.enabled ? (isReady ? "ready" : rawStatus || "—") : "disabled"
               return (
-                <button key={key} type="button" onClick={() => void selectServer(s)}
+                <button key={key} type="button" onClick={() => void selectServer(s)} aria-current={selectedKey === key ? "true" : undefined}
                   className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left transition ${selectedKey === key ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
                   <span className="truncate text-xs font-medium">{s.name}</span>
                   <span className={`truncate text-[10px] text-fg-faint`}>{statusText}</span>
                 </button>
               )
             })}
-            <button type="button" onClick={() => void openAdd()}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40 hover:text-fg-2">
-              <Plus size={14} />添加
-            </button>
           </div>
         </aside>
 

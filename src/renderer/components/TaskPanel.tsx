@@ -3,7 +3,9 @@ import { Plus, Loader2, Play, Trash2 } from "lucide-react"
 import ModelPicker from "./chat/ModelPicker"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { useScrollActiveIntoView } from "./panel-scroll"
+import { useOpenFirstOnce } from "./panel-default"
 import { applyTaskChannel, applyTaskModel, resolveTaskResourceId, taskResourceMissing } from "./task-model"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { isAiTask, resolveTaskNotify, type TaskNotify } from "../../shared/scheduled-task-rules"
@@ -40,6 +42,7 @@ export default function TaskPanel() {
   const { justSaved, markSaved } = usePanelSave()
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [tasks, setTasks] = useState<ScheduledTask[]>([])
+  const [tasksReady, setTasksReady] = useState(false)
   const [taskChannels, setTaskChannels] = useState<ChannelConfig[]>([])
   const [agentResources, setAgentResources] = useState<AgentResource[]>([])
   const [projects, setProjects] = useState<ProjectOption[]>([])
@@ -68,6 +71,7 @@ export default function TaskPanel() {
     setAgentResources(cfg.agentResources ?? [])
     setTaskStatuses(statuses)
     setProjects(projectList.map((p) => ({ id: p.id, name: p.name, status: p.status })))
+    setTasksReady(true)
   }, [])
 
   useEffect(() => { void reload() }, [reload])
@@ -275,11 +279,20 @@ export default function TaskPanel() {
     </select>
   )
 
+  const listRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(listRef, selectedId, tasks.length)
+  useOpenFirstOnce(tasksReady, tasks, selectedId !== null || draft !== null, (t) => openDraft(t, false))
+
   return (
     <>
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
-          <div className={PANEL_LIST}>
+          <div className={PANEL_ADD_BAR}>
+            <button type="button" onClick={openAdd} className={PANEL_ADD_BTN}>
+              <Plus size={14} />添加
+            </button>
+          </div>
+          <div ref={listRef} className={PANEL_LIST}>
             {tasks.map((t) => {
               const active = selectedId === t.id
               const isRunning = !!taskStatuses[t.id]?.running
@@ -288,6 +301,7 @@ export default function TaskPanel() {
                   key={t.id}
                   type="button"
                   onClick={() => void selectTask(t)}
+                  aria-current={active ? "true" : undefined}
                   className={`flex w-full flex-col rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                 >
                   <span className={`truncate text-xs font-medium ${t.enabled ? "" : "line-through opacity-60"}`}>{isAiTask(t) ? "🤖 " : ""}{t.name || "未命名"}</span>
@@ -296,13 +310,6 @@ export default function TaskPanel() {
                 </button>
               )
             })}
-            <button
-              type="button"
-              onClick={openAdd}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-            >
-              <Plus size={14} />添加
-            </button>
           </div>
         </aside>
 

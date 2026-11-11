@@ -24,6 +24,7 @@ import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatI
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import { useReplyNotify } from "../components/chat/useReplyNotify"
 import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarCollapsed } from "../components/chat/sidebar-state"
+import { useScrollActiveIntoView } from "../components/panel-scroll"
 import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
@@ -474,6 +475,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     </button>
   )
 
+  // 新建会话后选中的是它，列表要滚到它那里；只认选中变化，后台刷新多出几个会话不该把用户正在翻的位置拽回去
+  const sidebarListRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(sidebarListRef, selected, 0)
+
   return (
     <PreviewContext.Provider value={preview.api}>
     <div className="flex h-screen flex-col">
@@ -490,10 +495,26 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
         <div className="flex min-h-0 flex-1">
           {/* 左：会话列表（可收起；用 hidden 而不是卸载，展开后列表滚动位置还在） */}
           <aside className={`${sidebarCollapsed ? "hidden" : "flex"} w-60 shrink-0 flex-col border-r border-line-subtle bg-surface`}>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-2">
+            <div ref={sidebarListRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
               {views.map((v) => (
                 <div key={v.channelId}>
-                  {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-fg-faint">{v.name}</p>}
+                  {/* 新会话 / 新项目在分组顶部，滚动时粘在列表上沿：会话再多也不用滚到底才能新建 */}
+                  <div data-sticky-head className="sticky top-0 z-10 bg-surface pb-1.5 pt-2">
+                    {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-fg-faint">{v.name}</p>}
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void newSession(v.channelId)}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
+                      ><Plus size={14} />新会话</button>
+                      <button
+                        type="button"
+                        onClick={() => setNewProjectFor(v.channelId)}
+                        title="按一套做事的流程（调研、写作、周报……）建一个项目"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
+                      ><FolderKanban size={13} />新项目</button>
+                    </div>
+                  </div>
                   <div className="space-y-0.5">
                     {listOrder(v.tabs).map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
@@ -507,6 +528,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                           <button
                             type="button"
                             onClick={() => setSelected(t.sessionKey)}
+                            aria-current={on ? "true" : undefined}
                             title={dirOf(t) ?? sessionName(t)}
                             className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
                           >
@@ -546,19 +568,6 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                         </div>
                       )
                     })}
-                    <div className="flex gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => void newSession(v.channelId)}
-                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-                      ><Plus size={14} />新会话</button>
-                      <button
-                        type="button"
-                        onClick={() => setNewProjectFor(v.channelId)}
-                        title="按一套做事的流程（调研、写作、周报……）建一个项目"
-                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-                      ><FolderKanban size={13} />新项目</button>
-                    </div>
                   </div>
                 </div>
               ))}

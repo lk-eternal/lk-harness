@@ -3,7 +3,9 @@ import {
   Plus, Trash2, Loader2, ShieldCheck, ShieldAlert, Eye, EyeOff,
   KeyRound, Cloud, Globe,
 } from "lucide-react"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { useScrollActiveIntoView } from "./panel-scroll"
+import { useOpenFirstOnce } from "./panel-default"
 import PanelAddMenu from "./PanelAddMenu"
 import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
 import useInlineModal from "./useInlineModal"
@@ -137,6 +139,7 @@ function AgentModelsList({ draft, refreshKey }: { draft: AgentResource; refreshK
 
 export default function AgentPanel() {
   const [resources, setResources] = useState<AgentResource[]>([])
+  const [resourcesReady, setResourcesReady] = useState(false)
   const [channels, setChannels] = useState<ChannelConfig[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<AgentResource | null>(null)
@@ -155,6 +158,7 @@ export default function AgentPanel() {
     const cfg = await window.electronAPI.getConfig()
     setResources(cfg.agentResources ?? [])
     setChannels(cfg.channels ?? [])
+    setResourcesReady(true)
   }, [])
 
   useEffect(() => { void reload() }, [reload])
@@ -279,11 +283,40 @@ export default function AgentPanel() {
 
   const usedByCount = draft ? channels.filter((c) => c.agentResourceId === draft.id).length : 0
 
+  const listActiveId = draft ? draft.id : selectedId
+  const listRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(listRef, listActiveId, resources.length)
+  useOpenFirstOnce(resourcesReady, resources, selectedId !== null || draft !== null, (r) => openDraft(r, false))
+
   return (
     <>
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
-          <div className={PANEL_LIST}>
+          <div className={`relative ${PANEL_ADD_BAR}`} ref={addMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowAddMenu(!showAddMenu)}
+              className={PANEL_ADD_BTN}
+            >
+              <Plus size={14} />添加
+            </button>
+            <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
+              <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                <KeyRound size={12} className="text-purple" />Cursor SDK
+              </button>
+              <div className="my-1 border-t border-line-subtle" />
+              {BUILTIN_LLM_PROVIDERS.map((p) => (
+                <button key={p.id} type="button" onClick={() => openAdd("llm-builtin", p.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                  <Cloud size={12} className="text-sky" />{p.label}
+                </button>
+              ))}
+              <div className="my-1 border-t border-line-subtle" />
+              <button type="button" onClick={() => openAdd("llm-custom")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
+                <Globe size={12} className="text-warning" />自定义网关
+              </button>
+            </PanelAddMenu>
+          </div>
+          <div ref={listRef} className={PANEL_LIST}>
             {resources.map((r) => {
               const active = draft ? draft.id === r.id : selectedId === r.id
               return (
@@ -291,6 +324,7 @@ export default function AgentPanel() {
                   key={r.id}
                   type="button"
                   onClick={() => void selectItem(r.id)}
+                  aria-current={active ? "true" : undefined}
                   className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                 >
                   {resourceIcon(r)}
@@ -301,30 +335,6 @@ export default function AgentPanel() {
                 </button>
               )
             })}
-            <div className="relative pt-1" ref={addMenuRef}>
-              <button
-                type="button"
-                onClick={() => setShowAddMenu(!showAddMenu)}
-                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-              >
-                <Plus size={14} />添加
-              </button>
-              <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
-                <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
-                  <KeyRound size={12} className="text-purple" />Cursor SDK
-                </button>
-                <div className="my-1 border-t border-line-subtle" />
-                {BUILTIN_LLM_PROVIDERS.map((p) => (
-                  <button key={p.id} type="button" onClick={() => openAdd("llm-builtin", p.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
-                    <Cloud size={12} className="text-sky" />{p.label}
-                  </button>
-                ))}
-                <div className="my-1 border-t border-line-subtle" />
-                <button type="button" onClick={() => openAdd("llm-custom")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
-                  <Globe size={12} className="text-warning" />自定义网关
-                </button>
-              </PanelAddMenu>
-            </div>
           </div>
         </aside>
 

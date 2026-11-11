@@ -3,7 +3,9 @@ import { createPortal } from "react-dom"
 import { Plus, Trash2, ChevronDown, Search, Check, X } from "lucide-react"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
+import { useScrollActiveIntoView } from "./panel-scroll"
+import { useOpenFirstOnce } from "./panel-default"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -26,6 +28,7 @@ export default function RulePanel() {
   const { showConfirm, showUnsavedChoice, ModalPortal } = useInlineModal()
   const { justSaved, markSaved } = usePanelSave()
   const [rules, setRules] = useState<HarnessRule[]>([])
+  const [rulesReady, setRulesReady] = useState(false)
   const [channels, setChannels] = useState<ChannelLite[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<Draft | null>(null)
@@ -33,7 +36,7 @@ export default function RulePanel() {
   const [isNew, setIsNew] = useState(false)
 
   const reload = useCallback(() => {
-    void window.electronAPI.getHarnessRules().then(setRules)
+    void window.electronAPI.getHarnessRules().then((list) => { setRules(list); setRulesReady(true) })
     void window.electronAPI.getConfig().then((cfg) =>
       setChannels((cfg.channels ?? []).map((c) => ({ id: c.id, name: c.name || c.id })))
     )
@@ -107,13 +110,22 @@ export default function RulePanel() {
     return `${n} 项`
   }
 
+  const listRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(listRef, selectedId, rules.length)
+  useOpenFirstOnce(rulesReady, rules, selectedId !== null || draft !== null, (r) => openDraft({ id: r.id, name: r.id, content: r.content, enabled: r.enabled, scope: normalizeScope(r.scope) }, false))
+
   return (
     <>
       <div className={PANEL_ROOT}>
         <aside className={PANEL_ASIDE}>
-          <div className={PANEL_LIST}>
+          <div className={PANEL_ADD_BAR}>
+            <button type="button" onClick={() => void openAdd()} className={PANEL_ADD_BTN}>
+              <Plus size={14} />添加
+            </button>
+          </div>
+          <div ref={listRef} className={PANEL_LIST}>
             {rules.map((r) => (
-              <button key={r.id} type="button" onClick={() => void selectRule(r)}
+              <button key={r.id} type="button" onClick={() => void selectRule(r)} aria-current={selectedId === r.id ? "true" : undefined}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition ${selectedId === r.id ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.enabled ? "bg-green-500" : "bg-stronger"}`} />
                 <div className="min-w-0 flex-1">
@@ -122,10 +134,6 @@ export default function RulePanel() {
                 </div>
               </button>
             ))}
-            <button type="button" onClick={() => void openAdd()}
-              className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted hover:border-line-strong hover:bg-raised/40 hover:text-fg-2">
-              <Plus size={14} />添加
-            </button>
           </div>
         </aside>
         <div className={PANEL_MAIN}>
@@ -158,7 +166,7 @@ export default function RulePanel() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择 Claw 规则</div>
+            <div className="flex flex-1 items-center justify-center text-sm text-fg-faint">← 选择规则</div>
           )}
         </div>
       </div>

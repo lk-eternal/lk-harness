@@ -10,7 +10,9 @@ import { emptyChannel } from "../channel-defaults"
 import ChannelModelImpactDialog from "./ChannelModelImpactDialog"
 import ModelPicker from "./chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
-import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
+import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL_FLAT, PANEL_FOOTER } from "./panel-layout"
+import { useScrollActiveIntoView } from "./panel-scroll"
+import { useOpenFirstOnce } from "./panel-default"
 import PanelAddMenu from "./PanelAddMenu"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
@@ -22,6 +24,7 @@ const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
 
 export default function ChannelPanel() {
   const [channels, setChannels] = useState<ChannelConfig[]>([])
+  const [channelsReady, setChannelsReady] = useState(false)
   const [resources, setResources] = useState<AgentResource[]>([])
   const [statusMap, setStatusMap] = useState<Record<string, ChannelStatusInfo>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -44,6 +47,7 @@ export default function ChannelPanel() {
       digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     })))
     setResources(cfg.agentResources ?? [])
+    setChannelsReady(true)
   }, [])
 
   useEffect(() => { void reload() }, [reload])
@@ -184,12 +188,30 @@ export default function ChannelPanel() {
     setIsNewChannel(false)
   }
 
+  const listRef = useRef<HTMLDivElement>(null)
+  useScrollActiveIntoView(listRef, selectedId, channels.length)
+  useOpenFirstOnce(channelsReady, channels, selectedId !== null || draft !== null, (c) => openDraft(c, false))
+
   return (
     <>
       <div className={PANEL_ROOT}>
-        {/* 左侧通道列表（固定，独立滚动） */}
+        {/* 左侧通道列表（固定，独立滚动）；「添加」在列表外面，列表再长也看得见 */}
         <aside className={PANEL_ASIDE}>
-          <div className={PANEL_LIST}>
+          <div className={`relative ${PANEL_ADD_BAR}`} ref={addMenuRef}>
+            <button
+              type="button"
+              onClick={() => setShowAddMenu(!showAddMenu)}
+              className={PANEL_ADD_BTN}
+            >
+              <Plus size={14} />添加
+            </button>
+            <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
+              <button type="button" onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><Bird size={12} className="text-accent" />飞书</button>
+              <button type="button" onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MessageSquare size={12} className="text-success" />微信</button>
+              <button type="button" onClick={() => openAdd("app")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MonitorSmartphone size={12} className="text-purple" />应用内对话</button>
+            </PanelAddMenu>
+          </div>
+          <div ref={listRef} className={PANEL_LIST}>
             {channels.map((c) => {
               const st = statusMap[c.id]
               const active = selectedId === c.id
@@ -198,6 +220,7 @@ export default function ChannelPanel() {
                   key={c.id}
                   type="button"
                   onClick={() => void selectChannel(c)}
+                  aria-current={active ? "true" : undefined}
                   className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm transition ${active ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
                 >
                   {c.type === "feishu"
@@ -212,20 +235,6 @@ export default function ChannelPanel() {
                 </button>
               )
             })}
-            <div className="relative pt-1" ref={addMenuRef}>
-              <button
-                type="button"
-                onClick={() => setShowAddMenu(!showAddMenu)}
-                className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-              >
-                <Plus size={14} />添加
-              </button>
-              <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
-                <button type="button" onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><Bird size={12} className="text-accent" />飞书</button>
-                <button type="button" onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MessageSquare size={12} className="text-success" />微信</button>
-                <button type="button" onClick={() => openAdd("app")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MonitorSmartphone size={12} className="text-purple" />应用内对话</button>
-              </PanelAddMenu>
-            </div>
           </div>
         </aside>
 
