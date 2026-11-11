@@ -12,7 +12,7 @@ alwaysApply: true
 
 **`send_question`** — 点选提问  
 必填：`text`（问题题目,问题保持简练,不要在问题中写结论）、`options`（选项,每个选项1–10 个字符串,选项前无需序号,渲染层会自动带上序号）  
-可选：`message_id`（回复某条消息时使用，取自 `[本轮投递]` JSON 的 `messages[].message_id`）
+可选：`multi_select`（`true` = 多选题，用户可勾选多项后点「提交」，你收到的答案是被选中的选项按题目顺序用「、」连起来；默认单选，点一个就作答。多选时选项文本里不要带「、」）、`message_id`（回复某条消息时使用，取自 `[本轮投递]` JSON 的 `messages[].message_id`）
 
 **`send_image`** — 发图片  
 必填：`image_path`（本地绝对路径）  

@@ -23,8 +23,8 @@ beforeEach(async () => {
 afterEach(async () => { await d?.stop() })
 
 /** Agent 调 send_question：返回问题的 message_id */
-async function ask(text: string, options: string[]): Promise<string> {
-  const r = await d.post("/api/send-question", { text, options, session_key: d.sessionKey })
+async function ask(text: string, options: string[], multiSelect?: boolean): Promise<string> {
+  const r = await d.post("/api/send-question", { text, options, ...(multiSelect === undefined ? {} : { multi_select: multiSelect }), session_key: d.sessionKey })
   expect(r.ok, JSON.stringify(r)).toBe(true)
   expect(r.message_id).toBeTruthy()
   return r.message_id as string
@@ -96,6 +96,36 @@ describe("多个问题：全选完才发给 Agent", () => {
     expect(await polled()).toEqual([])
     await pick(q3, "否")
     expect(await polled()).toEqual(["【点选汇总】\n1. 第二轮 A → 是\n2. 第二轮 B → 否"])
+  })
+})
+
+describe("多选题（multi_select）", () => {
+  it("问题带 multi 标记；用户勾选多项提交后，Agent 收到按题目顺序用「、」连起来的一条", async () => {
+    const q = await ask("给哪些人开？", ["SUB_CHILD", "SUB_TEEN", "SUB_ADULT", "SUB_ALL"], true)
+    expect(await questionOf(q)).toMatchObject({ multi: true, options: ["SUB_CHILD", "SUB_TEEN", "SUB_ADULT", "SUB_ALL"] })
+
+    expect((await pick(q, "SUB_CHILD、SUB_ADULT")).ok).toBe(true)
+    expect(await polled()).toEqual(["SUB_CHILD、SUB_ADULT"])
+    expect(await questionOf(q)).toMatchObject({ answered: "SUB_CHILD、SUB_ADULT" })
+    // 交出之后锁定
+    expect((await pick(q, "SUB_ALL")).ok).toBe(false)
+  })
+
+  it("不传 multi_select / 传 false 都是单选；只有一个选项时 multi_select 也按单选发", async () => {
+    const plain = await ask("单选", ["是", "否"])
+    const off = await ask("单选 2", ["是", "否"], false)
+    const lone = await ask("只有一个选项", ["好"], true)
+    for (const id of [plain, off, lone]) expect((await questionOf(id)).multi).toBeUndefined()
+  })
+
+  it("和单选题同一轮：多选题的答案先记下，全答完才一起交出", async () => {
+    const multi = await ask("给哪些人开？", ["SUB_CHILD", "SUB_TEEN", "SUB_ADULT"], true)
+    const single = await ask("要不要加测试？", ["要", "不要"])
+    expect((await pick(multi, "SUB_TEEN、SUB_ADULT")).ok).toBe(true)
+    expect(await polled()).toEqual([])
+    expect(await questionOf(multi)).toMatchObject({ answered: "SUB_TEEN、SUB_ADULT", held: true })
+    expect((await pick(single, "要")).ok).toBe(true)
+    expect(await polled()).toEqual(["【点选汇总】\n1. 给哪些人开？ → SUB_TEEN、SUB_ADULT\n2. 要不要加测试？ → 要"])
   })
 })
 

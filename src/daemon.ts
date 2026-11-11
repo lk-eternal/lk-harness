@@ -9,12 +9,13 @@ import {
   stopDaemonScheduledTasks,
   setDaemonSchedulerLogger,
 } from "./daemon-scheduled-tasks.js";
-import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessageEvent, LarkCardActionEvent, CardButton, CardInput, CardTitle, cleanupMediaCache } from "./shared/lark-core.js";
+import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessageEvent, LarkCardActionEvent, CardButton, CardInput, CardTitle, QuestionMultiForm, cleanupMediaCache } from "./shared/lark-core.js";
 import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
 import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
+import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
@@ -1730,7 +1731,7 @@ type AgentStreamSegment =
   | { type: "tools"; tools: AgentStreamToolItem[]; panelId?: string }
   | { type: "reply"; text: string }
   | { type: "todos"; items: AgentStreamTodoItem[] }
-  | { type: "question"; blockId: string; text: string; options: string[]; answered?: string; closedNote?: string };
+  | { type: "question"; blockId: string; text: string; options: string[]; answered?: string; closedNote?: string; multi?: boolean };
 
 interface StreamQuestionBlock {
   blockId: string;
@@ -1739,6 +1740,8 @@ interface StreamQuestionBlock {
   options: string[];
   answered?: string;
   closedNote?: string;
+  /** 多选题：用户在飞书卡片的表单里本地勾选，点「提交」才作答（answered 是勾选项拼成的答案） */
+  multi?: boolean;
 }
 
 interface StreamPanelState {
@@ -1850,6 +1853,7 @@ function overlayQuestionBlocks(segs: AgentStreamSegment[], blocks: StreamQuestio
       options: b.options,
       answered: b.answered,
       closedNote: b.closedNote,
+      ...(b.multi ? { multi: true } : {}),
     });
     offset++;
   }
@@ -1992,7 +1996,7 @@ type CardBodySegment =
   | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
-  | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string };
+  | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string };
 
 function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfig): boolean {
   return daemonFlagsForSession(sessionKey, cfg).hideThinkingOnFinish;
@@ -2012,15 +2016,27 @@ export function buildCardSegmentsFromPayload(
   const out: CardBodySegment[] = [];
   for (const seg of payload.segments) {
     if (seg.type === "question") {
+      const open = !seg.answered && !seg.closedNote;
+      const elementId = streamQuestionElementId(seg.blockId);
+      // 多选题未决时是一张表单（每个选项一个勾选框 + 「提交」），选项文字写在勾选框旁，题干里不再列一遍；
+      // 已答/已关后回到普通问题块（答案在 footer）
+      if (seg.multi && open) {
+        out.push({
+          type: "question",
+          questionText: seg.text,
+          form: multiQuestionForm(seg.options, multiQuestionNamePrefix(seg.blockId), { kind: "question_submit", sk: sessionKey, blockId: seg.blockId }),
+          footer: MULTI_QUESTION_CARD_HINT,
+          elementId,
+        });
+        continue;
+      }
       const qText = questionBodyText(seg.text, seg.options);
-      const buttons = !seg.answered && !seg.closedNote
-        ? questionOptionButtons(seg.options, sessionKey, seg.blockId)
-        : undefined;
+      const buttons = open ? questionOptionButtons(seg.options, sessionKey, seg.blockId) : undefined;
       let footer: string | undefined;
       if (seg.answered) footer = answeredQuestionFooter(seg.answered);
       else if (seg.closedNote) footer = closedQuestionFooter(seg.text, seg.closedNote);
       else footer = QUESTION_CARD_HINT;
-      out.push({ type: "question", questionText: qText, buttons, footer, elementId: streamQuestionElementId(seg.blockId) });
+      out.push({ type: "question", questionText: qText, buttons, footer, elementId });
     } else if (seg.type === "thinking") {
       if (!opts.showThinking || stripFoldables) continue;
       if (!seg.text?.trim()) continue;
@@ -2568,10 +2584,17 @@ function retractActiveStreamCard(rt: ChannelRuntime, sessionKey: string): Promis
 interface CardQuestionEntry {
   text: string; displayBody?: string; options: string[]; sessionKey?: string; chatKey?: string;
   createdAt: number; title?: CardTitle; template?: string; isStreamCard?: boolean; questionBlockId?: string;
+  /** 多选题：勾选在飞书卡片表单里本地完成，提交时才带回；这里只记「这是多选题」 */
+  multi?: boolean;
 }
 const cardQuestionMap = new Map<string, CardQuestionEntry>();
 const CARD_QUESTION_MAX = 500;
 const QUESTION_CARD_HINT = "<font color='grey'>请选择上方选项或直接输入</font>";
+const MULTI_QUESTION_CARD_HINT = "<font color='grey'>可多选：勾选后点「提交」；也可直接回复文字</font>";
+/** 独立多选卡（不在流式卡里）只有一道题，勾选框 name 前缀固定即可 */
+const STANDALONE_MULTI_PREFIX = "qm";
+const MULTI_LEGACY_CARD_TOAST = "这张多选卡是旧版样式，已失效，请直接回复选项文字，或让 Agent 重新提问";
+const MULTI_NO_CHOICES_TOAST = "没读到勾选内容（旧版卡片或飞书客户端过旧），请直接回复选项文字，或让 Agent 重新提问";
 
 /** 问题块稳定元素 ID：q_ + blockId 短哈希=10 字符（element_id 上限 20），全量渲染与点选 surgical 更新同源 */
 function streamQuestionElementId(blockId: string): string {
@@ -2736,7 +2759,9 @@ function questionOptionLetter(i: number): string {
 function questionBodyWithOptions(raw: string, options: string[], maxLen?: number): string {
   const body = questionDisplayBody(raw, maxLen);
   if (!options.length) return body;
-  const list = options.map((o, i) => `**${questionOptionLetter(i)}.** ${o}`).join("\n");
+  const list = options
+    .map((o, i) => `**${questionOptionLetter(i)}.** ${o}`)
+    .join("\n");
   return body ? `${body}\n\n${list}` : list;
 }
 
@@ -2746,6 +2771,23 @@ function questionOptionButtons(options: string[], sessionKey?: string, blockId?:
     value: { kind: "question", opt: o, sk: sessionKey, blockId },
     type: "default" as const,
   }));
+}
+
+/**
+ * 多选题表单：每个选项一个勾选框（旁边写「A. 选项文本」），勾选在飞书客户端本地完成、不回调；
+ * 点「提交」才把整张表单一次性回传，服务端再按 namePrefix 把勾选读出来拼成答案交给 Agent。
+ */
+function multiQuestionForm(options: string[], namePrefix: string, submitValue: Record<string, unknown>): QuestionMultiForm {
+  return {
+    namePrefix,
+    labels: options.map((o, i) => `${questionOptionLetter(i)}. ${o}`),
+    submitValue,
+  };
+}
+
+/** 多选卡的勾选框 name 前缀：流式卡里同卡可能有多道题，用题块 ID 区分；独立卡只有一道题 */
+function multiQuestionNamePrefix(blockId: string | undefined): string {
+  return blockId ? streamQuestionElementId(blockId) : STANDALONE_MULTI_PREFIX;
 }
 
 /** @deprecated 用 questionDisplayBody；保留别名防漏改 */
@@ -2862,6 +2904,9 @@ function resolveCardActionChatType(rt: ChannelRuntime, chatKey: string, rawChatI
   return rawChatId?.startsWith("on_") ? "group" : "p2p";
 }
 
+// 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels };
+
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
   const value = evt.value as { kind?: string; opt?: string; cmd?: string; sk?: string; approve?: string; dir?: string; blockId?: string } | undefined;
@@ -2882,9 +2927,14 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     return {};
   }
 
-  if (value?.kind === "question") {
-    // 按钮点击取 opt；输入框提交取 input_value（自由输入）
-    const opt = String(value.opt ?? "").trim() || (evt.inputValue ?? "").trim();
+  // 旧版多选卡（每个选项一个开关按钮）已经不再支持：新版多选题是表单勾选框，勾选不回调。
+  // 升级前发出、还留在聊天里的旧卡点开关会走到这里，直接说明，别让用户点了没反应
+  if (value?.kind === "question_toggle") {
+    return { toast: { type: "warning", content: MULTI_LEGACY_CARD_TOAST } };
+  }
+
+  // question：单选点一下即作答 / 输入框自由输入；question_submit：多选题提交，答案取表单里的勾选
+  if (value?.kind === "question" || value?.kind === "question_submit") {
     const entry = cardQuestionMap.get(evt.messageId);
     // 优先 map；map 缺失时用按钮内嵌的 session_key（防 reply 未回 message_id 导致未登记）
     const sessionKey = entry?.sessionKey || value.sk || undefined;
@@ -2894,6 +2944,26 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         ? { sessionKey, state: agentStreamCards.get(sessionKey)! }
         : undefined);
     const streamQuestion = !!streamHit && (streamHit.state.questionBlocks?.length ?? 0) > 0;
+    // 按钮点击取 opt；输入框提交取 input_value（自由输入）；多选提交取表单里的勾选（按题目顺序拼接）
+    let opt: string;
+    if (value.kind === "question_submit") {
+      const multiSrc: { multi?: boolean; options: string[]; answered?: string; closedNote?: string } | undefined = streamQuestion
+        ? streamHit!.state.questionBlocks.find((b) => b.blockId === blockId)
+        : entry;
+      if (!multiSrc?.multi || multiSrc.answered || multiSrc.closedNote) {
+        return { toast: { type: "warning", content: "该问题已过期，请直接发消息告知选择" } };
+      }
+      const picked = readFormChoices(multiSrc.options, evt.formValue, multiQuestionNamePrefix(streamQuestion ? blockId : undefined));
+      if (!picked) {
+        // 表单里没有本题的勾选框字段：旧版卡片的提交按钮，或客户端没回传勾选内容。记下原始值方便排查
+        log("WARN", `[${rt.cfg.name}] 多选提交没带勾选内容 (msg=${evt.messageId}, block=${blockId ?? "-"}) form_value=${JSON.stringify(evt.formValue ?? null)?.slice(0, 300)}`);
+        return { toast: { type: "warning", content: MULTI_NO_CHOICES_TOAST } };
+      }
+      opt = joinChoices(multiSrc.options, picked);
+      if (!opt) return { toast: { type: "warning", content: "请先勾选至少一项" } };
+    } else {
+      opt = String(value.opt ?? "").trim() || (evt.inputValue ?? "").trim();
+    }
     // 只回 toast：返回 raw card 会把整张流式卡（思考/工具/正文）冲成一行提示
     if (!opt || (!entry && !sessionKey)) {
       return { toast: { type: "warning", content: "该问题已过期，请直接发消息告知选择" } };
@@ -3671,17 +3741,18 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: b
 
   s.tool(
     "send_question",
-    "向用户提问并给出选项按钮。飞书发交互卡片；微信降级为文本选项列表。",
+    "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。",
     {
       text: z.string().describe("问题内容（支持 markdown）"),
-      options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）"),
+      options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）。多选时选项文本里不要含「、」，多选答案用它连接"),
+      multi_select: z.boolean().optional().describe(`true = 多选题：用户可勾选多个选项后提交，收到的答案是被选中的选项文本按题目顺序用「${MULTI_ANSWER_SEP}」连起来；默认 false（单选）`),
       message_id: z.string().optional().describe("要回复的消息ID，传入后以回复模式发送"),
     },
-    async ({ text, options, message_id }) => {
+    async ({ text, options, multi_select, message_id }) => {
       try {
         const routeKey = resolveSendSessionKeyForMcp();
         if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
+        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, multi_select, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${(r as any)?.error?.trim() || "问题发送失败"}` }] };
         return { content: [{ type: "text" as const, text: r.degraded ? "问题已发送（微信文本降级）" : "问题已发送" }] };
       } catch (e: any) {
@@ -4970,8 +5041,10 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/send-question") {
     const body = JSON.parse(await readBody(req));
-    const { text, options, message_id, session_key, invoker_session_key } = body as { text: string; options: unknown; message_id?: string; session_key?: string; invoker_session_key?: string };
+    const { text, options, multi_select, message_id, session_key, invoker_session_key } = body as { text: string; options: unknown; multi_select?: unknown; message_id?: string; session_key?: string; invoker_session_key?: string };
     const opts = (Array.isArray(options) ? options : []).map((o) => String(o).trim()).filter(Boolean).slice(0, 10);
+    // 多选：只有 2 个及以上选项才有意义（单个选项勾选无从谈起，按普通单选发）
+    const multi = multi_select === true && opts.length >= 2;
     if (!text?.trim() || opts.length === 0) { json(res, { ok: false, error: "text 与 options 必填" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-question", session_key, message_id)) return true;
 
@@ -4980,12 +5053,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
     if (ch.type === "app") {
       const appSessionKey = resolveAppSessionKey(ch, message_id, session_key);
-      const questionId = appChat.addQuestion(appSessionKey, text, opts);
+      const questionId = appChat.addQuestion(appSessionKey, text, opts, multi);
       trackMessageSession(questionId, appSessionKey);
       json(res, { ok: true, message_id: questionId });
     } else if (ch.type === "wechat") {
       // 微信无交互卡片：降级为文本选项列表，用户直接回复字母或内容
-      const fallback = `${text}\n\n请回复字母或选项内容:\n${opts.map((o, i) => `${questionOptionLetter(i)}. ${o}`).join("\n")}`;
+      const fallback = `${text}\n\n${multi ? "可多选，请回复多个字母或选项内容（用空格或逗号隔开）:" : "请回复字母或选项内容:"}\n${opts.map((o, i) => `${questionOptionLetter(i)}. ${o}`).join("\n")}`;
       json(res, { ok: await ch.rt.wechat!.sendText(ch.chatId, fallback), degraded: true });
     } else {
       const sender = ch.rt.sender!;
@@ -5006,6 +5079,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
             insertAt: stream.lastSegments.length,
             text: displayBody,
             options: opts,
+            ...(multi ? { multi: true } : {}),
           });
           let mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
           if (!mergedOk) {
@@ -5049,21 +5123,29 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       const title = resolveReplyTitle(ch, colorKey || session_key);
       // 问题卡与普通回复同色：用会话稳定色，关闭/点选时不变色
       const displayBody = questionBodyWithOptions(text, opts);
-      const pendingText = displayBody;
-      const pendingFooter = QUESTION_CARD_HINT;
       const pendingTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
-      const buttons = questionOptionButtons(opts, session_key);
+      // 单选：选项字母按钮，点一下就作答；多选：表单（每项一个勾选框 + 「提交」）。答完都用 displayBody（带 A./B. 选项表）定格。
+      // 两种卡的发送方式（p2p 直发 / 群聊先 reply）一样，只是卡不同
+      const sendQuestionCard = (replyId?: string, chatId?: string) => multi
+        ? sender.sendQuestionMultiCard({
+          questionText: questionDisplayBody(text),
+          form: multiQuestionForm(opts, multiQuestionNamePrefix(undefined), { kind: "question_submit", sk: session_key }),
+          title,
+          template: pendingTemplate,
+          footer: MULTI_QUESTION_CARD_HINT,
+        }, replyId, chatId)
+        : sender.sendCardWithButtons(displayBody, questionOptionButtons(opts, session_key), replyId, chatId, title, undefined, pendingTemplate, QUESTION_CARD_HINT);
       // p2p 直发；群聊先 reply，失败再直发（null=已回复成功勿再发）
       let sentMsgId: string | null | undefined;
       if (shouldReplyToMessage(ch, message_id)) {
-        sentMsgId = await sender.sendCardWithButtons(pendingText, buttons, message_id, undefined, title, undefined, pendingTemplate, pendingFooter);
+        sentMsgId = await sendQuestionCard(message_id);
         if (sentMsgId === undefined) {
           log("INFO", `问题卡片回复退避: message_id=${message_id} → ${ch.chatId ? `chat_id=${ch.chatId}` : "无目标"}`);
-          if (ch.chatId) sentMsgId = await sender.sendCardWithButtons(pendingText, buttons, undefined, ch.chatId, title, undefined, pendingTemplate, pendingFooter);
+          if (ch.chatId) sentMsgId = await sendQuestionCard(undefined, ch.chatId);
         }
       } else {
         if (!ch.chatId) { json(res, { ok: false, error: "无法解析发送目标 chatId" }, 400); return true; }
-        sentMsgId = await sender.sendCardWithButtons(pendingText, buttons, undefined, ch.chatId, title, undefined, pendingTemplate, pendingFooter);
+        sentMsgId = await sendQuestionCard(undefined, ch.chatId);
       }
       const ok = sentMsgId !== undefined; // null 也算成功（已回复到原聊天）
       if (typeof sentMsgId === "string" && sentMsgId) {
@@ -5071,6 +5153,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           text, displayBody, options: opts, sessionKey: session_key,
           chatKey: session_key ? chatIdFromSessionKey(session_key) : (ch.chatId ? makeChatKey(ch.rt.cfg.id, ch.chatId) : undefined),
           createdAt: Date.now(), title, template: pendingTemplate,
+          ...(multi ? { multi: true } : {}),
         });
         if (session_key) trackMessageSession(sentMsgId, session_key);
       }

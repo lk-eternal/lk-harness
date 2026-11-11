@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { Check, Copy, Download, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
 import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUserItem } from "../../../shared/app-chat-types"
+import { joinChoices, splitChoices, toggleChoice } from "../../../shared/question-multi"
 import { formatFullTime, formatMessageTime } from "../../time-ago"
 import { canOpenWithDefaultApp, isPreviewable, previewTypeOf } from "../../../shared/preview-kinds"
 import { usePreview } from "../preview/PreviewContext"
@@ -105,10 +106,77 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
   )
 }
 
+/**
+ * 多选题：先勾选（只在本地记着草稿），点「提交」才作答。答案是勾选项按题目顺序连成的一条，
+ * 和单选一样走 onAnswer；同一轮还有别的问题没选完时（waiting），已提交的答案可以改勾后重新提交。
+ */
+function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
+  item: AppChatQuestionItem
+  onAnswer: (questionId: string, option: string) => void
+  waiting: boolean
+  locked: boolean
+}) {
+  const [draft, setDraft] = useState<string[]>(() => splitChoices(item.answered, item.options))
+  // 提交结果（含另一端改的）变了就跟着变；没提交过时用户在勾的草稿不被打断
+  useEffect(() => { setDraft(splitChoices(item.answered, item.options)) }, [item.answered])
+  const shown = locked ? splitChoices(item.answered, item.options) : draft
+  const answer = joinChoices(item.options, draft)
+  const dirty = answer !== (item.answered ?? "")
+  return (
+    <div className="rounded-lg border border-line bg-surface/60 p-3">
+      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>
+      <div className="mt-3 flex flex-col gap-1.5">
+        {item.options.map((o, i) => {
+          const picked = shown.includes(o)
+          return (
+            <button
+              key={`${i}-${o}`}
+              type="button"
+              role="checkbox"
+              aria-checked={picked}
+              disabled={locked}
+              onClick={() => setDraft((d) => toggleChoice(item.options, d, o))}
+              className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-left text-sm transition ${
+                picked
+                  ? "border-blue-500 bg-blue-600/20 text-accent-bright"
+                  : locked
+                    ? "border-line-subtle text-fg-faint"
+                    : "border-line text-fg-2 hover:border-blue-500 hover:bg-raised"
+              }`}
+            >
+              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${picked ? "border-blue-500 bg-blue-600 text-white" : "border-line"}`}>
+                {picked && <Check size={12} />}
+              </span>
+              <span className="min-w-0 flex-1 break-words">{o}</span>
+            </button>
+          )
+        })}
+      </div>
+      {!locked && (
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            type="button"
+            disabled={!answer || !dirty}
+            onClick={() => onAnswer(item.messageId, answer)}
+            className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {waiting ? "更新选择" : "提交"}{draft.length > 0 ? `（${draft.length}）` : ""}
+          </button>
+          <span className="text-xs text-fg-muted">
+            {waiting ? "已选择，等其余问题都选完后一起发给 Agent；也可以直接发消息说明" : "可多选，选好后点提交"}
+          </span>
+        </div>
+      )}
+      {item.closedNote && !item.answered && <p className="mt-2 text-xs text-fg-muted">{item.closedNote}</p>}
+    </div>
+  )
+}
+
 export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; onAnswer: (questionId: string, option: string) => void }) {
   // 同一轮有多个问题时，选了还不会发给 Agent（要全部选完才一起发）：这期间可以改选，发出去或被关闭之后才锁定
   const waiting = !!item.answered && item.held === true && !item.closedNote
   const locked = (!!item.answered && !waiting) || !!item.closedNote
+  if (item.multi) return <MultiQuestionCard item={item} onAnswer={onAnswer} waiting={waiting} locked={locked} />
   return (
     <div className="rounded-lg border border-line bg-surface/60 p-3">
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>

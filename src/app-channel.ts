@@ -302,9 +302,12 @@ export class AppChat {
   }
 
   /** 返回问题的 messageId，调用方据此登记消息路由 */
-  addQuestion(sessionKey: string, text: string, options: string[]): string {
+  addQuestion(sessionKey: string, text: string, options: string[], multi = false): string {
     const messageId = `app_q_${randomUUID()}`;
-    this.upsert(this.entry(sessionKey), { kind: "question", id: messageId, ts: Date.now(), messageId, text, options });
+    this.upsert(this.entry(sessionKey), {
+      kind: "question", id: messageId, ts: Date.now(), messageId, text, options,
+      ...(multi ? { multi: true } : {}),
+    });
     return messageId;
   }
 
@@ -320,6 +323,8 @@ export class AppChat {
     const entry = this.entry(sessionKey);
     const hit = entry.items.find((i) => i.id === messageId);
     if (!hit || !isUndeliveredQuestion(hit)) return { ok: false };
+    // 多选题一项都没勾不算作答
+    if (hit.multi && !option.trim()) return { ok: false };
     this.upsert(entry, { ...hit, answered: option, held: true });
 
     const group = entry.items.filter(isUndeliveredQuestion);

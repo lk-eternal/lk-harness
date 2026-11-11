@@ -35,7 +35,7 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
       tools: withDocs("lk-harness", [
         { name: "send_image", description: "发送本地图片到飞书/微信。" },
         { name: "send_file", description: "发送本地文件到飞书/微信。" },
-        { name: "send_question", description: "向用户提问并给出选项按钮。" },
+        { name: "send_question", description: "向用户提问并给出选项按钮，支持单选 / 多选。" },
         { name: "render_branch_diff", description: "生成分支对比单文件 HTML，返回本地绝对路径。" },
         { name: "send_result", description: "提交独立定时任务本次运行的结果。仅 task 端点（独立运行的定时任务）。" },
       ]),

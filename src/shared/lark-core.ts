@@ -1,4 +1,5 @@
 import { DEFAULT_NODE_GROUP_ID, encodeRepoPairOption } from "./project-types.js";
+import { checkerFieldName } from "./question-multi.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -84,6 +85,19 @@ export interface CardButton {
   type?: "primary" | "default" | "danger";
   /** 分组标题：与上一按钮不同时，在该按钮前插入 markdown 分段 */
   section?: string;
+}
+
+/**
+ * 多选题的表单：每个选项一个勾选框，勾选只在飞书客户端本地生效，点「提交」才一次性回调。
+ * 勾选值随提交按钮回传在 form_value 里（字段 name 见 checkerFieldName）。
+ */
+export interface QuestionMultiForm {
+  /** 勾选框 name 的前缀：整张卡内唯一（一张流式卡里可能有多道题） */
+  namePrefix: string;
+  /** 每个选项的勾选框旁显示的文字，按题目顺序；下标就是勾选框 name 的序号（见 checkerFieldName） */
+  labels: string[];
+  /** 提交按钮的回调值 */
+  submitValue: Record<string, unknown>;
 }
 
 /** 卡片标题：字符串，或主标题 + 副标题（分支等小字） */
@@ -1145,6 +1159,76 @@ export class LarkSender {
     };
   }
 
+  /**
+   * 未决多选题：题干 + 表单（每个选项一个勾选框 + 「提交」）+ 灰字提示。
+   * 飞书的表单容器只能放在卡片根节点、不能进折叠面板，所以这里返回的是一组根节点元素，
+   * 不像 buildQuestionBlockElement 包成灰框面板；答完 / 关闭后会回到面板样式。
+   * 勾选在客户端本地完成，点「提交」才回调一次，所以勾选时没有等待渲染。
+   */
+  static buildQuestionMultiFormElements(opts: {
+    questionText: string;
+    form: QuestionMultiForm;
+    footer?: string;
+    elementId?: string;
+  }): Record<string, unknown>[] {
+    const { form } = opts;
+    const eid = opts.elementId ?? form.namePrefix;
+    const els: Record<string, unknown>[] = [
+      { tag: "markdown", content: opts.questionText, element_id: `${eid}_md`.slice(0, 20) },
+      {
+        tag: "form",
+        name: `${form.namePrefix}_form`,
+        element_id: eid.slice(0, 20),
+        vertical_spacing: "4px",
+        elements: [
+          ...form.labels.map((label, i) => ({
+            tag: "checker",
+            name: checkerFieldName(form.namePrefix, i),
+            checked: false,
+            text: { tag: "plain_text", content: label },
+            // 飞书客户端会校验交互组件带 value（缺了点勾选时报 200340）；表单里的勾选不触发回调，这个值不会被用到
+            value: { kind: "question_check" },
+          })),
+          {
+            tag: "button",
+            name: `${form.namePrefix}_submit`,
+            text: { tag: "plain_text", content: "提交" },
+            type: "primary",
+            margin: "8px 0px 0px 0px",
+            form_action_type: "submit",
+            behaviors: [{ type: "callback", value: form.submitValue }],
+          },
+        ],
+      },
+    ];
+    const foot = opts.footer?.replace(/^\s+|\s+$/gu, "");
+    if (foot) els.push({ tag: "markdown", content: foot, text_size: "notation" });
+    return els;
+  }
+
+  /** 独立的多选题卡（不在流式卡里）：会话色标题条 + buildQuestionMultiFormElements */
+  static buildQuestionMultiCard(opts: {
+    questionText: string;
+    form: QuestionMultiForm;
+    title?: CardTitle;
+    template?: string;
+    footer?: string;
+  }): any {
+    const card = LarkSender.buildCard("", opts.title, undefined, undefined, opts.template);
+    card.body.elements.push(...LarkSender.buildQuestionMultiFormElements(opts));
+    return card;
+  }
+
+  /** 发独立的多选题卡；返回值约定同 sendCardWithButtons（null = 已回复成功但无 message_id，不得再直发） */
+  async sendQuestionMultiCard(
+    opts: Parameters<typeof LarkSender.buildQuestionMultiCard>[0],
+    replyMessageId?: string,
+    chatId?: string,
+  ): Promise<string | null | undefined> {
+    const card = LarkSender.buildQuestionMultiCard({ ...opts, questionText: `${this.messagePrefix}${opts.questionText}` });
+    return this.sendInteractiveCard(card, replyMessageId, chatId);
+  }
+
   /** 飞书 CardKit JSON 2.0：单卡组件/元素合计 ≤200（含嵌套 tag） */
   static readonly STREAM_ELEMENT_BUDGET = 180;
   /**
@@ -1376,7 +1460,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -1467,12 +1551,22 @@ export class LarkSender {
         if (seg.type === "omitted") {
           els.push({ tag: "markdown", content: seg.text, element_id: "omitted_notice" });
         } else if (seg.type === "question") {
-          els.push(LarkSender.buildQuestionBlockElement({
-            questionText: seg.questionText,
-            buttons: seg.buttons?.length ? seg.buttons : undefined,
-            footer: seg.footer,
-            elementId: seg.elementId,
-          }));
+          if (seg.form) {
+            // 未决多选题：表单必须在根节点，不能包进折叠面板
+            els.push(...LarkSender.buildQuestionMultiFormElements({
+              questionText: seg.questionText,
+              form: seg.form,
+              footer: seg.footer,
+              elementId: seg.elementId,
+            }));
+          } else {
+            els.push(LarkSender.buildQuestionBlockElement({
+              questionText: seg.questionText,
+              buttons: seg.buttons?.length ? seg.buttons : undefined,
+              footer: seg.footer,
+              elementId: seg.elementId,
+            }));
+          }
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
           const thinkEid = seg.panelId ? `think_${seg.panelId}` : `think_${thinkIdx++}`;
@@ -1624,7 +1718,7 @@ export class LarkSender {
     }
 
     const interactive = (opts?.buttons?.length ?? 0) > 0 || !!opts?.input
-      || (segments ?? []).some((s) => s.type === "question" && (s as { buttons?: CardButton[] }).buttons?.length);
+      || (segments ?? []).some((s) => s.type === "question" && ((s as { buttons?: CardButton[] }).buttons?.length || (s as { form?: QuestionMultiForm }).form));
     return {
       schema: "2.0",
       config: {
@@ -1661,7 +1755,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; footer?: string; elementId?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
     >;
     thinking?: string;
     thinkingTitle?: string;

@@ -70,7 +70,9 @@ export interface AppChatQuestionItem extends AppChatItemBase {
   messageId: string;
   text: string;
   options: string[];
-  /** 用户选的选项 */
+  /** 多选题：可勾选多项后点提交；answered 是勾选项按题目顺序用「、」连成的一条（见 question-multi） */
+  multi?: boolean;
+  /** 用户选的选项（多选题是勾选项连成的答案） */
   answered?: string;
   /**
    * 已选，但还没交给 Agent：同一轮有多个问题时，要全部选完才一起交出去。

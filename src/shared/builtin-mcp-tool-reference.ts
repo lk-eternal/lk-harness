@@ -31,10 +31,11 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
       ],
     },
     send_question: {
-      summary: "向用户提问并给出选项按钮（飞书交互卡片）。",
+      summary: "向用户提问并给出选项按钮（飞书交互卡片）。默认单选；multi_select=true 为多选。",
       params: [
         { name: "text", required: true, type: "string", description: "问题题目，简练，不要在题目里写结论" },
-        { name: "options", required: true, type: "string[]", description: "1–10 个选项，无需序号" },
+        { name: "options", required: true, type: "string[]", description: "1–10 个选项，无需序号；多选时选项文本里不要含「、」" },
+        { name: "multi_select", type: "boolean", description: "true = 多选：用户勾选多个选项后点「提交」，收到的答案是被选中的选项按题目顺序用「、」连起来；默认 false（点一个就作答）" },
         { name: "message_id", type: "string", description: "回复模式可选" },
       ],
     },
