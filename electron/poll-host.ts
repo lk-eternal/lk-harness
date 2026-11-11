@@ -1,4 +1,5 @@
 import { readLockFile, httpPost } from "./daemon-client"
+import { isPollStopReason, type PollStopReason } from "../src/shared/poll-protocol.js"
 
 export interface PollMessage {
   text: string
@@ -20,21 +21,12 @@ export interface PollMessage {
 
 export interface HostPollResult {
   messages: PollMessage[]
-  directive?: string
+  /** 空返回的原因：end=按需唤醒本回合结束（worker 退出），timeout=挂起到点（worker 续挂）；有消息时无此字段 */
+  reason?: PollStopReason
 }
 
-const POLL_DIRECTIVE_END_MARK = "安静退出"
-const POLL_DIRECTIVE_TIMEOUT_MARK = "轮询正常超时"
-/** blocking poll 最长挂起（与协议 24h 一致） */
+/** blocking poll 客户端兜底超时；daemon 侧挂起到点（POLL_BLOCK_TIMEOUT_MS）会先以 timeout 返回，正常走不到这里 */
 const POLL_BLOCK_MS = 86_400_000
-
-export function isPollEndDirective(directive?: string): boolean {
-  return !!directive?.includes(POLL_DIRECTIVE_END_MARK)
-}
-
-export function isPollTimeoutDirective(directive?: string): boolean {
-  return !!directive?.includes(POLL_DIRECTIVE_TIMEOUT_MARK)
-}
 
 function pollFetchSignal(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {
   const timeout = AbortSignal.timeout(timeoutMs)
@@ -59,8 +51,11 @@ async function fetchPoll(sessionKey: string, wait: boolean, signal?: AbortSignal
     signal: pollFetchSignal(signal, timeout),
   })
   if (!res.ok) throw new Error(`poll HTTP ${res.status}`)
-  const data = (await res.json()) as { messages?: PollMessage[]; directive?: string }
-  return { messages: data.messages ?? [], directive: data.directive }
+  const data = (await res.json()) as { messages?: PollMessage[]; reason?: unknown }
+  return {
+    messages: data.messages ?? [],
+    ...(isPollStopReason(data.reason) ? { reason: data.reason } : {}),
+  }
 }
 
 export async function hostBlockingPoll(sessionKey: string, signal?: AbortSignal): Promise<HostPollResult> {

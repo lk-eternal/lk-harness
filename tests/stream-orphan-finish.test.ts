@@ -40,8 +40,6 @@ describe("出生对齐 rebaseUnensuredQueue", () => {
   const hostOf = (agg: ReturnType<typeof newStreamAgg> | null) => ({
     sessionKey: "sk",
     streamAgg: agg,
-    pollPhase: { blocking: false, nonBlocking: false },
-    seenMessageIds: new Set<string>(),
   })
 
   it("未 ensure 的预热队列重定出生", () => {

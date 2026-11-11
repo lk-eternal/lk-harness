@@ -17,8 +17,6 @@ vi.mock("../electron/poll-host", () => ({
   hostNonBlockingPoll: mocks.hostNonBlockingPoll,
   hostConfirmClaimed: vi.fn(async () => undefined),
   hostTouchSessionReply: vi.fn(async () => undefined),
-  isPollEndDirective: vi.fn(() => false),
-  isPollTimeoutDirective: vi.fn(() => false),
   markMessagesProcessed: vi.fn(async () => undefined),
 }))
 vi.mock("../electron/prompt-assembler", () => ({ assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt") }))
@@ -52,7 +50,7 @@ beforeEach(() => {
 
 describe("停止 SDK worker", () => {
   it("Agent 卡在长工具调用里（没有事件）时，停止会立刻 cancel 当前 run，不用干等超时", async () => {
-    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "你好", messageId: "m1" }], directive: undefined })
+    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "你好", messageId: "m1" }] })
     let endTurn: () => void = () => undefined
     mocks.executeSdkTurn.mockImplementation(() => new Promise((resolve) => {
       endTurn = () => resolve({ ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false })
@@ -77,7 +75,7 @@ describe("停止 SDK worker", () => {
   })
 
   it("空闲监听（没有进行中的 run）时，停止照常退出，也不会去 cancel", async () => {
-    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [], directive: undefined })
+    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [] })
     mocks.hostBlockingPoll.mockImplementation((_key: string, signal: AbortSignal) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
     }))

@@ -18,7 +18,7 @@ vi.mock("../electron/agent-sdk", () => {
     isSdkSessionRunning: m.isSdkSessionRunning,
     listSdkModels: stub(), checkSdkApiKey: stub(), getSdkSessionList: stub(), getSdkSessionCount: stub(),
     switchSdkSessionModel: stub(), resetSdkSessionContext: stub(), exportSdkTranscript: stub(),
-    handlePollPhaseEvent: stub(), setSdkIdleHandler: stub(), sdkFailCooldownRemaining: stub(),
+    setSdkIdleHandler: stub(), sdkFailCooldownRemaining: stub(),
     clearSdkFailStreak: stub(), clearAllSdkFailStreaks: stub(), hasResumableSdkSession: stub(),
     getSdkSessionDiagnostics: stub(), getResumableSummary: stub(), completeSdkText: stub(),
   }

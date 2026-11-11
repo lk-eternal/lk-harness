@@ -157,20 +157,6 @@ function appendUserHarnessRules(parts: string[], ctx?: Pick<PromptAssemblyContex
   }
 }
 
-function appendTaskAndMeta(
-  parts: string[],
-  ctx: PromptAssemblyContext,
-): void {
-  if (ctx.taskMessage?.trim()) {
-    parts.push("---")
-    parts.push("任务内容:")
-    parts.push(ctx.taskMessage.trim())
-  }
-  parts.push("---")
-  parts.push("会话元数据:")
-  if (ctx.meta?.chatType) parts.push(`[chat_type=${ctx.meta.chatType}]`)
-}
-
 function ctxIncludeAdmin(ctx: Pick<PromptAssemblyContext, "includeAdmin">): boolean {
   return ctx.includeAdmin === true
 }
@@ -245,17 +231,6 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
 
 export function hashSystemPrompt(text: string): string {
   return createHash("md5").update(text).digest("hex").slice(0, 16)
-}
-
-/** Pi LLM 冷启动：仅用户侧指令 + 任务/元数据（协议在 system prompt） */
-export function assembleColdStartBootstrap(ctx: PromptAssemblyContext, daemonPort?: number | null): string {
-  const parts: string[] = [
-    "[冷启动] 请先非阻塞 poll-message（wait=false）检查待处理消息，按 lk-harness 协议处理；有 messageId 的消息必须逐条回复。",
-  ]
-  appendTaskAndMeta(parts, ctx)
-  const port = portForAssembly(daemonPort)
-  if (port) parts.push(`[daemon_port=${port}]`)
-  return parts.join("\n")
 }
 
 /** SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则） */

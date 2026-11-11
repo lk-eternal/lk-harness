@@ -29,8 +29,6 @@ vi.mock("../electron/poll-host", () => ({
   hostNonBlockingPoll: mocks.hostNonBlockingPoll,
   hostConfirmClaimed: vi.fn(async () => undefined),
   hostTouchSessionReply: vi.fn(async () => undefined),
-  isPollEndDirective: vi.fn(() => false),
-  isPollTimeoutDirective: vi.fn(() => false),
   markMessagesProcessed: mocks.markMessagesProcessed,
 }))
 vi.mock("../electron/prompt-assembler", () => ({ assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt") }))
@@ -68,7 +66,7 @@ function start(session: FakeSession, persistentPoll = true): void {
 
 /** 第一轮在跑（被测试手动结束），返回结束它的函数 */
 function firstTurnRunning(): { end: (r?: Record<string, unknown>) => void } {
-  mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "第一条", messageId: "m1" }], directive: undefined })
+  mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "第一条", messageId: "m1" }] })
   const handle: { end: (r?: Record<string, unknown>) => void } = { end: () => undefined }
   mocks.executeSdkTurn.mockImplementationOnce(() => new Promise((resolve) => {
     handle.end = (r) => resolve({ ok: true, networkFail: false, permanentFail: false, ...r })
@@ -79,7 +77,7 @@ function firstTurnRunning(): { end: (r?: Record<string, unknown>) => void } {
 /** 之后的监听：第一次领到排队的消息，再之后一直挂着，直到 worker 被停止 */
 function thenQueued(messages: Array<{ text: string; messageId: string }>): void {
   mocks.hostBlockingPoll
-    .mockImplementationOnce(async () => { mocks.order.push("poll"); return { messages, directive: undefined } })
+    .mockImplementationOnce(async () => { mocks.order.push("poll"); return { messages } })
     .mockImplementation((_key: string, signal: AbortSignal) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
     }))
@@ -193,7 +191,7 @@ describe("软打断不适用的情形：交还给调用方走原来的停止+重
   })
 
   it("Agent 在空闲监听、没有进行中的回合：no-turn，不 cancel，也不留标记", async () => {
-    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [], directive: undefined })
+    mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [] })
     mocks.hostBlockingPoll.mockImplementation((_key: string, signal: AbortSignal) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
     }))

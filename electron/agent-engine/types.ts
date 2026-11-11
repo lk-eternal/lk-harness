@@ -128,7 +128,8 @@ export interface AgentEngine {
     level: string,
   ): Promise<{ ok: boolean; deferred?: boolean; error?: string }>
   resetSessionContext(sessionKey: string): void
-  handlePollPhaseEvent(sessionKey: string, phase: "start" | "end", payload: PollPhaseEventPayload): void
+  /** 宿主 worker 的 poll 生命周期（SSE poll-phase）：仅 LLM 引擎用来管流式卡静默期，SDK 引擎不需要 */
+  handlePollPhaseEvent?(sessionKey: string, phase: "start" | "end", payload: PollPhaseEventPayload): void
   setIdleHandler(fn: (sessionKey: string) => void): void
 
   failCooldownRemaining(sessionKey: string): number

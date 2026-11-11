@@ -46,7 +46,7 @@ export function handleAgentPollPhase(
   payload: PollPhaseEventPayload,
 ): void {
   for (const e of getAllAgentEngines()) {
-    e.handlePollPhaseEvent(sessionKey, phase, payload)
+    e.handlePollPhaseEvent?.(sessionKey, phase, payload)
   }
 }
 

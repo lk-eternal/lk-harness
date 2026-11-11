@@ -12,8 +12,6 @@ import {
   hostNonBlockingPoll,
   hostSendText,
   hostTouchSessionReply,
-  isPollEndDirective,
-  isPollTimeoutDirective,
   markMessagesProcessed,
   type HostPollResult,
   type PollMessage,
@@ -182,12 +180,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       }
       if (abort.signal.aborted) break
 
-      if (isPollEndDirective(pollResult.directive)) {
-        pushUiLog("LLM", "INFO", `[${sessionKey}] worker 收到安静退出 directive，结束`)
+      if (pollResult.reason === "end") {
+        pushUiLog("LLM", "INFO", `[${sessionKey}] poll 返回 end（按需唤醒，本回合结束），worker 退出`)
         break
       }
-      if (isPollTimeoutDirective(pollResult.directive)) {
-        pushUiLog("LLM", "DEBUG", `[${sessionKey}] poll 超时保活，继续监听`)
+      if (pollResult.reason === "timeout") {
+        pushUiLog("LLM", "DEBUG", `[${sessionKey}] poll 挂起到点，继续监听`)
         continue
       }
 

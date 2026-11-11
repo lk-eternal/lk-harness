@@ -7,6 +7,7 @@ import {
   resolveChannelSessionFlags,
 } from "../src/shared/channel-types.js"
 import { LarkSender } from "../src/shared/lark-core.js"
+import type { PollPhaseReason } from "../src/shared/poll-protocol.js"
 
 export interface StreamToolEntry {
   callId: string
@@ -62,8 +63,8 @@ export interface StreamPollPhaseState {
 export interface StreamCardHost {
   sessionKey: string
   streamAgg: StreamAgg | null
-  pollPhase: StreamPollPhaseState
-  seenMessageIds: Set<string>
+  /** poll 静默期（仅 LLM 引擎有，见 PollPhaseHost）：阻塞期间关着流式卡的门 */
+  pollPhase?: StreamPollPhaseState
   /** 页脚展示用模型名（finish 时随卡下发） */
   modelLabel?: string
   /** SDK todos 跨换卡快照 */
@@ -72,11 +73,21 @@ export interface StreamCardHost {
   patchStreamCardId?: (cardId: string | undefined, opts?: { onlyIf?: string }) => void
 }
 
+/**
+ * 带 poll 静默期的宿主（目前只有 LLM 引擎）：宿主 worker 阻塞 poll 期间（由 SSE poll-phase 同步），
+ * 流式卡不收文本，免得上一回合的迟到事件写进已收口 / 将换掉的卡。
+ * SDK 引擎的回合边界由 worker 直接控制（openStreamForSdkTurn），不需要静默期。
+ */
+export interface PollPhaseHost extends StreamCardHost {
+  pollPhase: StreamPollPhaseState
+  /** poll 已见 messageId：区分新消息 vs 重投 */
+  seenMessageIds: Set<string>
+}
+
 export interface PollPhaseEventPayload {
   blocking?: boolean
-  reason?: string
+  reason?: PollPhaseReason
   messageIds?: string[]
-  directive?: string
 }
 
 const STREAM_FLUSH_MS = 400
@@ -87,12 +98,8 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "toolName", "tool_name", "serverName", "server",
 ]
 const TOOL_SUMMARY_MAX = 120
-const POLL_DIRECTIVE_END_MARK = "安静退出"
-const POLL_DIRECTIVE_TIMEOUT_MARK = "轮询正常超时"
 const OUTBOUND_MCP_RE = /^(?:send_(?:text|question|image|file)|project_\w+)$/i
 const MEDIA_MCP_RE = /^send_(?:file|image)$/i
-
-export { POLL_DIRECTIVE_END_MARK, POLL_DIRECTIVE_TIMEOUT_MARK }
 
 /** 流式卡承载输出的通道类型：飞书（卡片）与应用内对话（界面分段）；微信没有 */
 function carriesStreamCard(ch: { type: string } | undefined): boolean {
@@ -369,20 +376,6 @@ function isPollMessageInvocation(name: string, summary: string, args?: unknown):
   return /poll-message/i.test(summary)
 }
 
-/** 仅阻塞 poll 才换卡。必须看完整 command（摘要 120 字会裁掉 wait=false） */
-export function isBlockingPollMessage(name: string, summary: string, args?: unknown): boolean {
-  if (!isPollMessageInvocation(name, summary, args)) return false
-  const full = shellCommandText(args) || summary
-  if (/wait\s*=\s*false/i.test(full)) return false
-  if (/["']wait["']\s*:\s*false/i.test(full)) return false
-  if (/wait%3[Dd]false/i.test(full)) return false
-  return true
-}
-
-export function isPollMessageTool(name: string, summary: string, args?: unknown): boolean {
-  return isPollMessageInvocation(name, summary, args)
-}
-
 export function shouldOmitFromStreamCard(name: string, summary: string, args?: unknown): boolean {
   const mcp = mcpToolName(args)
   if (mcp) return OUTBOUND_MCP_RE.test(mcp)
@@ -641,7 +634,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean, opt
     agg.timer = null
   }
   if (!finish && !agg.dirty) return
-  if (!finish && (!agg.gateOpen || host.pollPhase.blocking)) return
+  if (!finish && (!agg.gateOpen || host.pollPhase?.blocking)) return
 
   const patchCard = (cardId: string | undefined, onlyIf?: string) => {
     host.patchStreamCardId?.(cardId, onlyIf ? { onlyIf } : undefined)
@@ -649,7 +642,7 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean, opt
 
   const pushFrame = async (opts?: { ignoreGate?: boolean }): Promise<boolean> => {
     if (agg.finished) return false
-    if (!opts?.ignoreGate && (!agg.gateOpen || host.pollPhase.blocking)) return false
+    if (!opts?.ignoreGate && (!agg.gateOpen || host.pollPhase?.blocking)) return false
     const payload = buildStreamPayload(agg, host.sessionKey)
     if (!agg.ensured && payload.segments.length === 0) return false
 
@@ -760,7 +753,7 @@ export function needsOrphanCardFinish(keepSession: boolean, aggCardId: string | 
   return false
 }
 
-export function enterSilentPollPhase(host: StreamCardHost): void {
+export function enterSilentPollPhase(host: PollPhaseHost): void {
   const stream = host.streamAgg
   if (stream && !stream.finished) {
     stream.segments = []
@@ -775,7 +768,7 @@ export function enterSilentPollPhase(host: StreamCardHost): void {
 }
 
 export function handleStreamPollPhaseEvent(
-  host: StreamCardHost,
+  host: PollPhaseHost,
   phase: "start" | "end",
   payload: PollPhaseEventPayload,
 ): void {
@@ -806,13 +799,11 @@ export function handleStreamPollPhaseEvent(
     }
   }
   const hasWorkMsgs = deliveredIds.length > 0
-  const directive = payload.directive ?? ""
-  const isEnd = payload.reason === "end" || directive.includes(POLL_DIRECTIVE_END_MARK)
-  const isTimeout = payload.reason === "timeout" || directive.includes(POLL_DIRECTIVE_TIMEOUT_MARK)
-  const isAbort = payload.reason === "abort"
+  // end / timeout / abort：本次阻塞 poll 空手而归，回到静默等待
+  const emptyHanded = payload.reason === "end" || payload.reason === "timeout" || payload.reason === "abort"
 
   if (wasBlocking || blocking) {
-    if (isTimeout || isEnd || isAbort) {
+    if (emptyHanded) {
       enterSilentPollPhase(host)
       return
     }
@@ -843,10 +834,10 @@ export function handleStreamPollPhaseEvent(
   }
 }
 
-export function isStreamSilenced(host: StreamCardHost): boolean {
+export function isStreamSilenced(host: PollPhaseHost): boolean {
   return host.pollPhase.blocking
 }
 
-export function isToolStreamSilenced(host: StreamCardHost): boolean {
+export function isToolStreamSilenced(host: PollPhaseHost): boolean {
   return host.pollPhase.blocking || host.pollPhase.nonBlocking
 }

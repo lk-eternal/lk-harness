@@ -43,9 +43,8 @@ import { syncMainProcessProxyEnv } from "./agent-env"
 import { llmProxyConfigured, withLlmProxyOptions } from "./llm-proxy"
 import {
   type PollPhaseEventPayload,
+  type PollPhaseHost,
   type StreamAgg,
-  type StreamCardHost,
-  type StreamPollPhaseState,
   buildStreamPayload,
   enqueueTool,
   enqueueThinking,
@@ -92,7 +91,7 @@ export interface LlmLaunchOptions {
   newSession?: boolean
 }
 
-interface LlmSession extends StreamCardHost {
+interface LlmSession extends PollPhaseHost {
   channelId?: string
   resource: AgentResource
   model: Model<Api>
@@ -112,8 +111,6 @@ interface LlmSession extends StreamCardHost {
   daemonPort?: number
   abort: AbortController
   runPromise: Promise<void>
-  /** poll 已见 messageId：非阻塞 poll 区分新消息 vs 重投 */
-  seenMessageIds: Set<string>
   /** 已成功跑完 worker 回合的 messageId：黑洞重投时跳过重复处理 */
   processedMessageIds: Set<string>
   piUnsubscribe: (() => void) | null

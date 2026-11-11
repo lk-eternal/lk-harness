@@ -10,8 +10,6 @@ import {
   hostConfirmClaimed,
   hostNonBlockingPoll,
   hostTouchSessionReply,
-  isPollEndDirective,
-  isPollTimeoutDirective,
   markMessagesProcessed,
   type HostPollResult,
   type PollMessage,
@@ -220,12 +218,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       }
       if (abort.signal.aborted || session.abortController.signal.aborted) break
 
-      if (isPollEndDirective(pollResult.directive)) {
-        pushUiLog("SDK", "INFO", `[${sessionKey}] worker 收到安静退出 directive，结束`)
+      if (pollResult.reason === "end") {
+        pushUiLog("SDK", "INFO", `[${sessionKey}] poll 返回 end（按需唤醒，本回合结束），worker 退出`)
         break
       }
-      if (isPollTimeoutDirective(pollResult.directive)) {
-        pushUiLog("SDK", "DEBUG", `[${sessionKey}] poll 超时保活，继续监听`)
+      if (pollResult.reason === "timeout") {
+        pushUiLog("SDK", "DEBUG", `[${sessionKey}] poll 挂起到点，继续监听`)
         continue
       }
 
@@ -239,9 +237,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         continue
       }
 
-      for (const m of fresh) {
-        if (m.messageId) session.seenMessageIds.add(m.messageId)
-      }
       // 出生对齐：预热队列早于投递收口时首 ensure 会被误杀丢头，未发过卡此刻重定无成本
       try {
         const { rebaseUnensuredQueue } = await import("./stream-card.js")

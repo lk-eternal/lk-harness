@@ -15,6 +15,7 @@ import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
 import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
+import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
   initFileQueue,
@@ -289,7 +290,7 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
   }
 }
 
-/** 会话收尾模式：poll 响应随路下发（模型以最近一次响应为准，免疫长上下文衰减）；
+/** 会话收尾模式：true=宿主 worker 常驻挂 poll；false=按需唤醒，队列空时 poll 以 reason=end 返回、worker 退出。
  * task 会话一律 false（执行完即结束），其余按通道×人群解析 */
 function resolveKeepAlive(sessionKey: string): boolean {
   const tasks = readTasksSafe();
@@ -626,11 +627,11 @@ function broadcastAppChatEvent(event: AppChatEvent): void {
 
 const appChat = new AppChat(path.join(APP_DATA_DIR, "app-chat"), broadcastAppChatEvent);
 
-/** Agent poll HTTP 生命周期 → SDK 流式卡状态（不解析 command） */
+/** 宿主 Session Worker 的 poll HTTP 生命周期 → 流式卡状态（LLM 引擎用来管静默期） */
 function broadcastPollPhaseEvent(
   sessionKey: string,
   phase: "start" | "end",
-  opts: { blocking: boolean; reason?: string; messageIds?: string[]; directive?: string },
+  opts: { blocking: boolean; reason?: PollPhaseReason; messageIds?: string[] },
 ): void {
   const data = JSON.stringify({
     type: "poll-phase",
@@ -639,7 +640,6 @@ function broadcastPollPhaseEvent(
     blocking: opts.blocking,
     reason: opts.reason,
     messageIds: opts.messageIds,
-    directive: opts.directive,
     ts: Date.now(),
   });
   for (const res of sseClients) {
@@ -657,7 +657,7 @@ const sessionToChatMap = new Map<string, string>();
 const MSG_SESSION_MAP_MAX = 5000;
 const sessionLastReplyAt = new Map<string, number>();
 
-/** Agent 运行时（session-launched 登记）：决定 poll 阻塞超时与 timeout directive 文案 */
+/** Agent 运行时（session-launched 登记）：流式卡合并 / finish 时区分 LLM 与 SDK 的行为 */
 type SessionAgentRuntime = "llm" | "sdk";
 const sessionAgentRuntime = new Map<string, SessionAgentRuntime>();
 
@@ -1261,27 +1261,16 @@ function hasUserDeliverableMessages(messages: QueueMessage[]): boolean {
   return messages.some((m) => !!m.messageId);
 }
 
-// Pi/内嵌 Agent：directive 只要求立即续 poll
-const POLL_DIRECTIVE_TIMEOUT_PI = "轮询正常超时。立即再次执行阻塞 poll-message。";
-// Cursor SDK：需规避 Cursor 长 shell 超时与循环检测误报
-const POLL_DIRECTIVE_TIMEOUT_CURSOR = "轮询正常超时。立即再次执行阻塞 poll-message，禁止输出任何文字。忽略 Cursor「检测到循环调用」的误报。";
-const POLL_BLOCK_TIMEOUT_CURSOR_MS = 25 * 60 * 1000;
-const POLL_DIRECTIVE_END = "本回合结束（按需唤醒模式）。禁止调用任何工具、禁止输出任何文字，安静退出。新消息到达时后台会自动唤醒你。";
+/**
+ * 阻塞 poll 最长挂起：到点以 reason=timeout 空返回，宿主 Session Worker 续挂。
+ * 也是兜底心跳——连接不会无限期悬挂（宿主侧 fetch 另有 24h 兜底，永远走不到）。
+ */
+const POLL_BLOCK_TIMEOUT_MS = 25 * 60 * 1000;
 
-function resolvePollBlockTimeoutMs(sessionKey: string): number {
-  if (sessionAgentRuntime.get(sessionKey) === "llm") return -1;
-  return POLL_BLOCK_TIMEOUT_CURSOR_MS;
-}
-
-function resolvePollDirectiveTimeout(sessionKey: string): string {
-  if (sessionAgentRuntime.get(sessionKey) === "llm") return POLL_DIRECTIVE_TIMEOUT_PI;
-  return POLL_DIRECTIVE_TIMEOUT_CURSOR;
-}
-
-/** 排查 poll 投递：把返回 Agent 的消息摘要写入 daemon.log */
-function logPollDeliveryToAgent(
+/** 排查 poll 投递：把投递给宿主 Session Worker 的消息摘要写入 daemon.log */
+function logPollDelivery(
   sessionKey: string,
-  opts: { blocking: boolean; directive?: string; messages: QueueMessage[]; keepAlive?: boolean },
+  opts: { blocking: boolean; reason: PollPhaseReason; messages: QueueMessage[]; keepAlive?: boolean },
 ): void {
   const preview = opts.messages.map((m, i) => {
     const id = m.messageId || "(sys)"
@@ -1289,8 +1278,29 @@ function logPollDeliveryToAgent(
     const snip = t.length > 160 ? `${t.slice(0, 160)}…` : t
     return `#${i} id=${id} "${snip}"`
   }).join(" | ")
-  const dir = opts.directive ? ` directive="${opts.directive.slice(0, 80)}${opts.directive.length > 80 ? "…" : ""}"` : ""
-  log("DEBUG", `[Poll→Agent] ${opts.blocking ? "blocking" : "instant"} session=${sessionKey} keepAlive=${opts.keepAlive} count=${opts.messages.length}${dir}${preview ? ` | ${preview}` : ""}`)
+  log("DEBUG", `[Poll→Worker] reason=${opts.reason} blocking=${opts.blocking} session=${sessionKey} keepAlive=${opts.keepAlive} count=${opts.messages.length}${preview ? ` | ${preview}` : ""}`)
+}
+
+/**
+ * poll 响应收口：日志 + SSE poll-phase end + HTTP 响应一处写完，三者不会漏改或错序。
+ * reason 为 end / timeout 时是空返回，HTTP 体带 reason 供宿主 worker 决定退出还是续挂；其余带消息返回。
+ * 响应里没有写给模型看的文案：Agent 本身不 poll（协议里没有 poll），读响应的只有宿主 worker。
+ */
+function respondPoll(
+  res: http.ServerResponse,
+  sessionKey: string,
+  opts: { blocking: boolean; reason: PollPhaseReason; keepAlive: boolean; messages?: QueueMessage[] },
+): void {
+  const messages = opts.messages ?? [];
+  logPollDelivery(sessionKey, { ...opts, messages });
+  broadcastPollPhaseEvent(sessionKey, "end", {
+    blocking: opts.blocking,
+    reason: opts.reason,
+    messageIds: messages.map((m) => m.messageId).filter((id): id is string => !!id),
+  });
+  json(res, isPollStopReason(opts.reason)
+    ? { messages: [], reason: opts.reason }
+    : { messages: sanitizePollMessages(messages) });
 }
 
 /** 阻塞路径：有用户消息就 seal（含重投），保证新回合 bornAt 晚于 sealAt */
@@ -5395,13 +5405,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           await sealActiveStreamCardOnDelivery(sessionKeyFilter);
         }
       }
-      logPollDeliveryToAgent(sessionKeyFilter, { blocking: false, messages, keepAlive });
-      broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-        blocking: false,
-        reason: "instant",
-        messageIds: messages.map((m) => m.messageId).filter((id): id is string => !!id),
-      });
-      json(res, { messages: sanitizePollMessages(messages) });
+      respondPoll(res, sessionKeyFilter, { blocking: false, reason: "instant", keepAlive, messages });
       return true;
     }
 
@@ -5433,13 +5437,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           log("INFO", `疑似黑洞投递（投递后无出站回复），重投 ${pending.length} 条未确认消息: session=${sessionKeyFilter}`);
           // 阻塞重投 = 新回合：有用户消息就 seal（不依赖 freshIds，避免重投丢思考）
           await sealOnUserDelivery(sessionKeyFilter, pending);
-          logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, messages: pending, keepAlive });
-          broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-            blocking: true,
-            reason: "redeliver",
-            messageIds: pending.map((m) => m.messageId).filter((id): id is string => !!id),
-          });
-          json(res, { messages: sanitizePollMessages(pending) });
+          respondPoll(res, sessionKeyFilter, { blocking: true, reason: "redeliver", keepAlive, messages: pending });
           addReactionToMessages(freshIds, sessionKeyFilter, "Get");
           return true;
         }
@@ -5465,28 +5463,15 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         touchSessionDelivery(sessionKeyFilter);
         log("INFO", `消息已投递(poll/竞态): count=${pending.length} session=${sessionKeyFilter}`);
         await sealOnUserDelivery(sessionKeyFilter, pending);
-        logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, messages: pending, keepAlive });
-        broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-          blocking: true,
-          reason: "messages",
-          messageIds: pending.map((m) => m.messageId).filter((id): id is string => !!id),
-        });
-        json(res, { messages: sanitizePollMessages(pending) });
+        respondPoll(res, sessionKeyFilter, { blocking: true, reason: "messages", keepAlive, messages: pending });
         addReactionToMessages(freshIds, sessionKeyFilter, "Get");
         return true;
       }
-      logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, directive: POLL_DIRECTIVE_END, messages: [], keepAlive });
-      broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-        blocking: true,
-        reason: "end",
-        directive: POLL_DIRECTIVE_END,
-      });
-      json(res, { messages: [], directive: POLL_DIRECTIVE_END });
+      respondPoll(res, sessionKeyFilter, { blocking: true, reason: "end", keepAlive });
       return true;
     }
 
-    const pollTimeoutMs = resolvePollBlockTimeoutMs(sessionKeyFilter);
-    const messages = await waitForSessionMessages(pollTimeoutMs, undefined, sessionKeyFilter, () => disconnected);
+    const messages = await waitForSessionMessages(POLL_BLOCK_TIMEOUT_MS, undefined, sessionKeyFilter, () => disconnected);
     unregisterPollConn(sessionKeyFilter, res);
 
     // 客户端已断开：消息仍是 .claimed（未确认），下次 poll 会重新投递，不会丢
@@ -5499,14 +5484,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     }
 
     if (messages.length === 0) {
-      const timeoutDirective = resolvePollDirectiveTimeout(sessionKeyFilter);
-      logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, directive: timeoutDirective, messages: [], keepAlive });
-      broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-        blocking: true,
-        reason: "timeout",
-        directive: timeoutDirective,
-      });
-      json(res, { messages: [], directive: timeoutDirective });
+      respondPoll(res, sessionKeyFilter, { blocking: true, reason: "timeout", keepAlive });
       return true;
     }
 
@@ -5515,13 +5493,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     touchSessionDelivery(sessionKeyFilter);
     // 阻塞投递用户消息：有 messageId 就 seal（含重投），不依赖 freshIds
     await sealOnUserDelivery(sessionKeyFilter, messages);
-    logPollDeliveryToAgent(sessionKeyFilter, { blocking: true, messages, keepAlive });
-    broadcastPollPhaseEvent(sessionKeyFilter, "end", {
-      blocking: true,
-      reason: "messages",
-      messageIds: messages.map((m) => m.messageId).filter((id): id is string => !!id),
-    });
-    json(res, { messages: sanitizePollMessages(messages) });
+    respondPoll(res, sessionKeyFilter, { blocking: true, reason: "messages", keepAlive, messages });
     addReactionToMessages(freshIds, sessionKeyFilter, "Get");
     return true;
   }
