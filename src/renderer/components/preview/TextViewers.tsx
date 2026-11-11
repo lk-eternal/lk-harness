@@ -2,12 +2,16 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown, { type Components } from "react-markdown"
 import { Loader2 } from "lucide-react"
 import { fileExt } from "../../../shared/preview-kinds"
+import {
+  clipFolds, collapseAll, computeFolds, foldLanguageOf, hiddenLineCount, revealLine, toggleFold, visibleLines, type FoldRegion,
+} from "../../../shared/preview-fold"
+import { formatJsonFor, jsonFormatKind, shouldDefaultToFormatted, type JsonFormatResult } from "../../../shared/preview-json"
 import { detectDelimiter, formatBytes, parseCsv } from "../../../shared/preview-text"
 import { PREVIEW_MAX_TEXT_BYTES, type PreviewFileInfo, type PreviewTextResult } from "../../../shared/preview-types"
 import { CodeBlock, SafeLink, remarkPlugins, rehypePlugins } from "../chat/Markdown"
-import { toCodeLines } from "./code-highlight"
+import { HIGHLIGHT_MAX_CHARS, MAX_RENDER_LINES, toCodeLines } from "./code-highlight"
 import { usePreviewHost } from "./preview-host"
-import { CenterMessage, Segmented, ViewerBar, ViewerNotice } from "./preview-ui"
+import { BarTextButton, CenterMessage, Segmented, ViewerBar, ViewerNotice } from "./preview-ui"
 
 type TextState =
   | { status: "loading" }
@@ -46,8 +50,15 @@ function TruncatedNotice({ state }: { state: Extract<TextState, { status: "ready
   return <ViewerNotice>文件有 {formatBytes(state.size)}，只显示了开头的 {formatBytes(PREVIEW_MAX_TEXT_BYTES)}。要看全部请在所在位置用其他程序打开。</ViewerNotice>
 }
 
-/** 带行号的文本；认识的语言做语法高亮 */
-function CodeText({ text, lang, wrap, line }: { text: string; lang?: string; wrap: boolean; line?: number }) {
+/** 折叠：哪些行能折、现在折了哪些（状态在调用方，工具栏上的「折叠全部 / 展开全部」要用） */
+interface FoldControl {
+  regions: readonly FoldRegion[]
+  collapsed: ReadonlySet<number>
+  onToggle: (start: number) => void
+}
+
+/** 带行号的文本；认识的语言做语法高亮；传了 fold 就带折叠箭头 */
+export function CodeText({ text, lang, wrap, line, fold }: { text: string; lang?: string; wrap: boolean; line?: number; fold?: FoldControl }) {
   const code = useMemo(() => toCodeLines(text, lang), [text, lang])
   // 要定位的行（从对话里的 file.ts:42 点进来）：高亮并滚到视野中间；超出文件行数就当没带
   const hit = line !== undefined && line >= 1 && line <= code.lines.length ? line : undefined
@@ -55,19 +66,54 @@ function CodeText({ text, lang, wrap, line }: { text: string; lang?: string; wra
   useEffect(() => {
     hitRef.current?.scrollIntoView({ block: "center" })
   }, [hit, code])
+  const regions = fold?.regions
+  const collapsed = fold?.collapsed
+  const byStart = useMemo(() => new Map((regions ?? []).map((r) => [r.start, r])), [regions])
+  const rows = useMemo(
+    () => visibleLines(code.lines.length, regions ?? [], collapsed ?? NO_COLLAPSED),
+    [code.lines.length, regions, collapsed],
+  )
+  const tooBigToHighlight = !!lang && !code.highlighted && text.length > HIGHLIGHT_MAX_CHARS
   return (
     <>
       {code.cutOff && <ViewerNotice>内容太长，只显示前 {code.lines.length.toLocaleString()} 行。</ViewerNotice>}
-      <pre className={`preview-code hljs ${wrap ? "wrap" : ""}`}>
+      {tooBigToHighlight && <ViewerNotice>内容较大（{text.length.toLocaleString()} 个字符），没有做语法高亮。</ViewerNotice>}
+      <pre className={`preview-code hljs ${wrap ? "wrap" : ""} ${byStart.size > 0 ? "foldable" : ""}`}>
         <code>
-          {code.lines.map((html, i) => (
-            <span key={i} ref={i + 1 === hit ? hitRef : undefined} className={i + 1 === hit ? "pl hit" : "pl"} dangerouslySetInnerHTML={{ __html: html }} />
-          ))}
+          {rows.map((i) => {
+            const html = code.lines[i]
+            const ref = i + 1 === hit ? hitRef : undefined
+            const className = i + 1 === hit ? "pl hit" : "pl"
+            const region = byStart.get(i)
+            if (!region || !fold) {
+              return <span key={i} ref={ref} className={className} data-ln={i + 1} dangerouslySetInnerHTML={{ __html: html }} />
+            }
+            const isCollapsed = fold.collapsed.has(i)
+            return (
+              <span key={i} ref={ref} className={className} data-ln={i + 1}>
+                <button
+                  type="button"
+                  className="fold-btn"
+                  aria-expanded={!isCollapsed}
+                  aria-label={isCollapsed ? "展开" : "折叠"}
+                  title={isCollapsed ? "展开" : "折叠"}
+                  onClick={() => fold.onToggle(i)}
+                />
+                <span dangerouslySetInnerHTML={{ __html: html }} />
+                {isCollapsed && (
+                  <button type="button" className="fold-pill" title="展开" onClick={() => fold.onToggle(i)}>⋯ {hiddenLineCount(region)} 行</button>
+                )}
+              </span>
+            )
+          })}
         </code>
       </pre>
     </>
   )
 }
+
+const NO_COLLAPSED: ReadonlySet<number> = new Set()
+const NO_REGIONS: readonly FoldRegion[] = []
 
 function WrapToggle({ wrap, onChange }: { wrap: boolean; onChange: (wrap: boolean) => void }) {
   return (
@@ -77,25 +123,97 @@ function WrapToggle({ wrap, onChange }: { wrap: boolean; onChange: (wrap: boolea
   )
 }
 
-function sourceSummary(state: Extract<TextState, { status: "ready" }>, lang?: string): string {
-  return [lang, state.encoding.toUpperCase(), formatBytes(state.size)].filter(Boolean).join(" · ")
+function sourceSummary(state: Extract<TextState, { status: "ready" }>, lang?: string, extra?: string): string {
+  return [lang, extra, state.encoding.toUpperCase(), formatBytes(state.size)].filter(Boolean).join(" · ")
+}
+
+/** 「第 3 行第 8 列：」，定位不到就是空串 */
+function errorWhere(e: { line?: number; column?: number }): string {
+  if (e.line === undefined) return ""
+  return e.column === undefined ? `第 ${e.line} 行：` : `第 ${e.line} 行第 ${e.column} 列：`
+}
+
+/** 格式化没有做到的原因（只在用户选了格式化、而且没成功时显示） */
+function FormatNotice({ result }: { result: JsonFormatResult }) {
+  if (!result.ok) return <ViewerNotice>无法格式化，显示的是原文。{errorWhere(result)}{result.message}</ViewerNotice>
+  if (result.skippedLines.length === 0) return null
+  const shown = result.skippedLines.slice(0, 5).join("、")
+  const more = result.skippedLines.length > 5 ? ` 等 ${result.skippedLines.length} 行` : " 行"
+  return <ViewerNotice>原文第 {shown}{more}不是合法的 JSON，已原样保留。</ViewerNotice>
+}
+
+/** 文本读好之后的代码视图：JSON 可以在原文和格式化之间切换，JSON / YAML 可以折叠 */
+export function CodeViewReady({ info, state, line }: { info: PreviewFileInfo; state: Extract<TextState, { status: "ready" }>; line?: number }) {
+  const jsonKind = jsonFormatKind(info.name)
+  // 文件被截断时内容不完整，不是合法 JSON，不提供格式化
+  const canFormat = jsonKind !== undefined && !state.truncated
+  const [wrap, setWrap] = useState(info.kind === "text")
+  const [mode, setMode] = useState<"raw" | "format">(() => (canFormat && shouldDefaultToFormatted(jsonKind, state.text, line !== undefined) ? "format" : "raw"))
+  const formatted = useMemo<JsonFormatResult | undefined>(
+    () => (jsonKind && canFormat && mode === "format" ? formatJsonFor(jsonKind, state.text) : undefined),
+    [canFormat, jsonKind, mode, state.text],
+  )
+  const showFormatted = formatted?.ok === true
+  const text = formatted?.ok ? formatted.text : state.text
+
+  const foldLang = foldLanguageOf(info.lang)
+  const regions = useMemo(
+    () => (foldLang ? clipFolds(computeFolds(foldLang, text, { records: jsonKind === "jsonl" }), MAX_RENDER_LINES) : NO_REGIONS),
+    [foldLang, text, jsonKind],
+  )
+  const [collapsed, setCollapsed] = useState<ReadonlySet<number>>(NO_COLLAPSED)
+  // 换了要定位的行（对话里又点了同一个文件的另一处）：把藏住它的折叠展开，不然滚不到。
+  // 渲染期间直接改状态：这样同一次提交里那一行就已经在了，滚动用的 ref 才拿得到
+  const [revealedFor, setRevealedFor] = useState(line)
+  if (revealedFor !== line) {
+    setRevealedFor(line)
+    if (line !== undefined && !showFormatted) setCollapsed(revealLine(collapsed, regions, line - 1))
+  }
+  const changeMode = (next: "raw" | "format"): void => {
+    setMode(next)
+    setCollapsed(NO_COLLAPSED) // 两种排版的行对不上，折叠状态作废
+  }
+
+  return (
+    <div className="flex h-full flex-col">
+      <ViewerBar>
+        {canFormat && (
+          <Segmented
+            value={showFormatted ? "format" : "raw"}
+            onChange={changeMode}
+            options={[{ value: "raw", label: "原文" }, { value: "format", label: "格式化" }]}
+          />
+        )}
+        <WrapToggle wrap={wrap} onChange={setWrap} />
+        {regions.length > 0 && (
+          <>
+            <BarTextButton onClick={() => setCollapsed(collapseAll(regions))} title="把所有层级都收起来，再逐层点开">折叠全部</BarTextButton>
+            <BarTextButton onClick={() => setCollapsed(NO_COLLAPSED)}>展开全部</BarTextButton>
+          </>
+        )}
+        <span className="ml-auto">{sourceSummary(state, info.lang, showFormatted ? "已格式化" : undefined)}</span>
+      </ViewerBar>
+      <TruncatedNotice state={state} />
+      {formatted && <FormatNotice result={formatted} />}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <CodeText
+          text={text}
+          lang={info.lang}
+          wrap={wrap}
+          // 格式化后行号变了，对话里那个行号不再对应，不高亮
+          line={showFormatted ? undefined : line}
+          fold={regions.length > 0 ? { regions, collapsed, onToggle: (start) => setCollapsed((c) => toggleFold(c, start)) } : undefined}
+        />
+      </div>
+    </div>
+  )
 }
 
 /** 纯文本、代码、日志、配置 */
 export function CodeView({ info, line }: { info: PreviewFileInfo; line?: number }) {
   const state = useFileText(info.token, true)
-  const [wrap, setWrap] = useState(info.kind === "text")
   if (state.status !== "ready") return <TextStatus state={state} />
-  return (
-    <div className="flex h-full flex-col">
-      <ViewerBar>
-        <WrapToggle wrap={wrap} onChange={setWrap} />
-        <span className="ml-auto">{sourceSummary(state, info.lang)}</span>
-      </ViewerBar>
-      <TruncatedNotice state={state} />
-      <div className="min-h-0 flex-1 overflow-auto"><CodeText text={state.text} lang={info.lang} wrap={wrap} line={line} /></div>
-    </div>
-  )
+  return <CodeViewReady info={info} state={state} line={line} />
 }
 
 /** 只放行相对路径的本地图片：解到令牌覆盖的目录里；网络图片和绝对路径不加载（追踪、越权读取风险） */

@@ -7,7 +7,6 @@
   font-size: 12.5px;
   line-height: 1.55;
   background: transparent;
-  counter-reset: ln;
   tab-size: 4;
   /* 不换行时让每行撑到最长那行的宽度，选中背景和横向滚动才完整 */
   width: max-content;
@@ -26,10 +25,9 @@
   min-height: 1.55em;
   padding: 0 1rem 0 4.1rem;
 }
-/* 行号用伪元素画：复制代码时不会带上行号 */
+/* 行号用伪元素画：复制代码时不会带上行号。号码取自 data-ln 而不是 CSS 计数器：折叠后有些行不渲染，计数器会错号 */
 .preview-code .pl::before {
-  counter-increment: ln;
-  content: counter(ln);
+  content: attr(data-ln);
   position: absolute;
   left: 0;
   width: 3.2rem;
@@ -45,6 +43,63 @@
   background: color-mix(in srgb, var(--color-accent) 18%, transparent);
   box-shadow: inset 2px 0 0 var(--color-accent);
 }
+
+/* 可折叠（JSON / YAML）：行号右边留一列放折叠箭头 */
+.preview-code.foldable .pl { padding-left: 5rem; }
+.preview-code .fold-btn {
+  position: absolute;
+  left: 3.2rem;
+  top: 0;
+  width: 1.5rem;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+  user-select: none;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+/* 箭头用边框画，DOM 里没有字符，复制时不会带上 */
+.preview-code .fold-btn::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+.preview-code .fold-btn[aria-expanded="false"]::before { transform: translateX(-1px) rotate(-45deg); }
+/* 平时只在悬停时露出箭头；已折叠的一直显示，一眼能看出哪里被收起来了 */
+.preview-code .pl:hover .fold-btn,
+.preview-code .fold-btn:focus-visible,
+.preview-code .fold-btn[aria-expanded="false"] { opacity: 1; }
+.preview-code .fold-btn:hover { color: var(--color-fg); }
+/* 触屏没有悬停：箭头一直显示，点按范围放大 */
+@media (hover: none) {
+  .preview-code .fold-btn { opacity: 1; }
+  .preview-code.foldable .pl { padding-left: 5.6rem; }
+  .preview-code .fold-btn { width: 2.1rem; }
+}
+.preview-code .fold-pill {
+  margin-left: 0.5rem;
+  padding: 0 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-raised) 80%, transparent);
+  color: var(--color-fg-muted);
+  font: inherit;
+  font-size: 0.88em;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.preview-code .fold-pill:hover { color: var(--color-fg); background: var(--color-raised); }
 
 /* 透明图片的棋盘格底 */
 .preview-checker {

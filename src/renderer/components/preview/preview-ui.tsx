@@ -57,6 +57,18 @@ export function BarButton({ title, onClick, disabled, active, children }: {
   )
 }
 
+/** 选项条里的文字按钮（折叠全部 / 展开全部 这类） */
+export function BarTextButton({ onClick, title, children }: { onClick: () => void; title?: string; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className="rounded-md border border-line-subtle px-2 py-0.5 text-xs text-fg-muted transition hover:border-line hover:text-fg-2"
+    >{children}</button>
+  )
+}
+
 /** 查看器顶部的选项条：左边放视图切换，右边放文件信息 */
 export function ViewerBar({ children }: { children: ReactNode }) {
   return <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line-subtle bg-surface/60 px-3 py-1.5 text-xs text-fg-muted">{children}</div>
