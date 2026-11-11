@@ -8,9 +8,7 @@ import {
 
   getCurrentProject,
 
-  getProjectNodes,
-
-  projectGroupIds,
+  projectNodes,
 
   registerArtifact,
 
@@ -38,7 +36,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     "project_register_artifact",
 
-    "登记项目最近产物（供后续节点注入上下文）。仅写元数据，不发消息、不推菜单；交付用户请用 send_file",
+    "登记项目最近产物/成果（供后续步骤注入上下文）。仅写元数据，不发消息、不推菜单；交付用户请用 send_file。mr_url / feishu_doc_url 只有研发项目才用，其他项目不用传",
 
     {
 
@@ -82,7 +80,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     "project_update",
 
-    "更新项目元数据。字段：baseBranch=生产基线（切 feature 起点，可与 feature 同步，禁止本地将 feature 合入/推送到生产基线）；testBranch=测试环境；developBranch=开发环境。可补齐 repos[].testBranch/developBranch、goal、文档链接、metadata（KV merge，空值删 key）等。",
+    "更新项目信息。通用：goal（项目目标）、story_url（项目链接）、metadata（KV merge，空值删 key；记录对象、截止时间、偏好等之后会话还要用的信息）。研发项目另有分支字段：baseBranch=生产基线（切 feature 起点，可与 feature 同步，禁止本地将 feature 合入/推送到生产基线）；testBranch=测试环境；developBranch=开发环境，可补齐 repos[].testBranch/developBranch、文档链接等；没有代码仓的项目不要传分支字段。",
 
     {
 
@@ -129,6 +127,14 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
       if (args.product_doc_url !== undefined) p.productDocUrl = args.product_doc_url || undefined
 
       if (args.tech_doc_url !== undefined) p.techDocUrl = args.tech_doc_url || undefined
+
+      // 没有代码仓的项目：只改通用信息，不碰分支/仓库字段（否则会写出空仓库条目）
+      if (p.workspaceType === "plain") {
+        if (args.metadata) mergeProjectMetadata(p, args.metadata)
+        const { saveProject: savePlain } = await import("./shared/project-store.js")
+        savePlain(p)
+        return txt(`✅ 已更新项目 ${p.id}\n${JSON.stringify({ goal: p.goal, storyUrl: p.storyUrl, metadata: p.metadata }, null, 2)}`)
+      }
 
       if (args.feature_branch !== undefined) p.featureBranch = args.feature_branch
 
@@ -264,7 +270,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
       if (!p) return txt("❌ 未找到项目")
 
-      const available = projectGroupIds(p).flatMap((gid) => getProjectNodes(gid).map((n) => n.id))
+      const available = projectNodes(p).map((n) => n.id)
 
       if (!available.includes(node_id)) return txt(`❌ 项目「${p.name}」无此节点：${node_id}\n可用节点：${available.join("、") || "（暂无）"}`)
 

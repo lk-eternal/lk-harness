@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -15,6 +15,9 @@ import { PreviewContext, usePreviewController } from "../components/preview/Prev
 import { sendNowOutcome, type SendNowOutcome } from "../components/chat/queued-strip-text"
 import SessionSchedules from "../components/chat/SessionSchedules"
 import DirPicker from "../components/chat/DirPicker"
+import NewProjectDialog from "../components/project/NewProjectDialog"
+import { PROJECT_TEMPLATES_TARGET } from "../components/project/projects-nav"
+import ProjectBar from "../components/project/ProjectBar"
 import ModelPicker, { type ModelChoice } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
@@ -23,6 +26,7 @@ import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
 import { workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
+import { projectIdOfSessionKey, type ProjectCreateResult } from "../../shared/project-app-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
@@ -98,6 +102,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [usageBytes, setUsageBytes] = useState<number | null>(null)
   const [actionError, setActionError] = useState("")
+  /** 「新建项目」对话框：要建在哪个应用内通道下 */
+  const [newProjectFor, setNewProjectFor] = useState<string | null>(null)
+  /** 刚建好的项目会话：等它出现在会话列表里再切过去（直接选一个列表里还没有的会话，会被「选中项失效」回落掉） */
+  const [pendingSelect, setPendingSelect] = useState<string | null>(null)
   const [titles, setTitles] = useState<Record<string, string>>({})
   /** 会话最近一条记录的时间，键为 appChatSessionId；now 随每次刷新更新，用来算「多久前」 */
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
@@ -179,6 +187,20 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     setSelected(pick.sessionKey)
   }, [views, selected])
 
+  // 刚建好的项目会话一出现在列表里就切过去；等太久（列表读失败等）就放弃，不霸占用户之后的选择
+  useEffect(() => {
+    if (!pendingSelect) return
+    if (views.some((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, pendingSelect)))) {
+      setSelected(pendingSelect)
+      setPendingSelect(null)
+    }
+  }, [views, pendingSelect])
+  useEffect(() => {
+    if (!pendingSelect) return
+    const timer = window.setTimeout(() => setPendingSelect(null), 20000)
+    return () => window.clearTimeout(timer)
+  }, [pendingSelect])
+
   // 草稿会话发出第一条消息后，服务端列表里就有了，草稿即可丢弃（否则会话被删后它会冒出来）
   useEffect(() => {
     setDrafts((prev) => {
@@ -210,6 +232,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
+  /** 当前会话是项目会话时的项目 id */
+  const projectId = tab?.kind === "project" ? projectIdOfSessionKey(tab.sessionKey) : undefined
   /** 用户给会话选的工作目录：服务端带回来的优先，刚选还没刷新到的用本地的 */
   const boundDirOf = (t: ChatTab): string | undefined => t.boundDir ?? pickedDirs[t.sessionKey]
   /** 会话的工作目录；没选过目录的临时会话没有，它自己的临时文件夹对用户不可见 */
@@ -393,6 +417,26 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (dir) await chooseDir(dir)
   }
 
+  /** 项目建好了：关对话框，等会话出现在列表里切过去；建好但有后续提示的（比如进入会话没成功）显示出来 */
+  const projectCreated = (r: ProjectCreateResult) => {
+    setNewProjectFor(null)
+    if (r.warning) setActionError(r.warning)
+    if (r.sessionKey) setPendingSelect(r.sessionKey)
+    void refresh()
+    // 刚进入的会话要等路由登记才进列表，补刷几次，不用等 8 秒的定时刷新
+    for (const ms of [600, 1800]) window.setTimeout(() => { void refresh() }, ms)
+  }
+
+  /** 项目已在项目栏里删除：和删普通会话一样先把它从列表拿掉，再刷新 */
+  const projectDeleted = async (t: ChatTab) => {
+    setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
+    discardComposerDraft(t.sessionKey)
+    markSessionDeleted(deletedRef.current, t.sessionKey)
+    setViews((prev) => hideDeletedTabs(prev, deletedRef.current))
+    await refresh()
+    void refreshUsage()
+  }
+
   // 会话进程在线 ≠ AI 在干活（回复完 Agent 仍挂在 poll 上）：以未收口的回合卡 / 待处理的用户消息为准
   const hasLiveTurn = items.some((it) => it.kind === "assistant" && !it.finished)
   const busy = !!tab?.running && (hasLiveTurn || items[items.length - 1]?.kind === "user")
@@ -437,7 +481,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                               <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
                             ) : (
                               <span className="relative shrink-0">
-                                <MessageCircle size={14} className="text-fg-faint" />
+                                {t.kind === "project"
+                                  ? <FolderKanban size={14} className="text-fg-faint" />
+                                  : <MessageCircle size={14} className="text-fg-faint" />}
                                 {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
                               </span>
                             )}
@@ -457,11 +503,19 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                         </div>
                       )
                     })}
-                    <button
-                      type="button"
-                      onClick={() => void newSession(v.channelId)}
-                      className="flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
-                    ><Plus size={14} />新会话</button>
+                    <div className="flex gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void newSession(v.channelId)}
+                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
+                      ><Plus size={14} />新会话</button>
+                      <button
+                        type="button"
+                        onClick={() => setNewProjectFor(v.channelId)}
+                        title="按一套做事的流程（调研、写作、周报……）建一个项目"
+                        className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-line py-2 text-xs text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2"
+                      ><FolderKanban size={13} />新项目</button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -520,7 +574,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   </div>
                 </div>
 
-                <ChatItemList key={selected} items={items} loading={loading} hasMore={hasMore} loadingEarlier={loadingEarlier} onLoadEarlier={() => void loadEarlier()} busy={busy} workspaceName={dirName(workspaceDir)} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
+                <ChatItemList key={selected} items={items} loading={loading} hasMore={hasMore} loadingEarlier={loadingEarlier} onLoadEarlier={() => void loadEarlier()} busy={busy} workspaceName={dirName(workspaceDir)} projectName={projectId ? tab.label : undefined} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer
                   draftKey={composerDraftKey(selected)}
@@ -528,20 +582,35 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   busy={busy}
                   top={
                     <>
+                      {projectId && ownerView && (
+                        <ProjectBar
+                          key={projectId}
+                          channelId={ownerView.channelId}
+                          projectId={projectId}
+                          running={!!tab.running}
+                          confirm={showConfirm}
+                          onStarted={() => { window.setTimeout(() => { void refresh() }, 600) }}
+                          onDeleted={() => void projectDeleted(tab)}
+                          onError={setActionError}
+                        />
+                      )}
                       <SessionSchedules sessionKey={selected} active={active} confirm={showConfirm} onOpenSettings={() => onSettings("tasks")} />
                       <QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />
                     </>
                   }
                   footer={
                     <>
-                      <DirPicker
-                        currentName={dirName(workspaceDir)}
-                        options={dirOptions}
-                        isCurrent={(dir) => sameChatDir(dir, workspaceDir)}
-                        onSelect={(dir) => void chooseDir(dir)}
-                        onPickNew={() => void pickNewDir()}
-                        hint={canRebindDir ? "为这个会话选择工作目录，多个会话可以共用同一个目录" : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
-                      />
+                      {/* 项目会话的目录是项目自己的（项目栏的「项目信息」里看），在这里选目录只会另开一个无关的新会话 */}
+                      {!projectId && (
+                        <DirPicker
+                          currentName={dirName(workspaceDir)}
+                          options={dirOptions}
+                          isCurrent={(dir) => sameChatDir(dir, workspaceDir)}
+                          onSelect={(dir) => void chooseDir(dir)}
+                          onPickNew={() => void pickNewDir()}
+                          hint={canRebindDir ? "为这个会话选择工作目录，多个会话可以共用同一个目录" : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
+                        />
+                      )}
                       {tab.branch && (
                         <span className="inline-flex items-center gap-1 px-1 text-[12.5px] text-fg-muted" title="当前分支"><GitBranch size={14} />{tab.branch}</span>
                       )}
@@ -574,6 +643,15 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
           </section>
           <PreviewPanel controller={preview} visible={active} />
         </div>
+      )}
+      {newProjectFor && (
+        <NewProjectDialog
+          channelId={newProjectFor}
+          onClose={() => setNewProjectFor(null)}
+          onCreated={projectCreated}
+          // 先关对话框再跳：对话框是盖在对话页上的弹层，留着会让内置浏览器视图一直让位
+          onOpenTemplateSettings={() => { setNewProjectFor(null); onSettings(PROJECT_TEMPLATES_TARGET) }}
+        />
       )}
       {ModalPortal}
     </div>

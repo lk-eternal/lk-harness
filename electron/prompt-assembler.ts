@@ -3,8 +3,8 @@ import * as fs from "node:fs"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
 import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
-import { projectIdFromSessionKey } from "../src/shared/project-types.js"
-import { getProject, getProjectNodes, projectGroupIds } from "../src/shared/project-store.js"
+import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
+import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
@@ -258,10 +258,10 @@ function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessa
   if (!pid) return undefined
   if (messages.some((m) => (m.text ?? "").trimStart().startsWith("[PROJECT_ACTION]"))) return undefined
   if (!messages.some((m) => (m.text ?? "").trim())) return undefined
-  let proj: { id: string; groupId?: string; groupIds?: string[] } | undefined
+  let proj: { id: string; groupId?: string; groupIds?: string[]; groupSnapshot?: ProjectNodeGroupDef[] } | undefined
   try { proj = getProject(pid) ?? undefined } catch { return undefined }
   if (!proj) return undefined
-  const nodes = projectGroupIds(proj).flatMap((gid) => getProjectNodes(gid).map((n) => ({ id: n.id, label: n.label })))
+  const nodes = projectNodes(proj).map((n) => ({ id: n.id, label: n.label }))
   if (!nodes.length) return undefined
   return {
     nodes,

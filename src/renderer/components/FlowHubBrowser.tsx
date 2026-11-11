@@ -148,7 +148,7 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-line bg-page shadow-xl">
         <div className="flex items-center justify-between border-b border-line-subtle px-4 py-3">
           <h3 className="text-sm font-semibold text-fg">
-            {kind === "group" ? "从共享空间获取流程组" : "从共享空间获取节点"}
+            {kind === "group" ? "从共享空间获取项目模板" : "从共享空间获取快捷操作"}
           </h3>
           <button type="button" onClick={onClose} className="text-fg-muted hover:text-fg"><X className="h-4 w-4" /></button>
         </div>
@@ -156,7 +156,7 @@ export function FlowHubBrowser({ kind, targetGroupId, onClose, onImported, showA
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); setVisible(PAGE) }}
-            placeholder="搜索名称 / 作者 / 节点…"
+            placeholder="搜索名称 / 作者 / 快捷操作…"
             className="w-full rounded-md border border-line bg-surface px-3 py-2 text-sm text-fg-soft"
           />
         </div>

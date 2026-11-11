@@ -835,7 +835,7 @@ function restoreMangledRemote(p: string): string {
 }
 
 /** 远程地址保持原文（不做本地 resolve）；本地路径 resolve 规范化 */
-function normalizeRepoPath(raw: string): string {
+export function normalizeRepoPath(raw: string): string {
   const t = (raw || "").trim()
   if (!t) return t
   const restored = restoreMangledRemote(t)
@@ -885,6 +885,29 @@ export function upsertRepoProfiles(pairs: RepoProfileCfg[]): void {
   }
   const next = [...byKey.values()]
   saveConfig({ repoProfiles: next, repoRoots: next.map((p) => p.path) })
+}
+
+/** 按路径或远程地址找常用仓库里的那一条（写法差一点也认得：大小写、末尾斜杠、.git） */
+export function findRepoProfile(repoPath: string): RepoProfileCfg | undefined {
+  const key = repoProfileKey(repoPath)
+  return getRepoProfiles().find((p) => repoProfileKey(p.path) === key)
+}
+
+/**
+ * 把还没记过的仓库记进常用仓库（建项时下次直接勾选）。已经记过的原样不动：
+ * 它的测试/开发分支是用户配的，这次建项选的基线分支也不该顶掉它的默认值。
+ */
+export function addRepoProfilesIfMissing(pairs: RepoProfileCfg[]): void {
+  const have = new Set(getRepoProfiles().map((p) => repoProfileKey(p.path)))
+  const fresh: RepoProfileCfg[] = []
+  for (const p of pairs) {
+    if (!p?.path?.trim()) continue
+    const key = repoProfileKey(p.path)
+    if (have.has(key)) continue
+    have.add(key)
+    fresh.push(p)
+  }
+  if (fresh.length) upsertRepoProfiles(fresh)
 }
 
 export function removeRepoProfile(index1Based: number): RepoProfileCfg | null {

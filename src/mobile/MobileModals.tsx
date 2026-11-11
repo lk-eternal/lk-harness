@@ -4,6 +4,7 @@ import {
   ClipboardPaste,
   Cloud,
   Cpu,
+  FolderKanban,
   FolderOpen,
   GitBranch,
   Loader2,
@@ -70,6 +71,7 @@ export function SessionDrawer({
   usageBytes,
   onSelect,
   onNewTemp,
+  onNewProject,
   onDelete,
   onClearAll,
   onOpenPair,
@@ -86,6 +88,8 @@ export function SessionDrawer({
   usageBytes: number | null
   onSelect: (sessionKey: string) => void
   onNewTemp: (channelId: string) => void
+  /** 新建项目（项目归这个通道） */
+  onNewProject: (channelId: string) => void
   onDelete: (t: MobileChatTab) => void
   onClearAll: () => void
   onOpenPair: () => void
@@ -145,16 +149,28 @@ export function SessionDrawer({
           </div>
 
           {defaultChannelId && (
-            <button
-              type="button"
-              onClick={() => {
-                onNewTemp(defaultChannelId)
-                onClose()
-              }}
-              className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-2 text-xs font-medium text-white shadow-sm transition active:scale-[0.99]"
-            >
-              <Plus size={15} />新建临时会话
-            </button>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onNewTemp(defaultChannelId)
+                  onClose()
+                }}
+                className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-2 text-xs font-medium text-white shadow-sm transition active:scale-[0.99]"
+              >
+                <Plus size={15} />新建临时会话
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onNewProject(defaultChannelId)
+                  onClose()
+                }}
+                className="flex shrink-0 items-center justify-center gap-1.5 rounded-xl border border-line px-3 py-2 text-xs font-medium text-fg-2 transition active:bg-raised"
+              >
+                <FolderKanban size={14} className="text-accent" />新项目
+              </button>
+            </div>
           )}
         </div>
 
@@ -180,9 +196,11 @@ export function SessionDrawer({
                     const subText =
                       status === "working"
                         ? "AI 正在回复..."
-                        : wsDir
-                          ? dirName(wsDir)
-                          : "临时对话"
+                        : t.kind === "project"
+                          ? "项目"
+                          : wsDir
+                            ? dirName(wsDir)
+                            : "临时对话"
                     const deletable = !!t.removable && t.kind !== "project"
 
                     return (
@@ -207,10 +225,17 @@ export function SessionDrawer({
                             />
                           ) : (
                             <span className="relative shrink-0">
-                              <MessageCircle
-                                size={15}
-                                className={on ? "text-accent" : "text-fg-faint"}
-                              />
+                              {t.kind === "project" ? (
+                                <FolderKanban
+                                  size={15}
+                                  className={on ? "text-accent" : "text-fg-faint"}
+                                />
+                              ) : (
+                                <MessageCircle
+                                  size={15}
+                                  className={on ? "text-accent" : "text-fg-faint"}
+                                />
+                              )}
                               {status === "unread" && (
                                 <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
                               )}

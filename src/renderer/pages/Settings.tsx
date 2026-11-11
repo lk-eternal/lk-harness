@@ -4,7 +4,6 @@ import {
   FolderOpen,
   CheckCircle2,
   Loader2,
-  X,
   Settings as SettingsIcon,
   Network,
   Blocks,
@@ -14,19 +13,14 @@ import {
   Bot,
   Download,
   Wrench,
-  FilePlus,
   BookOpen,
   ExternalLink,
   Copy,
-  Eye,
-  EyeOff,
   Info,
   Github,
   MessageSquare,
   Smartphone,
-  Upload,
 } from "lucide-react"
-import { FlowHubBrowser } from "../components/FlowHubBrowser"
 import ToolboxPanel from "../components/ToolboxPanel"
 import AgentPanel from "../components/AgentPanel"
 import ChannelPanel from "../components/ChannelPanel"
@@ -35,8 +29,8 @@ import TaskPanel from "../components/TaskPanel"
 import McpPanel from "../components/McpPanel"
 import RulePanel from "../components/RulePanel"
 import SkillPanel from "../components/SkillPanel"
-import ProjectListPanel from "../components/ProjectListPanel"
-import ProjectNodePanel from "../components/ProjectNodePanel"
+import ProjectsTab from "../components/project/ProjectsTab"
+import { projectsJumpFor, splitSettingsTarget, type ProjectsJump } from "../components/project/projects-nav"
 import { PANEL_FRAME } from "../components/panel-layout"
 import TitleBar from "../components/TitleBar"
 import useInlineModal from "../components/useInlineModal"
@@ -48,26 +42,6 @@ interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () =>
 
 type Tab = "general" | "channel" | "mobile" | "proxy" | "agent" | "mcp" | "rules" | "tasks" | "skills" | "projects" | "toolbox" | "setup" | "about"
 type CloseWindowAction = "ask" | "minimize" | "quit"
-
-interface ProjectListItem {
-  id: string
-  name: string
-  goal?: string
-  storyUrl?: string
-  productDocUrl?: string
-  techDocUrl?: string
-  featureBranch: string
-  status: string
-  groupId?: string
-  groupIds?: string[]
-  worktreePath?: string
-  repoPath?: string
-  workspaceType?: string
-  metadata?: Record<string, string>
-  groupChatId?: string
-}
-type ProjectsSubTab = "list" | "settings" | "groups"
-const PROJECT_STATUS_LABEL: Record<string, string> = { active: "进行中", paused: "已暂停", done: "已完成" }
 
 const MASTER_DETAIL_TABS: Tab[] = ["agent", "channel", "rules", "skills", "mcp", "projects", "tasks"]
 
@@ -88,11 +62,16 @@ const TABS: { id: Tab; label: string; icon: typeof SettingsIcon }[] = [
 ]
 
 export default function Settings({ onBack, initialTab, onTabConsumed, onReenterWizard }: Props) {
-  const [tab, setTab] = useState<Tab>((initialTab as Tab) || "general")
+  // initialTab 可以带子页（"projects:templates"），冒号前是一级标签
+  const [tab, setTab] = useState<Tab>((splitSettingsTarget(initialTab).tab as Tab) || "general")
+  const [projectsJump, setProjectsJump] = useState<ProjectsJump | undefined>(() => projectsJumpFor(splitSettingsTarget(initialTab)))
+  const clearProjectsJump = useCallback(() => setProjectsJump(undefined), [])
 
   useEffect(() => {
     if (initialTab) {
-      setTab(initialTab as Tab)
+      const target = splitSettingsTarget(initialTab)
+      setTab(target.tab as Tab)
+      setProjectsJump(projectsJumpFor(target))
       onTabConsumed?.()
     }
   }, [initialTab, onTabConsumed])
@@ -108,27 +87,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
 
   const [appVersion, setAppVersion] = useState("")
-  const [gitlabToken, setGitlabToken] = useState("")
-  const [showGitlabToken, setShowGitlabToken] = useState(false)
-  const [gitlabHost, setGitlabHost] = useState("")
-  const [repoProfiles, setRepoProfiles] = useState<{ path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]>([])
-  type ProjectNodeItem = { id: string; label: string; prompt?: string; defaultPrompt?: string; hubId?: string; hubRevision?: number; hubContentHash?: string; localRevision?: number }
-  type ProjectNodeGroup = { id: string; name: string; nodes: ProjectNodeItem[]; workspace?: "worktree" | "plain"; hubId?: string; hubRevision?: number; hubContentHash?: string; localRevision?: number }
-  const [nodeGroups, setNodeGroups] = useState<ProjectNodeGroup[]>([])
-  const [activeGroupId, setActiveGroupId] = useState("")
-  const [nodeEditing, setNodeEditing] = useState<(ProjectNodeItem & { index: number }) | null>(null)
-  const [groupEditing, setGroupEditing] = useState<{ id: string; name: string; index: number } | null>(null)
-  const [worktreeRoot, setWorktreeRoot] = useState("")
-  const [flowHubUrl, setFlowHubUrl] = useState("")
-  const [flowHubToken, setFlowHubToken] = useState("")
-  const [showFlowHubToken, setShowFlowHubToken] = useState(false)
-  const [flowHubAuthor, setFlowHubAuthor] = useState("")
-  const [hubBrowser, setHubBrowser] = useState<{ kind: "group" | "node" } | null>(null)
-  const [projectsSubTab, setProjectsSubTab] = useState<ProjectsSubTab>("list")
-  const [projectList, setProjectList] = useState<ProjectListItem[]>([])
-  const [projectEditing, setProjectEditing] = useState<ProjectListItem | null>(null)
-  const [metadataEditText, setMetadataEditText] = useState("{}")
-  const [metadataExpanded, setMetadataExpanded] = useState<Record<string, boolean>>({})
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateCheck, setUpdateCheck] = useState<Awaited<ReturnType<typeof window.electronAPI.checkAppUpdate>> | null>(null)
   const [updateMsg, setUpdateMsg] = useState<string | null>(null)
@@ -141,13 +99,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [saved, setSaved] = useState(false)
 
   const loaded = useRef(false)
-  const projectsLoaded = useRef(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  const projectsSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
-  const refreshProjectList = useCallback(() => {
-    void window.electronAPI.listProjects().then(setProjectList).catch(() => setProjectList([]))
-  }, [])
 
   useEffect(() => {
     void window.electronAPI.getAppVersion().then(setAppVersion)
@@ -239,28 +191,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
       })
     }
-    if (tab === "projects") {
-      projectsLoaded.current = false
-      refreshProjectList()
-      window.electronAPI.getConfig().then((config) => {
-        setGitlabToken(config.gitlabToken ?? "")
-        setGitlabHost(config.gitlabHost ?? "")
-        const profiles = (config.repoProfiles?.length)
-          ? config.repoProfiles
-          : (config.repoRoots ?? []).map((p) => ({ path: p, baseBranch: "" }))
-        setRepoProfiles(profiles)
-        setWorktreeRoot(config.worktreeRoot ?? "")
-        setFlowHubUrl(config.flowHubUrl ?? "")
-        setFlowHubToken(config.flowHubToken ?? "")
-        setFlowHubAuthor(config.flowHubAuthor ?? "")
-        projectsLoaded.current = true
-      })
-      window.electronAPI.getProjectNodeGroups().then((gs) => {
-        setNodeGroups(gs)
-        setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
-      }).catch(() => {})
-    }
-  }, [tab, refreshProjectList])
+  }, [tab])
 
   const autoSave = useCallback(() => {
     if (!loaded.current) return
@@ -275,56 +206,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   }, [proxy, noProxy, closeWindowAction])
 
   useEffect(() => { autoSave() }, [autoSave])
-
-  const autoSaveProjects = useCallback(() => {
-    if (!projectsLoaded.current || tab !== "projects") return
-    if (projectsSaveTimer.current) clearTimeout(projectsSaveTimer.current)
-    projectsSaveTimer.current = setTimeout(async () => {
-      const profiles = repoProfiles
-        .map((p) => ({
-          path: p.path.trim(),
-          baseBranch: p.baseBranch.trim(),
-          testBranch: p.testBranch?.trim() || undefined,
-          developBranch: p.developBranch?.trim() || undefined,
-        }))
-        .filter((p) => p.path)
-      await window.electronAPI.saveConfig({
-        gitlabToken: gitlabToken.trim(),
-        gitlabHost: gitlabHost.trim(),
-        repoProfiles: profiles,
-        repoRoots: profiles.map((p) => p.path),
-        worktreeRoot: worktreeRoot.trim(),
-        flowHubUrl: flowHubUrl.trim(),
-        flowHubToken: flowHubToken.trim(),
-        flowHubAuthor: flowHubAuthor.trim(),
-      })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 1500)
-    }, 500)
-  }, [tab, gitlabToken, gitlabHost, repoProfiles, worktreeRoot, flowHubUrl, flowHubToken, flowHubAuthor])
-
-  const hubUrlReady = flowHubUrl.trim().length > 0
-  const hubConfigured = hubUrlReady && (flowHubToken.trim().length > 0 || gitlabToken.trim().length > 0)
-
-  const openHubBrowser = (kind: "group" | "node") => {
-    if (!hubUrlReady) {
-      void showAlert("无法连接共享空间", "请先填写 Hub 地址。")
-      return
-    }
-    if (!hubConfigured) {
-      void showAlert("无法连接共享空间", "请填写 Hub Token，或在「项目设置」中配置 GitLab Token。")
-      return
-    }
-    setHubBrowser({ kind })
-  }
-
-  const refreshNodeGroups = useCallback(async () => {
-    const gs = await window.electronAPI.getProjectNodeGroups()
-    setNodeGroups(gs)
-    setActiveGroupId((prev) => gs.some((g) => g.id === prev) ? prev : (gs[0]?.id ?? ""))
-  }, [])
-
-  useEffect(() => { autoSaveProjects() }, [autoSaveProjects])
 
   const handleCheckUpdate = async () => {
     setUpdateBusy(true)
@@ -389,119 +270,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     await window.electronAPI.saveConfig({ autoUpgradePrompt: next })
   }
 
-  const activeGroup = nodeGroups.find((g) => g.id === activeGroupId) ?? nodeGroups[0]
-
-  const persistNodeGroups = async (groups: ProjectNodeGroup[]) => {
-    await window.electronAPI.saveProjectNodeGroups(groups.map((g) => ({
-      ...g,
-      nodes: g.nodes.map(({ defaultPrompt: _d, ...n }) => n),
-    })))
-    const fresh = await window.electronAPI.getProjectNodeGroups()
-    setNodeGroups(fresh)
-  }
-  const saveActiveGroupNodes = async (nodes: ProjectNodeItem[]) => {
-    if (!activeGroup) return
-    await persistNodeGroups(nodeGroups.map((g) => g.id === activeGroup.id ? { ...g, nodes } : g))
-  }
-  const handleGroupExport = async () => {
-    if (!activeGroup) return
-    const r = await window.electronAPI.exportProjectNodeGroup(activeGroup.id)
-    if (r.ok && r.path) void showAlert("导出成功", r.path)
-    else if (!r.ok && r.error !== "已取消") void showAlert("导出失败", r.error ?? "未知错误")
-  }
-  const handleGroupImport = async () => {
-    const r = await window.electronAPI.importProjectNodeGroup()
-    if (!r.ok) {
-      if (r.error !== "已取消") void showAlert("导入失败", r.error ?? "未知错误")
-      return
-    }
-    const fresh = await window.electronAPI.getProjectNodeGroups()
-    setNodeGroups(fresh)
-    if (r.group) {
-      setActiveGroupId(r.group.id)
-      void showAlert("导入成功", `已导入为新组「${r.group.name}」(${r.group.id})`)
-    }
-  }
-  const handleGroupDelete = async () => {
-    if (!activeGroup) return
-    if (nodeGroups.length <= 1) { void showAlert("无法删除", "至少保留 1 个流程组"); return }
-    const usage = await window.electronAPI.getProjectNodeGroupUsage().catch(() => ({} as Record<string, number>))
-    const count = usage[activeGroup.id] ?? 0
-    if (count > 0) { void showAlert("无法删除", `有 ${count} 个项目正在使用该组`); return }
-    if (!(await showConfirm("删除流程组", `确定删除「${activeGroup.name}」？组内 ${activeGroup.nodes.length} 个节点将一并删除。`))) return
-    const next = nodeGroups.filter((g) => g.id !== activeGroup.id)
-    await persistNodeGroups(next)
-    setActiveGroupId(next[0]?.id ?? "")
-  }
-  const handleGroupSave = async () => {
-    if (!groupEditing) return
-    const id = groupEditing.id.trim()
-    const name = groupEditing.name.trim()
-    if (!name) return
-    if (groupEditing.index < 0) {
-      if (!/^[a-z][a-z0-9-]*$/.test(id)) {
-        void showAlert("组 id 不可用", `「${id}」需小写字母开头（可含数字/-）`)
-        return
-      }
-      if (nodeGroups.some((g) => g.id === id)) {
-        void showAlert("无法保存", "组 id 与已有组重复")
-        return
-      }
-      await persistNodeGroups([...nodeGroups, { id, name, workspace: "worktree", nodes: [] }])
-      setActiveGroupId(id)
-    } else {
-      await persistNodeGroups(nodeGroups.map((g) => g.id === groupEditing.id ? { ...g, name } : g))
-    }
-    setGroupEditing(null)
-  }
-
-  const handleProjectSwitch = async (id: string) => {
-    const r = await window.electronAPI.switchProject(id)
-    if (!r.ok) void showAlert("错误", r.error ?? "切换失败")
-    refreshProjectList()
-  }
-  const handleProjectDelete = async (p: ProjectListItem) => {
-    if (!(await showConfirm("删除项目", `确定删除「${p.name}」？\n将移除 AI 工作目录（含未提交改动）；主仓与远程分支不受影响。`, "删除", "取消"))) return
-    const r = await window.electronAPI.deleteProject(p.id)
-    if (!r.ok) void showAlert("错误", r.error ?? "删除失败")
-    refreshProjectList()
-  }
-  const handleProjectSave = async () => {
-    if (!projectEditing || !projectEditing.name.trim()) return
-    let metadata: Record<string, string> | undefined
-    try {
-      const parsed = JSON.parse(metadataEditText || "{}") as unknown
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-        metadata = {}
-        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-          if (!k.trim()) continue
-          metadata[k] = String(v ?? "")
-        }
-        if (!Object.keys(metadata).length) metadata = undefined
-      } else {
-        void showAlert("错误", "metadata 必须是 JSON 对象")
-        return
-      }
-    } catch {
-      void showAlert("错误", "metadata JSON 格式无效")
-      return
-    }
-    const r = await window.electronAPI.updateProject({
-      id: projectEditing.id,
-      name: projectEditing.name.trim(),
-      goal: projectEditing.goal?.trim() || "",
-      storyUrl: projectEditing.storyUrl?.trim() || "",
-      productDocUrl: projectEditing.productDocUrl?.trim() || "",
-      techDocUrl: projectEditing.techDocUrl?.trim() || "",
-      status: projectEditing.status,
-      groupIds: projectEditing.groupIds ?? [],
-      metadata,
-    })
-    if (!r.ok) { void showAlert("错误", r.error ?? "保存失败"); return }
-    setProjectEditing(null)
-    refreshProjectList()
-  }
-
   const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
   const masterDetailLayout = MASTER_DETAIL_TABS.includes(tab) || tab === "projects"
 
@@ -535,197 +303,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             {tab === "rules" && <RulePanel />}
             {tab === "skills" && <SkillPanel />}
 
-            {tab === "projects" && (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="mb-2 flex shrink-0 flex-wrap items-center gap-1.5">
-                  <button type="button"
-                    onClick={() => { setProjectsSubTab("list"); refreshProjectList() }}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "list" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
-                  >项目列表</button>
-                  <button type="button"
-                    onClick={() => setProjectsSubTab("settings")}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "settings" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
-                  >项目设置</button>
-                  <button type="button"
-                    onClick={() => setProjectsSubTab("groups")}
-                    className={`rounded-md border px-3 py-1.5 text-xs transition ${projectsSubTab === "groups" ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
-                  >流程组</button>
-                </div>
-                {projectsSubTab === "list" && <ProjectListPanel />}
-                {projectsSubTab === "settings" && (
-                  <div className="flex-1 overflow-y-auto pb-6">
-                    <div className="mx-auto max-w-xl space-y-6">
-                      <section className="space-y-4">
-                        <h3 className="text-sm font-medium text-fg-2">项目配置</h3>
-                        <div>
-                          <label className="mb-1 block text-xs text-fg-muted">GitLab Token</label>
-                          <div className="relative">
-                            <input type={showGitlabToken ? "text" : "password"} value={gitlabToken} onChange={(e) => setGitlabToken(e.target.value)} placeholder="glpat-..." className={inputCls + " pr-16"} />
-                            <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                              <button type="button" title="复制" disabled={!gitlabToken.trim()} onClick={() => void navigator.clipboard.writeText(gitlabToken)} className="text-fg-muted hover:text-fg-2 disabled:opacity-40"><Copy size={13} /></button>
-                              <button type="button" title={showGitlabToken ? "隐藏" : "显示"} onClick={() => setShowGitlabToken(!showGitlabToken)} className="text-fg-muted hover:text-fg-2">{showGitlabToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
-                            </div>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-fg-muted">GitLab Host（可空，默认从 origin 推断）</label>
-                          <input type="text" value={gitlabHost} onChange={(e) => setGitlabHost(e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-fg-muted">主仓（路径须为 git 根目录；基线=生产分支，只作切 feature 起点；测试/开发可空）</label>
-                          <div className="space-y-2">
-                            {repoProfiles.map((p, i) => (
-                              <div key={i} className="flex items-center gap-2">
-                                <input type="text" value={p.path} placeholder="D:\repos\foo"
-                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, path: e.target.value } : x))}
-                                  className={`${inputCls} flex-[3]`} />
-                                <input type="text" value={p.baseBranch} placeholder="基线"
-                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, baseBranch: e.target.value } : x))}
-                                  className={`${inputCls} flex-1`} />
-                                <input type="text" value={p.testBranch ?? ""} placeholder="测试"
-                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, testBranch: e.target.value || undefined } : x))}
-                                  className={`${inputCls} flex-1`} />
-                                <input type="text" value={p.developBranch ?? ""} placeholder="开发"
-                                  onChange={(e) => setRepoProfiles((list) => list.map((x, j) => j === i ? { ...x, developBranch: e.target.value || undefined } : x))}
-                                  className={`${inputCls} flex-1`} />
-                                <button type="button" title="删除"
-                                  onClick={() => setRepoProfiles((list) => list.filter((_, j) => j !== i))}
-                                  className="shrink-0 rounded-md border border-line px-2 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-danger"
-                                >✕</button>
-                              </div>
-                            ))}
-                            <button
-                              type="button"
-                              onClick={() => setRepoProfiles((list) => [...list, { path: "", baseBranch: "" }])}
-                              className="rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-fg-3 hover:bg-raised"
-                            >+ 添加主仓</button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="mb-1 block text-xs text-fg-muted">AI 工作目录</label>
-                          <div className="flex gap-2">
-                            <input type="text" value={worktreeRoot} onChange={(e) => setWorktreeRoot(e.target.value)} placeholder="D:\claw-projects" className={inputCls} />
-                            <button
-                              type="button"
-                              onClick={async () => {
-                                const dir = await window.electronAPI.selectDirectory()
-                                if (dir) setWorktreeRoot(dir)
-                              }}
-                              className="shrink-0 rounded-md border border-line px-3 text-xs text-fg-2 hover:bg-raised"
-                            >浏览</button>
-                          </div>
-                        </div>
-                      </section>
-                    </div>
-                  </div>
-                )}
-                {projectsSubTab === "groups" && (
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden pb-2">
-                    <div className="flex-1 overflow-y-auto">
-                      <div className="space-y-4">
-                        <h3 className="text-sm font-medium text-fg-2">流程组</h3>
-                        <p className="text-xs text-fg-muted">建项可多选（不选默认「开发」）；推进节点按所选组分组展示；点击节点编辑提示词；拖动左侧把手调整顺序。</p>
-                        <div className="rounded-lg border border-line-subtle p-3 space-y-2">
-                          <h4 className="text-xs font-medium text-fg-3">共享空间</h4>
-                          <div>
-                            <label className="mb-1 block text-xs text-fg-muted">Hub 地址</label>
-                            <input type="text" value={flowHubUrl} onChange={(e) => setFlowHubUrl(e.target.value)}
-                              placeholder="https://gitlab.example.com/group/your-flow-hub" className={inputCls} />
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-fg-muted">Hub Token（Flow Hub 项目专用）</label>
-                            <div className="relative">
-                              <input type={showFlowHubToken ? "text" : "password"} value={flowHubToken} onChange={(e) => setFlowHubToken(e.target.value)}
-                                placeholder="glpat-...（需 Maintainer 及以上权限）" className={inputCls + " pr-16"} />
-                              <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-                                <button type="button" title="复制" disabled={!flowHubToken.trim()} onClick={() => void navigator.clipboard.writeText(flowHubToken)} className="text-fg-muted hover:text-fg-2 disabled:opacity-40"><Copy size={13} /></button>
-                                <button type="button" title={showFlowHubToken ? "隐藏" : "显示"} onClick={() => setShowFlowHubToken(!showFlowHubToken)} className="text-fg-muted hover:text-fg-2">{showFlowHubToken ? <EyeOff size={13} /> : <Eye size={13} />}</button>
-                              </div>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="mb-1 block text-xs text-fg-muted">作者昵称（上传时展示）</label>
-                            <input type="text" value={flowHubAuthor} onChange={(e) => setFlowHubAuthor(e.target.value)}
-                              placeholder="你的名字" className={inputCls} />
-                          </div>
-                          <p className="text-[10px] text-fg-faint">Hub Token 与上方项目 Token 独立；未填 Hub Token 时回退使用项目 Token。</p>
-                          <button
-                            type="button"
-                            onClick={() => openHubBrowser("group")}
-                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-blue-600/50 text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
-                          ><Download className="h-3 w-3" />从共享空间获取组</button>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {nodeGroups.map((g) => (
-                            <button key={g.id} type="button"
-                              onClick={() => setActiveGroupId(g.id)}
-                              className={`rounded-md border px-3 py-1.5 text-xs transition ${g.id === activeGroup?.id ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
-                            >{g.name}</button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => setGroupEditing({ id: "", name: "", index: -1 })}
-                            className="rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-fg-3 hover:bg-raised"
-                          >+ 新增组</button>
-                          <button
-                            type="button"
-                            onClick={() => openHubBrowser("group")}
-                            className={`inline-flex items-center gap-1 rounded-md border px-3 py-1.5 text-xs transition ${hubConfigured ? "border-line text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
-                          ><Download className="h-3 w-3" />从共享空间获取组</button>
-                        </div>
-                        {activeGroup && (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-3 text-xs text-fg-muted">
-                              <span>当前组 <span className="font-mono">{activeGroup.id}</span> · {activeGroup.nodes.length} 个节点</span>
-                              <button type="button" className="text-accent hover:text-accent-soft"
-                                onClick={() => setGroupEditing({ id: activeGroup.id, name: activeGroup.name, index: nodeGroups.findIndex((g) => g.id === activeGroup.id) })}
-                              >编辑</button>
-                              <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft" onClick={() => void handleGroupExport()}>
-                                <Download className="h-3 w-3" />导出
-                              </button>
-                              <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft" onClick={() => void handleGroupImport()}>
-                                <FilePlus className="h-3 w-3" />导入
-                              </button>
-                              {hubConfigured && (
-                                <button type="button" className="inline-flex items-center gap-1 text-accent hover:text-accent-soft"
-                                  onClick={async () => {
-                                    const r = await window.electronAPI.flowHub.uploadGroup(activeGroup.id)
-                                    if (r.ok) { void showAlert("上传成功", `流程组「${activeGroup.name}」已上传到共享空间`); void refreshNodeGroups() }
-                                    else void showAlert("上传失败", r.error ?? "未知错误")
-                                  }}>
-                                  <Upload className="h-3 w-3" />上传
-                                </button>
-                              )}
-                              {nodeGroups.length > 1 && (
-                                <button type="button" className="text-danger hover:text-danger-soft" onClick={handleGroupDelete}>删除组</button>
-                              )}
-                            </div>
-                            <ProjectNodePanel
-                              nodes={activeGroup.nodes}
-                              onSaveNodes={saveActiveGroupNodes}
-                              hubConfigured={hubConfigured}
-                              groupId={activeGroup.id}
-                              onUploadNode={hubConfigured ? async (nodeId) => {
-                                const r = await window.electronAPI.flowHub.uploadNode(activeGroup.id, nodeId)
-                                if (r.ok) void showAlert("上传成功", `节点已上传`)
-                                else void showAlert("上传失败", r.error ?? "未知错误")
-                              } : undefined}
-                            />
-                            {hubUrlReady && (
-                              <button
-                                type="button"
-                                onClick={() => openHubBrowser("node")}
-                                className={`w-full rounded-md border border-dashed px-3 py-2 text-xs transition ${hubConfigured ? "border-line text-accent hover:bg-raised" : "border-line text-fg-muted hover:bg-raised hover:text-fg-2"}`}
-                              >从共享空间获取节点</button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {tab === "projects" && <ProjectsTab jump={projectsJump} onJumpConsumed={clearProjectsJump} />}
 
             {!masterDetailLayout && (<>
 
@@ -1051,142 +629,6 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
           </div>
         </div>
       </div>
-
-      {/* ═══ Project Node Edit Modal ═══ */}
-      {nodeEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-lg flex-col rounded-xl border border-line bg-surface shadow-2xl" style={{ maxHeight: "80vh" }}>
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <h3 className="text-sm font-semibold text-fg-soft">{nodeEditing.index < 0 ? "添加节点" : `编辑节点 · ${nodeEditing.label || nodeEditing.id}`}</h3>
-              <button onClick={() => setNodeEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
-              <div className="flex gap-3">
-                <div className="flex-1"><label className="mb-1 block text-xs text-fg-muted">节点 id（/p 命令）</label>
-                  <input type="text" value={nodeEditing.id}
-                    onChange={(e) => setNodeEditing({ ...nodeEditing, id: e.target.value.trim() })}
-                    className={inputCls} placeholder="如 test-report" /></div>
-                <div className="flex-1"><label className="mb-1 block text-xs text-fg-muted">按钮名称</label>
-                  <input type="text" value={nodeEditing.label}
-                    onChange={(e) => setNodeEditing({ ...nodeEditing, label: e.target.value })}
-                    className={inputCls} placeholder="如 测试报告" /></div>
-              </div>
-              <div>
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="block text-xs text-fg-muted">节点提示词（告诉 AI 该节点做什么、产出标准）</label>
-                  {(nodeEditing.defaultPrompt ?? "").trim() !== "" && (nodeEditing.prompt ?? "").trim() !== "" && (
-                    <button type="button" className="text-xs text-accent hover:text-accent-soft"
-                      onClick={() => setNodeEditing({ ...nodeEditing, prompt: undefined })}
-                    >恢复默认模板</button>
-                  )}
-                </div>
-                <textarea rows={12}
-                  value={nodeEditing.prompt ?? nodeEditing.defaultPrompt ?? ""}
-                  onChange={(e) => setNodeEditing({ ...nodeEditing, prompt: e.target.value })}
-                  className={inputCls + " font-mono text-xs leading-relaxed"}
-                  placeholder="每行一条要求，会原样进入节点任务提示词" />
-                {(nodeEditing.defaultPrompt ?? "").trim() !== "" && (nodeEditing.prompt ?? "").trim() === "" && (
-                  <p className="mt-1 text-[10px] text-fg-muted">当前使用内置默认模板（上方内容即模板全文，编辑即覆盖）</p>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center justify-between border-t border-line-subtle px-6 py-4">
-              <div>
-                {nodeEditing.index >= 0 && hubConfigured && activeGroup && (
-                  <button
-                    type="button"
-                    className="mr-2 inline-flex items-center gap-1 rounded-md px-4 py-1.5 text-xs text-accent transition hover:bg-raised"
-                    onClick={async () => {
-                      const r = await window.electronAPI.flowHub.uploadNode(activeGroup.id, nodeEditing.id)
-                      if (r.ok) void showAlert("上传成功", `节点「${nodeEditing.label}」已上传`)
-                      else void showAlert("上传失败", r.error ?? "未知错误")
-                    }}
-                  ><Upload className="h-3 w-3" />上传此节点</button>
-                )}
-                {nodeEditing.index >= 0 && (
-                  <button
-                    onClick={async () => {
-                      if (!activeGroup) return
-                      if (!(await showConfirm("删除节点", `确定删除「${nodeEditing.label || nodeEditing.id}」？`))) return
-                      await saveActiveGroupNodes(activeGroup.nodes.filter((_, j) => j !== nodeEditing.index))
-                      setNodeEditing(null)
-                    }}
-                    className="rounded-md px-4 py-1.5 text-xs text-danger transition hover:bg-raised"
-                  >删除节点</button>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setNodeEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-                <button
-                  disabled={!nodeEditing.id.trim() || !nodeEditing.label.trim()}
-                  onClick={async () => {
-                    if (!activeGroup) return
-                    const reserved = ["help", "menu", "ls", "list", "use", "leave", "info", "new", "del", "delete", "rm", "setup", "sync", "ship"]
-                    const id = nodeEditing.id.trim()
-                    if (reserved.includes(id) || !/^[a-z][a-z0-9-]*$/.test(id)) {
-                      void showAlert("节点 id 不可用", `「${id}」需小写字母开头（可含数字/-），且不能与保留命令冲突`)
-                      return
-                    }
-                    if (activeGroup.nodes.some((n, j) => n.id === id && j !== nodeEditing.index)) {
-                      void showAlert("无法保存", "节点 id 与组内已有节点重复")
-                      return
-                    }
-                    // 与默认模板一致的内容不落库（保持跟随模板升级）
-                    const raw = (nodeEditing.prompt ?? "").trim()
-                    const promptVal = raw && raw !== (nodeEditing.defaultPrompt ?? "").trim() ? raw : undefined
-                    const item: ProjectNodeItem = { id, label: nodeEditing.label.trim(), prompt: promptVal }
-                    const nodes: ProjectNodeItem[] = nodeEditing.index < 0
-                      ? [...activeGroup.nodes, item]
-                      : activeGroup.nodes.map((n, j) => j === nodeEditing.index ? { ...n, ...item } : n)
-                    await saveActiveGroupNodes(nodes)
-                    setNodeEditing(null)
-                  }}
-                  className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40"
-                >保存</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Project Edit → ProjectListPanel */}
-
-      {/* ═══ Node Group Edit Modal ═══ */}
-      {groupEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="flex w-full max-w-sm flex-col rounded-xl border border-line bg-surface shadow-2xl">
-            <div className="flex items-center justify-between border-b border-line-subtle px-6 py-4">
-              <h3 className="text-sm font-semibold text-fg-soft">{groupEditing.index < 0 ? "新增流程组" : "编辑流程组"}</h3>
-              <button onClick={() => setGroupEditing(null)} className="text-fg-muted hover:text-fg"><X size={16} /></button>
-            </div>
-            <div className="space-y-3 px-6 py-4">
-              <div><label className="mb-1 block text-xs text-fg-muted">组 id</label>
-                <input type="text" value={groupEditing.id} disabled={groupEditing.index >= 0}
-                  onChange={(e) => setGroupEditing({ ...groupEditing, id: e.target.value.trim() })}
-                  className={`${inputCls} ${groupEditing.index >= 0 ? "opacity-60" : ""}`} placeholder="如 design" /></div>
-              <div><label className="mb-1 block text-xs text-fg-muted">组名</label>
-                <input type="text" value={groupEditing.name}
-                  onChange={(e) => setGroupEditing({ ...groupEditing, name: e.target.value })}
-                  className={inputCls} placeholder="如 设计" /></div>
-            </div>
-            <div className="flex justify-end gap-2 border-t border-line-subtle px-6 py-4">
-              <button onClick={() => setGroupEditing(null)} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-              <button onClick={handleGroupSave} disabled={!groupEditing.id.trim() || !groupEditing.name.trim()} className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white transition hover:bg-blue-500 disabled:opacity-40">保存</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {hubBrowser && activeGroup && (
-        <FlowHubBrowser
-          kind={hubBrowser.kind}
-          targetGroupId={activeGroup.id}
-          onClose={() => setHubBrowser(null)}
-          onImported={() => { void refreshNodeGroups(); setHubBrowser(null) }}
-          showAlert={showAlert}
-          showConfirm={showConfirm}
-        />
-      )}
 
       {ModalPortal}
     </div>

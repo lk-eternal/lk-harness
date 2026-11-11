@@ -42,7 +42,7 @@ function contextBlock(p: Project): string[] {
     !p.relatedDocs && p.techDocUrl ? `技术文档: ${p.techDocUrl}` : "",
   ]
   const meta = p.metadata && Object.keys(p.metadata).length
-    ? ["", "项目 metadata:", ...Object.entries(p.metadata).map(([k, v]) => `- ${k}: ${v}`)]
+    ? ["", "项目信息:", ...Object.entries(p.metadata).map(([k, v]) => `- ${k}: ${v}`)]
     : []
   const root = projectRootDir(p)
   if (isPlainProject(p)) {
@@ -81,10 +81,17 @@ export function buildProjectSessionPrompt(p: Project): string {
     "3. 自然语言：按每轮 [本轮投递] 内 node_protocol 判断是否拉取节点提示词。",
     "",
     "查数与写数（全会话唯一指引）:",
-    `- 查：project_get(project_id=${p.id}) 查分支/metadata/文档链接/最近产物；project_get_node 查单节点全文。内部 ID/路径/分支不向用户复述。`,
-    "- 写：补分支/metadata 用 project_update（metadata 为 KV merge，空值删 key）；需跨节点保留产物上下文时用 project_register_artifact(project_id="
-      + `${p.id}, artifact_path, summary?, mr_url?, feishu_doc_url?)。`,
-    "- 产物文件写 AI 工作目录下的 .lk-harness/artifacts/（多仓项目写主仓对应目录），用 send_file 交付文件。",
+    plain
+      ? `- 查：project_get(project_id=${p.id}) 查项目信息/链接/最近产物；project_get_node 查单步骤全文。内部 ID/路径不向用户复述。`
+      : `- 查：project_get(project_id=${p.id}) 查分支/metadata/文档链接/最近产物；project_get_node 查单节点全文。内部 ID/路径/分支不向用户复述。`,
+    plain
+      ? "- 写：了解到新的项目信息（对象、截止时间、偏好等）用 project_update 记进 metadata（KV merge，空值删 key），之后的会话都能看到；需跨步骤保留成果时用 project_register_artifact(project_id="
+        + `${p.id}, artifact_path, summary?)。`
+      : "- 写：补分支/metadata 用 project_update（metadata 为 KV merge，空值删 key）；需跨节点保留产物上下文时用 project_register_artifact(project_id="
+        + `${p.id}, artifact_path, summary?, mr_url?, feishu_doc_url?)。`,
+    plain
+      ? "- 成果文件写项目目录下的 .lk-harness/artifacts/，用 send_file 交付；项目目录里用户放的资料都可以读，但不要改动或删除用户原有文件，除非用户明确要求。"
+      : "- 产物文件写 AI 工作目录下的 .lk-harness/artifacts/（多仓项目写主仓对应目录），用 send_file 交付文件。",
   ].join("\n")
 }
 

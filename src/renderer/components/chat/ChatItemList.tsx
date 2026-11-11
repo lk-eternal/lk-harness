@@ -18,25 +18,38 @@ interface Props {
   busy: boolean
   /** 会话的目录名；临时会话没有指定目录，为空 */
   workspaceName?: string
+  /** 项目会话的项目名；有值时空白页讲项目，不讲目录 */
+  projectName?: string
   onAnswer: (questionId: string, option: string) => void
   onCommand: (cmd: string) => void
 }
 
-function EmptyChat({ workspaceName }: { workspaceName?: string }) {
+function EmptyChat({ workspaceName, projectName }: { workspaceName?: string; projectName?: string }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-2.5 pb-10 text-center">
       <div className="mb-1 flex h-12 w-12 items-center justify-center rounded-[14px] bg-raised text-fg-3"><MessageCircle size={24} /></div>
-      <p className="text-[17px] font-semibold text-fg">开始一段新对话</p>
-      <p className="max-w-[380px] text-[13px] leading-[1.75] text-fg-muted">
-        {workspaceName
-          ? `在「${workspaceName}」目录里运行，可以直接让 Agent 处理这个目录的内容。`
-          : <>没有指定目录，会在临时目录里运行，适合日常问答。<br />要处理某个项目，用输入框下方的目录选择切过去。</>}
-      </p>
+      {projectName ? (
+        <>
+          <p className="text-[17px] font-semibold text-fg">开始这个项目</p>
+          <p className="max-w-[380px] text-[13px] leading-[1.75] text-fg-muted">
+            这个项目的步骤和信息在输入框上方的项目栏里；也可以直接在下面说说你的想法。
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="text-[17px] font-semibold text-fg">开始一段新对话</p>
+          <p className="max-w-[380px] text-[13px] leading-[1.75] text-fg-muted">
+            {workspaceName
+              ? `在「${workspaceName}」目录里运行，可以直接让 Agent 处理这个目录的内容。`
+              : <>没有指定目录，会在临时目录里运行，适合日常问答。<br />要处理某个项目，用输入框下方的目录选择切过去。</>}
+          </p>
+        </>
+      )}
     </div>
   )
 }
 
-export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, onAnswer, onCommand }: Props) {
+export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, projectName, onAnswer, onCommand }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { sentinelRef, atBottom, scrollToBottom } = useStickToBottom(scrollRef, [items])
   const waiting = busy && items.length > 0 && items[items.length - 1].kind === "user"
@@ -53,7 +66,7 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
       <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
         <div className="mx-auto flex min-h-full max-w-3xl flex-col gap-4">
           {loading && items.length === 0 && <p className="text-center text-xs text-fg-faint">加载中…</p>}
-          {!loading && items.length === 0 && <EmptyChat workspaceName={workspaceName} />}
+          {!loading && items.length === 0 && <EmptyChat workspaceName={workspaceName} projectName={projectName} />}
           {hasMore && items.length > 0 && (
             <button
               type="button"

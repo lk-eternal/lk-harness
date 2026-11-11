@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import * as fs from "node:fs"
+import * as os from "node:os"
 import * as path from "node:path"
 import { isRemoteRepoRef } from "../src/shared/project-types.js"
 
@@ -57,6 +58,22 @@ function runGit(cwd: string, args: string[], timeoutMs?: number): Promise<{ ok: 
   })
 }
 
+/**
+ * 删一个刚被 git 用过的目录（克隆失败后的清理）。两个 Windows 上的坑：
+ * 1. git 子进程刚退出，目录可能还短暂被占着，rmSync 带 force 也会悄悄没删成（不抛错，它自带的重试也不会触发）；
+ * 2. 部分 Node 24 版本（实测 24.11.1）的 rmSync / rmdirSync 对含中文的路径会静默什么都不删，
+ *    而项目名常常就是中文——异步的 fs.promises.rm 没这个问题。
+ * 所以这里用异步删，并且按「目录还在不在」判断，没删掉就等一下再删。
+ * 始终不抛：清理是尽力而为，不能掩盖真正的失败原因。
+ */
+export async function removeDirRobust(dir: string): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    try { await fs.promises.rm(dir, { recursive: true, force: true }) } catch { /* 下面按目录还在不在判断 */ }
+    if (!fs.existsSync(dir)) return
+    await new Promise<void>((resolve) => setTimeout(resolve, 200))
+  }
+}
+
 function resolveReal(p: string): string {
   try {
     return fs.realpathSync.native(path.resolve(p))
@@ -80,6 +97,52 @@ export async function isUsableRepoRef(repoPath: string): Promise<boolean> {
 }
 
 /**
+ * 分支名是否合法：交给 git 判断，和之后真正建分支时是同一套规则。
+ * 以 - 开头的一律不要：后面拼进 git 命令行会被当成选项。
+ */
+export async function isValidBranchName(name: string): Promise<boolean> {
+  const n = (name ?? "").trim()
+  if (!n || n.startsWith("-")) return false
+  // 不依赖当前目录是不是仓库
+  const r = await runGit(os.tmpdir(), ["check-ref-format", "--branch", n], 10_000)
+  return r.ok
+}
+
+export interface LocalRepoInfo {
+  /** 仓库的默认基线分支：origin 的默认分支，没有就用当前分支 */
+  defaultBranch: string
+  /** 本地和 origin 上的分支名（去重排序，最多 200 个），给输入框做提示 */
+  branches: string[]
+}
+
+/** 看一个本地文件夹是不是 git 仓库根目录，是的话给出默认基线分支和分支列表；失败返回一句人话 */
+export async function inspectLocalRepo(repoPath: string): Promise<{ ok: true; info: LocalRepoInfo } | { ok: false; error: string }> {
+  const dir = (repoPath ?? "").trim()
+  if (!dir || !path.isAbsolute(dir)) return { ok: false, error: "请选择一个有效的文件夹" }
+  if (!fs.existsSync(dir)) return { ok: false, error: `文件夹不存在：${dir}` }
+  if (!(await isGitRepoRoot(dir))) {
+    return { ok: false, error: "这不是 git 仓库的根目录（里面要直接有 .git），请选仓库最外面那一层" }
+  }
+  const refs = await runGit(dir, ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes/origin"], 15_000)
+  const names = new Set<string>()
+  if (refs.ok) {
+    for (const line of refs.stdout.split(/\r?\n/)) {
+      const n = line.trim().replace(/^origin\//, "")
+      if (n && n !== "origin" && n !== "HEAD") names.add(n)
+    }
+  }
+  let defaultBranch = ""
+  const head = await runGit(dir, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], 10_000)
+  if (head.ok) defaultBranch = head.stdout.trim().replace(/^origin\//, "")
+  if (!defaultBranch) {
+    const cur = await runGit(dir, ["rev-parse", "--abbrev-ref", "HEAD"], 10_000)
+    if (cur.ok && cur.stdout.trim() && cur.stdout.trim() !== "HEAD") defaultBranch = cur.stdout.trim()
+  }
+  if (!defaultBranch) defaultBranch = names.has("main") ? "main" : names.has("master") ? "master" : "main"
+  return { ok: true, info: { defaultBranch, branches: [...names].sort().slice(0, 200) } }
+}
+
+/**
  * 独立 clone 创建 AI 工作目录：与用户主仓无 worktree 关联，同一分支双方可同时检出。
  * 本地主仓作克隆源加速（硬链接秒级），origin 指回真实远程；AI 提交 push 后用户主库 pull 即可。
  */
@@ -99,7 +162,7 @@ export async function addProjectClone(input: CloneAddInput): Promise<WorktreeRes
   if (!fs.existsSync(parent)) fs.mkdirSync(parent, { recursive: true })
 
   const fail = async (msg: string): Promise<WorktreeResult> => {
-    try { fs.rmSync(worktreePath, { recursive: true, force: true }) } catch { /* ignore */ }
+    await removeDirRobust(worktreePath)
     return { ok: false, error: msg }
   }
 
@@ -113,7 +176,7 @@ export async function addProjectClone(input: CloneAddInput): Promise<WorktreeRes
   // 本地 clone 加速（硬链接）；源有 dubious ownership 时本地 clone 会失败，回退到 origin 远程
   let clone = await runGit(parent, ["clone", repoPath, worktreePath])
   if (!clone.ok && !remote && originUrl) {
-    try { fs.rmSync(worktreePath, { recursive: true, force: true }) } catch { /* ignore */ }
+    await removeDirRobust(worktreePath)
     clone = await runGit(parent, ["clone", originUrl, worktreePath])
   }
   if (!clone.ok) {

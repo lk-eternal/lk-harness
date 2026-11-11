@@ -1,6 +1,7 @@
 import * as path from "node:path"
 import { makeChatKey, parseChatKey } from "./channel-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
+import { GENERAL_NODE_GROUPS } from "./project-templates.js"
 
 export type ProjectStatus = "active" | "paused" | "done"
 /** 节点 id：流程组节点 slug，或用户自定义 */
@@ -24,13 +25,26 @@ export interface ProjectNodeDef extends FlowHubHubTrack {
 /** 项目工作区类型：worktree=代码开发（主仓+隔离 worktree+分支借还）；plain=纯会话目录（测试/文档协作，无 git） */
 export type ProjectWorkspaceType = "worktree" | "plain"
 
-/** 流程组：建项可多选；推进按钮/命令按所选组分组展示节点 */
+/** 模板要用户在建项时填的一项信息；值存进项目的 metadata，键就是 label（AI 读上下文时看到的也是它） */
+export interface ProjectFieldDef {
+  label: string
+  placeholder?: string
+  /** 多行输入框 */
+  multiline?: boolean
+  required?: boolean
+}
+
+/** 流程组 = 项目模板：建项可选；推进按钮/命令按所选组分组展示节点 */
 export interface ProjectNodeGroupDef extends FlowHubHubTrack {
   id: string
   name: string
   nodes: ProjectNodeDef[]
-  /** 存量字段；建项已统一走开发流程（worktree），不再按组切换表单 */
+  /** 工作区类型：plain=普通文件夹，worktree=代码仓（应用内建项的表单按它走）。缺省按 worktree（存量） */
   workspace?: ProjectWorkspaceType
+  /** 一句话说明这个模板适合干什么（建项时展示） */
+  description?: string
+  /** 建项时要填的信息 */
+  fields?: ProjectFieldDef[]
 }
 
 /** 默认流程组种子：仅在无任何持久化数据时初始化用 */
@@ -38,6 +52,7 @@ export const DEFAULT_NODE_GROUPS: ProjectNodeGroupDef[] = [
   {
     id: "develop",
     name: "开发",
+    description: "软件研发：需求规划、写代码、提测、修缺陷。要接 git 代码仓库；用到飞书项目、GitLab 时再单独配置。",
     workspace: "worktree",
     nodes: [
       { id: "plan", label: "规划" },
@@ -54,6 +69,7 @@ export const DEFAULT_NODE_GROUPS: ProjectNodeGroupDef[] = [
   {
     id: "test",
     name: "测试",
+    description: "软件测试：评审、写用例、执行测试、提缺陷、复测。用飞书项目。",
     workspace: "plain",
     nodes: [
       { id: "test-review", label: "测试评审" },
@@ -65,9 +81,13 @@ export const DEFAULT_NODE_GROUPS: ProjectNodeGroupDef[] = [
       { id: "release-doc", label: "上线文档" },
     ],
   },
+  ...GENERAL_NODE_GROUPS,
 ]
 
+/** 存量项目没记流程组时的回落组：保持开发流程，老项目行为不变 */
 export const DEFAULT_NODE_GROUP_ID = DEFAULT_NODE_GROUPS[0].id
+/** 新建项目默认选的模板（不依赖 git / 飞书 / GitLab，谁都能用） */
+export const DEFAULT_NEW_PROJECT_GROUP_ID = GENERAL_NODE_GROUPS[0].id
 
 export interface RepoProfile {
   path: string
@@ -119,6 +139,13 @@ export interface Project {
   groupIds?: string[]
   /** 工作区类型；新建默认 worktree，缺省按 worktree 兼容存量 */
   workspaceType?: ProjectWorkspaceType
+  /**
+   * 建项时从模板复制来的流程组副本（含步骤和提示词）。有它就只认它，不再随全局模板变；
+   * 缺省的存量项目继续实时读全局流程组。
+   */
+  groupSnapshot?: ProjectNodeGroupDef[]
+  /** worktreePath 是用户自己选的已有文件夹：删项目时只解绑，不删它，也不删它的上级目录 */
+  externalWorkspace?: boolean
   status: ProjectStatus
   /** 可选：最近一次登记的产物路径（供下次节点注入） */
   lastArtifactPath?: string
@@ -172,7 +199,7 @@ export function projectRepoRefs(p: Project): { repoPath: string; worktreePath: s
 }
 
 /** 纯会话型项目（无 git 仓，跳过 worktree/分支借还等全部 git 行为） */
-export function isPlainProject(p: Project): boolean {
+export function isPlainProject(p: Pick<Project, "workspaceType">): boolean {
   return p.workspaceType === "plain"
 }
 
@@ -358,6 +385,8 @@ export function splitRepoPairValues(raw: unknown): string[] {
 
 /** 项目根目录：单仓为 worktree 父层 root/slug；多仓取各 worktree 公共父目录 */
 export function projectRootDir(p: Project): string {
+  // 用户自己选的文件夹就是项目目录本身：别按约定取上一层，上一层是用户的别的东西
+  if (p.externalWorkspace) return (p.worktreePath || "").trim()
   const wts = projectWorktrees(p).filter(Boolean)
   if (!wts.length) return (p.worktreePath || "").trim()
   if (wts.length === 1) return path.dirname(wts[0])

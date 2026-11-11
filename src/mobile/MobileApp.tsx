@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Cpu,
   Edit3,
+  FolderKanban,
   FolderOpen,
   GitBranch,
   ImagePlus,
@@ -31,6 +32,7 @@ import {
   workspaceDirFromSessionKey,
   type AgentResource,
 } from "../shared/channel-types"
+import { projectIdOfSessionKey, type ProjectCreateResult } from "../shared/project-app-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../shared/temp-workspace"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import QueuedStrip from "../renderer/components/chat/QueuedStrip"
@@ -76,6 +78,7 @@ import { composerAction } from "./composer-action"
 import { isTouchPrimary, shouldSendOnEnter } from "./enter-key"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
+import MobileProjectBar, { NewProjectSheet } from "./MobileProject"
 import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
 import { installExternalLinkHandler } from "./external-links"
 import { installNativeBackHandler } from "./native-back"
@@ -170,6 +173,10 @@ export default function MobileApp() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [dirSheetOpen, setDirSheetOpen] = useState(false)
+  /** 正在为哪个通道新建项目（项目归这个通道） */
+  const [newProjectFor, setNewProjectFor] = useState<string | null>(null)
+  /** 刚建好的项目会话：等它出现在会话列表里再切过去（直接选一个列表里还没有的会话，会被「选中项失效」回落掉） */
+  const [pendingSelect, setPendingSelect] = useState<string | null>(null)
   const [pairSheetOpen, setPairSheetOpen] = useState(() => !loadPairConfig().token)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
@@ -219,6 +226,23 @@ export default function MobileApp() {
     const pick = first.tabs.find((t) => sameChatSession(t.sessionKey, first.activeKey)) ?? first.tabs[0]
     setSelected(pick.sessionKey)
   }, [views, selected])
+
+  // 刚建好的项目会话一出现在列表里就切过去；等太久（列表读失败等）就放弃，不霸占用户之后的选择
+  useEffect(() => {
+    if (!pendingSelect) return
+    if (allTabs.some((t) => sameChatSession(t.sessionKey, pendingSelect))) {
+      setSelected(pendingSelect)
+      setPendingSelect(null)
+    }
+  }, [allTabs, pendingSelect])
+  useEffect(() => {
+    if (!pendingSelect) return
+    const timer = window.setTimeout(() => setPendingSelect(null), 20000)
+    return () => window.clearTimeout(timer)
+  }, [pendingSelect])
+
+  /** 当前会话是项目会话时的项目 id */
+  const projectId = currentTab?.kind === "project" ? projectIdOfSessionKey(currentTab.sessionKey) : undefined
 
   const refreshBootstrap = useCallback(
     async (baseUrl: string, token: string) => {
@@ -709,6 +733,34 @@ export default function MobileApp() {
     setSelected(key)
   }
 
+  // 新建项目建好了：收起弹层，刷新列表，项目会话一出现就切过去
+  const handleProjectCreated = (r: ProjectCreateResult) => {
+    setNewProjectFor(null)
+    if (r.warning) setActionError(r.warning)
+    if (r.sessionKey) setPendingSelect(r.sessionKey)
+    const { activeUrl } = route
+    const { token } = pairCfg
+    void refreshBootstrap(activeUrl, token)
+    // 刚进入的会话要等电脑端登记路由才进列表，补刷几次，不用等下一次推送
+    for (const ms of [600, 1800]) window.setTimeout(() => { void refreshBootstrap(activeUrl, token) }, ms)
+  }
+
+  // 项目已在项目栏里删除：和删普通会话一样，先把它从列表拿掉，再刷新
+  const handleProjectDeleted = async (t: MobileChatTab) => {
+    const key = t.sessionKey
+    const id = appChatSessionId(key)
+    setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, key)))
+    draftStore.discard(id)
+    setTitles((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    markSessionDeleted(deletedRef.current, key)
+    setServerViews((prev) => hideDeletedTabs(prev, deletedRef.current))
+    await refreshBootstrap(route.activeUrl, pairCfg.token)
+  }
+
   // 给当前会话选工作目录：还没开始的草稿会话直接改它的目录；其它用这个目录新开一个会话（目录不是会话的身份，多个会话可以共用）
   const handleChooseDir = async (dir: string) => {
     if (!selected || !ownerView || !route.activeUrl || !pairCfg.token) return
@@ -938,7 +990,7 @@ export default function MobileApp() {
                 {busy && <Loader2 size={12} className="shrink-0 animate-spin text-accent" />}
               </div>
               <div className="flex max-w-full items-center gap-1 text-[11px] text-fg-muted">
-                <span className="truncate">{workspaceLabel || hostname || "手机端对话"}</span>
+                <span className="truncate">{projectId ? "项目" : workspaceLabel || hostname || "手机端对话"}</span>
                 {currentTab?.branch && (
                   <span className="inline-flex shrink-0 items-center gap-0.5 text-fg-faint">
                     · <GitBranch size={10} />
@@ -1058,6 +1110,7 @@ export default function MobileApp() {
           onLoadEarlier={() => void loadEarlier()}
           busy={busy}
           workspaceName={workspaceLabel}
+          projectName={projectId && currentTab ? sessionName(currentTab) : undefined}
           sessionKey={selected}
           baseUrl={route.activeUrl}
           token={pairCfg.token}
@@ -1133,17 +1186,43 @@ export default function MobileApp() {
           </div>
         )}
 
+        {/* 项目会话：步骤条（点一下 AI 开始做这一步）和项目信息 */}
+        {projectId && currentTab && ownerView && route.connected && (
+          <MobileProjectBar
+            key={projectId}
+            baseUrl={route.activeUrl}
+            token={pairCfg.token}
+            channelId={ownerView.channelId}
+            projectId={projectId}
+            sessionKey={currentTab.sessionKey}
+            running={currentTab.running}
+            confirm={showConfirm}
+            onStarted={() => {
+              const { activeUrl } = route
+              const { token } = pairCfg
+              void refreshBootstrap(activeUrl, token)
+              // 进程要等一下才登记成「在跑」，补刷一次
+              window.setTimeout(() => { void refreshBootstrap(activeUrl, token) }, 1500)
+            }}
+            onDeleted={() => void handleProjectDeleted(currentTab)}
+            onError={setActionError}
+          />
+        )}
+
         {/* 上方快捷胶囊栏：目录 · 模型 · 发图 */}
         <div className="mb-2 flex items-center gap-1.5 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setDirSheetOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-page px-2.5 py-1 text-[11px] text-fg-2 transition active:scale-95"
-          >
-            <FolderOpen size={12} className="text-accent" />
-            <span className="max-w-[110px] truncate">{workspaceLabel || "切换目录"}</span>
-            <ChevronDown size={11} className="text-fg-muted" />
-          </button>
+          {/* 项目会话的目录是项目自己的（项目信息里看），在这里选目录只会另开一个无关的新会话 */}
+          {!projectId && (
+            <button
+              type="button"
+              onClick={() => setDirSheetOpen(true)}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-page px-2.5 py-1 text-[11px] text-fg-2 transition active:scale-95"
+            >
+              <FolderOpen size={12} className="text-accent" />
+              <span className="max-w-[110px] truncate">{workspaceLabel || "切换目录"}</span>
+              <ChevronDown size={11} className="text-fg-muted" />
+            </button>
+          )}
 
           <button
             type="button"
@@ -1253,9 +1332,19 @@ export default function MobileApp() {
         usageBytes={usageBytes}
         onSelect={setSelected}
         onNewTemp={(chId) => void handleNewTempSession(chId)}
+        onNewProject={(chId) => setNewProjectFor(chId)}
         onDelete={(t) => void handleDeleteSession(t)}
         onClearAll={() => void handleClearAll()}
         onOpenPair={() => setPairSheetOpen(true)}
+      />
+
+      <NewProjectSheet
+        open={newProjectFor !== null}
+        onClose={() => setNewProjectFor(null)}
+        baseUrl={route.activeUrl}
+        token={pairCfg.token}
+        channelId={newProjectFor ?? ""}
+        onCreated={handleProjectCreated}
       />
 
       <ModelSheet

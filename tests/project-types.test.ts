@@ -161,4 +161,12 @@ describe("projectRootDir", () => {
     } as Project
     expect(projectRootDir(p)).toBe(root)
   })
+
+  it("uses the folder itself (not its parent) when the user picked an existing folder", () => {
+    const folder = path.join("D:", "Documents", "周报")
+    const p = { worktreePath: folder, workspaceType: "plain", externalWorkspace: true } as Project
+    expect(projectRootDir(p)).toBe(folder)
+    // 对照：非外部目录按约定取上一层
+    expect(projectRootDir({ ...p, externalWorkspace: false } as Project)).toBe(path.join("D:", "Documents"))
+  })
 })

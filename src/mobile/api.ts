@@ -5,6 +5,9 @@ import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
 import type { HistoryQuery } from "../shared/app-chat-history-page"
 import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
+import type {
+  ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo, ProjectView,
+} from "../shared/project-app-types"
 import { challengeMessage } from "../shared/mobile-challenge"
 import { mobilePreviewPath } from "../shared/mobile-preview"
 import {
@@ -404,6 +407,44 @@ export async function clearMobileSession(baseUrl: string, token: string, opts: {
 
 export async function deleteMobileSession(baseUrl: string, token: string, sessionKey: string): Promise<{ ok: boolean; error?: string }> {
   return await callApi(baseUrl, token, "/api/mobile/delete-session", { sessionKey })
+}
+
+// ── 项目（电脑端同一组函数；旧版电脑端没有这些接口，网关回「未知接口」） ──
+
+const OLD_DESKTOP_PROJECT = "电脑端版本过旧，不支持项目功能，请把电脑端升级到最新版本"
+
+function projectError<T extends ApiResult>(r: T): T {
+  return !r.ok && r.error === "未知接口" ? { ...r, error: OLD_DESKTOP_PROJECT } : r
+}
+
+export async function fetchMobileProjectTemplates(baseUrl: string, token: string): Promise<{ ok: boolean; templates?: ProjectTemplateInfo[]; error?: string }> {
+  return projectError(await callApi(baseUrl, token, "/api/mobile/project-templates", {}))
+}
+
+/** 常用代码仓库（建研发类项目时勾选）：手机上选不了电脑里的文件夹，只能从记过的仓库里选或填远程地址 */
+export async function fetchMobileProjectRepos(baseUrl: string, token: string): Promise<{ ok: boolean; repos?: ProjectRepoOption[]; error?: string }> {
+  return projectError(await callApi(baseUrl, token, "/api/mobile/project-repos", {}))
+}
+
+/** 手机端建项目：不带文件夹（手机上选不了电脑里的文件夹），项目目录由电脑端自己管 */
+export async function createMobileProject(baseUrl: string, token: string, channelId: string, input: Omit<ProjectCreateInput, "folder">): Promise<ProjectCreateResult> {
+  return projectError(await callApi<ProjectCreateResult>(baseUrl, token, "/api/mobile/project-create", { channelId, input }))
+}
+
+export async function fetchMobileProjectView(baseUrl: string, token: string, channelId: string, projectId: string): Promise<{ ok: boolean; view?: ProjectView; error?: string }> {
+  return projectError(await callApi(baseUrl, token, "/api/mobile/project-view", { channelId, projectId }))
+}
+
+export async function runMobileProjectStep(baseUrl: string, token: string, channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResult> {
+  return projectError(await callApi<ProjectActionResult>(baseUrl, token, "/api/mobile/project-run-step", { channelId, projectId, nodeId }))
+}
+
+export async function syncMobileProjectSteps(baseUrl: string, token: string, projectId: string): Promise<ProjectActionResult> {
+  return projectError(await callApi<ProjectActionResult>(baseUrl, token, "/api/mobile/project-sync-steps", { projectId }))
+}
+
+export async function deleteMobileProject(baseUrl: string, token: string, channelId: string, projectId: string): Promise<{ ok: boolean; name?: string; error?: string }> {
+  return projectError(await callApi(baseUrl, token, "/api/mobile/project-delete", { channelId, projectId }))
 }
 
 export async function setMobileSessionModel(

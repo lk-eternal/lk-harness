@@ -14,6 +14,16 @@ import { getAgentEngine } from "./agent-engine/factory"
 import { applySessionModelChange, clearSessionQueue, sendQueuedNow } from "./daemon-manager"
 import { listDashboardTree, resolveSessionModels, stopSessionAgent } from "./session-dispatcher"
 import {
+  createProjectFromApp,
+  deleteProjectByUser,
+  getProjectView,
+  listProjectRepoOptions,
+  listProjectTemplates,
+  runProjectStepFromApp,
+  syncProjectSteps,
+} from "./project-create"
+import { parseGatewayCreateInput } from "../src/shared/project-create-plan.js"
+import {
   callAppChatDaemon,
   clearAppChatRecords,
   createAppChatTempSession,
@@ -539,6 +549,38 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       const buf = Buffer.from(base64, "base64")
       const bytes = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
       sendJson(res, 200, saveAppChatImage(bytes, ext))
+      return
+    }
+    // 项目：手机端建项、步骤条、项目信息、删除（和电脑端同一组函数；手机端不能指定本机文件夹，所以建项忽略 folder）
+    case "/api/mobile/project-templates": {
+      sendJson(res, 200, { ok: true, templates: listProjectTemplates() })
+      return
+    }
+    case "/api/mobile/project-repos": {
+      // 常用仓库：建研发类项目时在手机上勾选（手机上选不了电脑里的文件夹，所以只能从记过的里选，或填远程地址）
+      sendJson(res, 200, { ok: true, repos: listProjectRepoOptions() })
+      return
+    }
+    case "/api/mobile/project-create": {
+      sendJson(res, 200, await createProjectFromApp(String(body.channelId ?? ""), parseGatewayCreateInput(body.input)))
+      return
+    }
+    case "/api/mobile/project-view": {
+      const view = getProjectView(String(body.projectId ?? ""), String(body.channelId ?? ""))
+      sendJson(res, 200, view ? { ok: true, view } : { ok: false, error: "项目不存在" })
+      return
+    }
+    case "/api/mobile/project-run-step": {
+      sendJson(res, 200, await runProjectStepFromApp(String(body.channelId ?? ""), String(body.projectId ?? ""), String(body.nodeId ?? "")))
+      return
+    }
+    case "/api/mobile/project-sync-steps": {
+      sendJson(res, 200, syncProjectSteps(String(body.projectId ?? "")))
+      return
+    }
+    case "/api/mobile/project-delete": {
+      // 手机端必须带通道：只能删归这个应用内通道的项目（设置里管全部项目，是电脑端的事）
+      sendJson(res, 200, await deleteProjectByUser(String(body.projectId ?? ""), { channelId: String(body.channelId ?? "") }))
       return
     }
     default:

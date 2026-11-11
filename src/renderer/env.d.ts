@@ -18,6 +18,17 @@ import type {
   AppChatSendPayload as AppChatSendPayloadType,
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
+import type { ProjectNodeGroupDef as ProjectNodeGroupDefType } from "../shared/project-types"
+import type {
+  InspectRepoResult as InspectRepoResultType,
+  ProjectActionResult as ProjectActionResultType,
+  ProjectCreateInput as ProjectCreateInputType,
+  ProjectCreateResult as ProjectCreateResultType,
+  ProjectListItem as ProjectListItemType,
+  ProjectRepoOption as ProjectRepoOptionType,
+  ProjectTemplateInfo as ProjectTemplateInfoType,
+  ProjectView as ProjectViewType,
+} from "../shared/project-app-types"
 import type {
   PreviewBytesResult as PreviewBytesResultType,
   PreviewOpenResult as PreviewOpenResultType,
@@ -179,11 +190,11 @@ declare global {
     onUpdaterError(cb: (message: string) => void): () => void
     onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
     getConfig(): Promise<AppConfig>
-    getProjectNodeGroups(): Promise<{ id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string; defaultPrompt?: string }[] }[]>
-    saveProjectNodeGroups(groups: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }[]): Promise<{ ok: boolean }>
+    getProjectNodeGroups(): Promise<(Omit<ProjectNodeGroupDefType, "nodes"> & { nodes: (ProjectNodeGroupDefType["nodes"][number] & { defaultPrompt?: string })[] })[]>
+    saveProjectNodeGroups(groups: ProjectNodeGroupDefType[]): Promise<{ ok: boolean }>
     getProjectNodeGroupUsage(): Promise<Record<string, number>>
     exportProjectNodeGroup(groupId: string): Promise<{ ok: boolean; path?: string; error?: string }>
-    importProjectNodeGroup(): Promise<{ ok: boolean; group?: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }; error?: string }>
+    importProjectNodeGroup(): Promise<{ ok: boolean; group?: ProjectNodeGroupDefType; error?: string }>
     exportConfig(sections?: string[]): Promise<{ ok: boolean; path?: string; error?: string }>
     pickImportConfigFile(): Promise<{ ok: boolean; filePath?: string; sections?: string[]; items?: { id: string; label: string; count: number }[]; error?: string }>
     getLocalConfigSectionStats(): Promise<{ id: string; label: string; count: number }[]>
@@ -292,17 +303,21 @@ declare global {
     previewChannelModelImpact(channelId: string, draft: unknown): Promise<ChannelImpactPreviewResultType>
     clearOthersModelOverrides(channelId: string): Promise<ChannelImpactClearResultType>
     stopOthersFollowingDefault(channelId: string): Promise<ChannelImpactStopResultType>
-    listProjects(): Promise<{
-      id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
-      featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string
-      metadata?: Record<string, string>; groupChatId?: string; watchBugs?: boolean
-    }[]>
-    deleteProject(projectId: string): Promise<{ ok: boolean; name?: string; error?: string }>
+    listProjects(): Promise<ProjectListItemType[]>
+    deleteProject(projectId: string, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }>
     updateProject(patch: {
-      id: string; name?: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
+      id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
       status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
     }): Promise<{ ok: boolean; error?: string }>
     switchProject(projectId: string): Promise<{ ok: boolean; error?: string }>
+    listProjectTemplates(): Promise<ProjectTemplateInfoType[]>
+    getProjectsRootDir(): Promise<string>
+    listProjectRepoOptions(): Promise<ProjectRepoOptionType[]>
+    inspectProjectRepo(repoPath: string): Promise<InspectRepoResultType>
+    createProjectInApp(channelId: string, input: ProjectCreateInputType): Promise<ProjectCreateResultType>
+    getProjectView(projectId: string, channelId: string): Promise<ProjectViewType | null>
+    runProjectStep(channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResultType>
+    syncProjectSteps(projectId: string): Promise<ProjectActionResultType>
     listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }>
     forgetQuickModel(model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }>
     stopAllSessionAgents(): Promise<{ ok: boolean }>

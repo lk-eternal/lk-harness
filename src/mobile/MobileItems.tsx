@@ -184,6 +184,7 @@ function MobileItemListBody({
   loadingEarlier,
   onLoadEarlier,
   workspaceName,
+  projectName,
   sessionKey,
   baseUrl,
   token,
@@ -198,6 +199,8 @@ function MobileItemListBody({
   onLoadEarlier: () => void
   busy: boolean
   workspaceName?: string
+  /** 项目会话的项目名；有值时空白页讲项目，不讲目录和 git */
+  projectName?: string
   sessionKey: string
   baseUrl: string
   token: string
@@ -260,25 +263,36 @@ function MobileItemListBody({
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-surface text-accent shadow-sm">
               <Sparkles size={22} />
             </div>
-            <p className="text-sm font-medium text-fg-2">
-              {workspaceName ? `在 ${workspaceName} 中开始对话` : "开始新对话"}
-            </p>
-            <p className="mt-1 text-xs text-fg-muted">
-              与电脑端实时同步 · 支持代码读写、工具调用与图片上传
-            </p>
-            <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {["查看 git status 与最近提交", "运行项目类型检查", "/help"].map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={() => onCommand(q)}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg-3 transition active:scale-95"
-                >
-                  <Terminal size={12} className="text-accent" />
-                  {q}
-                </button>
-              ))}
-            </div>
+            {projectName ? (
+              <>
+                <p className="text-sm font-medium text-fg-2">开始这个项目</p>
+                <p className="mt-1 max-w-[300px] text-xs leading-relaxed text-fg-muted">
+                  这个项目的快捷操作和信息在输入框上方的项目栏里；也可以直接在下面说说你的想法。
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-fg-2">
+                  {workspaceName ? `在 ${workspaceName} 中开始对话` : "开始新对话"}
+                </p>
+                <p className="mt-1 text-xs text-fg-muted">
+                  与电脑端实时同步 · 支持代码读写、工具调用与图片上传
+                </p>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {["查看 git status 与最近提交", "运行项目类型检查", "/help"].map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={() => onCommand(q)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-fg-3 transition active:scale-95"
+                    >
+                      <Terminal size={12} className="text-accent" />
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         ) : (
           <div className="mx-auto flex max-w-2xl flex-col gap-4 pb-2">

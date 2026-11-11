@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
+import type { ProjectNodeGroupDef } from "../src/shared/project-types"
+import type { InspectRepoResult, ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectView } from "../src/shared/project-app-types"
 import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
@@ -271,21 +273,28 @@ const api = {
     ipcRenderer.invoke("session-manager:channel-impact-clear", channelId),
   stopOthersFollowingDefault: (channelId: string): Promise<ChannelImpactStopResult> =>
     ipcRenderer.invoke("session-manager:channel-impact-stop", channelId),
-  listProjects: (): Promise<{
-    id: string; name: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
-    featureBranch: string; status: string; groupId?: string; groupIds?: string[]; worktreePath?: string; repoPath?: string; workspaceType?: string
-    metadata?: Record<string, string>; groupChatId?: string; watchBugs?: boolean
-  }[]> =>
-    ipcRenderer.invoke("project:list"),
-  deleteProject: (projectId: string): Promise<{ ok: boolean; name?: string; error?: string }> =>
-    ipcRenderer.invoke("project:delete", projectId),
+  listProjects: (): Promise<ProjectListItem[]> => ipcRenderer.invoke("project:list"),
+  /** 给了 channelId（应用内项目栏）只能删归这个通道的项目；设置页不传 */
+  deleteProject: (projectId: string, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }> =>
+    ipcRenderer.invoke("project:delete", projectId, channelId),
   updateProject: (patch: {
-    id: string; name?: string; goal?: string; storyUrl?: string; productDocUrl?: string; techDocUrl?: string
+    id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
     status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:update", patch),
   switchProject: (projectId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:switch", projectId),
+  listProjectTemplates: (): Promise<ProjectTemplateInfo[]> => ipcRenderer.invoke("project:templates"),
+  getProjectsRootDir: (): Promise<string> => ipcRenderer.invoke("project:root-dir"),
+  listProjectRepoOptions: (): Promise<ProjectRepoOption[]> => ipcRenderer.invoke("project:repo-options"),
+  inspectProjectRepo: (repoPath: string): Promise<InspectRepoResult> => ipcRenderer.invoke("project:inspect-repo", repoPath),
+  createProjectInApp: (channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> =>
+    ipcRenderer.invoke("project:create-in-app", channelId, input),
+  getProjectView: (projectId: string, channelId: string): Promise<ProjectView | null> =>
+    ipcRenderer.invoke("project:view", projectId, channelId),
+  runProjectStep: (channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResult> =>
+    ipcRenderer.invoke("project:run-step", channelId, projectId, nodeId),
+  syncProjectSteps: (projectId: string): Promise<ProjectActionResult> => ipcRenderer.invoke("project:sync-steps", projectId),
   listQuickModels: (): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }> =>
     ipcRenderer.invoke("session:list-quick-models"),
   forgetQuickModel: (model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }> =>
@@ -324,15 +333,15 @@ const api = {
     ipcRenderer.invoke("scheduled-tasks:delete", taskId),
 
   // ── 项目流程组 ──────────────────────────────────────
-  getProjectNodeGroups: (): Promise<{ id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string; defaultPrompt?: string }[] }[]> =>
+  getProjectNodeGroups: (): Promise<(Omit<ProjectNodeGroupDef, "nodes"> & { nodes: (ProjectNodeGroupDef["nodes"][number] & { defaultPrompt?: string })[] })[]> =>
     ipcRenderer.invoke("project-node-groups:get"),
-  saveProjectNodeGroups: (groups: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }[]): Promise<{ ok: boolean }> =>
+  saveProjectNodeGroups: (groups: ProjectNodeGroupDef[]): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke("project-node-groups:save", groups),
   getProjectNodeGroupUsage: (): Promise<Record<string, number>> =>
     ipcRenderer.invoke("project-node-groups:usage"),
   exportProjectNodeGroup: (groupId: string): Promise<{ ok: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke("project-node-groups:export", groupId),
-  importProjectNodeGroup: (): Promise<{ ok: boolean; group?: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }; error?: string }> =>
+  importProjectNodeGroup: (): Promise<{ ok: boolean; group?: ProjectNodeGroupDef; error?: string }> =>
     ipcRenderer.invoke("project-node-groups:import"),
 
   exportConfig: (sections?: string[]): Promise<{ ok: boolean; path?: string; error?: string }> => ipcRenderer.invoke("config:export", sections),

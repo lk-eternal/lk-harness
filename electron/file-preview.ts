@@ -7,6 +7,8 @@ import { callAppChatDaemon } from "./app-chat"
 import { getChannel } from "./config-store"
 import { channelIdFromSessionKey, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionOverridesStore, getSessionRecord } from "../src/shared/session-overrides-store"
+import { getProject, initProjectStore } from "../src/shared/project-store"
+import { projectIdFromSessionKey } from "../src/shared/project-types"
 import { MOBILE_PREVIEW_TOKEN_TTL_MS, mobilePreviewPath } from "../src/shared/mobile-preview"
 import { PREVIEW_SCHEME, createPreviewFileStore } from "../src/shared/preview-file-store"
 import type { PreviewOpenResult } from "../src/shared/preview-types"
@@ -24,10 +26,21 @@ export function registerPreviewScheme(): void {
   ])
 }
 
-/** 会话的工作目录：用户给会话选的目录优先，否则是会话键里的目录（临时会话就是它自己的临时文件夹） */
+/**
+ * 会话的工作目录：用户给会话选的目录优先；项目会话是项目的工作目录（项目成果都写在里面，
+ * 项目信息里点成果要能预览，不能只认「聊天里发过的文件」）；否则是会话键里的目录（临时会话就是它自己的临时文件夹）
+ */
 function sessionWorkDir(sessionKey: string): string | undefined {
   initSessionOverridesStore(app.getPath("userData"))
-  return getSessionRecord(sessionKey)?.boundDir || workspaceDirFromSessionKey(sessionKey) || undefined
+  const bound = getSessionRecord(sessionKey)?.boundDir
+  if (bound) return bound
+  const projectId = projectIdFromSessionKey(sessionKey)
+  if (projectId) {
+    initProjectStore(app.getPath("userData"))
+    const dir = getProject(projectId)?.worktreePath?.trim()
+    if (dir) return dir
+  }
+  return workspaceDirFromSessionKey(sessionKey) || undefined
 }
 
 const openDeps: PreviewOpenDeps = {

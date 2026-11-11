@@ -3,6 +3,7 @@ import * as path from "node:path"
 import { randomBytes, randomUUID } from "node:crypto"
 import { DEFAULT_NODE_GROUPS, DEFAULT_NODE_GROUP_ID, projectGroupChatMatches, type Project, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
+import { cloneGroupPlain, normalizeFieldDefs } from "./project-templates.js"
 import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
 import type { FeishuProjectPickItem } from "./meegle-project-picker.js"
 
@@ -46,6 +47,8 @@ function sanitizeGroups(groups: ProjectNodeGroupDef[] | null | undefined): Proje
       id: g.id.trim(),
       name: g.name.trim(),
       ...(g.workspace === "plain" || g.workspace === "worktree" ? { workspace: g.workspace } : {}),
+      ...(typeof g.description === "string" && g.description.trim() ? { description: g.description.trim() } : {}),
+      ...(normalizeFieldDefs(g.fields) ? { fields: normalizeFieldDefs(g.fields) } : {}),
       ...pickHubTrack(g),
       nodes: (g.nodes ?? []).filter((n) => n?.id?.trim() && n?.label?.trim())
         .map((n) => ({
@@ -89,6 +92,8 @@ export function parseNodeGroupExport(raw: unknown): ProjectNodeGroupDef | null {
     id: (c.id ?? "").trim() || "import",
     name: c.name,
     workspace: c.workspace === "plain" || c.workspace === "worktree" ? c.workspace : "worktree",
+    description: c.description,
+    fields: c.fields,
     nodes: c.nodes,
   }])
   if (!group) return null
@@ -133,7 +138,7 @@ export function resolveUniqueNodeGroupId(
 
 /** 旧扁平表 → 默认组结构：plan/build/review 的自定义覆盖到开发组，ship 丢弃，其余节点并入开发组 */
 function migrateLegacyNodes(legacy: ProjectNodeDef[]): ProjectNodeGroupDef[] {
-  const groups = DEFAULT_NODE_GROUPS.map((g) => ({ ...g, nodes: g.nodes.map((n) => ({ ...n })) }))
+  const groups = DEFAULT_NODE_GROUPS.map(cloneGroupPlain)
   const develop = groups.find((g) => g.id === DEFAULT_NODE_GROUP_ID) ?? groups[0]
   for (const n of legacy) {
     if (n.id === "ship") continue
@@ -156,7 +161,7 @@ interface NodeGroupsFile {
 }
 
 function cloneDefaultGroups(): ProjectNodeGroupDef[] {
-  return DEFAULT_NODE_GROUPS.map((g) => ({ ...g, nodes: g.nodes.map((n) => ({ ...n })) }))
+  return DEFAULT_NODE_GROUPS.map(cloneGroupPlain)
 }
 
 /** 兼容 v1 裸数组格式：视文件中已有的组/节点为「已播种」 */
@@ -184,7 +189,7 @@ function seedMissingDefaults(file: NodeGroupsFile): boolean {
   for (const dg of DEFAULT_NODE_GROUPS) {
     let group = file.groups.find((g) => g.id === dg.id)
     if (!group && !seeded.has(`group:${dg.id}`)) {
-      group = { ...dg, nodes: dg.nodes.map((n) => ({ ...n })) }
+      group = cloneGroupPlain(dg)
       file.groups.push(group)
       changed = true
     }
@@ -193,6 +198,11 @@ function seedMissingDefaults(file: NodeGroupsFile): boolean {
     // 旧版本无 workspace 字段：按默认组补上（用户在新版设置页保存后字段固化，不再覆盖）
     if (group.workspace === undefined && dg.workspace) {
       group.workspace = dg.workspace
+      changed = true
+    }
+    // 旧版本没有模板说明：补上默认组的说明（只补空的，不覆盖用户写的）
+    if (group.description === undefined && dg.description) {
+      group.description = dg.description
       changed = true
     }
     for (const n of dg.nodes) {
@@ -274,6 +284,42 @@ export function projectGroupIds(p: Pick<Project, "groupIds" | "groupId">): strin
     : (p.groupId?.trim() ? [p.groupId.trim()] : [])
   const valid = raw.filter((id) => getNodeGroups().some((g) => g.id === id))
   return valid.length ? valid : [DEFAULT_NODE_GROUP_ID]
+}
+
+type ProjectGroupRef = Pick<Project, "groupIds" | "groupId" | "groupSnapshot">
+
+/**
+ * 项目实际使用的流程组：建项时复制了模板副本就只认副本（不随全局模板变），
+ * 没有副本的存量项目照旧实时读全局流程组。
+ */
+export function projectGroups(p: ProjectGroupRef): ProjectNodeGroupDef[] {
+  if (p.groupSnapshot?.length) return p.groupSnapshot
+  return projectGroupIds(p).map((id) => resolveNodeGroup(id))
+}
+
+/** 项目全部步骤（多组按顺序合并，同 id 只留第一个） */
+export function projectNodes(p: ProjectGroupRef): ProjectNodeDef[] {
+  const seen = new Set<string>()
+  const out: ProjectNodeDef[] = []
+  for (const g of projectGroups(p)) {
+    for (const n of g.nodes) {
+      if (seen.has(n.id)) continue
+      seen.add(n.id)
+      out.push(n)
+    }
+  }
+  return out
+}
+
+/** 按项目找步骤：先找项目自己的流程组，再回落全局（历史产物的步骤可能已被改名/删除） */
+export function projectNodeOf(p: ProjectGroupRef, nodeId: string): ProjectNodeDef | undefined {
+  const own = projectNodes(p).find((n) => n.id === nodeId)
+  if (own) return own
+  return getProjectNode(nodeId, p.groupId)
+}
+
+export function projectNodeLabelOf(p: ProjectGroupRef, nodeId: string): string {
+  return projectNodeOf(p, nodeId)?.label || nodeId
 }
 
 function ensureDir(dir: string): void {
@@ -405,6 +451,9 @@ export function createProject(input: Omit<Project, "id" | "status" | "createdAt"
     groupIds,
     groupId: groupIds[0],
     workspaceType: input.workspaceType,
+    ...(input.groupSnapshot?.length ? { groupSnapshot: input.groupSnapshot } : {}),
+    ...(input.externalWorkspace ? { externalWorkspace: true } : {}),
+    ...(input.metadata && Object.keys(input.metadata).length ? { metadata: input.metadata } : {}),
     status: input.status ?? "active",
     lastArtifactPath: input.lastArtifactPath,
     lastArtifactSummary: input.lastArtifactSummary,

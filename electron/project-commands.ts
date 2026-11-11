@@ -1,7 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { app, shell } from "electron"
-import { getConfig, saveConfig, getRepoProfiles, upsertRepoProfiles, removeRepoProfile } from "./config-store"
+import { getConfig, getChannel, saveConfig, getRepoProfiles, upsertRepoProfiles, removeRepoProfile } from "./config-store"
 import { reportCommandResult, type CommandButton } from "./command-handler"
 import { buildSessionCardTitle } from "../src/shared/session-label.js"
 import {
@@ -19,9 +19,9 @@ import {
   saveProjectNewDraft,
   clearProjectNewDraft,
   getNodeGroups,
-  resolveNodeGroup,
-  projectNodeLabel,
-  projectGroupIds,
+  projectGroups,
+  projectNodes,
+  projectNodeLabelOf,
   findProjectByGroupChat,
   type ProjectNewDraft,
 } from "../src/shared/project-store.js"
@@ -48,7 +48,8 @@ import {
 import { buildProjectSessionPrompt, buildActionPrompt } from "./project-prompts"
 import { findMergeRequest } from "./project-gitlab"
 import { syncArtifactToFeishu } from "./project-feishu-sync"
-import { httpPost, syncActiveSession, enqueueToSession, getCurrentActiveSession } from "./daemon-client"
+import { httpPost, syncActiveSession, enqueueToSession, getCurrentActiveSession, purgeSessionRouting, readLockFile } from "./daemon-client"
+import { clearAppChatRecords } from "./app-chat"
 import { pushUiLog } from "./ui-logger"
 import { leaveProjectSession, formatCurrentSessionBlock } from "./session-dispatcher"
 import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
@@ -80,22 +81,12 @@ const GROUP_LOCK_HINT = "当前为项目专属群，仅可协作本群项目，�
 
 function mergedProjectNodeIds(p?: Project): string[] {
   const cur = p ?? getCurrentProject()
-  const ids: string[] = []
-  const seen = new Set<string>()
-  for (const gid of projectGroupIds(cur ?? {})) {
-    for (const n of resolveNodeGroup(gid).nodes) {
-      if (!seen.has(n.id)) { seen.add(n.id); ids.push(n.id) }
-    }
-  }
-  return ids
+  return projectNodes(cur ?? {}).map((n) => n.id)
 }
 
 function projectHasNode(p: Project | undefined, nodeId: string): boolean {
   if (!p) return false
-  for (const gid of projectGroupIds(p)) {
-    if (resolveNodeGroup(gid).nodes.some((n) => n.id === nodeId)) return true
-  }
-  return false
+  return projectNodes(p).some((n) => n.id === nodeId)
 }
 
 function projectHelpText(): string {
@@ -119,7 +110,7 @@ function ensureStore(): void {
   initProjectStore(app.getPath("userData"))
 }
 
-function defaultFeatureBranch(name: string): string {
+export function defaultFeatureBranch(name: string): string {
   const d = new Date()
   const yy = String(d.getFullYear()).slice(-2)
   const mm = String(d.getMonth() + 1).padStart(2, "0")
@@ -137,7 +128,7 @@ function slugify(name: string): string {
 }
 
 /** 同名项目 worktree 目录去重：被现有项目占用则追加 -2/-3… */
-function uniqueProjectSlug(name: string): string {
+export function uniqueProjectSlug(name: string): string {
   const base = slugify(name)
   const used = new Set<string>()
   for (const p of listProjects()) {
@@ -172,8 +163,8 @@ function formatProjectCard(p: Project, index?: number): string {
           })
         : [`base=${p.baseBranch}`]),
     ]
-  const groupLine = projectGroupIds(p)
-    .map((id) => resolveNodeGroup(id).name)
+  const groupLine = projectGroups(p)
+    .map((g) => g.name)
     .filter(Boolean)
     .join("、")
   const lines = [
@@ -186,7 +177,7 @@ function formatProjectCard(p: Project, index?: number): string {
     !p.relatedDocs && p.productDocUrl ? `📘 产品文档 · ${p.productDocUrl}` : "",
     !p.relatedDocs && p.techDocUrl ? `📗 技术文档 · ${p.techDocUrl}` : "",
     ...(p.metadata && Object.keys(p.metadata).length
-      ? ["📋 metadata", ...Object.entries(p.metadata).map(([k, v]) => `   ${k}: ${v}`)]
+      ? ["📋 项目信息", ...Object.entries(p.metadata).map(([k, v]) => `   ${k}: ${v}`)]
       : []),
     ...gitLines,
     `💠 ${p.status}`,
@@ -201,8 +192,7 @@ function formatProjectCard(p: Project, index?: number): string {
 function projectNodeButtons(p?: Project): CommandButton[] {
   const proj = p ?? getCurrentProject()
   const btns: CommandButton[] = []
-  for (const gid of projectGroupIds(proj ?? {})) {
-    const group = resolveNodeGroup(gid)
+  for (const group of projectGroups(proj ?? {})) {
     for (const n of group.nodes) {
       btns.push({ label: n.label, cmd: `/p ${n.id}`, section: group.name })
     }
@@ -243,7 +233,7 @@ function withChatFooter(text: string, footer = "也可直接发消息，在项�
 }
 
 /** 进入项目会话（懒加载）：确保 AI 工作目录就绪（缺失重建、检出 feature、同步远程新提交），再落元数据与消息路由 */
-async function enterProjectSession(
+export async function enterProjectSession(
   port: number,
   chatId: string,
   project: Project,
@@ -275,6 +265,17 @@ async function enterProjectSession(
       }
       await ensureArtifactDir(project.worktreePath)
     }
+  } else if (project.worktreePath) {
+    // 普通项目：目录被误删就重建；用户自己选的文件夹不见了不能悄悄新建一个同名空目录冒充
+    if (!fs.existsSync(project.worktreePath)) {
+      if (project.externalWorkspace) {
+        return { ok: false, error: `项目文件夹不见了：${project.worktreePath}（被移动或删除了？）` }
+      }
+      try { fs.mkdirSync(project.worktreePath, { recursive: true }) } catch (e: any) {
+        return { ok: false, error: e?.message || "无法创建项目目录" }
+      }
+    }
+    await ensureArtifactDir(project.worktreePath)
   }
   // 独立群：会话绑在群 chat；沿用会话：必须与当前进入的 chat/通道一致（防恢复数据绑错通道导致 active 被拒）
   let sessionKey: string
@@ -1309,6 +1310,62 @@ async function releaseMrHint(p: Project): Promise<string> {
   ].join("")
 }
 
+/**
+ * 对指定项目启动一个步骤（节点）：把步骤提示词投进项目会话。
+ * 飞书按钮（runAction）和应用内步骤条共用；项目由调用方明确给出，不读全局「当前项目」。
+ * touchCurrent=false：应用内启动不去动飞书私聊用的全局当前项目指针。
+ */
+export async function startProjectNode(
+  port: number,
+  chatId: string,
+  p: Project,
+  type: ProjectActionType,
+  opts: { touchCurrent: boolean },
+): Promise<
+  | { ok: true; project: Project; sessionKey: string; label: string }
+  | { ok: false; error: string; kind: "denied" | "checkout" | "enqueue" }
+> {
+  if (!canOperateProjectInChat(p, chatId)) {
+    const hint = resolveBoundGroupProject(chatId) ? GROUP_LOCK_HINT : GROUP_ONLY_HINT
+    return { ok: false, error: hint, kind: "denied" }
+  }
+  if (!isPlainProject(p)) {
+    const refs = projectRepoRefs(p)
+    if (refs.length) {
+      const co = await ensureCheckouts(refs, p.featureBranch)
+      if (!co.ok) return { ok: false, error: featureOccupiedText(p, co.error || ""), kind: "checkout" }
+    }
+  }
+  const project = getProject(p.id) ?? p
+  if (isPlainProject(project) && project.externalWorkspace && !fs.existsSync(project.worktreePath)) {
+    return { ok: false, error: `项目文件夹不见了：${project.worktreePath}（被移动或删除了？）`, kind: "checkout" }
+  }
+  await ensureArtifactDir(project.worktreePath)
+  const sessionKey = project.groupChatId
+    ? (project.sessionKey || projectSessionKey(project.groupChatId, project.id))
+    : projectSessionKey(chatId, project.id)
+  project.sessionKey = sessionKey
+  project.notifyChatId = project.groupChatId || chatId
+  // 点节点按钮 = 明确要干活：leave 挂起的项目自动恢复
+  if (project.status === "paused") project.status = "active"
+  const { saveProject } = await import("../src/shared/project-store.js")
+  saveProject(project)
+  if (opts.touchCurrent && !project.groupChatId) setCurrentProjectId(project.id)
+
+  let prompt = buildActionPrompt(project, type)
+  if (type === "fill-release-doc" && !isPlainProject(project)) {
+    prompt += `\n\n${await releaseMrHint(project)}`
+  }
+
+  // 任务入队而非直塞启动提示词：Agent 崩溃时消息自动重投，节点不丢
+  const label = projectNodeLabelOf(project, type)
+  pushUiLog("Project", "INFO", `[${sessionKey}] ${label}节点任务入队:\n${prompt}`)
+  const enq = await enqueueToSession(port, sessionKey, prompt)
+  if (!enq.ok) return { ok: false, error: `节点任务入队失败: ${enq.error}`, kind: "enqueue" }
+  await syncActiveSession(port, chatId, sessionKey)
+  return { ok: true, project, sessionKey, label }
+}
+
 async function runAction(
   port: number,
   messageId: string,
@@ -1326,55 +1383,21 @@ async function runAction(
     await reportCommandResult(port, messageId, false, "❌ 没有当前项目，先 /p new 或 /p use", chatId)
     return
   }
-  if (!canOperateProjectInChat(p, chatId)) {
-    const hint = resolveBoundGroupProject(chatId) ? GROUP_LOCK_HINT : GROUP_ONLY_HINT
-    await reportCommandResult(port, messageId, false, `❌ ${hint}`, chatId, undefined, { patchMessageId })
+  const r = await startProjectNode(port, chatId, p, type, { touchCurrent: true })
+  if (!r.ok) {
+    if (r.kind === "enqueue") await reportCommandResult(port, messageId, false, `❌ ${r.error}`, chatId)
+    else if (r.kind === "denied") await reportCommandResult(port, messageId, false, `❌ ${r.error}`, chatId, undefined, { patchMessageId })
+    else await reportCommandResult(port, messageId, false, r.error, chatId, undefined, { patchMessageId })
     return
   }
-  if (!isPlainProject(p)) {
-    const refs = projectRepoRefs(p)
-    if (refs.length) {
-      const co = await ensureCheckouts(refs, p.featureBranch)
-      if (!co.ok) {
-        await reportCommandResult(port, messageId, false, featureOccupiedText(p, co.error || ""), chatId, undefined, { patchMessageId })
-        return
-      }
-    }
-  }
-  const project = getProject(p.id) ?? p
-  await ensureArtifactDir(project.worktreePath)
-  const sessionKey = project.groupChatId
-    ? (project.sessionKey || projectSessionKey(project.groupChatId, project.id))
-    : projectSessionKey(chatId, project.id)
-  project.sessionKey = sessionKey
-  project.notifyChatId = project.groupChatId || chatId
-  // 点节点按钮 = 明确要干活：leave 挂起的项目自动恢复
-  if (project.status === "paused") project.status = "active"
-  const { saveProject } = await import("../src/shared/project-store.js")
-  saveProject(project)
-  if (!project.groupChatId) setCurrentProjectId(project.id)
-
-  let prompt = buildActionPrompt(project, type)
-  if (type === "fill-release-doc" && !isPlainProject(project)) {
-    prompt += `\n\n${await releaseMrHint(project)}`
-  }
-
-  // 任务入队而非直塞启动提示词：Agent 崩溃时消息自动重投，节点不丢
-  pushUiLog("Project", "INFO", `[${sessionKey}] ${projectNodeLabel(type, project.groupId)}节点任务入队:\n${prompt}`)
-  const enq = await enqueueToSession(port, sessionKey, prompt)
-  if (!enq.ok) {
-    await reportCommandResult(port, messageId, false, `❌ 节点任务入队失败: ${enq.error}`, chatId)
-    return
-  }
-  await syncActiveSession(port, chatId, sessionKey)
   await reportCommandResult(
     port,
     messageId,
     true,
-    `🚀 已启动${projectNodeLabel(type, p.groupId)}\n项目：${project.name}`,
+    `🚀 已启动${r.label}\n项目：${r.project.name}`,
     chatId,
     undefined,
-    { patchMessageId, cardTitle: projectCardTitle(p), sessionKey: project.sessionKey },
+    { patchMessageId, cardTitle: projectCardTitle(p), sessionKey: r.project.sessionKey },
   )
 }
 
@@ -1503,10 +1526,16 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
     if (rd) otherRoots.add(path.resolve(rd).toLowerCase())
   }
 
-  if (rootDir && fs.existsSync(rootDir)) {
+  if (target.externalWorkspace) {
+    // 用户自己选的文件夹：只解绑，绝不移入回收站、更不能走下面失败后的强制删除
+    pushUiLog("Project", "INFO", `[Delete] 外部文件夹项目，只移除记录，保留目录: ${rootDir}`)
+  } else if (rootDir && fs.existsSync(rootDir)) {
     const rootKey = path.resolve(rootDir).toLowerCase()
+    const holdsOtherProject = [...otherRoots].some((r) => r.startsWith(rootKey + path.sep))
     if (otherRoots.has(rootKey)) {
       pushUiLog("Project", "WARN", `[Delete] 目录被其他项目引用，跳过清理: ${rootDir}`)
+    } else if (holdsOtherProject) {
+      pushUiLog("Project", "WARN", `[Delete] 目录里包含其他项目的目录，跳过清理: ${rootDir}`)
     } else {
       let trashed = false
       try {
@@ -1530,6 +1559,14 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
         } catch { /* 尽力清理 */ }
       }
     }
+  }
+  // 项目会话由项目派生：项目没了，路由登记和应用内聊天记录不清的话会留下删不掉的幽灵会话
+  const sk = target.sessionKey
+  if (sk) {
+    const lock = readLockFile()
+    if (lock?.port) await purgeSessionRouting(lock.port, sk)
+    const ch = channelIdFromSessionKey(sk)
+    if (ch && getChannel(ch)?.type === "app") await clearAppChatRecords({ sessionKey: sk })
   }
   deleteProject(target.id)
   return { ok: true, name: target.name }

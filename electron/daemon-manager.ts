@@ -76,8 +76,11 @@ import {
 } from "./flow-hub-service"
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { discoverCursorClawInstalls, migrateFromCursorClaw, inspectCursorClawSections } from "./cursor-claw-migrate"
-import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, projectGroupIds, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
-import { projectIdFromSessionKey, projectSessionKey, DEFAULT_NODE_GROUP_ID, canEnterProjectFromChat } from "../src/shared/project-types.js"
+import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
+import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
+import { createProjectFromApp, deleteProjectByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
+import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
+import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
 import { bugWatchUnsupportedReason } from "../src/shared/project-bug-watch.js"
 import {
   readGitBranch,
@@ -1993,51 +1996,15 @@ export function initDaemonManager(): void {
   ipcMain.handle("session-manager:channel-impact-preview", (_e, channelId: string, draft: unknown) => previewChannelModelImpact(channelId, draft))
   ipcMain.handle("session-manager:channel-impact-clear", (_e, channelId: string) => clearOthersModelOverrides(channelId))
   ipcMain.handle("session-manager:channel-impact-stop", (_e, channelId: string) => stopOthersFollowingDefault(channelId))
-  ipcMain.handle("project:list", () => {
-    initProjectStore(app.getPath("userData"))
-    return listProjects().map((p) => ({
-      id: p.id,
-      name: p.name,
-      goal: p.goal,
-      storyUrl: p.storyUrl,
-      productDocUrl: p.productDocUrl,
-      techDocUrl: p.techDocUrl,
-      featureBranch: p.featureBranch,
-      status: p.status,
-      groupId: p.groupId,
-      groupIds: p.groupIds,
-      worktreePath: p.worktreePath,
-      repoPath: p.repoPath,
-      workspaceType: p.workspaceType,
-      metadata: p.metadata,
-      groupChatId: p.groupChatId,
-      watchBugs: p.watchBugs === true,
-    }))
-  })
-  ipcMain.handle("project:delete", async (_e, projectId: string) => {
-    initProjectStore(app.getPath("userData"))
-    const id = String(projectId || "").trim()
-    const target = getProject(id)
-    if (!target) return { ok: false, error: "项目不存在" }
-    const lock = readLockFile()
-    const wasCurrent = getCurrentProject()?.id === id
-    const sk = target.sessionKey || (lock?.port
-      ? projectSessionKey(await resolveMainChatId(lock.port) || "", id)
-      : "")
-    if (sk) await stopSessionAgent(sk)
-    await executeProjectDelete(id)
-    if (lock?.port) await archiveProjectGroup(lock.port, target)
-    if (wasCurrent && lock?.port) {
-      const chatId = await resolveMainChatId(lock.port)
-      if (chatId) await leaveProjectSession(lock.port, chatId)
-    }
-    return { ok: true, name: target.name }
-  })
+  ipcMain.handle("project:list", () => listProjectItems())
+  ipcMain.handle("project:delete", (_e, projectId: string, channelId?: string) =>
+    deleteProjectByUser(projectId, channelId ? { channelId } : undefined))
   ipcMain.handle("project:update", (_e, patch: {
     id: string
     name?: string
     goal?: string
     storyUrl?: string
+    relatedDocs?: string
     productDocUrl?: string
     techDocUrl?: string
     status?: string
@@ -2056,6 +2023,7 @@ export function initDaemonManager(): void {
     }
     if (typeof patch.goal === "string") p.goal = patch.goal.trim()
     if (typeof patch.storyUrl === "string") p.storyUrl = patch.storyUrl.trim() || undefined
+    if (typeof patch.relatedDocs === "string") p.relatedDocs = patch.relatedDocs.trim() || undefined
     if (typeof patch.productDocUrl === "string") p.productDocUrl = patch.productDocUrl.trim() || undefined
     if (typeof patch.techDocUrl === "string") p.techDocUrl = patch.techDocUrl.trim() || undefined
     if (typeof patch.watchBugs === "boolean") {
@@ -2086,26 +2054,18 @@ export function initDaemonManager(): void {
       if (st === "active" || st === "paused" || st === "done") p.status = st
       else return { ok: false, error: "状态无效" }
     }
-    if (Array.isArray(patch.groupIds)) {
-      const groups = getNodeGroups()
-      const ids = [...new Set(patch.groupIds.map((id) => String(id).trim()).filter(Boolean))]
-      for (const gid of ids) {
-        if (!groups.some((g) => g.id === gid)) return { ok: false, error: `流程组不存在：${gid}` }
-      }
-      const resolved = projectGroupIds({ groupIds: ids })
-      p.groupIds = resolved
-      p.groupId = resolved[0]
-    } else if (typeof patch.groupId === "string") {
-      const gid = patch.groupId.trim()
-      const groups = getNodeGroups()
-      if (gid && !groups.some((g) => g.id === gid)) return { ok: false, error: "流程组不存在" }
-      if (gid) {
-        const resolved = projectGroupIds({ groupId: gid })
-        p.groupIds = resolved
-        p.groupId = resolved[0]
-      } else {
+    if (Array.isArray(patch.groupIds) || typeof patch.groupId === "string") {
+      if (!Array.isArray(patch.groupIds) && !String(patch.groupId).trim()) {
         p.groupId = undefined
         p.groupIds = undefined
+      } else {
+        const ids = Array.isArray(patch.groupIds) ? patch.groupIds : [String(patch.groupId)]
+        // 模板真的换了、项目又有自己的快捷操作副本时才重新复制；模板没变不动副本（见 changeProjectGroups）
+        const r = changeProjectGroups(p, ids, getNodeGroups())
+        if (!r.ok) return { ok: false, error: r.error }
+        p.groupIds = r.groupIds
+        p.groupId = r.groupId
+        if (r.groupSnapshot) p.groupSnapshot = r.groupSnapshot
       }
     }
     saveProject(p)
@@ -2128,6 +2088,16 @@ export function initDaemonManager(): void {
     }
     return switchMainSession(projectSessionKey(chatId, id))
   })
+  // ── 应用内项目：建项 / 步骤条 / 项目信息（手机端走 mobile-server，调的是同一组函数） ──
+  ipcMain.handle("project:templates", () => listProjectTemplates())
+  ipcMain.handle("project:root-dir", () => projectsRootDir())
+  ipcMain.handle("project:repo-options", () => listProjectRepoOptions())
+  ipcMain.handle("project:inspect-repo", (_e, repoPath: string) => inspectProjectRepo(String(repoPath || "")))
+  ipcMain.handle("project:create-in-app", (_e, channelId: string, input: ProjectCreateInput) => createProjectFromApp(String(channelId || ""), input))
+  ipcMain.handle("project:view", (_e, projectId: string, channelId: string) => getProjectView(projectId, channelId))
+  ipcMain.handle("project:run-step", (_e, channelId: string, projectId: string, nodeId: string) =>
+    runProjectStepFromApp(String(channelId || ""), projectId, String(nodeId || "")))
+  ipcMain.handle("project:sync-steps", (_e, projectId: string) => syncProjectSteps(projectId))
   ipcMain.handle("session:list-quick-models", () => {
     initSessionModelStore(app.getPath("userData"))
   initProjectStore(app.getPath("userData"))
@@ -2337,28 +2307,23 @@ export function initDaemonManager(): void {
       nodes: g.nodes.map((n) => ({ ...n, defaultPrompt: getDefaultNodeGuide(n.id) })),
     }))
   })
-  ipcMain.handle("project-node-groups:save", (_e, groups: { id: string; name: string; workspace?: "worktree" | "plain"; nodes: { id: string; label: string; prompt?: string }[] }[]) => {
+  ipcMain.handle("project-node-groups:save", (_e, groups: ProjectNodeGroupDef[]) => {
     initProjectStore(app.getPath("userData"))
     saveNodeGroups(groups)
     return { ok: true }
   })
   ipcMain.handle("project-node-groups:usage", () => {
     initProjectStore(app.getPath("userData"))
-    const usage: Record<string, number> = {}
-    for (const p of listProjects()) {
-      const gid = p.groupId || DEFAULT_NODE_GROUP_ID
-      usage[gid] = (usage[gid] ?? 0) + 1
-    }
-    return usage
+    return templateUsage(listProjects())
   })
   ipcMain.handle("project-node-groups:export", async (_e, groupId: string) => {
     initProjectStore(app.getPath("userData"))
     const group = getNodeGroups().find((g) => g.id === groupId)
-    if (!group) return { ok: false, error: "流程组不存在" }
+    if (!group) return { ok: false, error: "项目模板不存在" }
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
     const result = await dialog.showSaveDialog(win, {
-      title: "导出流程组",
+      title: "导出项目模板",
       defaultPath: `${group.id}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     })
@@ -2372,7 +2337,7 @@ export function initDaemonManager(): void {
     const win = BrowserWindow.getAllWindows()[0]
     if (!win) return { ok: false, error: "窗口不可用" }
     const result = await dialog.showOpenDialog(win, {
-      title: "导入流程组",
+      title: "导入项目模板",
       properties: ["openFile"],
       filters: [{ name: "JSON", extensions: ["json"] }],
     })
@@ -2384,7 +2349,7 @@ export function initDaemonManager(): void {
       return { ok: false, error: "JSON 解析失败" }
     }
     const parsed = parseNodeGroupExport(raw)
-    if (!parsed) return { ok: false, error: "不是有效的流程组文件" }
+    if (!parsed) return { ok: false, error: "不是有效的项目模板文件" }
     const groups = getNodeGroups()
     const newId = resolveUniqueNodeGroupId(parsed.id, parsed.name, groups.map((g) => g.id))
     const imported = { ...parsed, id: newId }

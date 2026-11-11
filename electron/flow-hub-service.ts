@@ -138,9 +138,9 @@ async function loadHubNodePayload(
 ): Promise<{ payload: FlowHubNodePayload; hubId: string; hubRevision: number; contentHash: string } | { error: string }> {
   if (ref.groupHubId && ref.nodeLocalId) {
     const raw = await ctx.client.readRawFile(ctx.projectId, `groups/${ref.groupHubId}.json`)
-    if (!raw) return { error: "Hub 上找不到该流程组" }
+    if (!raw) return { error: "共享空间里找不到这个项目模板" }
     const env = parseGroupEnvelope(JSON.parse(raw))
-    if (!env) return { error: "无效的流程组文件" }
+    if (!env) return { error: "无效的项目模板文件" }
     const payload = env.group.nodes.find((n) => n.id === ref.nodeLocalId)
     if (!payload) return { error: "组内找不到该节点" }
     return {
@@ -226,9 +226,9 @@ export async function importGroupFromHub(hubId: string, cfg?: AppConfig): Promis
   if ("error" in ctx) return { ok: false, error: ctx.error }
   try {
     const raw = await ctx.client.readRawFile(ctx.projectId, `groups/${hubId}.json`)
-    if (!raw) return { ok: false, error: "Hub 上找不到该流程组" }
+    if (!raw) return { ok: false, error: "共享空间里找不到这个项目模板" }
     const env = parseGroupEnvelope(JSON.parse(raw))
-    if (!env) return { ok: false, error: "无效的流程组文件" }
+    if (!env) return { ok: false, error: "无效的项目模板文件" }
     const existing = getNodeGroups().find((g) => g.hubId === hubId)
     if (existing) return { ok: false, error: "已添加，请使用同步" }
     let def = envelopeToGroupDef(env)
@@ -255,7 +255,7 @@ export async function importNodeFromHub(
     if ("error" in loaded) return { ok: false, error: loaded.error }
     const groups = getNodeGroups()
     const group = groups.find((g) => g.id === targetGroupId)
-    if (!group) return { ok: false, error: "目标流程组不存在" }
+    if (!group) return { ok: false, error: "目标项目模板不存在" }
     if (group.nodes.some((n) => n.hubId === loaded.hubId)) return { ok: false, error: "已添加，请使用同步" }
     const node: ProjectNodeDef = {
       id: resolveNodeId(group.nodes, loaded.payload.id),
@@ -281,7 +281,7 @@ export async function uploadGroup(groupId: string, cfg?: AppConfig): Promise<{ o
   if ("error" in ctx) return { ok: false, error: ctx.error }
   const groups = getNodeGroups()
   const group = groups.find((g) => g.id === groupId)
-  if (!group) return { ok: false, error: "流程组不存在" }
+  if (!group) return { ok: false, error: "项目模板不存在" }
   try {
     const withHub = {
       ...group,
@@ -417,7 +417,7 @@ export async function syncGroupFromHub(
   if ("error" in ctx) return { ok: false, error: ctx.error }
   try {
     const raw = await ctx.client.readRawFile(ctx.projectId, `groups/${hubId}.json`)
-    if (!raw) return { ok: false, error: "Hub 上找不到该流程组" }
+    if (!raw) return { ok: false, error: "共享空间里找不到这个项目模板" }
     const env = parseGroupEnvelope(JSON.parse(raw))
     if (!env) return { ok: false, error: "无效文件" }
     const groups = getNodeGroups()
@@ -447,7 +447,7 @@ export async function syncNodeFromHub(
     if ("error" in loaded) return { ok: false, error: loaded.error }
     const groups = getNodeGroups()
     const group = groups.find((g) => g.id === targetGroupId)
-    if (!group) return { ok: false, error: "流程组不存在" }
+    if (!group) return { ok: false, error: "项目模板不存在" }
     const ni = group.nodes.findIndex((n) => n.hubId === loaded.hubId)
     if (ni < 0) return { ok: false, error: "本地未添加该节点" }
     const node: ProjectNodeDef = {
