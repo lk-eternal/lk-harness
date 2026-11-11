@@ -45,7 +45,8 @@ export function formatLogLineForUi(
     })
 
   // Prompt / worker 回合日志含 session_key 与长 result，不可做缩短替换
-  if (/(?:启动|恢复|worker 回合) Prompt:/.test(line) || /worker 回合结束/.test(line)) return replaceTaskBracket(line)
+  // （System Prompt：Pi 引擎启动/恢复/变更时的 system prompt 全文，协议里同样带 sessionKey 形态的文字）
+  if (/(?:启动|恢复|worker 回合) Prompt:|System Prompt:/.test(line) || /worker 回合结束/.test(line)) return replaceTaskBracket(line)
 
   const withChatKeys = line.replace(
     SESSION_KEY_IN_LOG_RE,

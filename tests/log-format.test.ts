@@ -40,6 +40,17 @@ describe("formatLogLineForUi", () => {
     expect(out).toContain(`[${sk}] worker 回合 Prompt:`)
   })
 
+  it("preserves sessionKey-shaped text inside Pi System Prompt dump", () => {
+    const sk = "ch_c0130dd0|oc_32cb78537b97c685e29f8a77e8a510cc::D:\\\\workspace\\\\lk-harness"
+    const inner = "ch_c9fc9ff4|oc_be3ec98dda1e4f0d172474e6c19d98b"
+    for (const why of ["启动", "恢复", "变更"]) {
+      const line = `[LLM] INFO [${sk}] ${why} System Prompt: hash=abc · 99 chars\n示例 session_key=${inner}`
+      const out = formatLogLineForUi(line, () => "📂 lk-harness")
+      expect(out).toContain(`[${sk}] ${why} System Prompt:`)
+      expect(out).toContain(`session_key=${inner}`)
+    }
+  })
+
   it("preserves notify_session_key inside Prompt dump", () => {
     const id = "e126c5ba-ce6f-4558-8096-9ca5c07e6ea0"
     const notify = "ch_c9fc9ff4|oc_be3ec98dda1e4f0d172474e6c19d98b"

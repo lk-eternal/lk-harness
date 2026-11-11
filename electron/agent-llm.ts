@@ -119,6 +119,8 @@ interface LlmSession extends StreamCardHost {
   piUnsubscribe: (() => void) | null
   /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
+  /** 本会话最近一次落日志的 system prompt 哈希：没变就不重复打（见 logSystemPromptIfChanged） */
+  loggedSystemPromptHash?: string
   /** 账本超限 rollover：unregister 时不再写 resume */
   ledgerRollover?: boolean
 }
@@ -351,9 +353,29 @@ function isAssistantVisibleComplete(message: AgentMessage): boolean {
     && !message.content.some((block) => block.type === "toolCall")
 }
 
+/**
+ * system prompt 全文落日志。Pi 的协议、规则、Skill 名单都在 system prompt 里（SDK 是拼进每轮 prompt，
+ * 会被「worker 回合 Prompt」带出来），只打哈希没法核对内容。
+ * 同一会话内容没变不重复打；变了（扩展 before_agent_start 改写、工具集变化重建）才再打一份。
+ * 展示层靠 "System Prompt:" 前缀识别并跳过 sessionKey 缩写（见 shared/log-format.ts）。
+ */
+function logSystemPromptIfChanged(session: LlmSession, why: "启动" | "恢复" | "变更"): void {
+  const text = session.piSession.systemPrompt ?? ""
+  const hash = hashSystemPrompt(text)
+  if (session.loggedSystemPromptHash === hash) return
+  session.loggedSystemPromptHash = hash
+  pushUiLog("LLM", "INFO", `[${session.sessionKey}] ${why} System Prompt: hash=${hash} · ${text.length} chars\n${text}`)
+}
+
 function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): void {
   session.lastActivityAt = Date.now()
   const stream = session.streamAgg
+
+  // 回合开头：此刻 Pi 已把本回合要用的 system prompt 定下来（扩展钩子改写发生在这之前）
+  if (event.type === "agent_start") {
+    logSystemPromptIfChanged(session, "变更")
+    return
+  }
 
   if (event.type === "message_update") {
     const ev = event.assistantMessageEvent
@@ -560,6 +582,8 @@ async function runPiAgentTurn(session: LlmSession, prompt: string): Promise<{ ok
   // 网关 4xx/5xx 只看这行：协议与端点以实际交给 Pi 的 Model 为准，不靠配置推猜
   const modelRef = `${session.model.id} · ${session.model.api} · ${session.model.baseUrl ?? "provider 默认"}${session.model.reasoning ? " · reasoning" : ""}`
   pushUiLog("LLM", "INFO", `[${session.sessionKey}] 本回合模型: ${modelRef}`)
+  // 与 SDK 引擎同口径：把交给 Pi 的这一轮 prompt 原样打出来（发送前打，网关卡住/报错时也能看到发了什么）
+  pushUiLog("LLM", "INFO", `[${session.sessionKey}] worker 回合 Prompt:\n${prompt}`)
   const msgBefore = session.piSession.messages.length
   let result: { ok: boolean; error?: string }
   // 收口日志与下一次挂 poll 之间能差到分钟级：先孨清这三个 await 各占多少
@@ -934,6 +958,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       return { ok: true }
     }
 
+    logSystemPromptIfChanged(session, resumed ? "恢复" : "启动")
     registerLlmSession(session)
     session.runPromise = startLlmWorkerLoop(session, {
       persistentPoll,
