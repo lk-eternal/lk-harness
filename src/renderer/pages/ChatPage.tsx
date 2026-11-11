@@ -22,6 +22,7 @@ import ModelPicker, { type ModelChoice } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatItems"
 import { useSessionActivity } from "../components/chat/useSessionActivity"
+import { useReplyNotify } from "../components/chat/useReplyNotify"
 import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarCollapsed } from "../components/chat/sidebar-state"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
@@ -230,6 +231,14 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const items = useMemo(() => chatStreamItems(allItems), [allItems])
   const queuedItems = useMemo(() => allItems.filter(isQueuedUserItem), [allItems])
   const sessionStatus = useSessionActivity(active ? selected : null)
+  // 回复完成的系统通知：告诉主进程我正看着哪个会话（看着的不弹）；点了通知就切到那个会话
+  useReplyNotify(active ? selected : null, (sessionKey) => {
+    onSwitchPage("chat")
+    const known = viewsRef.current.flatMap((v) => v.tabs).find((t) => sameChatSession(t.sessionKey, sessionKey))
+    // 列表里还没有它（对话页不可见时不刷新）就等刷新出来再切，和刚建好的项目会话是同一条路
+    if (known) setSelected(known.sessionKey)
+    else setPendingSelect(sessionKey)
+  })
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))

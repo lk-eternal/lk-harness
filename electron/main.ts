@@ -54,6 +54,7 @@ import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
 import { initAppChat } from "./app-chat"
+import { initAppChatNotify } from "./app-chat-notify"
 import { initFilePreview, registerPreviewScheme } from "./file-preview"
 import { initPreviewBrowser } from "./preview-browser"
 import { initMobileServer, stopMobileServer } from "./mobile-server"
@@ -486,6 +487,7 @@ app.whenReady().then(() => {
   warmModelsDevCatalog()
   initToolbox()
   initAppChat()
+  initAppChatNotify()
   initFilePreview()
   initPreviewBrowser()
   initMobileServer()

@@ -222,6 +222,14 @@ const api = {
     ipcRenderer.on("app-chat:event", handler)
     return () => ipcRenderer.removeListener("app-chat:event", handler)
   },
+  /** 对话页告诉主进程用户正看着哪个会话（不在对话页传 null）；主进程据此决定要不要弹「回复完成」通知 */
+  appChatViewing: (sessionKey: string | null): void => ipcRenderer.send("app-chat:viewing", sessionKey),
+  /** 点了「回复完成」通知：主进程已把窗口唤到前台，界面要切到这个会话 */
+  onAppChatOpenSession: (cb: (sessionKey: string) => void) => {
+    const handler = (_: unknown, sessionKey: string) => cb(sessionKey)
+    ipcRenderer.on("app-chat:open-session", handler)
+    return () => ipcRenderer.removeListener("app-chat:open-session", handler)
+  },
   mobileStatus: (): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:status"),
   mobileUpdate: (patch: { enabled?: boolean; port?: number; publicUrl?: string }): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:update", patch),
   mobileResetToken: (): Promise<MobileServerStatus> => ipcRenderer.invoke("mobile:reset-token"),

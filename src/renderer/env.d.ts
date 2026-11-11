@@ -261,6 +261,10 @@ declare global {
     appChatTitles(): Promise<Record<string, string>>
     onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
+    /** 对话页告诉主进程用户正看着哪个会话（不在对话页传 null）；主进程据此决定要不要弹「回复完成」通知 */
+    appChatViewing(sessionKey: string | null): void
+    /** 点了「回复完成」通知：主进程已把窗口唤到前台，界面要切到这个会话 */
+    onAppChatOpenSession(cb: (sessionKey: string) => void): () => void
     mobileStatus(): Promise<MobileServerStatus>
     mobileUpdate(patch: { enabled?: boolean; port?: number; publicUrl?: string }): Promise<MobileServerStatus>
     mobileResetToken(): Promise<MobileServerStatus>

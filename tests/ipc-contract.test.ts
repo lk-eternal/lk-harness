@@ -101,4 +101,17 @@ describe("IPC 接线", () => {
       expect([...block.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1]), method).toEqual([channel])
     }
   })
+
+  it("回复完成通知：界面 → 主进程（send）和主进程 → 界面（推送）的通道名两头对得上，界面类型里也有", () => {
+    const envDts = read("src/renderer/env.d.ts")
+    // 界面告诉主进程用户正看着哪个会话：preload 用 send，主进程用 ipcMain.on 接
+    expect(preload).toMatch(/appChatViewing:[^\n]*ipcRenderer\.send\("app-chat:viewing"/)
+    expect(handled.has("app-chat:viewing"), "主进程没接 app-chat:viewing").toBe(true)
+    // 点通知后主进程推给界面要打开的会话：主进程 webContents.send，preload 订阅同一个通道
+    expect(preload).toMatch(/ipcRenderer\.on\("app-chat:open-session"/)
+    expect(read("electron/app-chat-notify.ts")).toMatch(/webContents\.send\("app-chat:open-session"/)
+    for (const method of ["appChatViewing", "onAppChatOpenSession"]) {
+      expect(envDts, `env.d.ts 缺 ${method}`).toMatch(new RegExp(`\\b${method}\\(`))
+    }
+  })
 })
