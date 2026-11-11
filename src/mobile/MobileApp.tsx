@@ -24,6 +24,7 @@ import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedH
 import { slashMenuItems } from "../shared/command-catalog"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
+import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
   APP_CHANNEL_CHAT_ID,
@@ -62,6 +63,7 @@ import {
   sendMobileQueuedNow,
   setMobileSessionDir,
   setMobileSessionModel,
+  setMobileSessionPinned,
   stopMobileSession,
   uploadMobileImage,
   type MobileChannelView,
@@ -117,6 +119,8 @@ export default function MobileApp() {
   /** 刚给会话选的工作目录：草稿会话不在服务端的会话树里，选完到服务端带回来之前先用本地的 */
   const [pickedDirs, setPickedDirs] = useState<Record<string, string>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
+  /** 置顶的会话：存在电脑端，和桌面端对话页同一份 */
+  const [pins, setPins] = useState<readonly string[]>([])
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [quickModels, setQuickModels] = useState<MobileQuickModel[]>([])
   const [resources, setResources] = useState<AgentResource[]>([])
@@ -253,6 +257,7 @@ export default function MobileApp() {
         setHostname(data.hostname || "")
         setServerViews(hideDeletedTabs(data.channels ?? [], deletedRef.current))
         setTitles(data.titles ?? {})
+        setPins(parsePinnedIds(data.pins))
         setLastActive((prev) => ({ ...prev, ...(data.lastActive ?? {}) }))
         setQuickModels(data.quickModels ?? [])
         setResources(data.resources ?? [])
@@ -388,6 +393,10 @@ export default function MobileApp() {
     const handleStream = (msg: MobileStreamMessage) => {
       if (msg.type === "titles") {
         setTitles(msg.titles ?? {})
+        return
+      }
+      if (msg.type === "pins") {
+        setPins(parsePinnedIds(msg.pins))
         return
       }
       if (msg.type === "sessions") {
@@ -824,6 +833,20 @@ export default function MobileApp() {
     markSessionDeleted(deletedRef.current, key)
     setServerViews((prev) => hideDeletedTabs(prev, deletedRef.current))
     await refreshBootstrap(route.activeUrl, pairCfg.token)
+  }
+
+  // 置顶 / 取消置顶：点了先在界面上生效，电脑端没改成就报错并按电脑端的真实状态刷回来
+  const handleTogglePin = async (t: MobileChatTab) => {
+    if (!route.activeUrl || !pairCfg.token) return
+    const pinned = !isSessionPinned(pins, t.sessionKey)
+    setPins(setSessionPinned(pins, t.sessionKey, pinned))
+    const r = await setMobileSessionPinned(route.activeUrl, pairCfg.token, t.sessionKey, pinned)
+    if (r.ok) {
+      if (r.pins) setPins(parsePinnedIds(r.pins))
+      return
+    }
+    setActionError(r.error ?? (pinned ? "置顶失败" : "取消置顶失败"))
+    void refreshBootstrap(route.activeUrl, pairCfg.token)
   }
 
   // 重命名当前会话
@@ -1329,10 +1352,12 @@ export default function MobileApp() {
         sessionName={sessionName}
         sessionStatus={sessionStatus}
         activeAt={activeAt}
+        pins={pins}
         usageBytes={usageBytes}
         onSelect={setSelected}
         onNewTemp={(chId) => void handleNewTempSession(chId)}
         onNewProject={(chId) => setNewProjectFor(chId)}
+        onTogglePin={(t) => void handleTogglePin(t)}
         onDelete={(t) => void handleDeleteSession(t)}
         onClearAll={() => void handleClearAll()}
         onOpenPair={() => setPairSheetOpen(true)}

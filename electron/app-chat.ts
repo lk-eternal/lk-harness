@@ -11,6 +11,7 @@ import { readLockFile } from "./daemon-client"
 import { getAgentResource, getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
+import { getAppChatPins, removeAppChatPin, setAppChatPinned } from "./app-chat-pins"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
 import { initSessionOverridesStore, patchSessionRecord } from "../src/shared/session-overrides-store"
@@ -63,6 +64,18 @@ export function renameAppChatSession(sessionKey: string, name: string): AppChatR
   try {
     renameAppChatTitle(sessionKey, name)
     return { ok: true }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** 置顶 / 取消置顶；返回最新的置顶列表，调用方（手机端）可以直接用来刷新 */
+export function setAppChatSessionPinned(sessionKey: string, pinned: boolean): AppChatResult {
+  const channelId = channelIdFromSessionKey(sessionKey)
+  if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
+  try {
+    setAppChatPinned(sessionKey, pinned)
+    return { ok: true, pins: getAppChatPins() }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -178,6 +191,7 @@ export async function deleteAppChatSession(sessionKey: string): Promise<AppChatR
   const r = await deleteUserSession(sessionKey, chatIdFromSessionKey(sessionKey))
   if (!r.ok) return { ok: false, error: r.error }
   removeTempWorkspace(sessionKey)
+  removeAppChatPin(sessionKey)
   return clearAppChatRecords({ sessionKey })
 }
 
@@ -264,6 +278,8 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => sendAppChatMessage(payload))
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearAppChatRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
+  ipcMain.handle("app-chat:get-pins", () => getAppChatPins())
+  ipcMain.handle("app-chat:set-pinned", (_e, sessionKey: string, pinned: boolean) => setAppChatSessionPinned(sessionKey, pinned === true))
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteAppChatSession(sessionKey))
   ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameAppChatSession(sessionKey, name))
   ipcMain.handle("app-chat:queue-edit", (_e, sessionKey: string, messageId: string, text: string) => editQueuedAppChatMessage(sessionKey, messageId, text))

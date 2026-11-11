@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -24,6 +24,7 @@ import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatI
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import { useReplyNotify } from "../components/chat/useReplyNotify"
 import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarCollapsed } from "../components/chat/sidebar-state"
+import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
@@ -240,6 +241,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     else setPendingSelect(sessionKey)
   })
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
+  /** 置顶的会话：存在电脑端，和手机端同一份 */
+  const pins = usePinnedSessions(setActionError)
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
@@ -256,6 +259,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
   const sortAt = (t: ChatTab) => activeAt(t) ?? tempWorkspaceCreatedAt(workspaceDirFromSessionKey(t.sessionKey)) ?? 0
   const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => sortAt(b) - sortAt(a))
+  /** 置顶的排在最前，其余按最近对话排；两组内部都是最近的在前 */
+  const listOrder = (tabs: ChatTab[]) => pins.order(byRecent(tabs))
   /** 目录菜单：这个通道里各会话在用的目录（去重）。目录不是会话的身份，同一个目录可以有多个会话 */
   const dirOptions = chatDirOptions(ownerView?.tabs ?? [], boundDirOf)
   /** 还没开始的临时会话可以直接改它的目录；开始了或目录是会话身份的，选目录只能用该目录新开一个会话 */
@@ -490,9 +495,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 <div key={v.channelId}>
                   {views.length > 1 && <p className="px-2 pb-1 text-[11px] text-fg-faint">{v.name}</p>}
                   <div className="space-y-0.5">
-                    {byRecent(v.tabs).map((t) => {
+                    {listOrder(v.tabs).map((t) => {
                       const on = sameChatSession(t.sessionKey, selected)
                       const at = activeAt(t)
+                      const pinned = pins.isPinned(t.sessionKey)
                       const status = sessionStatus(t.sessionKey, t.running)
                       // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
                       const deletable = !!t.removable && t.kind !== "project"
@@ -515,18 +521,28 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                               </span>
                             )}
                             <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
+                            {pinned && <Pin size={11} aria-label="已置顶" className="shrink-0 text-accent group-hover/row:invisible" />}
                             {at !== undefined && (
-                              <span className={`shrink-0 text-[11px] font-normal text-fg-faint ${deletable ? "group-hover/row:invisible" : ""}`}>{formatTimeAgo(at, now)}</span>
+                              <span className="shrink-0 text-[11px] font-normal text-fg-faint group-hover/row:invisible">{formatTimeAgo(at, now)}</span>
                             )}
                           </button>
-                          {deletable && (
+                          <div className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 items-center rounded bg-raised group-hover/row:flex">
                             <button
                               type="button"
-                              onClick={() => void deleteSession(t)}
-                              title="删除会话"
-                              className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded bg-raised p-1 text-fg-muted transition hover:text-danger group-hover/row:block"
-                            ><Trash2 size={13} /></button>
-                          )}
+                              onClick={() => pins.toggle(t.sessionKey)}
+                              title={pinned ? "取消置顶" : "置顶会话"}
+                              aria-label={pinned ? "取消置顶" : "置顶会话"}
+                              className="rounded p-1 text-fg-muted transition hover:text-accent"
+                            >{pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>
+                            {deletable && (
+                              <button
+                                type="button"
+                                onClick={() => void deleteSession(t)}
+                                title="删除会话"
+                                className="rounded p-1 text-fg-muted transition hover:text-danger"
+                              ><Trash2 size={13} /></button>
+                            )}
+                          </div>
                         </div>
                       )
                     })}

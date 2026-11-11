@@ -71,6 +71,8 @@ export interface MobileBootstrapData {
   theme?: "system" | "light" | "dark"
   channels: MobileChannelView[]
   titles: Record<string, string>
+  /** 置顶的会话（appChatSessionId，先置顶的在前）；旧版电脑端没有这个字段 */
+  pins?: string[]
   lastActive: Record<string, number>
   quickModels: MobileQuickModel[]
   resources: AgentResource[]
@@ -90,6 +92,7 @@ export type MobileStreamMessage =
   | { type: "ready"; ts: number }
   | { type: "chat"; event: AppChatEvent }
   | { type: "titles"; titles: Record<string, string> }
+  | { type: "pins"; pins: string[] }
   | { type: "sessions" }
 
 function trimUrl(raw: string): string {
@@ -399,6 +402,12 @@ export async function setMobileSessionDir(baseUrl: string, token: string, sessio
 
 export async function renameMobileSession(baseUrl: string, token: string, sessionKey: string, name: string): Promise<{ ok: boolean; titles?: Record<string, string>; error?: string }> {
   return await callApi(baseUrl, token, "/api/mobile/rename-session", { sessionKey, name })
+}
+
+/** 置顶 / 取消置顶；成功时带回最新的置顶列表。旧版电脑端没有这个接口，网关回「未知接口」 */
+export async function setMobileSessionPinned(baseUrl: string, token: string, sessionKey: string, pinned: boolean): Promise<{ ok: boolean; pins?: string[]; error?: string }> {
+  const r = await callApi<{ ok: boolean; pins?: string[]; error?: string }>(baseUrl, token, "/api/mobile/pin-session", { sessionKey, pinned })
+  return !r.ok && r.error === "未知接口" ? { ...r, error: "电脑端版本过旧，不支持置顶，请把电脑端升级到最新版本" } : r
 }
 
 export async function clearMobileSession(baseUrl: string, token: string, opts: { sessionKey?: string; channelId?: string }): Promise<{ ok: boolean; error?: string }> {

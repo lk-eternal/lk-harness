@@ -260,6 +260,9 @@ declare global {
     onPreviewWebOpenTab(cb: (payload: PreviewWebOpenTabType) => void): () => void
     appChatTitles(): Promise<Record<string, string>>
     onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
+    appChatPins(): Promise<string[]>
+    appChatSetPinned(sessionKey: string, pinned: boolean): Promise<AppChatResultType>
+    onAppChatPins(cb: (pins: string[]) => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
     /** 对话页告诉主进程用户正看着哪个会话（不在对话页传 null）；主进程据此决定要不要弹「回复完成」通知 */
     appChatViewing(sessionKey: string | null): void

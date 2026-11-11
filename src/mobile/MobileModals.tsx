@@ -10,6 +10,7 @@ import {
   Loader2,
   MessageCircle,
   Monitor,
+  Pin,
   Plus,
   RefreshCw,
   ScanLine,
@@ -22,6 +23,7 @@ import {
 } from "lucide-react"
 import type { AgentResource } from "../shared/channel-types"
 import { appChatSessionDir, sameChatDir, type ChatDirOption } from "../shared/app-chat-types"
+import { isSessionPinned, pinFirst } from "../shared/app-chat-pins"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import { modelSlug } from "../renderer/model-utils"
 import { formatTimeAgo } from "../renderer/time-ago"
@@ -58,6 +60,8 @@ function dirName(dir: string | undefined): string | undefined {
   return dir?.split(/[\\/]/).filter(Boolean).pop()
 }
 
+const NO_PINS: readonly string[] = []
+
 export function SessionDrawer({
   open,
   onClose,
@@ -68,10 +72,12 @@ export function SessionDrawer({
   sessionName,
   sessionStatus,
   activeAt,
+  pins = NO_PINS,
   usageBytes,
   onSelect,
   onNewTemp,
   onNewProject,
+  onTogglePin,
   onDelete,
   onClearAll,
   onOpenPair,
@@ -85,11 +91,15 @@ export function SessionDrawer({
   sessionName: (t: MobileChatTab) => string
   sessionStatus: (key: string, running: boolean) => "idle" | "working" | "unread"
   activeAt: (t: MobileChatTab) => number | undefined
+  /** 置顶的会话（appChatSessionId），置顶的排在最前；不传就是没有置顶 */
+  pins?: readonly string[]
   usageBytes: number | null
   onSelect: (sessionKey: string) => void
   onNewTemp: (channelId: string) => void
   /** 新建项目（项目归这个通道） */
   onNewProject: (channelId: string) => void
+  /** 置顶 / 取消置顶（和电脑端同一份） */
+  onTogglePin?: (t: MobileChatTab) => void
   onDelete: (t: MobileChatTab) => void
   onClearAll: () => void
   onOpenPair: () => void
@@ -177,8 +187,10 @@ export function SessionDrawer({
         {/* 会话列表 */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-2.5 py-3">
           {views.map((v) => {
-            const sortedTabs = [...v.tabs].sort(
-              (a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0),
+            // 置顶的在前，其余按最近对话排；两组内部都是最近的在前
+            const sortedTabs = pinFirst(
+              [...v.tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0)),
+              pins,
             )
             return (
               <div key={v.channelId}>
@@ -202,6 +214,7 @@ export function SessionDrawer({
                             ? dirName(wsDir)
                             : "临时对话"
                     const deletable = !!t.removable && t.kind !== "project"
+                    const pinned = isSessionPinned(pins, t.sessionKey)
 
                     return (
                       <div key={t.sessionKey} className="group relative flex items-center">
@@ -283,6 +296,22 @@ export function SessionDrawer({
                               </span>
                             ) : null}
                           </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onTogglePin?.(t)
+                          }}
+                          title={pinned ? "取消置顶" : "置顶会话"}
+                          aria-label={pinned ? "取消置顶" : "置顶会话"}
+                          aria-pressed={pinned}
+                          className={`ml-0.5 flex h-11 w-9 shrink-0 items-center justify-center rounded-xl transition active:bg-raised ${
+                            pinned ? "text-accent" : "text-fg-faint"
+                          }`}
+                        >
+                          <Pin size={15} className={pinned ? "fill-current" : ""} />
                         </button>
 
                         {deletable && (

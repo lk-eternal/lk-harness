@@ -217,6 +217,13 @@ const api = {
     ipcRenderer.on("app-chat:titles", handler)
     return () => ipcRenderer.removeListener("app-chat:titles", handler)
   },
+  appChatPins: (): Promise<string[]> => ipcRenderer.invoke("app-chat:get-pins"),
+  appChatSetPinned: (sessionKey: string, pinned: boolean): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:set-pinned", sessionKey, pinned),
+  onAppChatPins: (cb: (pins: string[]) => void) => {
+    const handler = (_: unknown, pins: string[]) => cb(pins)
+    ipcRenderer.on("app-chat:pins", handler)
+    return () => ipcRenderer.removeListener("app-chat:pins", handler)
+  },
   onAppChatEvent: (cb: (event: AppChatEvent) => void) => {
     const handler = (_: unknown, event: AppChatEvent) => cb(event)
     ipcRenderer.on("app-chat:event", handler)

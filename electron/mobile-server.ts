@@ -35,8 +35,10 @@ import {
   saveAppChatImage,
   sendAppChatMessage,
   setAppChatSessionDir,
+  setAppChatSessionPinned,
   subscribeAppChatEvent,
 } from "./app-chat"
+import { getAppChatPins, subscribeAppChatPins } from "./app-chat-pins"
 import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
@@ -244,6 +246,7 @@ async function buildBootstrap() {
       activeKey: c.activeKey,
     })),
     titles: getAppChatTitles(),
+    pins: getAppChatPins(),
     lastActive: activeRes.ok ? (activeRes.times ?? {}) : {},
     quickModels,
     resources: safeResources,
@@ -461,6 +464,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 200, renameAppChatSession(sessionKey, name))
       return
     }
+    case "/api/mobile/pin-session": {
+      const sessionKey = String(body.sessionKey ?? "")
+      sendJson(res, 200, setAppChatSessionPinned(sessionKey, body.pinned === true))
+      return
+    }
     case "/api/mobile/clear-session": {
       const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined
       const channelId = typeof body.channelId === "string" ? body.channelId : undefined
@@ -617,6 +625,7 @@ export async function startMobileServer(portInput?: number): Promise<{ ok: boole
       unsubEvents = [
         subscribeAppChatEvent((event) => broadcastSse({ type: "chat", event })),
         subscribeAppChatTitles((titles) => broadcastSse({ type: "titles", titles })),
+        subscribeAppChatPins((pins) => broadcastSse({ type: "pins", pins })),
         subscribeSessionStatus(() => broadcastSse({ type: "sessions" })),
       ]
       keepAliveTimer = setInterval(() => {

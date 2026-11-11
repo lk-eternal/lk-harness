@@ -170,6 +170,8 @@ export interface AppChatResult {
   times?: Record<string, number>;
   /** 新建的临时会话的会话键 */
   sessionKey?: string;
+  /** 置顶 / 取消置顶之后最新的置顶列表（appChatSessionId，先置顶的在前） */
+  pins?: string[];
 }
 
 /**
