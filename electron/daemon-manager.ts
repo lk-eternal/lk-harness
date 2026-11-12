@@ -77,7 +77,7 @@ import {
 } from "./flow-hub-service"
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
-import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
+import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
 import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
 import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
 import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
@@ -2068,23 +2068,6 @@ export function initDaemonManager(): void {
     }
     saveProject(p)
     return { ok: true }
-  })
-  ipcMain.handle("project:switch", async (_e, projectId: string) => {
-    initProjectStore(app.getPath("userData"))
-    const id = String(projectId || "").trim()
-    const p = getProject(id)
-    if (!p) return { ok: false, error: "项目不存在" }
-    if (p.groupChatId) {
-      return { ok: false, error: "该项目为独立群协作，请到飞书专属群内操作（设置页不可切入）" }
-    }
-    const lock = readLockFile()
-    if (!lock?.port) return { ok: false, error: "服务未运行" }
-    const chatId = await resolveMainChatId(lock.port)
-    if (!chatId) return { ok: false, error: "未绑定主用户" }
-    if (!canEnterProjectFromChat(p, chatId)) {
-      return { ok: false, error: "该项目为独立群协作，请到专属群内操作" }
-    }
-    return switchMainSession(projectSessionKey(chatId, id))
   })
   // ── 应用内项目：建项 / 步骤条 / 项目信息（手机端走 mobile-server，调的是同一组函数） ──
   ipcMain.handle("project:templates", () => listProjectTemplates())

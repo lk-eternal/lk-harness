@@ -157,12 +157,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
     await onChanged()
   }
 
-  const switchTo = async () => {
-    const r = await window.electronAPI.switchProject(item.id)
-    if (!r.ok) void ui.showAlert("切换失败", r.error ?? "切换失败")
-    await onChanged()
-  }
-
   const sync = async () => {
     const r = await window.electronAPI.syncProjectSteps(item.id)
     if (!r.ok) { void ui.showAlert("同步失败", r.error ?? "同步失败"); return }
@@ -205,7 +199,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
               title={item.archived ? "放回对话页的会话列表" : "做完了就归档：对话页里收进最下面的「已归档」，会话和成果都留着，随时可以取消"}
               className={linkBtn}
             >{item.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}{item.archived ? "取消归档" : "归档"}</button>
-            {!item.groupChatId && <button type="button" onClick={() => void switchTo()} className={linkBtn}>切换至</button>}
           </div>
           <SaveButtons dirty={dirty} canSave={canSave} justSaved={justSaved} busy={busy} onSave={() => void save()} onRevert={revert} />
         </>

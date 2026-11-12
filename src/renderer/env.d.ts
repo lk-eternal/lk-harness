@@ -326,7 +326,6 @@ declare global {
       id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
       groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
     }): Promise<{ ok: boolean; error?: string }>
-    switchProject(projectId: string): Promise<{ ok: boolean; error?: string }>
     listProjectTemplates(): Promise<ProjectTemplateInfoType[]>
     getProjectsRootDir(): Promise<string>
     listProjectRepoOptions(): Promise<ProjectRepoOptionType[]>

@@ -310,8 +310,6 @@ const api = {
     groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:update", patch),
-  switchProject: (projectId: string): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke("project:switch", projectId),
   listProjectTemplates: (): Promise<ProjectTemplateInfo[]> => ipcRenderer.invoke("project:templates"),
   getProjectsRootDir: (): Promise<string> => ipcRenderer.invoke("project:root-dir"),
   listProjectRepoOptions: (): Promise<ProjectRepoOption[]> => ipcRenderer.invoke("project:repo-options"),
