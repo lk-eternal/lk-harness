@@ -85,6 +85,29 @@ describe("splitChoices 从答案还原勾选", () => {
   it("答案切不干净（选项后来改过）：能认的认，认不出的忽略", () => {
     expect(splitChoices("SUB_TEEN、已经删掉的选项", OPTIONS)).toEqual(["SUB_TEEN"])
   })
+
+  it("选项里有一大串重复、答案又切不干净：切不通的状态只算一次，不会越回溯越慢（卡界面）", () => {
+    const options = Array.from({ length: 26 }, () => "A")
+    const answer = `${Array.from({ length: 26 }, () => "A").join(MULTI_ANSWER_SEP)}${MULTI_ANSWER_SEP}已经删掉的选项`
+    const started = performance.now()
+    const picked = splitChoices(answer, options)
+    // 没有缓存时这里是 2 的 26 次方量级的回溯（几秒到十几秒）；有缓存是亚毫秒。预算给得很宽，只拦指数级退化
+    expect(performance.now() - started).toBeLessThan(500)
+    expect(picked.every((o) => o === "A")).toBe(true) // 仍按宽松模式认出能认的
+  })
+
+  it("选项互为前缀、自带分隔符的各种组合：有多种切法时按选项顺序先找到的为准，需要回溯时能退回去", () => {
+    const options = ["A", "A、B", "B", "A、B、C", "C"]
+    const cases: [string, string[]][] = [
+      ["A、B、C", ["A", "B", "C"]],
+      ["A、B、B", ["A、B", "B"]], // 先试 A，后面 B、B 切不通，退回去把「A、B」当一项
+      ["A、C", ["A", "C"]],
+      ["B、C", ["B", "C"]],
+      ["A、B、C、C", ["A、B、C", "C"]], // 先试 A、再试「A、B」都切不通，最后整个「A、B、C」当一项
+      ["C", ["C"]],
+    ]
+    for (const [answer, expected] of cases) expect(splitChoices(answer, options), answer).toEqual(expected)
+  })
 })
 
 describe("checkerFieldName 勾选框 name", () => {

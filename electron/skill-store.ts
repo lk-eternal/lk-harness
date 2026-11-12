@@ -53,28 +53,36 @@ export function discoverSkillPaths(rootAbs: string): string[] {
   const found: string[] = []
   if (!fs.existsSync(rootAbs)) return found
 
-  // 当前这条路径上走过的真实目录：链接绕回自己的祖先（a/b -> a）时不再往下钻，免得无限递归
+  // 当前这条路径上每一层目录的真实路径：链接绕回自己的祖先（a/b -> a）时不再往下钻，免得无限递归。
+  // 普通目录的真实路径 = 上一层的真实路径 + 自己的名字，不用再问系统；只有链接（含 Windows 的 junction）才要取真实路径。
+  // 以前每个目录都 realpathSync 一遍：这个函数会递归进 Skill 目录下的所有子目录（node_modules 之类也进），
+  // 又是主进程里的同步调用，目录一多就明显变慢。
   const chain = new Set<string>()
-  const realOf = (p: string): string => { try { return fs.realpathSync(p) } catch { return p } }
+  const realOf = (p: string): string => { try { return fs.realpathSync.native(p) } catch { return p } }
   // 读不了的目录（没权限、被占用）当成空的，不能让一个坏目录带垮整个扫描
-  const listDir = (dir: string): string[] => { try { return fs.readdirSync(dir) } catch { return [] } }
+  const entriesOf = (dir: string) => { try { return fs.readdirSync(dir, { withFileTypes: true }) } catch { return [] } }
 
-  function walk(dir: string, rel: string): void {
-    const real = realOf(dir)
+  function walk(dir: string, rel: string, real: string): void {
     if (chain.has(real)) return
     chain.add(real)
     if (statFile(path.join(dir, "SKILL.md"))) found.push(rel)
-    for (const name of listDir(dir)) {
-      const child = path.join(dir, name)
-      if (statDir(child)) walk(child, rel ? `${rel}/${name}` : name)
-    }
+    visitChildren(dir, rel, real)
     chain.delete(real)
   }
 
-  for (const name of listDir(rootAbs)) {
-    const entry = path.join(rootAbs, name)
-    if (statDir(entry)) walk(entry, name)
+  /** 往下走 dir 里的每个子目录（含链接指向的目录）；real 是 dir 自己的真实路径 */
+  function visitChildren(dir: string, rel: string, real: string): void {
+    for (const entry of entriesOf(dir)) {
+      if (entry.isFile()) continue
+      const child = path.join(dir, entry.name)
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walk(child, childRel, path.join(real, entry.name))
+      // 链接（含 junction），或文件系统没告诉类型：stat 确认是目录再走，真实路径要问系统
+      else if (statDir(child)) walk(child, childRel, realOf(child))
+    }
   }
+
+  visitChildren(rootAbs, "", realOf(rootAbs))
   return [...new Set(found)].sort((a, b) => a.localeCompare(b))
 }
 

@@ -55,17 +55,22 @@ export function readFormChoices(
 /**
  * 在选项（按题目顺序）里找一种切法，正好把答案切完：答案剩余部分以某个选项开头、后面紧跟分隔符或结束。
  * 会回溯：选项 A 和 A、B 同时存在时，答案「A、B」先试 A 发现剩下的 B 切不了，再退回去整个当 A、B。
+ * 切不通的状态只算一次（dead）：剩余部分总是答案的一个后缀，所以「剩余长度 + 从第几个选项往后找」就唯一确定一个状态。
+ * 没有这一步，选项里有重复、或一串前缀相同的选项，再配上一个切不干净的答案，回溯的次数是指数级的。
  */
-function segmentAnswer(rest: string, options: readonly string[], from: number): string[] | null {
+function segmentAnswer(rest: string, options: readonly string[], from: number, dead: Set<number> = new Set()): string[] | null {
+  const state = rest.length * (options.length + 1) + from
+  if (dead.has(state)) return null
   for (let k = from; k < options.length; k++) {
     const o = options[k]
     if (!o) continue
     if (rest === o) return [o]
     if (rest.startsWith(o + MULTI_ANSWER_SEP)) {
-      const tail = segmentAnswer(rest.slice(o.length + MULTI_ANSWER_SEP.length), options, k + 1)
+      const tail = segmentAnswer(rest.slice(o.length + MULTI_ANSWER_SEP.length), options, k + 1, dead)
       if (tail) return [o, ...tail]
     }
   }
+  dead.add(state)
   return null
 }
 
