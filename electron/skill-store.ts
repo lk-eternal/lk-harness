@@ -53,15 +53,25 @@ export function discoverSkillPaths(rootAbs: string): string[] {
   const found: string[] = []
   if (!fs.existsSync(rootAbs)) return found
 
+  // 当前这条路径上走过的真实目录：链接绕回自己的祖先（a/b -> a）时不再往下钻，免得无限递归
+  const chain = new Set<string>()
+  const realOf = (p: string): string => { try { return fs.realpathSync(p) } catch { return p } }
+  // 读不了的目录（没权限、被占用）当成空的，不能让一个坏目录带垮整个扫描
+  const listDir = (dir: string): string[] => { try { return fs.readdirSync(dir) } catch { return [] } }
+
   function walk(dir: string, rel: string): void {
+    const real = realOf(dir)
+    if (chain.has(real)) return
+    chain.add(real)
     if (statFile(path.join(dir, "SKILL.md"))) found.push(rel)
-    for (const name of fs.readdirSync(dir)) {
+    for (const name of listDir(dir)) {
       const child = path.join(dir, name)
       if (statDir(child)) walk(child, rel ? `${rel}/${name}` : name)
     }
+    chain.delete(real)
   }
 
-  for (const name of fs.readdirSync(rootAbs)) {
+  for (const name of listDir(rootAbs)) {
     const entry = path.join(rootAbs, name)
     if (statDir(entry)) walk(entry, name)
   }
