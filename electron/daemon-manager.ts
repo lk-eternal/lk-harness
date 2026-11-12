@@ -22,6 +22,7 @@ import { aiScheduleStateFile, readAiScheduleRuns } from "../src/shared/ai-schedu
 import { buildSessionSchedules, removeUserTask } from "../src/shared/session-schedule-build.js"
 import { resetChangedTaskModelOverrides } from "../src/shared/task-model-reset.js"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
+import { shellPathReady } from "./shell-path"
 import { startMainPerfMonitor, getMainPerfStats } from "./main-perf"
 import { applyProxyEnv, syncMainProcessProxyEnv } from "./agent-env"
 import { createUtf8Decoder, decodeUtf8Chunk, finishUtf8Decoder } from "../src/shared/utf8-stream.js"
@@ -599,6 +600,8 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
       ? path.join(process.resourcesPath, "template")
       : path.join(app.getAppPath(), "resources", "template")
 
+    // daemon 和它起的 Agent 继承这份 PATH：macOS / Linux 要等终端里的 PATH 补进来，否则它们找不到 node / lark-cli / meegle
+    await shellPathReady()
     const env: Record<string, string> = {
       ...process.env as Record<string, string>,
       LARK_WORKSPACE_DIR: wsFallback,

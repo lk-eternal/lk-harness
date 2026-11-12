@@ -53,6 +53,7 @@ import {
 import { initTray, destroyTray } from "./tray"
 import { initAppUpdater } from "./updater"
 import { initToolbox } from "./toolbox"
+import { initShellPath } from "./shell-path"
 import { initAppChat } from "./app-chat"
 import { initAppChatNotify } from "./app-chat-notify"
 import { initFilePreview, registerPreviewScheme } from "./file-preview"
@@ -478,6 +479,7 @@ app.on("before-quit", (e) => {
 })
 
 app.whenReady().then(() => {
+  void initShellPath((m) => broadcastLog(m)) // 必须最先：macOS 从 Dock 启动时 PATH 里没有终端配的 node，后面起的子进程都继承它
   migrateSecretsToSafeStorage()
   scrubUndecryptableSecretsInStore()
   getConfig()

@@ -74,7 +74,7 @@ export default function ToolboxPanel() {
           依赖 Node.js
           {status?.nodeOk
             ? <span className="text-success">（已检测到{status.nodeVersion ? ` v${status.nodeVersion}` : ""}）</span>
-            : <span className="text-warning">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a> 并勾选 Add to PATH，然后重启本应用）</span>}
+            : <span className="text-warning">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a>（Windows 安装时勾选 Add to PATH），然后重启本应用）</span>}
         </p>
         {anyInstalled && (
           <button onClick={() => void updateAll()} disabled={!!busy}

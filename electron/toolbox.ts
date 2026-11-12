@@ -3,8 +3,16 @@ import { execFile, spawn } from "node:child_process"
 import { promisify } from "node:util"
 import { ipcMain, shell } from "electron"
 import { getConfig } from "./config-store"
+import { shellPathReady } from "./shell-path"
 
 const execFileAsync = promisify(execFile)
+
+/** Node 找不到时的提示：Windows 要勾选 Add to PATH；macOS / Linux 的问题多半是应用拿不到终端的 PATH，让用户把 `which node` 反馈回来好排查 */
+function nodeMissingHint(): string {
+  return process.platform === "win32"
+    ? "请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 LK Harness 后再试。"
+    : "请先安装 Node.js（https://nodejs.org），装好后重新打开 LK Harness。若终端里 node -v 能用但这里仍检测不到，请把终端里 which node 的输出反馈给我们。"
+}
 
 export interface ToolboxToolStatus {
   installed: boolean
@@ -56,6 +64,7 @@ function looksLikeMissingCmd(text: string, cmd: string): boolean {
 
 /** Windows 下 npm 全局 bin 是 .cmd/.ps1：优先经 cmd.exe 调 .cmd，避开 PowerShell 拦 .ps1 */
 async function runCommand(cmd: string, args: string[], timeoutMs = 15_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  await shellPathReady() // macOS / Linux：先等终端里的 PATH 补进来，否则 node / lark-cli 找不到
   try {
     const isWin = process.platform === "win32"
     if (isWin) {
@@ -87,7 +96,7 @@ async function detectNode(): Promise<{ ok: boolean; version?: string }> {
 
 function friendlyInstallError(raw: string): string {
   if (looksLikeMissingCmd(raw, "npm") || looksLikeMissingCmd(raw, "node")) {
-    return "未检测到 Node.js / npm。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 LK Harness 后再点一键安装。"
+    return `未检测到 Node.js / npm。${nodeMissingHint()}`
   }
   if (/EACCES|permission|rejected by your operating system|as root\/Administrator/i.test(raw)) {
     return process.platform === "darwin"
@@ -135,11 +144,11 @@ export async function installTool(key: "larkCli" | "meegle"): Promise<{ ok: bool
   if (!tool) return { ok: false, error: "未知工具" }
   const node = await detectNode()
   if (!node.ok) {
-    return { ok: false, error: "未检测到 Node.js。请先安装 Node.js（https://nodejs.org ，勾选 Add to PATH），重新打开 LK Harness 后再试。" }
+    return { ok: false, error: `未检测到 Node.js。${nodeMissingHint()}` }
   }
   const npmVer = await runCommand("npm", ["-v"])
   if (!npmVer.ok) {
-    return { ok: false, error: "检测到 Node 但找不到 npm。请重装 Node.js 并勾选 Add to PATH。" }
+    return { ok: false, error: `检测到 Node 但找不到 npm。请重装 Node.js${process.platform === "win32" ? " 并勾选 Add to PATH" : ""}。` }
   }
   const r = await runCommand("npm", ["install", "-g", `${tool.pkg}@latest`], 180_000)
   if (!r.ok) return { ok: false, error: friendlyInstallError(r.stderr || r.stdout) }
@@ -148,6 +157,7 @@ export async function installTool(key: "larkCli" | "meegle"): Promise<{ ok: bool
 
 /** Windows 下经 cmd.exe 跑 .cmd 且向 stdin 写入内容（喂 app secret，避免进程列表暴露） */
 async function runCommandWithStdin(cmd: string, args: string[], input: string, timeoutMs = 30_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  await shellPathReady()
   return new Promise((resolve) => {
     const isWin = process.platform === "win32"
     const child = isWin
