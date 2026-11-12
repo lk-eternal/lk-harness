@@ -36,6 +36,11 @@ export interface AppConfig {
   closeWindowAction: "ask" | "minimize" | "quit"
   /** 启动时自动弹出升级提示；false=静默，用户仍可在「关于」手动检查更新 */
   autoUpgradePrompt: boolean
+  /**
+   * 静默更新（只在 Windows 生效）：后台自动下载新版本、不弹任何窗口，退出应用时自动静默安装（不出现安装向导）。
+   * 开着时优先于 autoUpgradePrompt；默认关，行为和以前一样。
+   */
+  silentUpdate: boolean
   /** 界面主题：system=跟随系统；light/dark=固定。主进程同步给 nativeTheme，渲染层 CSS 用 prefers-color-scheme 响应 */
   theme: "system" | "light" | "dark"
   /** 主会话 chatId 映射（`channelId:workspaceDir` → chatId），用于 --resume 恢复上下文 */
@@ -107,6 +112,7 @@ const defaults: AppConfig = {
   noProxy: "localhost,127.0.0.1,feishu.cn,weixin.qq.com",
   closeWindowAction: "ask",
   autoUpgradePrompt: true,
+  silentUpdate: false,
   theme: "system",
   mainChatIds: {},
   daemonPort: 19528,

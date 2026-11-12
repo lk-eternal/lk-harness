@@ -37,6 +37,7 @@ import useInlineModal from "../components/useInlineModal"
 import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
 import { THEME_OPTIONS, type Theme } from "../theme-options"
+import { silentReadyMessage } from "../../shared/silent-update"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
 
@@ -82,6 +83,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [autoLaunch, setAutoLaunch] = useState(false)
   const [theme, setTheme] = useState<Theme>("system")
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
+  /** 静默更新（仅 Windows 显示）：后台自动下载，退出应用时自动安装，不弹窗、不出安装向导 */
+  const [silentUpdate, setSilentUpdate] = useState(false)
+  const silentUpdateRef = useRef(false)
   /** 帮助引导页飞书控制台链接用 */
   const [firstFeishuAppId, setFirstFeishuAppId] = useState("")
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
@@ -111,6 +115,10 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   }, [updateDownloading])
 
   useEffect(() => {
+    silentUpdateRef.current = silentUpdate
+  }, [silentUpdate])
+
+  useEffect(() => {
     const offS = window.electronAPI.onUpdaterStatus((s) => {
       if (s.kind === "downloading") {
         setUpdateDownloading(true)
@@ -125,7 +133,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       if (s.kind === "downloaded") {
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)
-        setUpdateMsg(`新版本 v${s.version} 已下载，可立即安装。`)
+        setUpdateMsg(s.silent ? silentReadyMessage(s.version) : `新版本 v${s.version} 已下载，可立即安装。`)
         void window.electronAPI.checkAppUpdate().then((r) => {
           if (r.status === "ready" || r.status === "available") {
             setUpdateCheck(r)
@@ -162,7 +170,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setUpdateCheck(r)
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)
-        setUpdateMsg(`新版本 v${r.latestVersion} 已下载，可立即安装。`)
+        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
       } else if (r.status === "available") {
         setUpdateCheck(r)
         if (!updateDownloading) {
@@ -189,6 +197,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     if (tab === "about") {
       window.electronAPI.getConfig().then((config) => {
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
+        setSilentUpdate(config.silentUpdate === true)
       })
     }
   }, [tab])
@@ -226,7 +235,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       } else if (r.status === "available") {
         setUpdateMsg(`发现新版本 v${r.latestVersion}，当前 v${r.currentVersion}。`)
       } else if (r.status === "ready") {
-        setUpdateMsg(`新版本 v${r.latestVersion} 已下载，可立即安装。`)
+        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
       }
     } finally {
       setUpdateBusy(false)
@@ -268,6 +277,14 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     const next = !autoUpgradePrompt
     setAutoUpgradePrompt(next)
     await window.electronAPI.saveConfig({ autoUpgradePrompt: next })
+  }
+
+  const handleSilentUpdateToggle = async () => {
+    const next = !silentUpdate
+    setSilentUpdate(next)
+    await window.electronAPI.saveConfig({ silentUpdate: next })
+    // 刚打开：马上查一次，有新版本就开始后台下载（不用等下一个 6 小时的周期）
+    if (next) void window.electronAPI.checkAppUpdate()
   }
 
   const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
@@ -543,6 +560,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${autoUpgradePrompt ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
                   </button>
                 </div>
+                {window.electronAPI?.platform === "win32" && (
+                  <div className="flex items-center justify-between rounded-lg border border-line px-4 py-3">
+                    <div className="min-w-0 pr-3">
+                      <p className="text-sm font-medium">静默更新</p>
+                      <p className="text-xs text-fg-muted">有新版本时在后台自动下载，不弹窗；退出应用时自动安装，不出现安装向导。开启后不再弹出「启动时自动提示升级」</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={silentUpdate}
+                      onClick={() => void handleSilentUpdateToggle()}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${silentUpdate ? "bg-green-500" : "bg-stronger"}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${silentUpdate ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                    </button>
+                  </div>
+                )}
                 <p className="text-xs text-fg-faint">
                   当前 <span className="font-mono text-fg-3">v{appVersion || "…"}</span>
                   ，可检查是否有新版本。

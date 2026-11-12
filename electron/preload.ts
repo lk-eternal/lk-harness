@@ -107,7 +107,8 @@ export interface UpdaterApplyResult {
 
 export type UpdaterStatusPayload =
   | { kind: "available" }
-  | { kind: "downloaded"; version: string }
+  /** silent=true：静默更新开着，下载好后不弹窗，退出应用时自动安装 */
+  | { kind: "downloaded"; version: string; silent?: boolean }
   | { kind: "downloading" }
   /** 下载中断，正在自动重试/续传；message 是给界面看的提示 */
   | { kind: "retrying"; message: string }

@@ -12,6 +12,8 @@ import { syncMainProcessProxyEnv } from "./agent-env"
 import { DownloadRetryExhausted, errorMessage as downloadErrorMessage } from "./resumable-download"
 import { createRotatingFetch, formatRetryNotice, pickWindowsInstaller, prefetchInstaller } from "./update-prefetch"
 import { macInstallerUrl, summarizeBrewFailure } from "./brew-update"
+import { broadcastLog } from "./ui-logger"
+import { SILENT_CHECK_INTERVAL_MS, decideSilentUpdate } from "../src/shared/silent-update.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -94,6 +96,14 @@ let autoUpdaterWired = false
 let updaterIpcRegistered = false
 let downloadedUpdateVersion: string | null = null
 
+// ── 静默更新（仅 Windows，设置里的开关）：决策在 shared/silent-update.ts，这里只管接线 ──
+/** 这一路下载是静默发起的：失败只写日志，不弹「自动更新失败」；下载开始或失败时清掉 */
+let silentRunActive = false
+/** 静默一轮的查询阶段互斥：启动、定时、设置页检查同时到来时只放一路进去 */
+let silentCycleBusy = false
+/** 本进程里已经下好、等着安装的版本。不跨重启，也不影响上面原有的 downloadedUpdateVersion（它每次检查都会被重置） */
+let installReadyVersion: string | null = null
+
 /**
  * 注意：这个路径**不是** electron-updater 的缓存目录。
  *
@@ -174,8 +184,26 @@ function isAutoUpgradePromptEnabled(): boolean {
   return getConfig().autoUpgradePrompt !== false
 }
 
+/** 静默更新是否生效：只在 Windows 的安装版里，且设置里开着；开着时优先于「启动时提示升级」 */
+function isSilentUpdateEnabled(): boolean {
+  return process.platform === "win32" && app.isPackaged && getConfig().silentUpdate === true
+}
+
+/** 静默更新没有任何窗口，出了问题只能靠日志排查，所以写进应用日志（界面日志和日志文件） */
+function silentLog(message: string, level: "INFO" | "WARN" = "INFO"): void {
+  broadcastLog(`[Updater] 静默更新：${message}`, level)
+}
+
+/**
+ * electron-updater 的「退出时静默安装」：下载完成那一刻开关是开的才会登记退出处理，退出时它还会再看一次开关。
+ * 所以下载开始前、下载完成时、退出前各同步一次，用户中途把开关关了，退出时就不会装。
+ */
+function syncAutoInstallOnQuit(): void {
+  autoUpdater.autoInstallOnAppQuit = isSilentUpdateEnabled()
+}
+
 function promptInstallDownloaded(version: string): void {
-  if (!isAutoUpgradePromptEnabled()) {
+  if (!isAutoUpgradePromptEnabled() || isSilentUpdateEnabled()) {
     return
   }
   void showAppModal({
@@ -792,8 +820,20 @@ async function prefetchWinInstaller(info: UpdateInfo): Promise<void> {
 
 let activeWinDownload: Promise<void> | null = null
 
+/** 下载失败的出口：用户点的更新弹「自动更新失败」；静默发起的只写日志，下个周期再试 */
+function reportWinDownloadFailure(err: unknown, silent = silentRunActive): void {
+  if (silent) {
+    silentRunActive = false
+    silentLog(`下载失败，下个周期再试：${downloadErrorMessage(err)}`, "WARN")
+    return
+  }
+  void showWinDownloadFallback(err)
+}
+
 /** Windows 下载更新：续传下载安装包 → 交给 electron-updater 校验缓存并发出 update-downloaded */
-function startWinDownload(info: UpdateInfo): void {
+function startWinDownload(info: UpdateInfo, silent = false): void {
+  // 下载完成那一刻 electron-updater 才登记「退出时安装」，所以要赶在下载开始前把开关同步好
+  syncAutoInstallOnQuit()
   getMainWindow()?.webContents.send("updater:status", { kind: "downloading" as const })
   // 已经在下了：别再起第二路，否则两路会写同一个 .part
   if (activeWinDownload) return
@@ -803,7 +843,7 @@ function startWinDownload(info: UpdateInfo): void {
     } catch (err) {
       // 重试用尽或不可重试的失败：通知界面结束「下载中」状态，再弹手动下载的提示
       getMainWindow()?.webContents.send("updater:error", downloadErrorMessage(err))
-      void showWinDownloadFallback(err)
+      reportWinDownloadFailure(err, silent)
       return
     }
     try {
@@ -811,11 +851,67 @@ function startWinDownload(info: UpdateInfo): void {
       await autoUpdater.downloadUpdate()
     } catch (err) {
       // 它的 error 事件已经通知过界面
-      void showWinDownloadFallback(err)
+      reportWinDownloadFailure(err, silent)
     }
   })().finally(() => {
     activeWinDownload = null
   })
+}
+
+/**
+ * 静默更新的一轮：查版本 → 有新版本就在后台下载（不弹任何窗口）→ 下好后等退出时自动安装。
+ * 启动、定时、设置页检查更新都会走到这里；开关没开、已经有一路在跑、没有更新时什么都不做。
+ * 失败只写日志，下个周期再试。known 是调用方刚查到的结果，给了就不再查一遍。
+ */
+async function runSilentUpdateCycle(reason: string, known?: LatestRelease | null): Promise<void> {
+  if (!isSilentUpdateEnabled() || silentCycleBusy) {
+    return
+  }
+  const busy = (): boolean => silentRunActive || winDownloadRequested || activeWinDownload !== null
+  if (busy()) {
+    return
+  }
+  silentCycleBusy = true
+  try {
+    const rel = known ?? (await fetchLatestRelease())
+    if (rel) {
+      lastKnownRemote = rel
+    }
+    // 查版本要几秒：期间用户可能手动点了更新、或把开关关了，下载前再判断一次
+    const decision = decideSilentUpdate({
+      enabled: isSilentUpdateEnabled(),
+      busy: busy(),
+      current: app.getVersion(),
+      remote: rel?.version ?? null,
+      readyVersion: installReadyVersion,
+    })
+    if (decision.action === "skip") {
+      if (decision.reason === "no-remote") {
+        silentLog(`${reason}：查不到最新版本（网络或版本源不通），下个周期再试`, "WARN")
+      }
+      return
+    }
+    silentLog(`${reason}：发现新版本 v${decision.version}（当前 v${app.getVersion()}），开始后台下载`)
+    silentRunActive = true
+    winDownloadRequested = true
+    try {
+      await autoUpdater.checkForUpdates()
+    } catch (err) {
+      // 它的 error 事件通常已经处理过一次；没处理（silentRunActive 还在）才在这里补
+      if (silentRunActive) {
+        reportWinDownloadFailure(err, true)
+      }
+      winDownloadRequested = false
+    }
+    // 三个事件（有更新 / 没更新 / 出错）一个都没来，不该发生：别让标记一直挂着，把后面的周期都挡住
+    if (winDownloadRequested || silentRunActive) {
+      winDownloadRequested = false
+      silentRunActive = false
+      silentLog("检查更新没有返回结果，这一轮作废，下个周期再试", "WARN")
+    }
+  } finally {
+    silentCycleBusy = false
+  }
 }
 
 function wireAutoUpdater(): void {
@@ -825,19 +921,24 @@ function wireAutoUpdater(): void {
   autoUpdaterWired = true
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
+  // 退出前再对一次开关：下载完成后用户把静默更新关了，退出时就不该自动装
+  app.on("before-quit", syncAutoInstallOnQuit)
 
   autoUpdater.on("update-available", (info: UpdateInfo) => {
     getMainWindow()?.webContents.send("updater:status", { kind: "available" as const })
     if (winDownloadRequested && process.platform === "win32") {
       winDownloadRequested = false
-      startWinDownload(info)
+      // 静默标记交给这一路下载带着走，自己清掉
+      const silent = silentRunActive
+      silentRunActive = false
+      startWinDownload(info, silent)
     }
   })
 
   autoUpdater.on("update-not-available", () => {
     if (winDownloadRequested && process.platform === "win32") {
       winDownloadRequested = false
-      void showWinDownloadFallback(new Error("未找到可用更新"))
+      reportWinDownloadFailure(new Error("未找到可用更新"))
     }
   })
 
@@ -848,17 +949,25 @@ function wireAutoUpdater(): void {
   autoUpdater.on("update-downloaded", (info) => {
     const version = normalizeReleaseVersion(info.version)
     downloadedUpdateVersion = semver.valid(version) ? version : null
+    installReadyVersion = downloadedUpdateVersion
+    syncAutoInstallOnQuit()
+    const silent = isSilentUpdateEnabled()
     getMainWindow()?.webContents.send("updater:status", {
       kind: "downloaded" as const,
       version: downloadedUpdateVersion ?? version,
+      silent,
     })
+    if (silent) {
+      silentLog(`v${downloadedUpdateVersion ?? version} 已下载好，退出应用时自动静默安装`)
+      return
+    }
     promptInstallDownloaded(downloadedUpdateVersion ?? version)
   })
 
   autoUpdater.on("error", (err) => {
     if (winDownloadRequested && process.platform === "win32") {
       winDownloadRequested = false
-      void showWinDownloadFallback(err)
+      reportWinDownloadFailure(err)
     }
     getMainWindow()?.webContents.send("updater:error", err.message)
   })
@@ -876,6 +985,10 @@ function applyHintForPlatform(): string {
 
 async function runStartupUpdateCheck(): Promise<void> {
   if (!app.isPackaged && !isDevSimulateUpdate()) {
+    return
+  }
+  if (isSilentUpdateEnabled()) {
+    await runSilentUpdateCycle("启动")
     return
   }
   if (!isAutoUpgradePromptEnabled()) {
@@ -1050,7 +1163,14 @@ export function registerUpdaterIpc(): void {
     }
     lastKnownRemote = rel
     if (semver.gt(rel.version, currentVersion)) {
-      return buildAvailableOrReadyResult(currentVersion, rel)
+      const res = await buildAvailableOrReadyResult(currentVersion, rel)
+      if (isSilentUpdateEnabled()) {
+        if (installReadyVersion && semver.gte(installReadyVersion, rel.version)) {
+          return { ...res, status: "ready" }
+        }
+        void runSilentUpdateCycle("检查更新", rel)
+      }
+      return res
     }
     return {
       status: "latest",
@@ -1087,6 +1207,18 @@ export function registerUpdaterIpc(): void {
 
     if (process.platform === "darwin") {
       return runBrewUpgrade(rel.version)
+    }
+
+    if (isSilentUpdateEnabled()) {
+      if (installReadyVersion && semver.gte(installReadyVersion, rel.version)) {
+        silentLog(`立即安装 v${installReadyVersion}`)
+        autoUpdater.quitAndInstall(true, true)
+        return { ok: true, message: "正在静默安装并重启…" }
+      }
+      // 后台正在下：别再起第二路
+      if (silentRunActive || winDownloadRequested || activeWinDownload) {
+        return { ok: true, message: "正在后台下载更新，下好后点「立即安装」，或退出应用时自动安装。" }
+      }
     }
 
     if (process.platform === "win32") {
@@ -1132,5 +1264,11 @@ export function initAppUpdater(getMainWindow: () => BrowserWindow | null): void 
     setTimeout(() => {
       void runStartupUpdateCheck()
     }, STARTUP_CHECK_DELAY_MS)
+  }
+  if (app.isPackaged) {
+    // 静默更新：应用常驻托盘、几天不重启时，只靠启动那一次查不到后来发的版本。开关没开时这一轮什么都不做
+    setInterval(() => {
+      void runSilentUpdateCycle("定时")
+    }, SILENT_CHECK_INTERVAL_MS).unref()
   }
 }
