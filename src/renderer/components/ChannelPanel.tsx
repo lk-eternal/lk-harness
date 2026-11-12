@@ -7,6 +7,7 @@ import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-type
 import { holdBackModelEdits, type ChannelModelImpact } from "../../shared/channel-model-impact"
 import { saveChannelWithImpact, type ImpactChoice } from "../../shared/channel-save-flow"
 import { emptyChannel } from "../channel-defaults"
+import { onChannelsChanged } from "../channel-events"
 import ChannelModelImpactDialog from "./ChannelModelImpactDialog"
 import ModelPicker from "./chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
@@ -51,6 +52,8 @@ export default function ChannelPanel() {
   }, [])
 
   useEffect(() => { void reload() }, [reload])
+  // 对话页自动建了应用内通道：这里的列表要跟着更新，否则之后的保存会拿旧列表把它覆盖掉
+  useEffect(() => onChannelsChanged(() => void reload()), [reload])
 
   useEffect(() => {
     const sync = (s: DaemonStatus) => {

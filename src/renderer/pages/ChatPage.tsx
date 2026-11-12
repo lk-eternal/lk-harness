@@ -29,7 +29,10 @@ import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
-import { workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
+import { CHANNEL_TYPE_LABELS, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
+import { describeAppChannelIssue, ensureAppChannel, planAppChannel, type AppChannelIssue, type EnsureAppChannelIO } from "../../shared/app-channel-ensure"
+import { emptyChannel } from "../channel-defaults"
+import { notifyChannelsChanged } from "../channel-events"
 import { projectIdOfSessionKey, type ProjectCreateResult } from "../../shared/project-app-types"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
@@ -57,6 +60,19 @@ interface Props {
 }
 
 const REFRESH_MS = 8000
+
+/**
+ * 没有「应用内对话」通道时自动建一个（见 shared/app-channel-ensure.ts）。
+ * 走设置页同一个保存入口：通道的启动、热更新都在保存里处理；供应商留空，跟随默认供应商。
+ */
+const appChannelIO: EnsureAppChannelIO = {
+  loadChannels: async () => (await window.electronAPI.getConfig()).channels ?? [],
+  saveChannels: async (channels) => {
+    const r = await window.electronAPI.saveConfig({ channels })
+    if (!r.ok) throw new Error("保存配置失败")
+  },
+  newChannel: () => emptyChannel("app", CHANNEL_TYPE_LABELS.app),
+}
 
 /** 刚建好、还没发过消息的临时会话：会话在首条消息发出时才建立，在此之前只存在于界面里 */
 interface DraftSession {
@@ -99,6 +115,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [pickedDirs, setPickedDirs] = useState<Record<string, string>>({})
   const [loaded, setLoaded] = useState(false)
   const [treeError, setTreeError] = useState("")
+  /** 没有可用的应用内通道时的原因：被停用 / 自动创建失败（下一次刷新会重试） */
+  const [channelIssue, setChannelIssue] = useState<AppChannelIssue | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [resources, setResources] = useState<AgentResource[]>([])
@@ -128,10 +146,29 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (busyRef.current) return
     busyRef.current = true
     try {
-      const [cfg, tree] = await Promise.all([
+      const read = () => Promise.all([
         window.electronAPI.getConfig(),
         window.electronAPI.listDashboardTree(),
       ])
+      let [cfg, tree] = await read()
+      // 一个应用内通道都没有：自动建好再读一遍，用户不用先去设置里添加；已被停用的不动，只提示
+      let issue: AppChannelIssue | null = null
+      const plan = planAppChannel(cfg.channels)
+      if (plan.action === "disabled") issue = { kind: "disabled" }
+      if (plan.action === "create") {
+        const r = await ensureAppChannel(appChannelIO)
+        if (r.status === "created") {
+          notifyChannelsChanged()
+          const again = await read()
+          cfg = again[0]
+          tree = again[1]
+        } else if (r.status === "failed") {
+          issue = { kind: "failed", error: r.error }
+        } else if (r.status === "disabled") {
+          issue = { kind: "disabled" }
+        }
+      }
+      setChannelIssue(issue)
       const appCfgs = new Map((cfg.channels ?? []).filter((c) => c.type === "app" && c.enabled !== false).map((c) => [c.id, c]))
       const appChannels = tree.channels.filter((c) => appCfgs.has(c.channelId))
       const active = await window.electronAPI.appChatLastActive(appChannels.flatMap((c) => c.mainTabs.map((t) => t.sessionKey)))
@@ -458,6 +495,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const hasLiveTurn = items.some((it) => it.kind === "assistant" && !it.finished)
   const busy = !!tab?.running && (hasLiveTurn || items[items.length - 1]?.kind === "user")
   const noChannel = loaded && views.length === 0
+  const issueText = describeAppChannelIssue(channelIssue)
 
   // 收起会话栏后看不到别的会话的绿点（有新回复），在开关按钮上补一个
   const unreadElsewhere = countUnreadElsewhere(views.flatMap((v) => v.tabs), (key) => sameChatSession(key, selected), sessionStatus)
@@ -488,8 +526,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
       {noChannel ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-fg-muted">
-          <p>还没有「应用内对话」通道</p>
-          <button type="button" onClick={() => onSettings("channel")} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">去设置里添加</button>
+          <p>{issueText.message}</p>
+          <button type="button" onClick={() => onSettings("channel")} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">{issueText.settingsLabel}</button>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
