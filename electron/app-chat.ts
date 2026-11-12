@@ -17,6 +17,9 @@ import { parseBranchTarget } from "../src/shared/git-branch"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
 import { initSessionOverridesStore, patchSessionRecord } from "../src/shared/session-overrides-store"
+import { initProjectStore, renameProject } from "../src/shared/project-store"
+import { projectIdFromSessionKey } from "../src/shared/project-types"
+import { normalizeProjectName } from "../src/shared/project-create-plan"
 import { createTempChatSession } from "../src/shared/temp-chat-session"
 import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
@@ -60,10 +63,24 @@ export async function clearAppChatRecords(target: { sessionKey?: string; channel
   return r
 }
 
+/**
+ * 改会话名（桌面端和手机端共用）。
+ * 项目会话的名字就是项目名：改它改的是项目的名称，设置页项目详情里的名称是同一个字段，不另存一份标题；
+ * 名字规则和建项一样（不能留空、不超过上限），所以项目会话没有「留空恢复自动命名」。
+ * 其它会话存成会话标题，留空恢复自动命名。
+ */
 export function renameAppChatSession(sessionKey: string, name: string): AppChatResult {
   const channelId = channelIdFromSessionKey(sessionKey)
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   try {
+    const projectId = projectIdFromSessionKey(sessionKey)
+    if (projectId) {
+      const checked = normalizeProjectName(name)
+      if (!checked.ok) return { ok: false, error: checked.error }
+      initProjectStore(app.getPath("userData"))
+      if (!renameProject(projectId, checked.name)) return { ok: false, error: "项目不存在" }
+      return { ok: true }
+    }
     renameAppChatTitle(sessionKey, name)
     return { ok: true }
   } catch (e: unknown) {

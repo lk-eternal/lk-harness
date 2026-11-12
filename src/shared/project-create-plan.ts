@@ -87,11 +87,19 @@ export type ProjectCreatePlan =
   }
   | { ok: false; error: string }
 
-/** 校验建项输入并整理成要落盘的内容（不碰文件系统） */
-export function planProjectCreate(input: ProjectCreateInput, groups: ProjectNodeGroupDef[]): ProjectCreatePlan {
-  const name = (input.name ?? "").trim()
+/** 项目名称的规则：去掉两端空白后不能为空、不超过上限。建项和改名（含在对话页里改项目会话的名字）共用这一条 */
+export function normalizeProjectName(raw: unknown): { ok: true; name: string } | { ok: false; error: string } {
+  const name = typeof raw === "string" ? raw.trim() : ""
   if (!name) return { ok: false, error: "请填写项目名称" }
   if (name.length > PROJECT_NAME_MAX) return { ok: false, error: `项目名称不要超过 ${PROJECT_NAME_MAX} 个字` }
+  return { ok: true, name }
+}
+
+/** 校验建项输入并整理成要落盘的内容（不碰文件系统） */
+export function planProjectCreate(input: ProjectCreateInput, groups: ProjectNodeGroupDef[]): ProjectCreatePlan {
+  const checked = normalizeProjectName(input.name)
+  if (!checked.ok) return { ok: false, error: checked.error }
+  const name = checked.name
   const goal = (input.goal ?? "").trim()
   if (goal.length > PROJECT_TEXT_MAX) return { ok: false, error: `目标不要超过 ${PROJECT_TEXT_MAX} 个字` }
 

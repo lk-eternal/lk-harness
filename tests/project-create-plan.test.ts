@@ -19,6 +19,7 @@ import {
   checkExternalFolder,
   isProjectOwnedBy,
   isSameOrInside,
+  normalizeProjectName,
   parseGatewayCreateInput,
   planProjectCreate,
   snapshotDiffers,
@@ -49,6 +50,25 @@ describe("templateInfos", () => {
     for (const i of infos) expect(Object.keys(i)).not.toContain("creatable")
     expect(byId.research.steps.map((s) => s.id)).toEqual(["scope", "gather", "analyze", "write-report"])
     expect(byId.research.fields.map((f) => f.label)).toContain("交付形式")
+  })
+})
+
+describe("normalizeProjectName（建项和改名共用的项目名规则）", () => {
+  it("两端空白去掉；中间的空白不动", () => {
+    expect(normalizeProjectName("  周报 Q4  ")).toEqual({ ok: true, name: "周报 Q4" })
+  })
+
+  it("不能留空：空串、纯空白、不是字符串（界面或网关传错了类型）都拒绝，说法和建项一致", () => {
+    for (const bad of ["", "   ", "\n\t", undefined, null, 123, {}]) {
+      expect(normalizeProjectName(bad)).toEqual({ ok: false, error: "请填写项目名称" })
+    }
+  })
+
+  it("上限刚好放行，多一个字就拒绝；长度按去掉空白之后算", () => {
+    expect(normalizeProjectName("x".repeat(PROJECT_NAME_MAX)).ok).toBe(true)
+    expect(normalizeProjectName(` ${"x".repeat(PROJECT_NAME_MAX)} `).ok).toBe(true)
+    const over = normalizeProjectName("x".repeat(PROJECT_NAME_MAX + 1))
+    expect(over).toEqual({ ok: false, error: `项目名称不要超过 ${PROJECT_NAME_MAX} 个字` })
   })
 })
 

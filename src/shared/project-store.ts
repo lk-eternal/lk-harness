@@ -426,6 +426,19 @@ export function setProjectArchived(id: string, archived: boolean): Project | und
   return getProject(id)
 }
 
+/**
+ * 改项目名。项目名只有这一个字段：设置页的项目详情、对话页里项目会话的名字（会话名就是项目名）改的都是它。
+ * 名字的规则（非空、长度）由调用方用 normalizeProjectName 校验，这里原样存。
+ */
+export function renameProject(id: string, name: string): Project | undefined {
+  const p = getProject(id)
+  if (!p) return undefined
+  if (p.name === name) return p
+  p.name = name
+  saveProject(p)
+  return getProject(id)
+}
+
 export function getCurrentProjectId(): string | null {
   const data = readJsonSafe<{ id?: string }>(currentPath(), {})
   return data.id ?? null

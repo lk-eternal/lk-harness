@@ -126,6 +126,53 @@ describe("应用内项目：真实 daemon", () => {
     expect(await find(a.sessionKey)).not.toHaveProperty("archived")
   })
 
+  it("改项目会话的名字 = 改项目名：项目记录、项目信息、会话列表里的名字是同一个字段；别的会话不受影响", async () => {
+    const { store, create, tabs } = await boot()
+    const appChat = await import("../../electron/app-chat")
+    const a = await create.createProjectFromApp(CH, { name: "旧名字", templateId: "general" })
+    const b = await create.createProjectFromApp(CH, { name: "另一个项目", templateId: "general" })
+    const labelOf = async (key: string | undefined) => (await tabs()).find((t) => t.sessionKey === key)?.label
+
+    expect(appChat.renameAppChatSession(a.sessionKey!, "  新名字  ")).toEqual({ ok: true })
+    expect(store.getProject(a.projectId!)?.name).toBe("新名字") // 两端空白去掉，落在项目上
+    expect(create.getProjectView(a.projectId!, CH)?.name).toBe("新名字") // 项目栏 / 项目详情读到的
+    expect(await labelOf(a.sessionKey)).toBe("新名字") // 会话列表
+    expect(store.getProject(b.projectId!)?.name).toBe("另一个项目")
+    expect(await labelOf(b.sessionKey)).toBe("另一个项目")
+
+    // 反过来：在项目详情里改名（设置页走的是同一个字段），会话名跟着变
+    const p = store.getProject(a.projectId!)!
+    p.name = "详情页里改的"
+    store.saveProject(p)
+    expect(await labelOf(a.sessionKey)).toBe("详情页里改的")
+  })
+
+  it("改项目会话的名字：不能留空、不能超长，失败时项目名不变；也不会往会话标题表里写东西", async () => {
+    const { store, create, tabs } = await boot()
+    const appChat = await import("../../electron/app-chat")
+    const titles = await import("../../electron/app-chat-title")
+    const a = await create.createProjectFromApp(CH, { name: "原名", templateId: "general" })
+
+    expect(appChat.renameAppChatSession(a.sessionKey!, "   ")).toEqual({ ok: false, error: "请填写项目名称" })
+    expect(appChat.renameAppChatSession(a.sessionKey!, "")).toEqual({ ok: false, error: "请填写项目名称" })
+    expect(appChat.renameAppChatSession(a.sessionKey!, "长".repeat(61)).ok).toBe(false)
+    expect(store.getProject(a.projectId!)?.name).toBe("原名")
+    expect((await tabs()).find((t) => t.sessionKey === a.sessionKey)?.label).toBe("原名")
+
+    expect(appChat.renameAppChatSession(a.sessionKey!, "改好了").ok).toBe(true)
+    expect(titles.getAppChatTitles()).toEqual({}) // 项目会话的名字不是会话标题，不另存一份
+  })
+
+  it("改项目会话的名字：项目已经被删掉时说清楚，不是应用内通道的会话键也拒绝", async () => {
+    const { create } = await boot()
+    const appChat = await import("../../electron/app-chat")
+    const a = await create.createProjectFromApp(CH, { name: "会被删", templateId: "general" })
+    expect((await create.deleteProjectByUser(a.projectId!, { channelId: CH })).ok).toBe(true)
+
+    expect(appChat.renameAppChatSession(a.sessionKey!, "还想改名")).toEqual({ ok: false, error: "项目不存在" })
+    expect(appChat.renameAppChatSession("ch_nope|app_main::project_abc", "x")).toEqual({ ok: false, error: "不是应用内对话的会话" })
+  })
+
   it("点步骤：提示词进了项目会话的队列，聊天记录里有「开始」的通知；全局当前项目指针不动", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(CH, { name: "写周报", templateId: "report" })

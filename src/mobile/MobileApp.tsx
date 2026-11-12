@@ -868,9 +868,13 @@ export default function MobileApp() {
     }
     const r = await renameMobileSession(route.activeUrl, pairCfg.token, selected, renameDraft)
     setRenaming(false)
-    if (r.ok && r.titles) {
-      setTitles(r.titles)
+    if (!r.ok) {
+      setActionError(r.error ?? "重命名失败")
+      return
     }
+    if (r.titles) setTitles(r.titles)
+    // 项目会话的名字就是项目名：改的是项目，没有标题推送，重新读一次会话列表才看得到新名字
+    if (projectId) void refreshBootstrap(route.activeUrl, pairCfg.token)
   }
 
   // 清空当前会话

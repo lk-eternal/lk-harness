@@ -11,6 +11,8 @@ interface Props {
   projectId: string
   /** 会话进程是否在跑；跑完后项目信息（成果、项目信息）可能变了，重新读一次 */
   running: boolean
+  /** 值一变就重读一次：项目在别处改了（比如在会话标题上改了项目名），这里显示的内容要跟着变 */
+  reloadToken?: number
   /** 删项目前确认（沿用对话页的确认弹窗） */
   confirm: (title: string, message: string, ok: string) => Promise<boolean>
   /** 点步骤成功：对话页稍后刷新会话状态 */
@@ -38,7 +40,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
  * 以及项目信息（目标、项目信息、最近成果、文件夹）、归档和删除项目。
  * 归别的通道管的项目（飞书里建的）只读：点快捷操作会把它的会话绑定抢过来，所以不给点。
  */
-export default function ProjectBar({ channelId, projectId, running, confirm, onStarted, onDeleted, onArchiveChanged, onError }: Props) {
+export default function ProjectBar({ channelId, projectId, running, reloadToken, confirm, onStarted, onDeleted, onArchiveChanged, onError }: Props) {
   const preview = usePreview()
   const [view, setView] = useState<ProjectView | null>(null)
   const [open, setOpen] = useState(false)
@@ -55,8 +57,8 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
     } catch { /* 读不到就保持上一次的内容 */ }
   }, [projectId, channelId])
 
-  // 进入项目、会话跑完（running 翻转）、打开信息面板时重读
-  useEffect(() => { void reload() }, [reload, running, open])
+  // 进入项目、会话跑完（running 翻转）、打开信息面板、项目在别处改了（reloadToken 变）时重读
+  useEffect(() => { void reload() }, [reload, running, open, reloadToken])
 
   const close = useCallback(() => setOpen(false), [])
   useOutsideClose(open, rootRef, close)

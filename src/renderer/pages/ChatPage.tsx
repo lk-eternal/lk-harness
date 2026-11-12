@@ -35,7 +35,7 @@ import { CHANNEL_TYPE_LABELS, workspaceDirFromSessionKey, type AgentResource } f
 import { describeAppChannelIssue, ensureAppChannel, planAppChannel, type AppChannelIssue, type EnsureAppChannelIO } from "../../shared/app-channel-ensure"
 import { emptyChannel } from "../channel-defaults"
 import { notifyChannelsChanged } from "../channel-events"
-import { projectDeleteConfirmText, projectIdOfSessionKey, projectNotOwnedHint, type ProjectCreateResult } from "../../shared/project-app-types"
+import { PROJECT_NAME_MAX, projectDeleteConfirmText, projectIdOfSessionKey, projectNotOwnedHint, type ProjectCreateResult } from "../../shared/project-app-types"
 import { ARCHIVED_GROUP_TITLE, pickDefaultTab, splitArchived } from "../../shared/session-archive"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
@@ -123,6 +123,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const [selected, setSelected] = useState<string | null>(null)
   /** 侧栏最下面「已归档」分组是否展开；默认收起，只有一行标题 */
   const [archivedOpen, setArchivedOpen] = useState(false)
+  /** 项目会话改名后加一：让项目栏重读项目信息（里面显示的项目名和会话名是同一个字段） */
+  const [projectBarEpoch, setProjectBarEpoch] = useState(0)
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [resources, setResources] = useState<AgentResource[]>([])
   const [modelBusy, setModelBusy] = useState(false)
@@ -349,7 +351,23 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const renameSession = async (name: string) => {
     if (!selected) return
     const r = await window.electronAPI.appChatRenameSession(selected, name)
-    if (!r.ok) setActionError(r.error ?? "重命名失败")
+    if (!r.ok) { setActionError(r.error ?? "重命名失败"); return }
+    // 项目会话的名字就是项目名：改的是项目，不是会话标题，没有标题推送，得自己刷新
+    if (projectIdOfSessionKey(selected)) projectRenamed(selected, name.trim())
+  }
+
+  /**
+   * 项目会话改名成功：先在本地列表里改上（马上看到新名字），项目栏里的项目名重读，
+   * 再重新读一次会话列表——刷新正好在途时晚到的旧结果会把旧名字盖回来，所以稍后补读一次。
+   */
+  const projectRenamed = (sessionKey: string, name: string) => {
+    setViews((prev) => prev.map((v) => ({
+      ...v,
+      tabs: v.tabs.map((t) => (sameChatSession(t.sessionKey, sessionKey) ? { ...t, label: name } : t)),
+    })))
+    setProjectBarEpoch((n) => n + 1)
+    void refresh()
+    window.setTimeout(() => { void refresh() }, 600)
   }
 
   const deleteSession = async (t: ChatTab) => {
@@ -724,7 +742,14 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-subtle px-6">
                   {sidebarToggle}
                   <div className="min-w-0 flex-1">
-                    <SessionTitle key={selected} name={sessionName(tab)} onRename={tab.kind === "project" ? undefined : (name) => void renameSession(name)} />
+                    <SessionTitle
+                      key={selected}
+                      name={sessionName(tab)}
+                      onRename={(name) => void renameSession(name)}
+                      // 项目会话的名字就是项目名：不能留空，上限和建项一样
+                      maxLength={tab.kind === "project" ? PROJECT_NAME_MAX : undefined}
+                      placeholder={tab.kind === "project" ? "项目名称" : undefined}
+                    />
                   </div>
                   <button
                     type="button"
@@ -769,6 +794,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                           channelId={ownerView.channelId}
                           projectId={projectId}
                           running={!!tab.running}
+                          reloadToken={projectBarEpoch}
                           confirm={showConfirm}
                           onStarted={() => { window.setTimeout(() => { void refresh() }, 600) }}
                           onDeleted={() => void projectDeleted(tab)}

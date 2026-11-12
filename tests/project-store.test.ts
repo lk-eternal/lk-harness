@@ -8,6 +8,7 @@ import {
   getCurrentProject,
   getNodeGroups,
   getProject,
+  renameProject,
   saveProject,
   setProjectArchived,
   getProjectNodes,
@@ -141,6 +142,29 @@ describe("project-store", () => {
 
     it("项目不存在：返回 undefined", () => {
       expect(setProjectArchived("nope", true)).toBeUndefined()
+    })
+
+    it("改名：只改名称这一个字段，别的（目标、归档、分支）原样，更新时间往前走", async () => {
+      const p = make("旧名字")
+      setProjectArchived(p.id, true)
+      const before = getProject(p.id)!
+      await new Promise((r) => setTimeout(r, 5))
+
+      const renamed = renameProject(p.id, "新名字")!
+      expect(renamed.name).toBe("新名字")
+      expect(getProject(p.id)?.name).toBe("新名字")
+      expect(rawOf(p.id).name).toBe("新名字")
+      expect(renamed).toMatchObject({ goal: before.goal, featureBranch: before.featureBranch, archivedAt: before.archivedAt })
+      expect(renamed.updatedAt).toBeGreaterThan(before.updatedAt)
+    })
+
+    it("改成一样的名字：不写盘（更新时间不动）；项目不存在：返回 undefined", async () => {
+      const p = make("同名")
+      const before = getProject(p.id)!
+      await new Promise((r) => setTimeout(r, 5))
+      expect(renameProject(p.id, "同名")?.updatedAt).toBe(before.updatedAt)
+      expect(getProject(p.id)?.updatedAt).toBe(before.updatedAt)
+      expect(renameProject("nope", "x")).toBeUndefined()
     })
 
     it("旧数据 status=done 读出来就是已归档（归档时间取最后更新时间），status 字段不再带出，下次保存后从文件里消失", () => {
