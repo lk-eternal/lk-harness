@@ -386,6 +386,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
     discardComposerDraft(t.sessionKey)
+    preview.dropSession(t.sessionKey)
     // 先从列表里拿掉，再刷新：正在进行中的刷新可能是删除前发出的，晚到时不能让它把会话带回来
     markSessionDeleted(deletedRef.current, t.sessionKey)
     setViews((prev) => hideDeletedTabs(prev, deletedRef.current))
@@ -519,6 +520,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const projectDeleted = async (t: ChatTab) => {
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
     discardComposerDraft(t.sessionKey)
+    preview.dropSession(t.sessionKey)
     markSessionDeleted(deletedRef.current, t.sessionKey)
     setViews((prev) => hideDeletedTabs(prev, deletedRef.current))
     await refresh()

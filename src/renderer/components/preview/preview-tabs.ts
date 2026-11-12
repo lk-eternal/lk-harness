@@ -1,4 +1,6 @@
 // ── 预览面板的标签页状态（纯函数；id 由调用方生成，保证 reducer 无副作用）────────
+// 两层：PreviewState 是「一个会话」的标签页（文件、网页都在里面），previewReducer 管它；
+// PreviewSessions 是「所有会话各一份」，previewSessionsReducer 把动作路由到对应会话那一份。
 
 import type { PreviewWebState } from "../../../shared/preview-types"
 import { hostLabel, isHttpUrl } from "../../../shared/preview-url"
@@ -31,10 +33,16 @@ export interface WebTab {
   canGoForward: boolean
   error?: string
   favicon?: string
+  /**
+   * 主进程里的网页视图已经销毁（同时开着的网页太多，换出去了最久没看的）：标签页还在，网址留着，
+   * 下次要看它时重新加载。页面里没提交的输入、滚动位置会丢，登录状态在共用的存储分区里，不受影响
+   */
+  discarded?: boolean
 }
 
 export type PreviewTab = FileTab | WebTab
 
+/** 一个会话的预览标签页 */
 export interface PreviewState {
   tabs: PreviewTab[]
   activeId: string | null
@@ -44,8 +52,14 @@ export interface PreviewState {
 
 export const INITIAL_PREVIEW_STATE: PreviewState = { tabs: [], activeId: null, open: false }
 
-/** 标签页上限：每个网页标签页背后是一个完整的浏览器进程，不能无限开 */
+/** 一个会话的标签页上限 */
 export const MAX_PREVIEW_TABS = 12
+
+/**
+ * 所有会话加起来，主进程里同时活着的网页视图上限：每个网页标签页背后是一个完整的浏览器进程，
+ * 标签页按会话分开之后总数不再有天然的上限，必须在这里兜住。超出的把最久没看的换出去（discarded）
+ */
+export const MAX_LIVE_WEB_TABS = 12
 
 export type PreviewAction =
   | { type: "openFile"; id: string; sessionKey: string; path: string; name: string; line?: number }
@@ -59,6 +73,10 @@ export type PreviewAction =
   | { type: "activate"; id: string }
   | { type: "close"; id: string }
   | { type: "setOpen"; open: boolean }
+  /** 换出去这些网页标签页（主进程里的视图由调用方销毁） */
+  | { type: "discard"; ids: string[] }
+  /** 换出去的网页标签页要看了：重新加载它最后停留的网址 */
+  | { type: "revive"; id: string }
 
 const norm = (p: string) => p.replace(/[\\/]+/g, "/").toLowerCase()
 
@@ -108,19 +126,43 @@ export function previewReducer(state: PreviewState, action: PreviewAction): Prev
       if (!isHttpUrl(action.url)) return state
       return {
         ...state,
-        tabs: state.tabs.map((t) => (t.id === action.id && t.kind === "web" ? { ...t, url: action.url, pendingUrl: action.url, loading: true, error: undefined } : t)),
+        tabs: state.tabs.map((t) => (t.id === action.id && t.kind === "web" ? { ...t, url: action.url, pendingUrl: action.url, loading: true, error: undefined, discarded: undefined } : t)),
       }
     }
     case "webStarted":
       return { ...state, tabs: state.tabs.map((t) => (t.id === action.id && t.kind === "web" && t.pendingUrl ? { ...t, pendingUrl: undefined } : t)) }
     case "webState": {
       const s = action.state
+      const index = state.tabs.findIndex((t) => t.id === s.tabId && t.kind === "web")
+      if (index < 0) return state
+      const t = state.tabs[index] as WebTab
+      // 已经换出去的标签页，主进程里的视图销毁前后可能还有几条状态晚到：不能让它们盖掉换出时的状态
+      if (t.discarded) return state
+      const next: WebTab = { ...t, url: s.url || t.url, title: s.title, loading: s.loading, canGoBack: s.canGoBack, canGoForward: s.canGoForward, error: s.error, favicon: s.favicon }
+      // 页面里标题、前进后退状态隔一会儿就推一条，多半什么都没变：原样返回，订阅它的界面就不用重绘
+      if (sameWebView(t, next)) return state
+      return { ...state, tabs: state.tabs.map((x, i) => (i === index ? next : x)) }
+    }
+    case "discard": {
+      if (!state.tabs.some((t) => hasNativeView(t) && action.ids.includes(t.id))) return state
       return {
         ...state,
-        tabs: state.tabs.map((t) => {
-          if (t.id !== s.tabId || t.kind !== "web") return t
-          return { ...t, url: s.url || t.url, title: s.title, loading: s.loading, canGoBack: s.canGoBack, canGoForward: s.canGoForward, error: s.error, favicon: s.favicon }
-        }),
+        tabs: state.tabs.map((t) => (
+          hasNativeView(t) && action.ids.includes(t.id)
+            ? { ...t, discarded: true, pendingUrl: undefined, loading: false, canGoBack: false, canGoForward: false, error: undefined }
+            : t
+        )),
+      }
+    }
+    case "revive": {
+      if (!state.tabs.some((t) => t.id === action.id && t.kind === "web" && t.discarded)) return state
+      return {
+        ...state,
+        tabs: state.tabs.map((t) => (
+          t.id === action.id && t.kind === "web" && t.discarded
+            ? { ...t, discarded: undefined, pendingUrl: t.url, loading: true }
+            : t
+        )),
       }
     }
     case "asText":
@@ -143,10 +185,109 @@ export function previewReducer(state: PreviewState, action: PreviewAction): Prev
   }
 }
 
-/** 前后两个状态之间被移除的网页标签页：主进程里对应的视图要跟着销毁 */
-export function removedWebTabIds(prev: PreviewState, next: PreviewState): string[] {
-  const alive = new Set(next.tabs.map((t) => t.id))
-  return prev.tabs.filter((t) => t.kind === "web" && !alive.has(t.id)).map((t) => t.id)
+/** 这个标签页在主进程里有网页视图：开着网页、没被换出去。空白标签页还没有加载过任何网址，没有视图 */
+function hasNativeView(tab: PreviewTab): tab is WebTab {
+  return tab.kind === "web" && !!tab.url && !tab.discarded
+}
+
+function sameWebView(a: WebTab, b: WebTab): boolean {
+  return a.url === b.url && a.title === b.title && a.loading === b.loading && a.canGoBack === b.canGoBack
+    && a.canGoForward === b.canGoForward && a.error === b.error && a.favicon === b.favicon
+}
+
+// ── 所有会话各一份 ─────────────────────────────────────────────────────────
+
+/** 键是会话的统一标识（appChatSessionId）；没有标签页的会话不留记录 */
+export type PreviewSessions = Readonly<Record<string, PreviewState>>
+
+export const NO_SESSIONS: PreviewSessions = {}
+
+export type PreviewSessionsAction =
+  /** 对指定会话的标签页做 action */
+  | { type: "in"; session: string; action: PreviewAction }
+  /** 对 id 这个标签页做 action：它在哪个会话里就对哪个会话做（主进程推来的网页状态、界面上点的标签页） */
+  | { type: "byTab"; tabId: string; action: PreviewAction }
+  /** 会话没了：它的标签页全部丢掉 */
+  | { type: "drop"; session: string }
+  /** 换出去这些网页标签页，不管它们在哪个会话里 */
+  | { type: "discard"; ids: string[] }
+
+/** 某个会话的标签页；没有就是共用的空状态（引用稳定，可以直接当 useSyncExternalStore 的快照） */
+export function sessionPreview(sessions: PreviewSessions, session: string | null): PreviewState {
+  return (session && sessions[session]) || INITIAL_PREVIEW_STATE
+}
+
+/** 标签页在哪个会话里 */
+export function ownerSession(sessions: PreviewSessions, tabId: string): string | undefined {
+  for (const key of Object.keys(sessions)) if (sessions[key].tabs.some((t) => t.id === tabId)) return key
+  return undefined
+}
+
+/** 把一个会话的新状态放回去；没变就原样返回，空了就不留记录 */
+function withSession(sessions: PreviewSessions, session: string, inner: PreviewState): PreviewSessions {
+  if (inner === sessionPreview(sessions, session)) return sessions
+  if (inner.tabs.length === 0) return dropSession(sessions, session)
+  return { ...sessions, [session]: inner }
+}
+
+function dropSession(sessions: PreviewSessions, session: string): PreviewSessions {
+  if (!(session in sessions)) return sessions
+  const { [session]: _gone, ...rest } = sessions
+  return rest
+}
+
+export function previewSessionsReducer(sessions: PreviewSessions, action: PreviewSessionsAction): PreviewSessions {
+  switch (action.type) {
+    case "in":
+      return withSession(sessions, action.session, previewReducer(sessionPreview(sessions, action.session), action.action))
+    case "byTab": {
+      const session = ownerSession(sessions, action.tabId)
+      return session ? withSession(sessions, session, previewReducer(sessions[session], action.action)) : sessions
+    }
+    case "drop":
+      return dropSession(sessions, action.session)
+    case "discard": {
+      let next = sessions
+      for (const key of Object.keys(sessions)) {
+        next = withSession(next, key, previewReducer(next[key], { type: "discard", ids: action.ids }))
+      }
+      return next
+    }
+  }
+}
+
+/** 前后两个状态之间，主进程里的网页视图要销毁的标签页：被关掉、被淘汰、会话没了、被换出去 */
+export function releasedWebTabIds(prev: PreviewSessions, next: PreviewSessions): string[] {
+  const released: string[] = []
+  for (const key of Object.keys(prev)) {
+    const before = prev[key]
+    const after = next[key]
+    if (before === after) continue
+    const alive = new Set((after?.tabs ?? []).filter(hasNativeView).map((t) => t.id))
+    for (const t of before.tabs) if (hasNativeView(t) && !alive.has(t.id)) released.push(t.id)
+  }
+  return released
+}
+
+/** 所有会话里，主进程中现在活着网页视图的标签页 */
+export function liveWebTabIds(sessions: PreviewSessions): string[] {
+  const ids: string[] = []
+  for (const key of Object.keys(sessions)) for (const t of sessions[key].tabs) if (hasNativeView(t)) ids.push(t.id)
+  return ids
+}
+
+/**
+ * 网页视图超过上限时该换出去的标签页：最久没看的先走。keepId（正在看的标签页）一定留下。
+ * lastUsed 是标签页最近一次被看的时间（单调递增的序号即可），没有记录的按最久没看算。
+ */
+export function pickDiscards(sessions: PreviewSessions, lastUsed: ReadonlyMap<string, number>, keepId: string | null, max: number = MAX_LIVE_WEB_TABS): string[] {
+  const live = liveWebTabIds(sessions)
+  const over = live.length - max
+  if (over <= 0) return []
+  return live
+    .filter((id) => id !== keepId)
+    .sort((a, b) => (lastUsed.get(a) ?? 0) - (lastUsed.get(b) ?? 0))
+    .slice(0, over)
 }
 
 /** 标签页上显示的名字 */

@@ -20,7 +20,8 @@ export default function WebViewer({ tab, visible, dragging }: { tab: WebTab; vis
   /** 要让位且截图已经拿到（或放弃等了）：这时才真的把原生视图藏起来 */
   const [yielded, setYielded] = useState(false)
 
-  const hasPage = !!tab.url && !tab.error
+  // 被换出去的标签页主进程里没有视图，换回来（重新加载）之前没有页面可摆；换回来后 showNative 翻成 true，位置会重新告诉主进程
+  const hasPage = !!tab.url && !tab.error && !tab.discarded
   const needYield = visible && hasPage && (overlayOpen || dragging)
 
   useEffect(() => {
