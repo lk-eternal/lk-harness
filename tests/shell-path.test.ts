@@ -5,6 +5,7 @@ import {
   fallbackDirCandidates,
   newestVersionDir,
   parseShellEnvPath,
+  pickLoginShell,
   splitPathList,
   supportsLoginShellProbe,
 } from "../src/shared/shell-path"
@@ -106,6 +107,30 @@ describe("fallbackDirCandidates", () => {
   it("没有家目录时不拼出 /.volta 这类错路径", () => {
     const dirs = fallbackDirCandidates("")
     expect(dirs.every((d) => d.startsWith("/opt/") || d.startsWith("/usr/"))).toBe(true)
+  })
+})
+
+describe("pickLoginShell", () => {
+  const onDisk = new Set(["/bin/zsh", "/bin/bash", "/bin/tcsh", "/opt/homebrew/bin/fish"])
+  const exists = (p: string) => onDisk.has(p)
+
+  it("用户中途 chsh -s /bin/zsh：图形应用的 $SHELL 还是旧的 bash，账号记录里已经是 zsh，要用 zsh（和新开的 Terminal 一致）", () => {
+    expect(pickLoginShell(["/bin/zsh", "/bin/bash"], exists)).toBe("/bin/zsh")
+  })
+  it("账号记录里的不能用（服务账号的 nologin、tcsh）就退到 $SHELL，再退到系统自带的", () => {
+    expect(pickLoginShell(["/usr/sbin/nologin", "/bin/bash"], exists)).toBe("/bin/bash")
+    expect(pickLoginShell(["/bin/tcsh", undefined, "/bin/zsh", "/bin/bash"], exists)).toBe("/bin/zsh")
+  })
+  it("候选里写了但磁盘上没有的跳过", () => {
+    expect(pickLoginShell(["/usr/local/bin/zsh", "/bin/bash"], exists)).toBe("/bin/bash")
+  })
+  it("空值、null 都跳过；一个能用的都没有就是 undefined", () => {
+    expect(pickLoginShell([null, undefined, "", "/bin/bash"], exists)).toBe("/bin/bash")
+    expect(pickLoginShell([null, undefined, "/bin/csh"], exists)).toBeUndefined()
+    expect(pickLoginShell([], exists)).toBeUndefined()
+  })
+  it("用户自己装的 fish 也认", () => {
+    expect(pickLoginShell(["/opt/homebrew/bin/fish"], exists)).toBe("/opt/homebrew/bin/fish")
   })
 })
 

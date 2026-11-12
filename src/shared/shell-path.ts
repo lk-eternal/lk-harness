@@ -85,3 +85,16 @@ export function supportsLoginShellProbe(shellPath: string): boolean {
   const base = shellPath.split("/").pop() ?? ""
   return ["zsh", "bash", "fish", "ksh", "sh"].includes(base)
 }
+
+/**
+ * 从候选里挑要开的 login shell：第一个「支持 -ilc 且磁盘上真有」的。
+ * 候选的顺序由调用方给：系统账号记录里的 shell 要排在环境变量 $SHELL 前面——
+ * 图形应用的 $SHELL 是登录会话开始时定的，用户中途 `chsh -s /bin/zsh` 改了登录 shell 之后它还是旧值（要注销重登才变），
+ * 而新开的 Terminal 用的是账号记录里的。服务账号的 /usr/sbin/nologin 这类会被跳过。
+ */
+export function pickLoginShell(candidates: (string | null | undefined)[], exists: (p: string) => boolean): string | undefined {
+  for (const c of candidates) {
+    if (c && supportsLoginShellProbe(c) && exists(c)) return c
+  }
+  return undefined
+}

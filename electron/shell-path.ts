@@ -3,14 +3,14 @@
 // 做法分两步，都是改 process.env.PATH（之后起的子进程——工具箱检测、daemon、MCP——都继承它）：
 //   1. 立刻（同步）：把 Homebrew、/usr/local/bin、volta / asdf / mise / nvm 等常见目录里真实存在的补上。
 //      装在这些位置的用户不用等任何东西。
-//   2. 后台：开一个 login shell（`$SHELL -ilc env`）读用户在 .zprofile / .zshrc / .bash_profile 里配出来的 PATH，
+//   2. 后台：开一个 login shell（账号记录里的 shell，`-ilc env`）读用户在 .zprofile / .zshrc / .bash_profile 里配出来的 PATH，
 //      排到最前面，和终端里看到的顺序一致。nvm / fnm 这类只在 rc 文件里初始化的靠这一步。
 // 需要完整 PATH 的地方（工具箱检测、启动 daemon）await shellPathReady()。Windows 不需要，直接跳过。
 import { execFile } from "node:child_process"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import { promisify } from "node:util"
-import { SHELL_ENV_DELIMITER, buildPath, fallbackDirCandidates, newestVersionDir, parseShellEnvPath, splitPathList, supportsLoginShellProbe } from "../src/shared/shell-path"
+import { SHELL_ENV_DELIMITER, buildPath, fallbackDirCandidates, newestVersionDir, parseShellEnvPath, pickLoginShell, splitPathList, supportsLoginShellProbe } from "../src/shared/shell-path"
 
 const execFileAsync = promisify(execFile)
 
@@ -68,16 +68,17 @@ export async function probeLoginShellPath(shell: string, timeoutMs = SHELL_PROBE
 }
 
 export function defaultShellPathDeps(): ShellPathDeps {
-  let shell = process.env.SHELL
-  if (!shell) {
-    try { shell = os.userInfo().shell ?? undefined } catch { /* 没有 passwd 记录 */ }
-  }
+  const exists = (p: string): boolean => { try { return fs.existsSync(p) } catch { return false } }
+  let passwdShell: string | null | undefined
+  try { passwdShell = os.userInfo().shell } catch { /* 没有 passwd 记录 */ }
+  const darwin = process.platform === "darwin"
   return {
     env: process.env,
     platform: process.platform,
     home: os.homedir(),
-    shell: shell || (process.platform === "darwin" ? "/bin/zsh" : undefined),
-    exists: (p) => { try { return fs.existsSync(p) } catch { return false } },
+    // 账号记录里的在前（和新开的 Terminal 一致，chsh 之后立刻生效），$SHELL 在后，最后是 macOS 的两个系统自带 shell
+    shell: pickLoginShell([passwdShell, process.env.SHELL, darwin ? "/bin/zsh" : undefined, darwin ? "/bin/bash" : undefined], exists),
+    exists,
     listDir: (p) => { try { return fs.readdirSync(p) } catch { return [] } },
     probeShellPath: (s) => probeLoginShellPath(s),
   }
