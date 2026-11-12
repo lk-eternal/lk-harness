@@ -97,9 +97,6 @@ import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
 import { registerScheduleTools, type ScheduleApi } from "./server-schedule.js";
 import { aiScheduleStateFile, readAiScheduleRuns, writeAiScheduleRuns } from "./shared/ai-schedule-state.js";
-import { createBugWatcher, createMeegleBugSource, type BugWatchDeps } from "./daemon-bug-watch.js";
-import { bugWatchStateFile, readBugWatchState, writeBugWatchState } from "./shared/project-bug-watch-state.js";
-import { meegleAuthenticated, runMeegleJson } from "./shared/meegle-cli.js";
 import { registerDiffTools } from "./server-diff.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
@@ -4017,14 +4014,6 @@ function startHttpServer(): Promise<number> {
           return;
         }
 
-        // 立刻跑一轮缺陷监控（可只查一个项目）：返回每个项目这一轮的结果，便于排查「为什么没通知」
-        if (method === "POST" && pathname === "/api/bug-watch-run") {
-          const body = JSON.parse((await readBody(req)) || "{}");
-          const projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined;
-          json(res, { ok: true, ...(await bugWatcher.runNow({ projectId })) });
-          return;
-        }
-
         // 设置页取消 AI 排程：与 AI 自己 schedule_cancel 同一套（在跑的先停用，不直接删）
         if (method === "POST" && pathname === "/api/ai-task-cancel") {
           const body = JSON.parse(await readBody(req));
@@ -4039,14 +4028,6 @@ function startHttpServer(): Promise<number> {
           const target = tasks.find((t) => t.id === taskId && isAiTask(t));
           if (!target) { json(res, { ok: false, error: "排程不存在（可能已结束并被清理）" }); return; }
           json(res, { ok: true, ...cancelAiTaskRecord(tasks, target) });
-          return;
-        }
-
-        // 立刻检查一轮项目缺陷（调试 / 测试用；平时由定时器按间隔跑）
-        if (method === "POST" && pathname === "/api/bug-watch-run") {
-          const body = JSON.parse((await readBody(req)) || "{}");
-          const projectId = typeof body.projectId === "string" && body.projectId.trim() ? body.projectId.trim() : undefined;
-          json(res, { ok: true, ...(await bugWatcher.runNow({ projectId })) });
           return;
         }
 
@@ -6125,49 +6106,6 @@ function cancelAiTaskRecord(tasks: ScheduledTask[], target: ScheduledTask): { bu
   return { busy: false };
 }
 
-// ── 项目缺陷监控 ────────────────────────────────────────
-// 编排与规则在 daemon-bug-watch.ts / shared/project-bug-watch.ts；这里只接真实的外部动作：
-// 飞书项目 CLI、项目会话队列、项目群通知、去重记录文件。
-
-const BUG_WATCH_STATE_FILE = bugWatchStateFile(APP_DATA_DIR || ".");
-
-const bugWatchDeps: BugWatchDeps = {
-  now: () => Date.now(),
-  listProjects: () => listProjects(),
-  authenticated: () => meegleAuthenticated(),
-  ...createMeegleBugSource(runMeegleJson),
-  loadState: () => readBugWatchState(BUG_WATCH_STATE_FILE),
-  saveState: (state) => writeBugWatchState(BUG_WATCH_STATE_FILE, state),
-  deliverToSession(project, text) {
-    const target = resolveProjectAgentTarget(project.id, getProject(project.id));
-    if (!target.ok) return { ok: false, error: target.error };
-    if (!pushToAgentSession({ ...target, chatType: "project" }, text, `internal_bugwatch_${project.id}_${Date.now()}`)) {
-      return { ok: false, error: "写入会话队列失败" };
-    }
-    return { ok: true };
-  },
-  async notifyGroup(project, text) {
-    const full = getProject(project.id);
-    const target = resolveProjectAgentTarget(project.id, full);
-    // 项目专属群优先；没有独立群的项目，消息发到它的会话所在的聊天
-    const chatKey = full?.groupChatId || full?.notifyChatId || (target.ok ? target.chatKey : "");
-    if (!chatKey) return;
-    await replyToMessage(`internal_bugwatch_notice_${project.id}_${Date.now()}`, text, chatKey, undefined, undefined, {
-      sessionKey: target.ok ? target.sessionKey : undefined,
-    });
-  },
-  log: (level, msg) => log(level, msg),
-};
-
-/** LK_BUG_WATCH_INTERVAL_MS：调试 / 测试用，缩短（或拉长）检查间隔；不设就用默认的 10 分钟 */
-const bugWatchIntervalOverride = Number(process.env.LK_BUG_WATCH_INTERVAL_MS);
-const bugWatcher = createBugWatcher(
-  bugWatchDeps,
-  Number.isFinite(bugWatchIntervalOverride) && bugWatchIntervalOverride > 0
-    ? { intervalMs: bugWatchIntervalOverride, firstDelayMs: bugWatchIntervalOverride }
-    : {},
-);
-
 export async function daemonMain(): Promise<void> {
   if (CHANNEL_CONFIGS.length === 0) {
     log("ERROR", "未配置任何消息通道，至少需要启用一个（CLAW_CHANNELS_JSON 为空）");
@@ -6182,7 +6120,6 @@ export async function daemonMain(): Promise<void> {
 
   const cleanup = () => {
     stopDaemonScheduledTasks();
-    bugWatcher.stop();
     removeLockFile();
     process.exit(0);
   };
@@ -6235,7 +6172,6 @@ export async function daemonMain(): Promise<void> {
     fireScheduledTask(task, content);
   });
   setInterval(sweepAiTasks, 60_000).unref();
-  bugWatcher.start();
 
   log("INFO", `Daemon 就绪 ✓ port=${daemonPort}`);
 }

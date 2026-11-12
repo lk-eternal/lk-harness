@@ -350,8 +350,9 @@ function writeJson(filePath: string, data: unknown): void {
  * 存量 actions[] → lastArtifact*；去掉运行态数组。
  * 旧版有 status（进行中 / 已暂停 / 已完成）：「已完成」按已归档读，其余当普通项目；读出来之后不再带这个字段，下次保存时从文件里消失。
  */
-function normalizeProject(raw: Project & { status?: unknown }): Project {
-  const { status, ...rest } = raw
+function normalizeProject(raw: Project & { status?: unknown; watchBugs?: unknown }): Project {
+  // status 是旧版的三态；watchBugs 是旧版「自动盯缺陷」的开关（功能已去掉）：老项目文件里留着的都不要了，下次保存时一并清掉
+  const { status, watchBugs, ...rest } = raw
   const p: Project = { ...rest }
   if (status === "done" && !p.archivedAt) p.archivedAt = p.updatedAt || p.createdAt || Date.now()
   if (!p.lastArtifactPath && Array.isArray(p.actions) && p.actions.length) {

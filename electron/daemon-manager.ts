@@ -81,7 +81,6 @@ import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared
 import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
 import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
 import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
-import { bugWatchUnsupportedReason } from "../src/shared/project-bug-watch.js"
 import {
   readGitBranch,
   formatSessionLabel,
@@ -2014,7 +2013,6 @@ export function initDaemonManager(): void {
     groupId?: string
     groupIds?: string[]
     metadata?: Record<string, string>
-    watchBugs?: boolean
   }) => {
     initProjectStore(app.getPath("userData"))
     const p = getProject(String(patch?.id || "").trim())
@@ -2029,16 +2027,6 @@ export function initDaemonManager(): void {
     if (typeof patch.relatedDocs === "string") p.relatedDocs = patch.relatedDocs.trim() || undefined
     if (typeof patch.productDocUrl === "string") p.productDocUrl = patch.productDocUrl.trim() || undefined
     if (typeof patch.techDocUrl === "string") p.techDocUrl = patch.techDocUrl.trim() || undefined
-    if (typeof patch.watchBugs === "boolean") {
-      if (patch.watchBugs) {
-        // 需求链接不是 wk-dm 的产品需求时开了也只会空转，直接说清楚
-        const why = bugWatchUnsupportedReason(p.storyUrl)
-        if (why) return { ok: false, error: `不能开启自动盯缺陷：${why}` }
-        p.watchBugs = true
-      } else {
-        delete p.watchBugs
-      }
-    }
     if (patch.metadata !== undefined) {
       if (patch.metadata && typeof patch.metadata === "object") {
         const meta: Record<string, string> = {}

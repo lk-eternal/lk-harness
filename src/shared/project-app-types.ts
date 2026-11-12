@@ -200,7 +200,6 @@ export interface ProjectListItem {
   workspaceType?: string
   metadata: Record<string, string>
   groupChatId?: string
-  watchBugs: boolean
 }
 
 /**

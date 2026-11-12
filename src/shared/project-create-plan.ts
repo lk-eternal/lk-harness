@@ -315,7 +315,6 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     ...(p.workspaceType ? { workspaceType: p.workspaceType } : {}),
     metadata: { ...(p.metadata ?? {}) },
     ...(p.groupChatId ? { groupChatId: p.groupChatId } : {}),
-    watchBugs: p.watchBugs === true,
   }
 }
 

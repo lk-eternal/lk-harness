@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 import type { ProjectListItem } from "../src/shared/project-app-types.js"
 import {
-  INFO_KEY_MAX, bugWatchView, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow, retargetInfo, sameIdList, splitInfo,
+  INFO_KEY_MAX, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow, retargetInfo, sameIdList, splitInfo,
 } from "../src/shared/project-detail-form.js"
 import { DEFAULT_NODE_GROUPS, type ProjectFieldDef, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
 
@@ -150,31 +150,5 @@ describe("linkFieldsShown（哪些链接输入框要出现）", () => {
     expect(linkFieldsShown(saved({ storyUrl: "https://x", productDocUrl: "https://p", techDocUrl: "https://t", relatedDocs: "文档" })))
       .toEqual(["storyUrl", "relatedDocs", "productDocUrl", "techDocUrl"])
     expect(linkFieldsShown(saved({ techDocUrl: "https://t" }))).toEqual(["techDocUrl"])
-  })
-})
-
-describe("bugWatchView（自动盯缺陷开关）", () => {
-  const WK = "https://project.feishu.cn/wk-dm/story/detail/123456"
-
-  it("项目链接框没出现、也没开过：不展示", () => {
-    expect(bugWatchView(undefined, false, false)).toBeUndefined()
-    expect(bugWatchView(WK, false, false)).toBeUndefined()
-  })
-
-  it("链接不是飞书 wk-dm 的、也没开过：不展示，别给其他人添困惑", () => {
-    expect(bugWatchView("https://example.com/x", false, true)).toBeUndefined()
-    expect(bugWatchView("", false, true)).toBeUndefined()
-  })
-
-  it("链接匹配：能开，状态如实反映", () => {
-    expect(bugWatchView(WK, false, true)).toEqual({ disabled: false, checked: false })
-    expect(bugWatchView(WK, true, true)).toEqual({ disabled: false, checked: true })
-  })
-
-  it("开过、但链接后来被改成不匹配的：展示出来但只能关（带原因），并显示为未勾选", () => {
-    const v = bugWatchView("https://example.com/x", true, true)
-    expect(v?.disabled).toBe(true)
-    expect(v?.checked).toBe(false)
-    expect(v?.reason).toBeTruthy()
   })
 })

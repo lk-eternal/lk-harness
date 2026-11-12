@@ -307,7 +307,7 @@ const api = {
     ipcRenderer.invoke("project:set-archived", projectId, archived, channelId),
   updateProject: (patch: {
     id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
-    groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
+    groupId?: string; groupIds?: string[]; metadata?: Record<string, string>
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:update", patch),
   listProjectTemplates: (): Promise<ProjectTemplateInfo[]> => ipcRenderer.invoke("project:templates"),

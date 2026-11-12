@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Archive, ArchiveRestore, ChevronRight, Copy, FolderOpen, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { PROJECT_NAME_MAX, PROJECT_TEXT_MAX, projectDeleteConfirmText, type ProjectListItem } from "../../../shared/project-app-types"
-import { bugWatchUnsupportedReason } from "../../../shared/project-bug-watch"
 import {
-  INFO_KEY_MAX, LINK_FIELDS, bugWatchView, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow,
+  INFO_KEY_MAX, LINK_FIELDS, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow,
   retargetInfo, sameIdList, splitInfo, type InfoForm, type LinkKey,
 } from "../../../shared/project-detail-form"
 import { usePanelSave } from "../usePanelSave"
@@ -18,7 +17,6 @@ interface Draft {
   goal: string
   groupIds: string[]
   links: Record<LinkKey, string>
-  watchBugs: boolean
   info: InfoForm
 }
 
@@ -33,7 +31,6 @@ function draftOf(item: ProjectListItem): Draft {
       productDocUrl: item.productDocUrl ?? "",
       techDocUrl: item.techDocUrl ?? "",
     },
-    watchBugs: item.watchBugs,
     info: splitInfo(item.fields, item.metadata),
   }
 }
@@ -92,8 +89,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
   const dirty = snapshotOf(draft) !== base
   const fields = useMemo(() => fieldsForSelection(item, draft.groupIds, groups), [item, draft.groupIds, groups])
   const shownLinks = useMemo(() => linkFieldsShown(item), [item])
-  const storyShown = shownLinks.includes("storyUrl")
-  const bugView = bugWatchView(draft.links.storyUrl, draft.watchBugs, storyShown)
   const canSave = !!draft.name.trim() && dirty
 
   const save = async (): Promise<boolean> => {
@@ -110,9 +105,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
     for (const k of shownLinks) patch[k] = draft.links[k].trim()
     // 模板没换就别传：传了会让主进程重新复制项目的快捷操作
     if (!sameIdList(draft.groupIds, item.groupIds)) patch.groupIds = draft.groupIds
-    // 需求链接不支持时一律关掉（改掉链接后不能留着一个空转的开关）
-    const story = storyShown ? draft.links.storyUrl : (item.storyUrl ?? "")
-    patch.watchBugs = !bugWatchUnsupportedReason(story) && draft.watchBugs
     setBusy(true)
     try {
       const r = await window.electronAPI.updateProject(patch)
@@ -272,25 +264,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
                     />
                   )}
                 </label>
-                {l.key === "storyUrl" && bugView && (
-                  <div className="mt-2">
-                    <label className={`flex items-center gap-2 text-xs ${bugView.disabled ? "text-fg-faint" : "text-fg-3"}`}>
-                      <input
-                        type="checkbox"
-                        disabled={bugView.disabled}
-                        checked={bugView.checked}
-                        onChange={(e) => setDraft({ ...draft, watchBugs: e.target.checked })}
-                        className="rounded border-line-strong"
-                      />
-                      自动盯缺陷
-                    </label>
-                    <p className="mt-1 text-[11px] leading-relaxed text-fg-muted">
-                      {bugView.reason
-                        ? `暂不能开启：${bugView.reason}`
-                        : "每 10 分钟查一次飞书项目里关联本需求的缺陷，发现新增的就交给项目会话处理，并在项目群里提一句。开启时已有的缺陷不会通知，只通知之后新增的。"}
-                    </p>
-                  </div>
-                )}
               </div>
             ))}
           </div>

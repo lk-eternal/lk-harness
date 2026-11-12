@@ -77,11 +77,6 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
     expect(live).not.toHaveProperty("status")
     expect(buildProjectListItem(project({ archivedAt: 1700000000000 }), opts).archived).toBe(true)
   })
-
-  it("watchBugs 只有明确为 true 才是 true", () => {
-    expect(buildProjectListItem(project(), { groups: pick("general"), globals: globals() }).watchBugs).toBe(false)
-    expect(buildProjectListItem(project({ watchBugs: true }), { groups: pick("general"), globals: globals() }).watchBugs).toBe(true)
-  })
 })
 
 describe("changeProjectGroups（改项目的模板）", () => {

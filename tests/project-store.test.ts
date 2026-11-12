@@ -201,6 +201,22 @@ describe("project-store", () => {
       }
     })
 
+    it("旧数据里的 watchBugs（已去掉的「自动盯缺陷」开关）：读出来没有，下次保存后从文件里消失，别的字段不受影响", () => {
+      const p = make("watching")
+      const raw = rawOf(p.id)
+      raw.watchBugs = true
+      fs.writeFileSync(fileOf(p.id), JSON.stringify(raw), "utf-8")
+
+      const got = getProject(p.id)!
+      expect(got).not.toHaveProperty("watchBugs")
+      expect(listProjects().find((x) => x.id === p.id)).not.toHaveProperty("watchBugs")
+      expect(got).toMatchObject({ name: "watching", goal: "g", featureBranch: "f" })
+
+      renameProject(p.id, "改过名")
+      expect(rawOf(p.id)).not.toHaveProperty("watchBugs")
+      expect(rawOf(p.id).name).toBe("改过名")
+    })
+
     it("已归档的项目不再认领飞书群聊（群里的消息不会路由到它）；取消归档后恢复", () => {
       const p = make("grp", "ch_a|oc_grp")
       expect(findProjectByGroupChat("ch_a|oc_grp")?.id).toBe(p.id)

@@ -361,7 +361,7 @@ export async function deleteProjectByUser(
 /**
  * 用户在界面上归档 / 取消归档项目（设置页、应用内会话列表和项目栏、手机端共用）。
  * 只改项目上的标记：会话、聊天记录、工作目录都原样留着，对话页把它收进最下面的「已归档」分组；
- * 归档后飞书专属群不再认领它、定时任务和 AI 排程不再投给它、也不再盯缺陷（见 archivedAt 的说明）。
+ * 归档后飞书专属群不再认领它、定时任务和 AI 排程不再投给它（见 archivedAt 的说明）。
  * 给了通道（手机端、应用内）就只能动归这个应用内通道的项目；设置页不传，可以管全部项目。
  */
 export function setProjectArchivedByUser(

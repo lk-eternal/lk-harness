@@ -3,7 +3,6 @@
 // 老项目留下的链接字段只在有内容（或研发项目）时才出现，不再给每个项目都摆一排用不上的输入框。
 
 import { PROJECT_TEXT_MAX, type ProjectListItem } from "./project-app-types.js"
-import { bugWatchUnsupportedReason } from "./project-bug-watch.js"
 import { mergeGroupFields } from "./project-templates.js"
 import type { ProjectFieldDef, ProjectNodeGroupDef } from "./project-types.js"
 
@@ -147,23 +146,4 @@ export function linkFieldsShown(
   if (has("productDocUrl")) shown.push("productDocUrl")
   if (has("techDocUrl")) shown.push("techDocUrl")
   return shown
-}
-
-export interface BugWatchView {
-  /** 开关当前能不能点 */
-  disabled: boolean
-  /** 不能开启的原因（能开启时为空） */
-  reason?: string
-  checked: boolean
-}
-
-/**
- * 「自动盯缺陷」开关：只对飞书项目 wk-dm 空间的产品需求链接有意义。
- * 链接不匹配、也没开过，就不展示（返回 undefined），别给其他人添困惑；开过的要展示出来才能关。
- */
-export function bugWatchView(storyUrl: string | undefined, watchBugs: boolean, linkShown: boolean): BugWatchView | undefined {
-  if (!linkShown && !watchBugs) return undefined
-  const reason = bugWatchUnsupportedReason(storyUrl)
-  if (reason && !watchBugs) return undefined
-  return { disabled: !!reason, ...(reason ? { reason } : {}), checked: !reason && watchBugs }
 }

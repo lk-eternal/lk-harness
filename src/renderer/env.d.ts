@@ -324,7 +324,7 @@ declare global {
     setProjectArchived(projectId: string, archived: boolean, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }>
     updateProject(patch: {
       id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
-      groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
+      groupId?: string; groupIds?: string[]; metadata?: Record<string, string>
     }): Promise<{ ok: boolean; error?: string }>
     listProjectTemplates(): Promise<ProjectTemplateInfoType[]>
     getProjectsRootDir(): Promise<string>

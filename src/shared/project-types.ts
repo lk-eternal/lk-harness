@@ -147,7 +147,7 @@ export interface Project {
   externalWorkspace?: boolean
   /**
    * 归档时间；有值就是已归档。做完的项目用户自己归档（或删除），没有「进行中 / 已暂停 / 已完成」这类状态。
-   * 归档的项目不再认领飞书专属群、不能再排定时任务、不再盯缺陷，对话页里收进最下面的「已归档」分组；会话和成果都还在。
+   * 归档的项目不再认领飞书专属群、不能再排定时任务，对话页里收进最下面的「已归档」分组；会话和成果都还在。
    */
   archivedAt?: number
   /** 可选：最近一次登记的产物路径（供下次节点注入） */
@@ -162,8 +162,6 @@ export interface Project {
   notifyChatId?: string
   /** 独立群模式：项目专属群 chatKey（ch_xxx|oc_yyy）；命中该群的消息强制路由到本项目 */
   groupChatId?: string
-  /** 自动盯缺陷：daemon 定期查飞书项目里关联本项目需求的缺陷，新增的投给项目会话并通知项目群（需要需求链接是 wk-dm 空间的产品需求） */
-  watchBugs?: boolean
   /** 项目级 KV 配置，AI 可通过 project_update 持久化（空字符串 value 表示删 key） */
   metadata?: Record<string, string>
   createdAt: number
