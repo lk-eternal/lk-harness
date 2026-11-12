@@ -65,8 +65,20 @@
   font-size: 0.88em;
 }
 
+/* 表格的列宽由浏览器自动分：每列在「最小宽度」和「最大宽度」之间，按富余量比例分空间。
+   - 单元格不能继承外层的 overflow-wrap: anywhere：它会把每列的最小宽度降到一个字符，
+     内容短的列（时间、状态）就被挤得一行只剩一两个字。break-word 只在整词放不下时才折断，最小宽度保持为最长的一个词。
+   - max-width 给超长的词（长链接、长路径）封顶，封顶后在单元格里折断；不封的话它会把整列撑开，把旁边的列挤成一条缝。
+   - 内容很短的单元格另外标 lk-nowrap（Markdown.tsx），中文每个字后面都能断行，光靠上面两条挡不住「已改」被竖排。 */
 .chat-md table { border-collapse: collapse; font-size: 13px; }
-.chat-md th, .chat-md td { border: 1px solid var(--color-line); padding: 0.35em 0.7em; text-align: left; }
+.chat-md th, .chat-md td {
+  border: 1px solid var(--color-line);
+  padding: 0.35em 0.7em;
+  text-align: left;
+  overflow-wrap: break-word;
+  max-width: 44em;
+}
+.chat-md th.lk-nowrap, .chat-md td.lk-nowrap { white-space: nowrap; }
 .chat-md th { background: var(--color-surface); font-weight: 600; }
 
 /* 代码块：背景由外层容器给，不用高亮主题自带的背景/内边距 */

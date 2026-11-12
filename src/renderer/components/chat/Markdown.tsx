@@ -7,6 +7,7 @@ import { parsePathRef } from "../../../shared/preview-paths"
 import { opensInApp } from "../preview/link-mode"
 import { usePreview } from "../preview/PreviewContext"
 import { rehypePathMentions } from "./path-mentions"
+import { isShortCell } from "./table-cell"
 import "./chat-markdown.css"
 
 /** 取 React 子树的纯文本（高亮后代码被拆成 span，复制要还原原文） */
@@ -108,6 +109,12 @@ function PathLink({ raw, line, children }: { raw: string; line?: number; childre
   )
 }
 
+/** 内容很短的单元格加上 lk-nowrap（规则和原因见 table-cell.ts），其余原样 */
+function cellClass(className: string | undefined, children: ReactNode): string | undefined {
+  if (!isShortCell(textOf(children))) return className
+  return className ? `${className} lk-nowrap` : "lk-nowrap"
+}
+
 const components: Components = {
   pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
   a: ({ href, children }) => <SafeLink href={href}>{children}</SafeLink>,
@@ -130,6 +137,15 @@ const components: Components = {
   table: ({ children }) => (
     <div className="my-3 overflow-x-auto"><table>{children}</table></div>
   ),
+  // node 是 react-markdown 传进来的语法树节点，不能落到 DOM 上
+  th: ({ node, className, children, ...rest }) => {
+    void node
+    return <th {...rest} className={cellClass(className, children)}>{children}</th>
+  },
+  td: ({ node, className, children, ...rest }) => {
+    void node
+    return <td {...rest} className={cellClass(className, children)}>{children}</td>
+  },
 }
 
 export const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm]
