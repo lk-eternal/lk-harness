@@ -12,6 +12,7 @@ import {
   repoDisplayName,
   repoPicksProblem,
   sortTemplatesForPicker,
+  withLegacyProjectStatus,
 } from "../src/shared/project-app-types.js"
 import { isRemoteRepoRef } from "../src/shared/project-types.js"
 import {
@@ -468,6 +469,41 @@ describe("项目的删除确认和归档提示", () => {
   it("项目归别的通道管：删除 / 归档都指到设置的项目管理里做", () => {
     expect(projectNotOwnedHint("删除")).toContain("删除可以在设置的项目管理里做")
     expect(projectNotOwnedHint("归档")).toContain("归档可以在设置的项目管理里做")
+  })
+})
+
+describe("withLegacyProjectStatus（旧版手机 App 要读的 status）", () => {
+  const viewOf = (extra: Partial<Project> = {}) => buildProjectView(
+    {
+      id: "abc123def456", name: "周报", goal: "g", repoPath: "", baseBranch: "", featureBranch: "",
+      worktreePath: path.resolve(path.sep, "work", "p1", "workspace"), workspaceType: "plain",
+      groupIds: ["report"], groupId: "report", createdAt: 1, updatedAt: 2, ...extra,
+    },
+    { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true },
+  )
+  // 1.4.0 手机 App 里项目信息的标签逻辑（原样抄来）：不是 "active" 就挂标签
+  const oldAppBadge = (view: { status?: string }): string | null =>
+    view.status !== "active" ? (view.status === "done" ? "已完成" : "已暂停") : null
+
+  it("电脑端的项目视图本身没有 status：不补的话旧 App 会给每个项目都挂「已暂停」", () => {
+    expect(viewOf()).not.toHaveProperty("status")
+    expect(oldAppBadge(viewOf())).toBe("已暂停")
+  })
+
+  it("没归档：status 是 active，旧 App 不挂标签", () => {
+    expect(oldAppBadge(withLegacyProjectStatus(viewOf()))).toBeNull()
+  })
+
+  it("已归档：status 是 done，旧 App 显示「已完成」", () => {
+    expect(oldAppBadge(withLegacyProjectStatus(viewOf({ archivedAt: 5 })))).toBe("已完成")
+  })
+
+  it("其余字段原样、新 App 读的 archived 还在，也不改原对象", () => {
+    const v = viewOf({ archivedAt: 5 })
+    const out = withLegacyProjectStatus(v)
+    expect(out).toEqual({ ...v, status: "done" })
+    expect(out.archived).toBe(true)
+    expect(v).not.toHaveProperty("status")
   })
 })
 

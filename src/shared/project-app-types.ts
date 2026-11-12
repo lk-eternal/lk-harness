@@ -223,6 +223,15 @@ export function projectDeleteConfirmText(view: Pick<ProjectView, "name" | "exter
   return `确定删除项目「${view.name}」吗？\n会停止它的 AI 会话、清除聊天记录。${projectDeleteNote(view, recycleBin)}\n做完了想留着成果的话，可以归档，不用删除。`
 }
 
+/**
+ * 给旧版手机 App（1.4.0 及以前）补上它认得的 status。
+ * 旧 App 在项目信息里按 view.status !== "active" 决定要不要挂「已完成 / 已暂停」标签；三态去掉之后电脑端不再有这个字段，
+ * 旧 App 会给每个项目都挂上「已暂停」。已归档的当「已完成」、其余当「进行中」；新版 App 不读它。
+ */
+export function withLegacyProjectStatus(view: ProjectView): ProjectView & { status: "active" | "done" } {
+  return { ...view, status: view.archived ? "done" : "active" }
+}
+
 export interface ProjectActionResult {
   ok: boolean
   error?: string

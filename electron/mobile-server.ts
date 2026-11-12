@@ -24,6 +24,7 @@ import {
   syncProjectSteps,
 } from "./project-create"
 import { parseGatewayCreateInput } from "../src/shared/project-create-plan.js"
+import { withLegacyProjectStatus } from "../src/shared/project-app-types.js"
 import {
   callAppChatDaemon,
   clearAppChatRecords,
@@ -611,7 +612,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
     case "/api/mobile/project-view": {
       const view = getProjectView(String(body.projectId ?? ""), String(body.channelId ?? ""))
-      sendJson(res, 200, view ? { ok: true, view } : { ok: false, error: "项目不存在" })
+      sendJson(res, 200, view ? { ok: true, view: withLegacyProjectStatus(view) } : { ok: false, error: "项目不存在" })
       return
     }
     case "/api/mobile/project-run-step": {
