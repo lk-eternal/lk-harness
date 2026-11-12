@@ -6,17 +6,16 @@ import { projectSessionKey, type Project } from "./project-types.js";
 
 export type ProjectAgentTarget =
   | { ok: true; sessionKey: string; chatKey: string; label: string }
-  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已完成），AI 排程应作废 */ retire: boolean };
+  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已归档），AI 排程应作废 */ retire: boolean };
 
 /** 项目会话作为投递目标是否可用；会话 key 优先用项目记录的，没有则按独立群拼 */
 export function resolveProjectAgentTarget(
   projectId: string,
-  project: Pick<Project, "name" | "status" | "sessionKey" | "groupChatId"> | undefined,
+  project: Pick<Project, "name" | "archivedAt" | "sessionKey" | "groupChatId"> | undefined,
 ): ProjectAgentTarget {
   if (!project) return { ok: false, retire: true, error: `项目 ${projectId} 已不存在` };
   const label = `项目「${project.name}」的会话`;
-  if (project.status === "done") return { ok: false, retire: true, error: `项目「${project.name}」已完成` };
-  if (project.status === "paused") return { ok: false, retire: false, error: `项目「${project.name}」已暂停` };
+  if (project.archivedAt) return { ok: false, retire: true, error: `项目「${project.name}」已归档` };
   const sessionKey = project.sessionKey || (project.groupChatId ? projectSessionKey(project.groupChatId, projectId) : "");
   if (!sessionKey) {
     return { ok: false, retire: false, error: `项目「${project.name}」还没有会话（还没有进入过项目）` };

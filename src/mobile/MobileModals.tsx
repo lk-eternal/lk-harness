@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import {
+  Archive,
   Check,
+  ChevronRight,
   ClipboardPaste,
   Cloud,
   Cpu,
@@ -24,6 +26,7 @@ import {
 import type { AgentResource } from "../shared/channel-types"
 import { appChatSessionDir, sameChatDir, type ChatDirOption } from "../shared/app-chat-types"
 import { isSessionPinned, pinFirst } from "../shared/app-chat-pins"
+import { ARCHIVED_GROUP_TITLE, splitArchived } from "../shared/session-archive"
 import { branchGroups, branchNotices, type BranchOption } from "../shared/git-branch"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
 import { useBranchMenu } from "../renderer/components/chat/useBranchMenu"
@@ -65,6 +68,36 @@ function dirName(dir: string | undefined): string | undefined {
 }
 
 const NO_PINS: readonly string[] = []
+
+/**
+ * 会话列表最下面的「已归档」折叠分组（调用方保证至少有一个才渲染）。
+ * 默认收起；选中的会话在里面（点通知跳过来的、刚把当前项目归档了）就展开，不然打开抽屉找不到自己在哪。
+ */
+function ArchivedGroup({ tabs, selected, renderRow }: {
+  tabs: MobileChatTab[]
+  selected: string | null
+  renderRow: (t: MobileChatTab) => ReactNode
+}) {
+  const hasSelected = tabs.some((t) => sameChatSession(t.sessionKey, selected))
+  const [open, setOpen] = useState(hasSelected)
+  useEffect(() => { if (hasSelected) setOpen(true) }, [selected, hasSelected])
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 rounded-xl px-3 py-2 text-left text-[12px] text-fg-muted transition active:bg-raised"
+      >
+        <ChevronRight size={13} className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
+        <Archive size={13} className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{ARCHIVED_GROUP_TITLE}</span>
+        <span className="shrink-0 text-[11px] text-fg-faint">{tabs.length}</span>
+      </button>
+      {open && <div className="space-y-1">{tabs.map(renderRow)}</div>}
+    </div>
+  )
+}
 
 export function SessionDrawer({
   open,
@@ -112,6 +145,144 @@ export function SessionDrawer({
   useBackToClose(open, onClose)
 
   const defaultChannelId = views[0]?.channelId
+
+  // 置顶的在前，其余按最近对话排；两组内部都是最近的在前
+  const sortTabs = (tabs: MobileChatTab[]) =>
+    pinFirst([...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0)), pins)
+  /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面 */
+  const archivedTabs = views.flatMap((v) => splitArchived(v.tabs).archived)
+
+  const renderRow = (t: MobileChatTab) => {
+    const on = sameChatSession(t.sessionKey, selected)
+    const status = sessionStatus(t.sessionKey, t.running)
+    const at = activeAt(t)
+    const wsDir = appChatSessionDir(t.sessionKey, t.boundDir)
+    const subText =
+      status === "working"
+        ? "AI 正在回复..."
+        : t.kind === "project"
+          ? "项目"
+          : wsDir
+            ? dirName(wsDir)
+            : "临时对话"
+    const deletable = !!t.removable && t.kind !== "project"
+    const pinned = isSessionPinned(pins, t.sessionKey)
+
+    return (
+      <div key={t.sessionKey} className={`group relative flex items-center ${t.archived ? "opacity-70" : ""}`}>
+        <button
+          type="button"
+          onClick={() => {
+            onSelect(t.sessionKey)
+            onClose()
+          }}
+          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${
+            on
+              ? "border border-blue-500/35 bg-blue-600/15 text-fg"
+              : "text-fg-2 active:bg-raised"
+          }`}
+        >
+          {/* 状态图标：转圈 / 未读绿点 / 普通图标 */}
+          {status === "working" ? (
+            <Loader2
+              size={15}
+              className="shrink-0 animate-spin text-accent"
+            />
+          ) : (
+            <span className="relative shrink-0">
+              {t.kind === "project" ? (
+                <FolderKanban
+                  size={15}
+                  className={on ? "text-accent" : "text-fg-faint"}
+                />
+              ) : (
+                <MessageCircle
+                  size={15}
+                  className={on ? "text-accent" : "text-fg-faint"}
+                />
+              )}
+              {status === "unread" && (
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
+              )}
+            </span>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[13px] font-medium">
+                {sessionName(t)}
+              </span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-fg-muted">
+              <span
+                className={
+                  status === "working"
+                    ? "font-medium text-accent"
+                    : "truncate"
+                }
+              >
+                {subText}
+              </span>
+              {t.branch && status !== "working" && (
+                <span className="inline-flex items-center gap-0.5 text-fg-faint">
+                  · <GitBranch size={10} />
+                  {t.branch}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* 右侧状态角标或活跃时间 */}
+          <div className="shrink-0 text-right">
+            {status === "unread" ? (
+              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                已完成
+              </span>
+            ) : status === "working" ? (
+              <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-accent">
+                回复中
+              </span>
+            ) : at !== undefined ? (
+              <span className="text-[11px] text-fg-faint">
+                {formatTimeAgo(at, now)}
+              </span>
+            ) : null}
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onTogglePin?.(t)
+          }}
+          title={pinned ? "取消置顶" : "置顶会话"}
+          aria-label={pinned ? "取消置顶" : "置顶会话"}
+          aria-pressed={pinned}
+          className={`ml-0.5 flex h-11 w-9 shrink-0 items-center justify-center rounded-xl transition active:bg-raised ${
+            pinned ? "text-accent" : "text-fg-faint"
+          }`}
+        >
+          <Pin size={15} className={pinned ? "fill-current" : ""} />
+        </button>
+
+        {deletable && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(t)
+            }}
+            title="删除会话"
+            aria-label="删除会话"
+            className="ml-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-fg-faint transition active:bg-raised active:text-danger"
+          >
+            <Trash2 size={16} />
+          </button>
+        )}
+      </div>
+    )
+  }
 
   // 常驻挂载、靠 CSS 滑入滑出（关着时 visibility:hidden，见 mobile.css 的 .drawer）：
   // 这样手指才能拖着它走（drawer-swipe.ts），按钮、遮罩、返回键也都有同样的动画
@@ -190,155 +361,23 @@ export function SessionDrawer({
 
         {/* 会话列表 */}
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-2.5 py-3">
-          {views.map((v) => {
-            // 置顶的在前，其余按最近对话排；两组内部都是最近的在前
-            const sortedTabs = pinFirst(
-              [...v.tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0)),
-              pins,
-            )
-            return (
-              <div key={v.channelId}>
-                {views.length > 1 && (
-                  <p className="px-2 pb-1.5 text-[11px] font-medium text-fg-faint">
-                    {v.name}
-                  </p>
-                )}
-                <div className="space-y-1">
-                  {sortedTabs.map((t) => {
-                    const on = sameChatSession(t.sessionKey, selected)
-                    const status = sessionStatus(t.sessionKey, t.running)
-                    const at = activeAt(t)
-                    const wsDir = appChatSessionDir(t.sessionKey, t.boundDir)
-                    const subText =
-                      status === "working"
-                        ? "AI 正在回复..."
-                        : t.kind === "project"
-                          ? "项目"
-                          : wsDir
-                            ? dirName(wsDir)
-                            : "临时对话"
-                    const deletable = !!t.removable && t.kind !== "project"
-                    const pinned = isSessionPinned(pins, t.sessionKey)
-
-                    return (
-                      <div key={t.sessionKey} className="group relative flex items-center">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            onSelect(t.sessionKey)
-                            onClose()
-                          }}
-                          className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${
-                            on
-                              ? "border border-blue-500/35 bg-blue-600/15 text-fg"
-                              : "text-fg-2 active:bg-raised"
-                          }`}
-                        >
-                          {/* 状态图标：转圈 / 未读绿点 / 普通图标 */}
-                          {status === "working" ? (
-                            <Loader2
-                              size={15}
-                              className="shrink-0 animate-spin text-accent"
-                            />
-                          ) : (
-                            <span className="relative shrink-0">
-                              {t.kind === "project" ? (
-                                <FolderKanban
-                                  size={15}
-                                  className={on ? "text-accent" : "text-fg-faint"}
-                                />
-                              ) : (
-                                <MessageCircle
-                                  size={15}
-                                  className={on ? "text-accent" : "text-fg-faint"}
-                                />
-                              )}
-                              {status === "unread" && (
-                                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
-                              )}
-                            </span>
-                          )}
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="truncate text-[13px] font-medium">
-                                {sessionName(t)}
-                              </span>
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-fg-muted">
-                              <span
-                                className={
-                                  status === "working"
-                                    ? "font-medium text-accent"
-                                    : "truncate"
-                                }
-                              >
-                                {subText}
-                              </span>
-                              {t.branch && status !== "working" && (
-                                <span className="inline-flex items-center gap-0.5 text-fg-faint">
-                                  · <GitBranch size={10} />
-                                  {t.branch}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* 右侧状态角标或活跃时间 */}
-                          <div className="shrink-0 text-right">
-                            {status === "unread" ? (
-                              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
-                                已完成
-                              </span>
-                            ) : status === "working" ? (
-                              <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-accent">
-                                回复中
-                              </span>
-                            ) : at !== undefined ? (
-                              <span className="text-[11px] text-fg-faint">
-                                {formatTimeAgo(at, now)}
-                              </span>
-                            ) : null}
-                          </div>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onTogglePin?.(t)
-                          }}
-                          title={pinned ? "取消置顶" : "置顶会话"}
-                          aria-label={pinned ? "取消置顶" : "置顶会话"}
-                          aria-pressed={pinned}
-                          className={`ml-0.5 flex h-11 w-9 shrink-0 items-center justify-center rounded-xl transition active:bg-raised ${
-                            pinned ? "text-accent" : "text-fg-faint"
-                          }`}
-                        >
-                          <Pin size={15} className={pinned ? "fill-current" : ""} />
-                        </button>
-
-                        {deletable && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              onDelete(t)
-                            }}
-                            title="删除会话"
-                            aria-label="删除会话"
-                            className="ml-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-fg-faint transition active:bg-raised active:text-danger"
-                          >
-                            <Trash2 size={16} />
-                          </button>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
+          {views.map((v) => (
+            <div key={v.channelId}>
+              {views.length > 1 && (
+                <p className="px-2 pb-1.5 text-[11px] font-medium text-fg-faint">
+                  {v.name}
+                </p>
+              )}
+              <div className="space-y-1">
+                {sortTabs(splitArchived(v.tabs).live).map(renderRow)}
               </div>
-            )
-          })}
+            </div>
+          ))}
+
+          {/* 已归档的项目会话收在最下面一个折叠分组里；一个都没有就不出现 */}
+          {archivedTabs.length > 0 && (
+            <ArchivedGroup tabs={sortTabs(archivedTabs)} selected={selected} renderRow={renderRow} />
+          )}
         </div>
 
         {/* 底部信息与配对入口 */}

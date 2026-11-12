@@ -28,7 +28,7 @@ export const BUG_WATCH_INTERVAL_MS = 10 * 60_000;
 /** daemon 启动后多久做第一轮：建好基线，之后新增的缺陷才算新 */
 export const BUG_WATCH_FIRST_DELAY_MS = 30_000;
 
-export type WatchProject = Pick<Project, "id" | "name" | "status" | "storyUrl" | "watchBugs">;
+export type WatchProject = Pick<Project, "id" | "name" | "archivedAt" | "storyUrl" | "watchBugs">;
 
 export interface BugWatchDeps {
   now(): number;
@@ -72,7 +72,7 @@ export async function runBugWatchCycle(deps: BugWatchDeps, opts: { projectId?: s
     if (opts.projectId && p.id !== opts.projectId) continue;
     if (p.watchBugs !== true) continue;
     const skip = (detail: string) => outcomes.push({ projectId: p.id, name: p.name, result: "skipped", detail });
-    if (p.status !== "active") { skip(p.status === "paused" ? "项目已暂停" : "项目已完成"); continue; }
+    if (p.archivedAt) { skip("项目已归档"); continue; }
     const story = parseWatchableStoryUrl(p.storyUrl);
     if (!story) { skip(bugWatchUnsupportedReason(p.storyUrl) ?? "需求链接不支持"); continue; }
     candidates.push({ project: p, storyId: story.storyId });

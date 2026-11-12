@@ -48,7 +48,7 @@ const cliCalls = (cmd?: string) => {
 const SESSION = projectSessionKey(GROUP, "pw")
 const addProject = (extra: Partial<Project> = {}) => saveProject({
   id: "pw", name: "满班率项目", goal: "g", repoPath: "", baseBranch: "main", featureBranch: "", worktreePath: "",
-  workspaceType: "plain", status: "active", sessionKey: SESSION, groupChatId: GROUP, storyUrl: STORY_URL, watchBugs: true,
+  workspaceType: "plain", sessionKey: SESSION, groupChatId: GROUP, storyUrl: STORY_URL, watchBugs: true,
   createdAt: Date.now(), updatedAt: Date.now(), ...extra,
 })
 
@@ -168,9 +168,9 @@ describe.skipIf(process.platform !== "win32")("项目缺陷监控", () => {
     expect(cliCalls("workitem query")).toBe(0)
   })
 
-  it("已暂停的项目 / 需求链接不支持的项目：跳过并说明原因，不查", async () => {
-    addProject({ status: "paused" })
-    expect((await run()).projects[0]).toMatchObject({ result: "skipped", detail: "项目已暂停" })
+  it("已归档的项目 / 需求链接不支持的项目：跳过并说明原因，不查", async () => {
+    addProject({ archivedAt: Date.now() })
+    expect((await run()).projects[0]).toMatchObject({ result: "skipped", detail: "项目已归档" })
     addProject({ storyUrl: "https://project.feishu.cn/wk-dm/t1024/detail/1" })
     const r = await run()
     expect(r.projects[0].result).toBe("skipped")

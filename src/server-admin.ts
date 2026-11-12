@@ -146,7 +146,7 @@ export function registerAdminTools(mcpServer: McpServer): void {
       if (action === "list") {
         const list = listProjects()
         if (list.length === 0) return txt("📭 暂无项目")
-        const lines = list.map((p, i) => `#${i + 1} ${p.name} (${p.status}) id=${p.id} branch=${p.featureBranch}`)
+        const lines = list.map((p, i) => `#${i + 1} ${p.name}${p.archivedAt ? "（已归档）" : ""} id=${p.id} branch=${p.featureBranch}`)
         return txt(lines.join("\n"))
       }
       const p = getProject(project_id ?? "")

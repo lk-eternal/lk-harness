@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { Download, Eye, FileText, FolderKanban, GitBranch, Info, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { Archive, ArchiveRestore, Download, Eye, FileText, FolderKanban, GitBranch, Info, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react"
 import { previewTypeOf } from "../shared/preview-kinds"
 import {
-  PROJECT_NAME_MAX, PROJECT_REPOS_MAX, PROJECT_TEXT_MAX, projectDeleteNote, repoPicksProblem, sortTemplatesForPicker,
+  PROJECT_NAME_MAX, PROJECT_REPOS_MAX, PROJECT_TEXT_MAX, projectDeleteConfirmText, repoPicksProblem, sortTemplatesForPicker,
   type ProjectCreateResult, type ProjectTemplateInfo, type ProjectView,
 } from "../shared/project-app-types"
 import {
@@ -14,7 +14,7 @@ import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { formatTimeAgo } from "../renderer/time-ago"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, syncMobileProjectSteps,
+  runMobileProjectStep, setMobileProjectArchived, syncMobileProjectSteps,
 } from "./api"
 import { useBackToClose } from "./back-stack"
 import { MobilePreviewProvider } from "./MobilePreview"
@@ -376,15 +376,17 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, busy, onSync, onDelete }: {
+function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, busy, onSync, onArchive, onDelete }: {
   open: boolean
   onClose: () => void
   view: ProjectView
   baseUrl: string
   token: string
   sessionKey: string
-  busy: "sync" | "delete" | null
+  busy: "sync" | "delete" | "archive" | null
   onSync: () => void
+  /** 归档 / 取消归档（看 view.archived） */
+  onArchive: () => void
   onDelete: () => void
 }) {
   useBackToClose(open, onClose)
@@ -407,8 +409,8 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="truncate text-sm font-semibold text-fg">{view.name}</span>
-              {view.status !== "active" && (
-                <span className="shrink-0 rounded bg-raised px-1.5 text-[10.5px] leading-4 text-fg-muted">{view.status === "done" ? "已完成" : "已暂停"}</span>
+              {view.archived && (
+                <span className="shrink-0 rounded bg-raised px-1.5 text-[10.5px] leading-4 text-fg-muted">已归档</span>
               )}
             </div>
             <p className="mt-0.5 text-[11.5px] text-fg-muted">
@@ -497,9 +499,15 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
               )}
               <button
                 type="button"
+                onClick={onArchive}
+                disabled={!!busy}
+                className="ml-auto inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-xs text-fg-2 transition active:bg-raised disabled:opacity-50"
+              >{busy === "archive" ? <Loader2 size={12} className="animate-spin" /> : view.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}{view.archived ? "取消归档" : "归档项目"}</button>
+              <button
+                type="button"
                 onClick={onDelete}
                 disabled={!!busy}
-                className="ml-auto inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-danger transition active:bg-raised disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-danger transition active:bg-raised disabled:opacity-50"
               >{busy === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}删除项目</button>
             </div>
           )}
@@ -524,14 +532,16 @@ interface BarProps {
   onStarted: () => void
   /** 项目已删除 */
   onDeleted: () => void
+  /** 归档 / 取消归档成功：会话列表据此把它挪进（出）「已归档」分组 */
+  onArchiveChanged: (archived: boolean) => void
   onError: (message: string) => void
 }
 
-function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, running, confirm, onStarted, onDeleted, onError }: BarProps) {
+function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, running, confirm, onStarted, onDeleted, onArchiveChanged, onError }: BarProps) {
   const [view, setView] = useState<ProjectView | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
   const [starting, setStarting] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"sync" | "delete" | null>(null)
+  const [busy, setBusy] = useState<"sync" | "delete" | "archive" | null>(null)
   const seqRef = useRef(0)
 
   const reload = useCallback(async () => {
@@ -575,10 +585,25 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
     }
   }
 
+  /** 归档 / 取消归档：做完了的项目收起来，不用确认（随时能取消）；会话和成果都还在 */
+  const toggleArchive = async () => {
+    if (busy) return
+    const next = !view.archived
+    setBusy("archive")
+    try {
+      const r = await setMobileProjectArchived(baseUrl, token, channelId, projectId, next)
+      if (!r.ok) { onError(r.error ?? (next ? "归档失败" : "取消归档失败")); return }
+      setInfoOpen(false)
+      await reload()
+      onArchiveChanged(next)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const removeProject = async () => {
     if (busy) return
-    const where = projectDeleteNote(view, "电脑的回收站")
-    if (!await confirm("删除项目", `确定删除项目「${view.name}」吗？\n会停止它的 AI 会话、清除聊天记录。${where}`, "删除")) return
+    if (!await confirm("删除项目", projectDeleteConfirmText(view, "电脑的回收站"), "删除")) return
     setBusy("delete")
     try {
       const r = await deleteMobileProject(baseUrl, token, channelId, projectId)
@@ -594,6 +619,7 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
     <>
       <div className="mb-2 flex items-center gap-1.5 rounded-xl border border-line bg-page/70 px-2 py-1">
         <FolderKanban size={14} className="shrink-0 text-accent" />
+        {view.archived && <span className="shrink-0 rounded bg-raised px-1.5 text-[11px] leading-5 text-fg-muted">已归档</span>}
         {view.ownedHere ? (
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
             {view.steps.map((s) => (
@@ -628,6 +654,7 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
           sessionKey={sessionKey}
           busy={busy}
           onSync={() => void syncSteps()}
+          onArchive={() => void toggleArchive()}
           onDelete={() => void removeProject()}
         />,
         document.body,

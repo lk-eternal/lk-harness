@@ -270,7 +270,7 @@ const api = {
       channelId: string
       name: string
       mainUserChatId?: string
-      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
+      mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; archived?: boolean; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
       activeKey?: string
     }[]
     running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
@@ -302,9 +302,12 @@ const api = {
   /** 给了 channelId（应用内项目栏）只能删归这个通道的项目；设置页不传 */
   deleteProject: (projectId: string, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }> =>
     ipcRenderer.invoke("project:delete", projectId, channelId),
+  /** 归档 / 取消归档；channelId 的含义同 deleteProject */
+  setProjectArchived: (projectId: string, archived: boolean, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }> =>
+    ipcRenderer.invoke("project:set-archived", projectId, archived, channelId),
   updateProject: (patch: {
     id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
-    status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
+    groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
   }): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("project:update", patch),
   switchProject: (projectId: string): Promise<{ ok: boolean; error?: string }> =>

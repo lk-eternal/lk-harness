@@ -17,7 +17,7 @@ const bug = (id: number, extra: Partial<BugRecord> = {}): BugRecord =>
   ({ id: String(id), name: `缺陷${id}`, status: "OPEN", assignee: "张三", priority: "P2", ...extra })
 
 const proj = (id: string, extra: Partial<WatchProject> = {}): WatchProject =>
-  ({ id, name: `项目${id}`, status: "active", storyUrl: URL_OF(storyIdOf(id)), watchBugs: true, ...extra })
+  ({ id, name: `项目${id}`, storyUrl: URL_OF(storyIdOf(id)), watchBugs: true, ...extra })
 
 /** 可编排的替身：records 记下所有外部动作，便于断言「没调用 / 调了几次」 */
 function harness(initial: { projects: WatchProject[]; bugs?: Record<string, BugRecord[] | Error>; names?: Record<string, string | undefined> }) {
@@ -73,11 +73,10 @@ describe("runBugWatchCycle：什么时候查、查谁", () => {
     expect(h.calls).toEqual({ auth: 0, storyName: 0, bugs: 0, saves: 0 })
   })
 
-  it("开了监控但项目已暂停 / 已完成 / 需求链接不支持：跳过并说明原因，不查", async () => {
+  it("开了监控但项目已归档 / 需求链接不支持：跳过并说明原因，不查", async () => {
     const { h, deps } = harness({
       projects: [
-        proj("paused", { status: "paused" }),
-        proj("done", { status: "done" }),
+        proj("archived", { archivedAt: 1_700_000_000_000 }),
         proj("nourl", { storyUrl: undefined }),
         proj("tech", { storyUrl: "https://project.feishu.cn/wk-dm/t1024/detail/1" }),
       ],
@@ -85,8 +84,7 @@ describe("runBugWatchCycle：什么时候查、查谁", () => {
     const r = await runBugWatchCycle(deps)
     expect(r.ran).toBe(false)
     const by = Object.fromEntries(r.projects.map((p) => [p.projectId, p]))
-    expect(by.paused).toMatchObject({ result: "skipped", detail: "项目已暂停" })
-    expect(by.done).toMatchObject({ result: "skipped", detail: "项目已完成" })
+    expect(by.archived).toMatchObject({ result: "skipped", detail: "项目已归档" })
     expect(by.nourl.detail).toContain("没有填")
     expect(by.tech.detail).toContain("wk-dm")
     expect(h.calls.bugs).toBe(0)

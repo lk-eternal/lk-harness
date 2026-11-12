@@ -346,9 +346,14 @@ function writeJson(filePath: string, data: unknown): void {
   writeJsonAtomic(filePath, data)
 }
 
-/** 存量 actions[] → lastArtifact*；去掉运行态数组 */
-function normalizeProject(raw: Project): Project {
-  const p = { ...raw }
+/**
+ * 存量 actions[] → lastArtifact*；去掉运行态数组。
+ * 旧版有 status（进行中 / 已暂停 / 已完成）：「已完成」按已归档读，其余当普通项目；读出来之后不再带这个字段，下次保存时从文件里消失。
+ */
+function normalizeProject(raw: Project & { status?: unknown }): Project {
+  const { status, ...rest } = raw
+  const p: Project = { ...rest }
+  if (status === "done" && !p.archivedAt) p.archivedAt = p.updatedAt || p.createdAt || Date.now()
   if (!p.lastArtifactPath && Array.isArray(p.actions) && p.actions.length) {
     const accepted = [...p.actions].reverse().find((a) => a.status === "accepted" && a.artifactPath)
     const any = accepted || [...p.actions].reverse().find((a) => a.artifactPath)
@@ -374,10 +379,10 @@ export function listProjects(): Project[] {
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
-/** 当前 chat 是否为某活跃项目的专属群（chatKey / 裸 chatId 皆可） */
+/** 当前 chat 是否为某未归档项目的专属群（chatKey / 裸 chatId 皆可） */
 export function findProjectByGroupChat(chatKey?: string): Project | undefined {
   if (!chatKey) return undefined
-  return listProjects().find((p) => p.status !== "done" && projectGroupChatMatches(p, chatKey))
+  return listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatKey))
 }
 
 export function getProject(id: string): Project | undefined {
@@ -410,6 +415,17 @@ export function deleteProject(id: string): boolean {
   return true
 }
 
+/** 归档 / 取消归档；已经是想要的状态时原样返回（不改归档时间）。项目不存在返回 undefined */
+export function setProjectArchived(id: string, archived: boolean): Project | undefined {
+  const p = getProject(id)
+  if (!p) return undefined
+  if (archived === !!p.archivedAt) return p
+  if (archived) p.archivedAt = Date.now()
+  else delete p.archivedAt
+  saveProject(p)
+  return getProject(id)
+}
+
 export function getCurrentProjectId(): string | null {
   const data = readJsonSafe<{ id?: string }>(currentPath(), {})
   return data.id ?? null
@@ -429,9 +445,8 @@ export function getCurrentProject(): Project | undefined {
   return id ? getProject(id) : undefined
 }
 
-export function createProject(input: Omit<Project, "id" | "status" | "createdAt" | "updatedAt" | "actions"> & {
+export function createProject(input: Omit<Project, "id" | "archivedAt" | "createdAt" | "updatedAt" | "actions"> & {
   id?: string
-  status?: Project["status"]
 }): Project {
   const now = Date.now()
   const groupIds = projectGroupIds(input)
@@ -454,7 +469,6 @@ export function createProject(input: Omit<Project, "id" | "status" | "createdAt"
     ...(input.groupSnapshot?.length ? { groupSnapshot: input.groupSnapshot } : {}),
     ...(input.externalWorkspace ? { externalWorkspace: true } : {}),
     ...(input.metadata && Object.keys(input.metadata).length ? { metadata: input.metadata } : {}),
-    status: input.status ?? "active",
     lastArtifactPath: input.lastArtifactPath,
     lastArtifactSummary: input.lastArtifactSummary,
     lastMrUrl: input.lastMrUrl,

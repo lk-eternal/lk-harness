@@ -9,6 +9,7 @@ import {
   getNodeGroups,
   getProject,
   saveProject,
+  setProjectArchived,
   getProjectNodes,
   initProjectStore,
   listProjects,
@@ -107,6 +108,79 @@ describe("project-store", () => {
     expect(migrated.lastArtifactPath).toBe("legacy.md")
     expect(migrated.lastArtifactSummary).toBe("旧产物")
     expect(migrated.actions).toBeUndefined()
+  })
+
+  describe("归档（没有「进行中 / 已暂停 / 已完成」状态，做完了就归档或删除）", () => {
+    const make = (name: string, groupChatId?: string) => createProject({
+      name, goal: "g", repoPath: "/r", baseBranch: "main", featureBranch: "f", worktreePath: "/w",
+      ...(groupChatId ? { groupChatId } : {}),
+    })
+    const fileOf = (id: string) => path.join(dir, "projects", `${id}.json`)
+    const rawOf = (id: string) => JSON.parse(fs.readFileSync(fileOf(id), "utf-8")) as Record<string, unknown>
+
+    it("新项目没有归档时间，也不带 status", () => {
+      const p = make("a")
+      expect(p.archivedAt).toBeUndefined()
+      expect(rawOf(p.id)).not.toHaveProperty("status")
+    })
+
+    it("归档 → 有归档时间；取消归档 → 清掉；已经是想要的状态时原样返回，不改归档时间", async () => {
+      const p = make("a")
+      const archived = setProjectArchived(p.id, true)!
+      expect(archived.archivedAt).toBeGreaterThan(0)
+      expect(getProject(p.id)?.archivedAt).toBe(archived.archivedAt)
+
+      await new Promise((r) => setTimeout(r, 5))
+      expect(setProjectArchived(p.id, true)?.archivedAt).toBe(archived.archivedAt)
+
+      const back = setProjectArchived(p.id, false)!
+      expect(back.archivedAt).toBeUndefined()
+      expect(rawOf(p.id)).not.toHaveProperty("archivedAt")
+      expect(setProjectArchived(p.id, false)?.archivedAt).toBeUndefined()
+    })
+
+    it("项目不存在：返回 undefined", () => {
+      expect(setProjectArchived("nope", true)).toBeUndefined()
+    })
+
+    it("旧数据 status=done 读出来就是已归档（归档时间取最后更新时间），status 字段不再带出，下次保存后从文件里消失", () => {
+      const p = make("old")
+      const raw = rawOf(p.id)
+      raw.status = "done"
+      raw.updatedAt = 1700000000000
+      fs.writeFileSync(fileOf(p.id), JSON.stringify(raw), "utf-8")
+
+      const got = getProject(p.id)!
+      expect(got.archivedAt).toBe(1700000000000)
+      expect(got).not.toHaveProperty("status")
+      expect(listProjects().find((x) => x.id === p.id)?.archivedAt).toBe(1700000000000)
+
+      // 取消归档后文件里既没有 archivedAt 也没有 status，不会再被当成已完成读回去
+      setProjectArchived(p.id, false)
+      expect(rawOf(p.id)).not.toHaveProperty("status")
+      expect(getProject(p.id)?.archivedAt).toBeUndefined()
+    })
+
+    it("旧数据 status=paused / active：当普通项目，不会变成已归档", () => {
+      for (const status of ["paused", "active"]) {
+        const p = make(`old-${status}`)
+        const raw = rawOf(p.id)
+        raw.status = status
+        fs.writeFileSync(fileOf(p.id), JSON.stringify(raw), "utf-8")
+        const got = getProject(p.id)!
+        expect(got.archivedAt).toBeUndefined()
+        expect(got).not.toHaveProperty("status")
+      }
+    })
+
+    it("已归档的项目不再认领飞书群聊（群里的消息不会路由到它）；取消归档后恢复", () => {
+      const p = make("grp", "ch_a|oc_grp")
+      expect(findProjectByGroupChat("ch_a|oc_grp")?.id).toBe(p.id)
+      setProjectArchived(p.id, true)
+      expect(findProjectByGroupChat("ch_a|oc_grp")).toBeUndefined()
+      setProjectArchived(p.id, false)
+      expect(findProjectByGroupChat("ch_a|oc_grp")?.id).toBe(p.id)
+    })
   })
 
   it("switches current project", () => {

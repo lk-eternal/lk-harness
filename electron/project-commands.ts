@@ -58,7 +58,7 @@ import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../
 /** 当前 chat 是哪个独立群项目的专属群（有则返回该项目） */
 function resolveBoundGroupProject(chatId?: string): Project | undefined {
   if (!chatId) return undefined
-  return listProjects().find((p) => p.status !== "done" && projectGroupChatMatches(p, chatId))
+  return listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
 }
 
 /** 独立群内优先按 groupChatId 解析项目；否则用全局 current 指针 */
@@ -181,7 +181,7 @@ function formatProjectCard(p: Project, index?: number): string {
       ? ["📋 项目信息", ...Object.entries(p.metadata).map(([k, v]) => `   ${k}: ${v}`)]
       : []),
     ...gitLines,
-    `💠 ${p.status}`,
+    p.archivedAt ? "🗄 已归档" : "",
     p.lastArtifactPath ? `📄 artifact · ${p.lastArtifactPath}` : "📄 尚无产物",
     p.lastFeishuDocUrl ? `📘 飞书 · ${p.lastFeishuDocUrl}` : "",
     p.lastMrUrl ? `🔀 MR · ${p.lastMrUrl}` : "",
@@ -297,8 +297,6 @@ export async function enterProjectSession(
   project.sessionKey = sessionKey
   // 独立群通知/路由固定绑群，禁止被私聊进入改写
   project.notifyChatId = project.groupChatId || chatId
-  // leave 挂起的项目重新激活（调度器恢复自动拉起）
-  if (project.status === "paused") project.status = "active"
   const { saveProject } = await import("../src/shared/project-store.js")
   saveProject(project)
   const bound = await syncActiveSession(port, chatId, sessionKey)
@@ -1347,8 +1345,6 @@ export async function startProjectNode(
     : projectSessionKey(chatId, project.id)
   project.sessionKey = sessionKey
   project.notifyChatId = project.groupChatId || chatId
-  // 点节点按钮 = 明确要干活：leave 挂起的项目自动恢复
-  if (project.status === "paused") project.status = "active"
   const { saveProject } = await import("../src/shared/project-store.js")
   saveProject(project)
   if (opts.touchCurrent && !project.groupChatId) setCurrentProjectId(project.id)
@@ -1619,14 +1615,13 @@ async function replyProjectMenu(port: number, messageId: string, chatId?: string
     ], { cardTitle: { title: "项目", subtitle: "菜单" }, patchMessageId })
     return
   }
-  const statusLabel: Record<string, string> = { active: "进行中", paused: "已暂停", done: "已完成" }
   const lines = list.map((p, i) => {
     const mark = cur?.id === p.id ? "（当前）" : ""
-    const st = statusLabel[p.status] || p.status
+    const st = p.archivedAt ? " · 已归档" : ""
     const mode = p.groupChatId
       ? (canOperateProjectInChat(p, chatId) ? " · 独立群（本群）" : " · 独立群（仅群内）")
       : ""
-    return `#${i + 1} 📦 ${p.name}${mark} · ${st}${mode}\n     🌿 ${p.featureBranch || "—"}`
+    return `#${i + 1} 📦 ${p.name}${mark}${st}${mode}\n     🌿 ${p.featureBranch || "—"}`
   })
   const head = cur
     ? [

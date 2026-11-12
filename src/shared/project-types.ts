@@ -3,7 +3,6 @@ import { makeChatKey, parseChatKey } from "./channel-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
 import { GENERAL_NODE_GROUPS } from "./project-templates.js"
 
-export type ProjectStatus = "active" | "paused" | "done"
 /** 节点 id：流程组节点 slug，或用户自定义 */
 export type ProjectActionType = string
 /** @deprecated 轻量化后不再使用运行态；仅兼容读存量 JSON */
@@ -146,7 +145,11 @@ export interface Project {
   groupSnapshot?: ProjectNodeGroupDef[]
   /** worktreePath 是用户自己选的已有文件夹：删项目时只解绑，不删它，也不删它的上级目录 */
   externalWorkspace?: boolean
-  status: ProjectStatus
+  /**
+   * 归档时间；有值就是已归档。做完的项目用户自己归档（或删除），没有「进行中 / 已暂停 / 已完成」这类状态。
+   * 归档的项目不再认领飞书专属群、不能再排定时任务、不再盯缺陷，对话页里收进最下面的「已归档」分组；会话和成果都还在。
+   */
+  archivedAt?: number
   /** 可选：最近一次登记的产物路径（供下次节点注入） */
   lastArtifactPath?: string
   lastArtifactSummary?: string

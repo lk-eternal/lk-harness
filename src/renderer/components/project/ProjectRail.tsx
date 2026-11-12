@@ -4,12 +4,6 @@ import type { ProjectListItem } from "../../../shared/project-app-types"
 import { sectionOfSel, type ProjectsSel } from "./projects-nav"
 import { isCodeGroup, type Group } from "./template-data"
 
-const STATUS: Record<ProjectListItem["status"], { label: string; dot: string }> = {
-  active: { label: "进行中", dot: "bg-success" },
-  paused: { label: "已暂停", dot: "bg-warning" },
-  done: { label: "已完成", dot: "bg-fg-faint" },
-}
-
 interface Props {
   sel: ProjectsSel
   go: (next: ProjectsSel) => void
@@ -56,14 +50,10 @@ export default function ProjectRail({ sel, go, projects, groups, hubUrlReady, on
         <div className="space-y-0.5">
           {projects.map((p) => {
             const on = sel.kind === "project" && sel.id === p.id
-            const st = STATUS[p.status] ?? STATUS.active
             return (
-              <button key={p.id} type="button" data-rail="project" aria-current={on ? "true" : undefined} onClick={() => go({ kind: "project", id: p.id })} className={itemCls(on)}>
-                <span className="flex items-center gap-1.5">
-                  <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.dot}`} title={st.label} />
-                  <span className={`min-w-0 flex-1 truncate text-xs ${on ? "font-medium" : ""}`}>{p.name}</span>
-                </span>
-                <span className="truncate pl-3 text-[10px] text-fg-faint">{p.groupNames.join("、") || "普通项目"}</span>
+              <button key={p.id} type="button" data-rail="project" aria-current={on ? "true" : undefined} onClick={() => go({ kind: "project", id: p.id })} className={`${itemCls(on)} ${p.archived && !on ? "opacity-60" : ""}`}>
+                <span className={`truncate text-xs ${on ? "font-medium" : ""}`}>{p.name}</span>
+                <span className="truncate text-[10px] text-fg-faint">{p.archived ? "已归档 · " : ""}{p.groupNames.join("、") || "普通项目"}</span>
               </button>
             )
           })}

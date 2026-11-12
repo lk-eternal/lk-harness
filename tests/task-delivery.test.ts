@@ -238,7 +238,7 @@ describe("describeTaskDelivery：设置页文案", () => {
 })
 
 describe("resolveProjectAgentTarget：项目会话能不能当投递目标", () => {
-  const base = { name: "组班", status: "active" as const, sessionKey: "ch_a|oc_grp::project_p1", groupChatId: "ch_a|oc_grp" }
+  const base = { name: "组班", archivedAt: undefined as number | undefined, sessionKey: "ch_a|oc_grp::project_p1", groupChatId: "ch_a|oc_grp" }
 
   it("用项目记录的会话 key，聊天键从中取", () => {
     const r = resolveProjectAgentTarget("p1", base)
@@ -255,10 +255,15 @@ describe("resolveProjectAgentTarget：项目会话能不能当投递目标", () 
     expect(r).toMatchObject({ ok: false, retire: false })
   })
 
-  it("暂停：不可用但不作废；完成 / 不存在：作废", () => {
-    expect(resolveProjectAgentTarget("p1", { ...base, status: "paused" })).toMatchObject({ ok: false, retire: false })
-    expect(resolveProjectAgentTarget("p1", { ...base, status: "done" })).toMatchObject({ ok: false, retire: true })
+  it("已归档 / 不存在：作废（以后也投不了了）", () => {
+    expect(resolveProjectAgentTarget("p1", { ...base, archivedAt: 1700000000000 })).toEqual({
+      ok: false, retire: true, error: "项目「组班」已归档",
+    })
     expect(resolveProjectAgentTarget("p1", undefined)).toMatchObject({ ok: false, retire: true })
+  })
+
+  it("没归档：照常可用（取消归档后恢复投递）", () => {
+    expect(resolveProjectAgentTarget("p1", { ...base, archivedAt: undefined })).toMatchObject({ ok: true })
   })
 })
 

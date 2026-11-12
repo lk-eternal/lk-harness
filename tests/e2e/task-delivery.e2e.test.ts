@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { configDir } from "../../src/shared/data-paths"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../../src/shared/ai-schedule-state"
 import { initProjectStore, saveProject } from "../../src/shared/project-store"
-import { projectSessionKey, type Project } from "../../src/shared/project-types"
+import { projectSessionKey } from "../../src/shared/project-types"
 import { ensureSessionEntry, purgeSessionEntry, sessionEntryDir } from "../../src/shared/session-entry-paths"
 import { startIsolatedDaemon, waitFor, sleep, type IsolatedDaemon } from "../helpers/isolated-daemon"
 
@@ -43,11 +43,12 @@ const task = (id: string, extra: Record<string, unknown> = {}) => ({
 })
 
 const GROUP = "ch_test|app_group"
-const addProject = (id: string, status: Project["status"] = "active", name = `项目${id}`): string => {
+const addProject = (id: string, archived = false, name = `项目${id}`): string => {
   const sessionKey = projectSessionKey(GROUP, id)
   saveProject({
     id, name, goal: "g", repoPath: "", baseBranch: "main", featureBranch: "", worktreePath: "",
-    workspaceType: "plain", status, sessionKey, groupChatId: GROUP, createdAt: Date.now(), updatedAt: Date.now(),
+    workspaceType: "plain", sessionKey, groupChatId: GROUP, createdAt: Date.now(), updatedAt: Date.now(),
+    ...(archived ? { archivedAt: Date.now() } : {}),
   })
   return sessionKey
 }
@@ -114,12 +115,12 @@ describe("手动触发（立即执行）：任务投到绑定的 Agent 会话", 
     expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
-  it("目标项目已暂停：不投递，直接告诉用户原因", async () => {
-    const pk = addProject("p-paused", "paused", "暂停的项目")
-    writeTasks([task("t-paused", { independent: false, targetProjectId: "p-paused" })])
-    const r = await trigger("t-paused")
+  it("目标项目已归档：不投递，直接告诉用户原因", async () => {
+    const pk = addProject("p-archived", true, "归档的项目")
+    writeTasks([task("t-archived", { independent: false, targetProjectId: "p-archived" })])
+    const r = await trigger("t-archived")
     expect(r.ok).toBe(false)
-    expect(r.error).toContain("已暂停")
+    expect(r.error).toContain("已归档")
     expect(await pollKey(pk)).toEqual([])
   })
 
@@ -187,17 +188,17 @@ describe("send_result：独立任务交付结果", () => {
     expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
-  it("通知到 Agent 会话但项目已暂停：send_result 失败并如实告诉 AI；失败不算提交，条件恢复后能重试", async () => {
+  it("通知到 Agent 会话但项目已归档：send_result 失败并如实告诉 AI；失败不算提交，取消归档后能重试", async () => {
     const pk = addProject("p-pause2")
     writeTasks([task("r-pause", { notify: "agent", targetProjectId: "p-pause2" })])
     await trigger("r-pause")
-    addProject("p-pause2", "paused")
+    addProject("p-pause2", true)
     const out = await sendResult("r-pause", { text: "x" })
     expect(out).toContain("[send_failed]")
-    expect(out).toContain("已暂停")
+    expect(out).toContain("已归档")
     expect(await pollKey(pk)).toEqual([])
 
-    addProject("p-pause2", "active")
+    addProject("p-pause2")
     expect(await sendResult("r-pause", { text: "恢复后重试" })).toContain("结果已处理")
     const msgs = await pollKey(pk)
     expect(msgs).toHaveLength(1)
@@ -370,9 +371,8 @@ describe("AI 自排程工具（/mcp-schedule）", () => {
     expect(await schedule(d.sessionKey, "schedule_create", { ...OK, name: "排程6" })).toContain("已创建排程")
   })
 
-  it("身份：只有主用户的会话 / 活跃项目会话能排程；定时任务会话、别人的聊天、不存在的通道、暂停的项目、没有身份都不行", async () => {
-    const paused = addProject("p-ai-paused", "paused")
-    addProject("p-ai-done", "done")
+  it("身份：只有主用户的会话 / 活跃项目会话能排程；定时任务会话、别人的聊天、不存在的通道、已归档的项目、没有身份都不行", async () => {
+    addProject("p-ai-archived", true)
     writeTasks([task("some-task")])
     const wsDir = d.wsDir
     const cases: Array<[string, string | undefined]> = [
@@ -381,8 +381,7 @@ describe("AI 自排程工具（/mcp-schedule）", () => {
       ["别人的聊天的会话", `ch_test|app_other::${wsDir}`],
       ["别人的聊天（别的目录）", `ch_test|app_other::${path.join(d.dataDir, "elsewhere")}`],
       ["不存在的通道", `ch_ghost|app_main::${wsDir}`],
-      ["暂停的项目", paused],
-      ["已完成的项目", projectSessionKey(GROUP, "p-ai-done")],
+      ["已归档的项目", projectSessionKey(GROUP, "p-ai-archived")],
       ["不存在的项目", projectSessionKey(GROUP, "p-none")],
     ]
     for (const [label, invoker] of cases) {
@@ -538,18 +537,13 @@ describe("AI 排程触发：次数 / 过期 / 合并 / 目标失效", () => {
     expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
-  it("目标项目已完成：作废清理；已暂停：保留但不投递", async () => {
-    const donePk = addProject("p-done-ai", "done")
-    const pausedPk = addProject("p-paused-ai", "paused")
-    writeTasks([
-      aiTask("ai-target-done", { targetProjectId: "p-done-ai" }),
-      aiTask("ai-target-paused", { targetProjectId: "p-paused-ai" }),
-    ])
-    expect(await waitFor(() => !readTasks().some((t) => t.id === "ai-target-done"), 15_000, 300)).toBe(true)
+  it("目标项目已归档：作废清理，不投递", async () => {
+    const archivedPk = addProject("p-archived-ai", true)
+    writeTasks([aiTask("ai-target-archived", { targetProjectId: "p-archived-ai" })])
+    expect(await waitFor(() => !readTasks().some((t) => t.id === "ai-target-archived"), 15_000, 300)).toBe(true)
     await sleep(1500)
-    expect(readTasks().map((t) => t.id)).toEqual(["ai-target-paused"])
-    expect(await pollKey(donePk)).toEqual([])
-    expect(await pollKey(pausedPk)).toEqual([])
+    expect(readTasks()).toEqual([])
+    expect(await pollKey(archivedPk)).toEqual([])
   })
 
   it("应用内其他会话建的提醒：到点投给创建它的会话，主会话不受打扰", async () => {

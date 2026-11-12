@@ -25,6 +25,7 @@ import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedH
 import { slashMenuItems } from "../shared/command-catalog"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
+import { pickDefaultTab } from "../shared/session-archive"
 import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
 import { canSwitchBranch, isDetachedLabel, makeBranchOverride, sharedSessionCount, shownBranch, type BranchOverride } from "../shared/git-branch"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
@@ -228,7 +229,8 @@ export default function MobileApp() {
     }
     if (withTabs.flatMap((v) => v.tabs).some((t) => sameChatSession(t.sessionKey, selected))) return
     const first = withTabs[0]
-    const pick = first.tabs.find((t) => sameChatSession(t.sessionKey, first.activeKey)) ?? first.tabs[0]
+    // 默认进没归档的会话，别一进来就落在收起来的归档分组里
+    const pick = pickDefaultTab(first.tabs, first.activeKey, sameChatSession) ?? first.tabs[0]
     setSelected(pick.sessionKey)
   }, [views, selected])
 
@@ -762,6 +764,18 @@ export default function MobileApp() {
     await refreshBootstrap(route.activeUrl, pairCfg.token)
   }
 
+  /** 项目归档 / 取消归档成功：先在本地列表里改掉，马上归到对的分组；再读一次，在途的刷新晚到会把它盖回去，所以稍后补读 */
+  const handleProjectArchiveChanged = (key: string, archived: boolean) => {
+    setServerViews((prev) => prev.map((v) => ({
+      ...v,
+      tabs: v.tabs.map((t) => (sameChatSession(t.sessionKey, key) ? { ...t, archived: archived || undefined } : t)),
+    })))
+    const { activeUrl } = route
+    const { token } = pairCfg
+    void refreshBootstrap(activeUrl, token)
+    window.setTimeout(() => { void refreshBootstrap(activeUrl, token) }, 1500)
+  }
+
   // 给当前会话选工作目录：还没开始的草稿会话直接改它的目录；其它用这个目录新开一个会话（目录不是会话的身份，多个会话可以共用）
   const handleChooseDir = async (dir: string) => {
     if (!selected || !ownerView || !route.activeUrl || !pairCfg.token) return
@@ -1260,6 +1274,7 @@ export default function MobileApp() {
               window.setTimeout(() => { void refreshBootstrap(activeUrl, token) }, 1500)
             }}
             onDeleted={() => void handleProjectDeleted(currentTab)}
+            onArchiveChanged={(archived) => handleProjectArchiveChanged(currentTab.sessionKey, archived)}
             onError={setActionError}
           />
         )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { ChevronRight, Copy, FolderOpen, Plus, RefreshCw, Trash2, X } from "lucide-react"
-import { PROJECT_NAME_MAX, PROJECT_TEXT_MAX, projectDeleteNote, type ProjectListItem } from "../../../shared/project-app-types"
+import { Archive, ArchiveRestore, ChevronRight, Copy, FolderOpen, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { PROJECT_NAME_MAX, PROJECT_TEXT_MAX, projectDeleteConfirmText, type ProjectListItem } from "../../../shared/project-app-types"
 import { bugWatchUnsupportedReason } from "../../../shared/project-bug-watch"
 import {
   INFO_KEY_MAX, LINK_FIELDS, bugWatchView, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow,
@@ -13,18 +13,9 @@ import {
   type RegisterGuard,
 } from "./project-ui"
 
-type Status = ProjectListItem["status"]
-
-const STATUS_OPTIONS: { value: Status; label: string }[] = [
-  { value: "active", label: "进行中" },
-  { value: "paused", label: "已暂停" },
-  { value: "done", label: "已完成" },
-]
-
 interface Draft {
   name: string
   goal: string
-  status: Status
   groupIds: string[]
   links: Record<LinkKey, string>
   watchBugs: boolean
@@ -35,7 +26,6 @@ function draftOf(item: ProjectListItem): Draft {
   return {
     name: item.name,
     goal: item.goal,
-    status: item.status,
     groupIds: [...item.groupIds],
     links: {
       storyUrl: item.storyUrl ?? "",
@@ -115,7 +105,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
       id: item.id,
       name,
       goal: draft.goal.trim(),
-      status: draft.status,
       metadata: composed.metadata,
     }
     for (const k of shownLinks) patch[k] = draft.links[k].trim()
@@ -152,11 +141,20 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
     setDraft({ ...draft, info: { ...draft.info, extra: draft.info.extra.map((r) => (r.id === id ? { ...r, ...patch } : r)) } })
 
   const remove = async () => {
-    const note = projectDeleteNote({ externalDir: item.externalWorkspace, dir: item.dir, isCode: item.isCode })
-    if (!(await ui.showConfirm("删除项目", `确定删除「${item.name}」？\n${note}`, "删除", "取消"))) return
+    const text = projectDeleteConfirmText({ name: item.name, externalDir: item.externalWorkspace, dir: item.dir, isCode: item.isCode })
+    if (!(await ui.showConfirm("删除项目", text, "删除", "取消"))) return
     const r = await window.electronAPI.deleteProject(item.id)
     if (!r.ok) { void ui.showAlert("删除失败", r.error ?? "删除失败"); return }
     await onDeleted()
+  }
+
+  /** 归档 / 取消归档：不用确认，随时能取消。有没保存的修改先存下来，不然重新读回资料时会把它们冲掉 */
+  const toggleArchive = async () => {
+    const next = !item.archived
+    if (dirty && !(await save())) return
+    const r = await window.electronAPI.setProjectArchived(item.id, next)
+    if (!r.ok) { void ui.showAlert(next ? "归档失败" : "取消归档失败", r.error ?? "操作失败"); return }
+    await onChanged()
   }
 
   const switchTo = async () => {
@@ -189,17 +187,7 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base font-medium text-fg outline-none transition hover:border-line focus:border-blue-500 focus:bg-surface"
             />
-            <div role="group" aria-label="项目状态" className="flex shrink-0 overflow-hidden rounded-md border border-line">
-              {STATUS_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  aria-pressed={draft.status === o.value}
-                  onClick={() => setDraft({ ...draft, status: o.value })}
-                  className={`px-2.5 py-1 text-xs transition ${draft.status === o.value ? "bg-blue-500/15 font-medium text-fg" : "text-fg-3 hover:bg-raised"}`}
-                >{o.label}</button>
-              ))}
-            </div>
+            {item.archived && <span className="shrink-0 rounded bg-raised px-2 py-0.5 text-xs text-fg-muted">已归档</span>}
           </div>
           <p className="px-2 text-[11.5px] text-fg-muted">
             {selectedNames.join("、") || "普通项目"} · {actionCount} 个快捷操作
@@ -211,6 +199,12 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
         <>
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => void remove()} className={dangerBtn}><Trash2 size={13} />删除</button>
+            <button
+              type="button"
+              onClick={() => void toggleArchive()}
+              title={item.archived ? "放回对话页的会话列表" : "做完了就归档：对话页里收进最下面的「已归档」，会话和成果都留着，随时可以取消"}
+              className={linkBtn}
+            >{item.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}{item.archived ? "取消归档" : "归档"}</button>
             {!item.groupChatId && <button type="button" onClick={() => void switchTo()} className={linkBtn}>切换至</button>}
           </div>
           <SaveButtons dirty={dirty} canSave={canSave} justSaved={justSaved} busy={busy} onSave={() => void save()} onRevert={revert} />

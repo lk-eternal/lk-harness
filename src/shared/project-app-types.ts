@@ -136,7 +136,8 @@ export interface ProjectView {
   id: string
   name: string
   goal: string
-  status: "active" | "paused" | "done"
+  /** 已归档：会话列表里收进最下面的「已归档」分组 */
+  archived: boolean
   /** 是研发项目（有代码仓和分支）；普通项目为 false */
   isCode: boolean
   templateNames: string[]
@@ -175,7 +176,8 @@ export interface ProjectListItem {
   productDocUrl?: string
   techDocUrl?: string
   featureBranch: string
-  status: "active" | "paused" | "done"
+  /** 已归档 */
+  archived: boolean
   /** 项目实际在用的模板（没记模板的老项目已回落到默认模板） */
   groupId?: string
   groupIds: string[]
@@ -210,6 +212,16 @@ export function projectDeleteNote(view: Pick<ProjectView, "externalDir" | "dir" 
   if (view.externalDir) return `你选的文件夹「${view.dir}」不会被删除，里面 AI 生成的 .lk-harness 成果文件夹会留着。`
   if (view.isCode) return `项目文件夹（含里面的代码副本，以及还没提交或推送的改动）会移到${recycleBin}；你自己的仓库和远程分支不受影响。`
   return `项目文件夹（含 AI 生成的全部成果）会移到${recycleBin}。`
+}
+
+/** 项目归别的通道管（比如飞书）时，应用里动不了它的删除 / 归档，这句话告诉用户去哪做 */
+export function projectNotOwnedHint(action: "删除" | "归档"): string {
+  return `这个项目归其它通道管（比如飞书），${action}可以在设置的项目管理里做`
+}
+
+/** 对话页项目栏、会话列表、手机端删项目时确认框里的正文（三处同一句话，不各写一份） */
+export function projectDeleteConfirmText(view: Pick<ProjectView, "name" | "externalDir" | "dir" | "isCode">, recycleBin = "回收站"): string {
+  return `确定删除项目「${view.name}」吗？\n会停止它的 AI 会话、清除聊天记录。${projectDeleteNote(view, recycleBin)}\n做完了想留着成果的话，可以归档，不用删除。`
 }
 
 export interface ProjectActionResult {

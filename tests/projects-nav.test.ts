@@ -209,8 +209,8 @@ describe("设置页「项目」标签：一栏式，没有顶上的子标签", (
 })
 
 describe("项目左栏", () => {
-  const project = (id: string, name: string, groupNames: string[], status: ProjectListItem["status"] = "active"): ProjectListItem => ({
-    id, name, status, groupNames,
+  const project = (id: string, name: string, groupNames: string[], archived = false): ProjectListItem => ({
+    id, name, archived, groupNames,
   } as ProjectListItem)
   const group = (id: string, name: string, n: number, repo = false) => ({
     id, name, nodes: Array.from({ length: n }, (_, i) => ({ id: `${id}-${i}`, label: `操作${i}` })),
@@ -218,7 +218,7 @@ describe("项目左栏", () => {
   })
   const render = (sel: ProjectsSel, hubUrlReady = false) => renderToStaticMarkup(createElement(ProjectRail, {
     sel, go: vi.fn(), hubUrlReady, onImport: vi.fn(), onOpenHub: vi.fn(),
-    projects: [project("p1", "官网改版", ["通用任务"]), project("p2", "老项目", [], "paused")],
+    projects: [project("p1", "官网改版", ["通用任务"]), project("p2", "老项目", [], true)],
     groups: [group("g1", "通用任务", 2), group("g2", "研发需求", 3, true)] as never,
   }))
 
@@ -229,7 +229,10 @@ describe("项目左栏", () => {
     expect(html).toContain("老项目")
     expect(html).toContain("普通项目") // 没挂模板的老项目
     expect(html).toContain("3 个快捷操作")
-    expect(html).toContain("已暂停")
+    // 归档的项目才有标记；没归档的不带任何「进行中」之类的状态字
+    expect(html).toContain("已归档 · 普通项目")
+    expect(html.match(/已归档/g)).toHaveLength(1)
+    expect(html).not.toMatch(/进行中|已暂停|已完成/)
   })
 
   it("选中谁谁亮：项目只亮一个，模板只亮一个", () => {

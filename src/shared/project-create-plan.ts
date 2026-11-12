@@ -289,7 +289,7 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     ...(p.productDocUrl ? { productDocUrl: p.productDocUrl } : {}),
     ...(p.techDocUrl ? { techDocUrl: p.techDocUrl } : {}),
     featureBranch: p.featureBranch || "",
-    status: p.status,
+    archived: !!p.archivedAt,
     // 实际在用的模板（没记模板的老项目已经回落到默认模板），详情页据此勾选，不用再猜
     groupId: deps.groups[0]?.id,
     groupIds: deps.groups.map((g) => g.id),
@@ -361,7 +361,7 @@ export function buildProjectView(p: Project, deps: ProjectViewDeps): ProjectView
     id: p.id,
     name: p.name,
     goal: p.goal || "",
-    status: p.status,
+    archived: !!p.archivedAt,
     isCode,
     templateNames: deps.groups.map((g) => g.name),
     steps,

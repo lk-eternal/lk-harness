@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { FileText, FolderKanban, FolderOpen, Info, Loader2, RefreshCw, Trash2 } from "lucide-react"
-import { projectDeleteNote, type ProjectView } from "../../../shared/project-app-types"
+import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, RefreshCw, Trash2 } from "lucide-react"
+import { projectDeleteConfirmText, type ProjectView } from "../../../shared/project-app-types"
 import useOutsideClose from "../../hooks/useOutsideClose"
 import { formatTimeAgo } from "../../time-ago"
 import { usePreview } from "../preview/PreviewContext"
@@ -17,6 +17,8 @@ interface Props {
   onStarted: () => void
   /** 项目已删除 */
   onDeleted: () => void
+  /** 项目归档 / 取消归档成功：对话页据此把它挪进（出）「已归档」分组 */
+  onArchiveChanged: (archived: boolean) => void
   onError: (message: string) => void
 }
 
@@ -33,15 +35,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 /**
  * 项目会话输入框上方的项目栏：这个项目有哪些快捷操作（点一下就让 AI 做这件事，和直接在对话里说效果一样），
- * 以及项目信息（目标、项目信息、最近成果、文件夹）和删除项目。
+ * 以及项目信息（目标、项目信息、最近成果、文件夹）、归档和删除项目。
  * 归别的通道管的项目（飞书里建的）只读：点快捷操作会把它的会话绑定抢过来，所以不给点。
  */
-export default function ProjectBar({ channelId, projectId, running, confirm, onStarted, onDeleted, onError }: Props) {
+export default function ProjectBar({ channelId, projectId, running, confirm, onStarted, onDeleted, onArchiveChanged, onError }: Props) {
   const preview = usePreview()
   const [view, setView] = useState<ProjectView | null>(null)
   const [open, setOpen] = useState(false)
   const [starting, setStarting] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"sync" | "delete" | null>(null)
+  const [busy, setBusy] = useState<"sync" | "delete" | "archive" | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const seqRef = useRef(0)
 
@@ -93,10 +95,25 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
     }
   }
 
+  /** 归档 / 取消归档：做完了的项目收起来，不用确认（随时能取消）；会话和成果都还在 */
+  const toggleArchive = async () => {
+    if (busy) return
+    const next = !view.archived
+    setBusy("archive")
+    try {
+      const r = await window.electronAPI.setProjectArchived(projectId, next, channelId)
+      if (!r.ok) { onError(r.error ?? (next ? "归档失败" : "取消归档失败")); return }
+      setOpen(false)
+      await reload()
+      onArchiveChanged(next)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const removeProject = async () => {
     if (busy) return
-    const where = projectDeleteNote(view)
-    if (!await confirm("删除项目", `确定删除项目「${view.name}」吗？\n会停止它的 AI 会话、清除聊天记录。${where}`, "删除")) return
+    if (!await confirm("删除项目", projectDeleteConfirmText(view), "删除")) return
     setBusy("delete")
     try {
       const r = await window.electronAPI.deleteProject(projectId, channelId)
@@ -122,8 +139,8 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
           <div className="px-3 pb-2 pt-2.5">
             <div className="flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-fg">{view.name}</span>
-              {view.status !== "active" && (
-                <span className="shrink-0 rounded bg-raised px-1.5 text-[10.5px] leading-4 text-fg-muted">{view.status === "done" ? "已完成" : "已暂停"}</span>
+              {view.archived && (
+                <span className="shrink-0 rounded bg-raised px-1.5 text-[10.5px] leading-4 text-fg-muted">已归档</span>
               )}
             </div>
             <p className="mt-0.5 text-[11.5px] text-fg-muted">
@@ -201,9 +218,16 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
               )}
               <button
                 type="button"
+                onClick={() => void toggleArchive()}
+                disabled={!!busy}
+                title={view.archived ? "放回会话列表" : "做完了就归档：收进会话列表最下面的「已归档」，会话和成果都留着，随时可以取消"}
+                className="ml-auto inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-[12px] text-fg-3 transition hover:bg-raised/50 disabled:opacity-50"
+              >{busy === "archive" ? <Loader2 size={12} className="animate-spin" /> : view.archived ? <ArchiveRestore size={12} /> : <Archive size={12} />}{view.archived ? "取消归档" : "归档项目"}</button>
+              <button
+                type="button"
                 onClick={() => void removeProject()}
                 disabled={!!busy}
-                className="ml-auto inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-muted transition hover:bg-raised hover:text-danger disabled:opacity-50"
+                className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-muted transition hover:bg-raised hover:text-danger disabled:opacity-50"
               >{busy === "delete" ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}删除项目</button>
             </div>
           )}
@@ -212,6 +236,9 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
 
       <div className="flex items-start gap-2 rounded-xl border border-line bg-surface/70 px-2.5 py-1.5">
         <FolderKanban size={14} className="mt-[5px] shrink-0 text-accent" />
+        {view.archived && (
+          <span className="mt-[3px] shrink-0 rounded bg-raised px-1.5 text-[11px] leading-5 text-fg-muted" title="已归档：在会话列表最下面的「已归档」里。点「项目信息」可以取消归档">已归档</span>
+        )}
         <div className="flex max-h-[62px] min-w-0 flex-1 flex-wrap items-center gap-1.5 overflow-y-auto">
           {view.ownedHere ? (
             view.steps.map((s) => (
@@ -234,7 +261,7 @@ export default function ProjectBar({ channelId, projectId, running, confirm, onS
           type="button"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          title="项目信息、成果、删除项目"
+          title="项目信息、成果、归档、删除项目"
           className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[12px] transition hover:bg-raised hover:text-fg-soft ${open ? "bg-raised text-accent" : "text-fg-muted"}`}
         ><Info size={13} />项目信息</button>
       </div>

@@ -262,10 +262,9 @@ describe("classifyAiScheduleOwner：谁能给自己排程", () => {
     ch_app_nomain: { id: "ch_app_nomain", type: "app", mainUserEnabled: false, workspaceDir: "D:\\ws" },
     ch_fs: { id: "ch_fs", type: "feishu", mainUserEnabled: true, mainUserChatId: "ou_main", workspaceDir: "D:\\fs" },
   }
-  const projects: Record<string, { name: string; status: string }> = {
-    p1: { name: "活跃项目", status: "active" },
-    p2: { name: "暂停项目", status: "paused" },
-    p3: { name: "完成项目", status: "done" },
+  const projects: Record<string, { name: string; archivedAt?: number }> = {
+    p1: { name: "活跃项目" },
+    p2: { name: "归档项目", archivedAt: 1700000000000 },
   }
   const env: AiScheduleOwnerEnv = { project: (id) => projects[id], channel: (id) => channels[id] }
   const classify = (invoker: string | undefined) => classifyAiScheduleOwner(invoker, env)
@@ -316,12 +315,11 @@ describe("classifyAiScheduleOwner：谁能给自己排程", () => {
     }
   })
 
-  it("项目会话：活跃的 → project（带通道和项目 id）；暂停 / 完成 / 不存在 → 拒绝并说明原因", () => {
+  it("项目会话：没归档的 → project（带通道和项目 id）；已归档 / 不存在 → 拒绝并说明原因", () => {
     expect(classify("ch_app|oc_grp::project_p1")).toEqual({
       ok: true, owner: { sessionKey: "ch_app|oc_grp::project_p1", kind: "project", projectId: "p1", channelId: "ch_app" },
     })
-    expect(classify("ch_app|oc_grp::project_p2")).toEqual({ ok: false, error: "项目「暂停项目」已暂停，不能排程" })
-    expect(classify("ch_app|oc_grp::project_p3")).toEqual({ ok: false, error: "项目「完成项目」已完成，不能排程" })
+    expect(classify("ch_app|oc_grp::project_p2")).toEqual({ ok: false, error: "项目「归档项目」已归档，不能排程" })
     expect(classify("ch_app|oc_grp::project_nope")).toEqual({ ok: false, error: "这个项目已不存在，不能排程" })
   })
 

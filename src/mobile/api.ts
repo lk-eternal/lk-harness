@@ -42,6 +42,8 @@ export interface MobileChatTab {
   running: boolean
   current: boolean
   removable?: boolean
+  /** 项目会话的项目已归档：收进最下面的「已归档」分组；旧版电脑端没有这个字段，按没归档算 */
+  archived?: boolean
   model?: string
   modelParams?: string
   resourceId?: string
@@ -477,6 +479,11 @@ export async function syncMobileProjectSteps(baseUrl: string, token: string, pro
 
 export async function deleteMobileProject(baseUrl: string, token: string, channelId: string, projectId: string): Promise<{ ok: boolean; name?: string; error?: string }> {
   return projectError(await callApi(baseUrl, token, "/api/mobile/project-delete", { channelId, projectId }))
+}
+
+/** 归档 / 取消归档项目。旧版电脑端没有这个接口，会得到「未知接口」 */
+export async function setMobileProjectArchived(baseUrl: string, token: string, channelId: string, projectId: string, archived: boolean): Promise<{ ok: boolean; name?: string; error?: string }> {
+  return projectError(await callApi(baseUrl, token, "/api/mobile/project-archive", { channelId, projectId, archived }))
 }
 
 export async function setMobileSessionModel(

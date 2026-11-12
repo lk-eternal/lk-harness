@@ -300,7 +300,7 @@ declare global {
         channelId: string
         name: string
         mainUserChatId?: string
-        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; branch?: string; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
+        mainTabs: { sessionKey: string; label: string; kind: "main" | "project" | "dir" | "temp" | "other"; running: boolean; current: boolean; removable?: boolean; archived?: boolean; branch?: string; boundDir?: string; model?: string; modelParams?: string; resourceId?: string }[]
         activeKey?: string
       }[]
       running: { sessionKey: string; pid: number; startedAt: number; chatType: string; lastActivityAt: number; chatName?: string; workspaceDir?: string; source?: "sdk" | "llm"; model?: string; modelParams?: string; resourceId?: string }[]
@@ -321,9 +321,10 @@ declare global {
     stopOthersFollowingDefault(channelId: string): Promise<ChannelImpactStopResultType>
     listProjects(): Promise<ProjectListItemType[]>
     deleteProject(projectId: string, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }>
+    setProjectArchived(projectId: string, archived: boolean, channelId?: string): Promise<{ ok: boolean; name?: string; error?: string }>
     updateProject(patch: {
       id: string; name?: string; goal?: string; storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
-      status?: string; groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
+      groupId?: string; groupIds?: string[]; metadata?: Record<string, string>; watchBugs?: boolean
     }): Promise<{ ok: boolean; error?: string }>
     switchProject(projectId: string): Promise<{ ok: boolean; error?: string }>
     listProjectTemplates(): Promise<ProjectTemplateInfoType[]>

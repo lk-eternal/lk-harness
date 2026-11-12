@@ -21,7 +21,7 @@ import {
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
-interface ProjectOption { id: string; name: string; status: string }
+interface ProjectOption { id: string; name: string; archived: boolean }
 
 const NOTIFY_OPTIONS: { value: TaskNotify; label: string }[] = [
   { value: "none", label: "不通知（只执行）" },
@@ -70,7 +70,7 @@ export default function TaskPanel() {
     setTaskChannels(cfg.channels ?? [])
     setAgentResources(cfg.agentResources ?? [])
     setTaskStatuses(statuses)
-    setProjects(projectList.map((p) => ({ id: p.id, name: p.name, status: p.status })))
+    setProjects(projectList.map((p) => ({ id: p.id, name: p.name, archived: p.archived })))
     setTasksReady(true)
   }, [])
 
@@ -258,7 +258,7 @@ export default function TaskPanel() {
   const deliveryHint = draft ? describeTaskDelivery(withEffectiveChannel(draft), labels) : ""
   const ai = draft ? isAiTask(draft) : false
 
-  /** Agent 会话选择：空 = 所属通道的主会话；已完成的项目不再提供（已选的保留，保存时提示它已不可用） */
+  /** Agent 会话选择：空 = 所属通道的主会话；已归档的项目不再提供（已选的保留，保存时提示它已不可用） */
   const agentTargetSelect = draft && (
     <select
       value={draft.targetProjectId ?? ""}
@@ -270,10 +270,10 @@ export default function TaskPanel() {
         <option value={draft.targetProjectId}>（项目已不存在）</option>
       )}
       {projects
-        .filter((p) => p.status !== "done" || p.id === draft.targetProjectId)
+        .filter((p) => !p.archived || p.id === draft.targetProjectId)
         .map((p) => (
           <option key={p.id} value={p.id}>
-            项目「{p.name}」的会话{p.status === "paused" ? "（已暂停）" : ""}
+            项目「{p.name}」的会话{p.archived ? "（已归档）" : ""}
           </option>
         ))}
     </select>

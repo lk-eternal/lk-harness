@@ -282,6 +282,44 @@ describe("删项目", () => {
   })
 })
 
+describe("归档项目", () => {
+  it("归档 → 成果和会话都留着，只是标成已归档；取消归档能恢复；视图和列表都带这个标记", async () => {
+    const { store, create } = await boot()
+    const r = await create.createProjectFromApp(APP, { name: "做完了", templateId: "research" })
+    const id = r.projectId!
+    expect(create.getProjectView(id, APP)?.archived).toBe(false)
+
+    expect(create.setProjectArchivedByUser(id, true)).toEqual({ ok: true, name: "做完了" })
+    expect(store.getProject(id)?.archivedAt).toBeGreaterThan(0)
+    expect(store.getProject(id)?.sessionKey).toBeTruthy()
+    expect(trashed).toEqual([]) // 不删任何东西
+    expect(create.getProjectView(id, APP)?.archived).toBe(true)
+    expect(create.listProjectItems().find((x) => x.id === id)?.archived).toBe(true)
+
+    expect(create.setProjectArchivedByUser(id, false)).toEqual({ ok: true, name: "做完了" })
+    expect(store.getProject(id)?.archivedAt).toBeUndefined()
+    expect(create.getProjectView(id, APP)?.archived).toBe(false)
+  })
+
+  it("设置页的项目列表：已归档的排在最后，其余保持原来的顺序", async () => {
+    const { create } = await boot()
+    const a = await create.createProjectFromApp(APP, { name: "甲", templateId: "general" })
+    await create.createProjectFromApp(APP, { name: "乙", templateId: "general" })
+    await create.createProjectFromApp(APP, { name: "丙", templateId: "general" })
+    const before = create.listProjectItems().map((x) => x.id)
+    create.setProjectArchivedByUser(a.projectId!, true)
+    const after = create.listProjectItems()
+    expect(after.map((x) => x.archived)).toEqual([false, false, true])
+    expect(after[2].id).toBe(a.projectId)
+    expect(after.slice(0, 2).map((x) => x.id)).toEqual(before.filter((id) => id !== a.projectId))
+  })
+
+  it("不存在的项目：报错", async () => {
+    const { create } = await boot()
+    expect(create.setProjectArchivedByUser("000000000000", true)).toEqual({ ok: false, error: "项目不存在" })
+  })
+})
+
 describe("同步步骤和项目信息", () => {
   it("全局模板改了，项目的步骤副本在同步前不变、同步后跟上", async () => {
     const { store, create } = await boot()
@@ -663,6 +701,27 @@ describe("飞书里建的项目在应用内只读", () => {
     expect(create.getProjectView(p.id, APP)?.ownedHere).toBe(false)
     const mine = await create.createProjectFromApp(APP, { name: "我的", templateId: "general" })
     expect(create.getProjectView(mine.projectId!, APP)?.ownedHere).toBe(true)
+  })
+
+  it("应用内归档（带通道）：飞书建的项目同样被拒绝，状态不动；设置页（不带通道）能归档", async () => {
+    const { store, create, p } = await feishuProject()
+    const denied = create.setProjectArchivedByUser(p.id, true, { channelId: APP })
+    expect(denied.ok).toBe(false)
+    expect(denied.error).toContain("归档可以在设置的项目管理里做")
+    expect(store.getProject(p.id)?.archivedAt).toBeUndefined()
+    expect(create.setProjectArchivedByUser(p.id, true, { channelId: FEISHU }).ok).toBe(false)
+
+    expect(create.setProjectArchivedByUser(p.id, true)).toEqual({ ok: true, name: "飞书项目" })
+    expect(store.getProject(p.id)?.archivedAt).toBeGreaterThan(0)
+  })
+
+  it("自己建的项目：应用内归档 / 取消归档（带通道）可以", async () => {
+    const { store, create } = await boot()
+    const mine = await create.createProjectFromApp(APP, { name: "我的", templateId: "general" })
+    expect(create.setProjectArchivedByUser(mine.projectId!, true, { channelId: APP }).ok).toBe(true)
+    expect(store.getProject(mine.projectId!)?.archivedAt).toBeGreaterThan(0)
+    expect(create.setProjectArchivedByUser(mine.projectId!, false, { channelId: APP }).ok).toBe(true)
+    expect(store.getProject(mine.projectId!)?.archivedAt).toBeUndefined()
   })
 
   it("自己建的项目：应用内删除（带通道）可以", async () => {

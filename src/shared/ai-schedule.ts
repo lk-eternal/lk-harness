@@ -57,7 +57,7 @@ export interface AiScheduleOwner {
 
 /** 判定调用者归属要查的外部信息（daemon 里的项目表和通道表） */
 export interface AiScheduleOwnerEnv {
-  project(id: string): { name: string; status: string } | undefined;
+  project(id: string): { name: string; archivedAt?: number } | undefined;
   channel(id: string): {
     id: string;
     /** 通道类型：app = 应用内，其余是飞书 / 微信 */
@@ -89,8 +89,8 @@ export function classifyAiScheduleOwner(invoker: string | undefined, env: AiSche
   if (projectId) {
     const project = env.project(projectId);
     if (!project) return { ok: false, error: "这个项目已不存在，不能排程" };
-    if (project.status !== "active") {
-      return { ok: false, error: `项目「${project.name}」${project.status === "paused" ? "已暂停" : "已完成"}，不能排程` };
+    if (project.archivedAt) {
+      return { ok: false, error: `项目「${project.name}」已归档，不能排程` };
     }
     return { ok: true, owner: { sessionKey, kind: "project", projectId, ...(channelId ? { channelId } : {}) } };
   }

@@ -108,6 +108,22 @@ describe("应用内项目：真实 daemon", () => {
 
     const tab = (await tabs()).find((t) => t.sessionKey === r.sessionKey)
     expect(tab).toMatchObject({ kind: "project", label: "Q4 调研", current: true })
+    expect(tab).not.toHaveProperty("archived") // 没归档的会话不带这个字段
+  })
+
+  it("归档：会话还在列表里，只是标上 archived（侧栏据此收进「已归档」分组）；取消归档就恢复；别的会话不受影响", async () => {
+    const { create, tabs } = await boot()
+    const a = await create.createProjectFromApp(CH, { name: "做完的", templateId: "general" })
+    const b = await create.createProjectFromApp(CH, { name: "还在做的", templateId: "general" })
+    const find = async (key: string | undefined) => (await tabs()).find((t) => t.sessionKey === key)
+
+    expect(create.setProjectArchivedByUser(a.projectId!, true, { channelId: CH }).ok).toBe(true)
+    expect(await find(a.sessionKey)).toMatchObject({ kind: "project", label: "做完的", archived: true })
+    expect(await find(b.sessionKey)).toMatchObject({ kind: "project", label: "还在做的" })
+    expect(await find(b.sessionKey)).not.toHaveProperty("archived")
+
+    expect(create.setProjectArchivedByUser(a.projectId!, false, { channelId: CH }).ok).toBe(true)
+    expect(await find(a.sessionKey)).not.toHaveProperty("archived")
   })
 
   it("点步骤：提示词进了项目会话的队列，聊天记录里有「开始」的通知；全局当前项目指针不动", async () => {

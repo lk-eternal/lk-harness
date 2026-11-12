@@ -10,7 +10,7 @@ const base = path.resolve(path.sep, "work", "p1")
 
 const project = (extra: Partial<Project> = {}): Project => ({
   id: "abc123def456", name: "周报", goal: "每周五出报告", repoPath: "", baseBranch: "", featureBranch: "",
-  worktreePath: path.join(base, "workspace"), workspaceType: "plain", status: "active",
+  worktreePath: path.join(base, "workspace"), workspaceType: "plain",
   groupIds: ["general"], groupId: "general", createdAt: 1, updatedAt: 2, ...extra,
 })
 
@@ -68,6 +68,14 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
     expect(buildProjectListItem(p, { groups: snap, globals: globals() }).hasGroupSnapshot).toBe(true)
     // 没副本：永远没有可同步的
     expect(buildProjectListItem(project(), { groups: pick("general"), globals: changed }).canSyncSteps).toBe(false)
+  })
+
+  it("有归档时间才是已归档；没有任何「进行中 / 已暂停」这类状态字段", () => {
+    const opts = { groups: pick("general"), globals: globals() }
+    const live = buildProjectListItem(project(), opts)
+    expect(live.archived).toBe(false)
+    expect(live).not.toHaveProperty("status")
+    expect(buildProjectListItem(project({ archivedAt: 1700000000000 }), opts).archived).toBe(true)
   })
 
   it("watchBugs 只有明确为 true 才是 true", () => {

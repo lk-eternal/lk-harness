@@ -37,7 +37,7 @@ import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
-import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
+import { getProject, findProjectByGroupChat, initProjectStore, listProjects, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
 import { globalChatNamesPath, purgeSessionEntry, readRoutingFileView } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
@@ -501,7 +501,7 @@ function findBoundProject(sessionKey: string, chatId?: string) {
   const projId = projectIdFromSessionKey(sessionKey)
   if (projId) {
     const p = getProject(projId)
-    if (p && p.status !== "done") return p
+    if (p && !p.archivedAt) return p
   }
   const key = chatId || extractChatId(sessionKey)
   return key ? findProjectByGroupChat(key) : undefined
@@ -731,7 +731,7 @@ function buildSwitchableSessions(
   }
   const channel = resolveChannelForSession(chatId)
   const mainDir = effectiveWorkspaceDir(channel)
-  const bound = listProjects().find((p) => p.status !== "done" && projectGroupChatMatches(p, chatId))
+  const bound = listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
   // 专属群：只协作本群项目，目录会话/其它项目一律不列（切了也会被强制路由拉回）
   if (bound) {
     const key = bound.sessionKey || projectSessionKey(bound.groupChatId || chatId, bound.id)
@@ -1103,6 +1103,8 @@ export type SessionTabItem = {
   running: boolean
   current: boolean
   removable?: boolean
+  /** 项目会话：项目已归档（对话页和手机端把它收进最下面的「已归档」分组）；其它会话没有这个字段 */
+  archived?: boolean
   /** 工作目录所在 git 仓库的当前分支；非目录会话或不是仓库时缺省 */
   branch?: string
   /** 用户给这个会话选的工作目录（应用内临时会话）；没选过缺省，此时目录要看会话键 */
@@ -1110,6 +1112,25 @@ export type SessionTabItem = {
   model?: string
   modelParams?: string
   resourceId?: string
+}
+
+/**
+ * 这批会话里，哪些项目已归档（项目 id 集合）。没有项目会话时不碰盘；
+ * 项目记录读不到（已删除、store 还没就绪）按没归档算，别因为读不到就把会话藏进归档分组。
+ */
+function archivedProjectIds(sessionKeys: readonly string[]): Set<string> {
+  const ids = new Set<string>()
+  for (const key of sessionKeys) {
+    const id = projectIdFromSessionKey(key)
+    if (id) ids.add(id)
+  }
+  const archived = new Set<string>()
+  if (ids.size === 0) return archived
+  try { initProjectStore(app.getPath("userData")) } catch { return archived }
+  for (const id of ids) {
+    if (getProject(id)?.archivedAt) archived.add(id)
+  }
+  return archived
 }
 
 function tabBranchFor(sessionKey: string, running?: { workspaceDir?: string }, boundDir?: string): string | undefined {
@@ -1151,8 +1172,10 @@ function buildTabsSync(chatId: string, activeKey: string | undefined): SessionTa
   const tabs: SessionTabItem[] = withOverridesSnapshot(() => {
     const list = buildSessionListForChat(chatId, activeKey)
     const boundDirOf = boundDirReader()
+    const archivedIds = archivedProjectIds(list.map((e) => e.sessionKey))
     return list.map((entry) => {
       const boundDir = boundDirOf(entry.sessionKey)
+      const projectId = projectIdFromSessionKey(entry.sessionKey)
       return {
         sessionKey: entry.sessionKey,
         label: tabLabelForSession(entry.sessionKey, entry.running, boundDir),
@@ -1160,6 +1183,7 @@ function buildTabsSync(chatId: string, activeKey: string | undefined): SessionTa
         running: isSessionAgentRunning(entry.sessionKey),
         current: entry.current,
         removable: isDeletableSession(entry.sessionKey, chatId) || sessionTabKind(entry.sessionKey) === "project",
+        ...(projectId && archivedIds.has(projectId) ? { archived: true } : {}),
         branch: tabBranchFor(entry.sessionKey, entry.running, boundDir),
         ...(boundDir ? { boundDir } : {}),
         ...tabModelFor(entry.sessionKey, entry.running),
@@ -1284,7 +1308,7 @@ export async function switchMainSession(sessionKey: string): Promise<{ ok: boole
   const pid = projectIdFromSessionKey(key)
   if (pid) {
     const proj = getProject(pid)
-    const bound = listProjects().find((p) => p.status !== "done" && projectGroupChatMatches(p, chatId))
+    const bound = listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
     if (bound && bound.id !== pid) {
       return { ok: false, error: "当前为项目专属群，不能切换其它项目" }
     }
@@ -1300,12 +1324,6 @@ export async function switchMainSession(sessionKey: string): Promise<{ ok: boole
       setCurrentProjectId(null)
     } else {
       setCurrentProjectId(pid)
-    }
-    // 存量挂起（旧版 leave）的项目切回视作重新进入：恢复调度 + 确保 AI 工作目录就绪
-    if (proj?.status === "paused") {
-      proj.status = "active"
-      saveProject(proj)
-      if (!isPlainProject(proj)) await ensureCheckouts(projectRepoRefs(proj), proj.featureBranch)
     }
   }
   return { ok: true }
@@ -1715,15 +1733,6 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     const projId = projectIdFromSessionKey(sessionKey)
     const proj = projId ? getProject(projId) : undefined
     if (proj) {
-      // leave 挂起的项目不自动拉起（会把刚释放的 feature 又占回去）；残留消息等 /p use 恢复后处理
-      if (proj.status === "paused") {
-        const lastAt = featureOccupiedNotifyAt.get(sessionKey) ?? 0
-        if (Date.now() - lastAt > 10 * 60_000) {
-          featureOccupiedNotifyAt.set(sessionKey, Date.now())
-          await notifyChat(sessionKey, `💤 项目「${proj.name}」已退出会话，有消息待处理：/p use 重新进入后会自动继续`)
-        }
-        continue
-      }
       // 拉起前确保 AI 工作目录就绪（缺失自动重建、切回 feature）；失败拦下并节流提醒（纯会话型无 git 直接放行）
       const co = isPlainProject(proj) ? { ok: true as const, error: undefined } : await ensureCheckouts(projectRepoRefs(proj), proj.featureBranch)
       if (!co.ok) {

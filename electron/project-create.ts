@@ -20,6 +20,7 @@ import { leaveProjectSession, stopSessionAgent } from "./session-dispatcher"
 import { addProjectClone, ensureArtifactDir, inspectLocalRepo, isUsableRepoRef, isValidBranchName, removeDirRobust } from "./project-worktree"
 import { pushUiLog } from "./ui-logger"
 import {
+  projectNotOwnedHint,
   repoDisplayName,
   type InspectRepoResult,
   type ProjectActionResult,
@@ -52,6 +53,7 @@ import {
   projectNodes,
   saveProject,
   setCurrentProjectId,
+  setProjectArchived,
 } from "../src/shared/project-store.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
 import { APP_CHANNEL_CHAT_ID, makeChatKey } from "../src/shared/channel-types.js"
@@ -62,7 +64,6 @@ function ensureStore(): void {
 }
 
 const NOT_OWNED_HINT = "这个项目归其它通道管（比如飞书），请到它所在的聊天里推进；删除可以在设置的项目管理里做"
-
 /** 应用内对话通道的 chatKey；不是应用内通道返回 undefined */
 function appChatKeyOf(channelId: string): string | undefined {
   if (!channelId || getChannel(channelId)?.type !== "app") return undefined
@@ -285,7 +286,10 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
 export function listProjectItems(): ProjectListItem[] {
   ensureStore()
   const globals = getNodeGroups()
-  return listProjects().map((p) => buildProjectListItem(p, { groups: projectGroups(p), globals }))
+  // 已归档的排在后面（稳定排序，各自保持最近更新在前）
+  return listProjects()
+    .map((p) => buildProjectListItem(p, { groups: projectGroups(p), globals }))
+    .sort((a, b) => Number(a.archived) - Number(b.archived))
 }
 
 /** 项目信息面板数据；项目不存在返回 null。channelId 是正在看的通道，用来标出项目归不归它 */
@@ -351,6 +355,27 @@ export async function deleteProjectByUser(
     const chatId = await resolveMainChatId(lock.port)
     if (chatId) await leaveProjectSession(lock.port, chatId)
   }
+  return { ok: true, name: target.name }
+}
+
+/**
+ * 用户在界面上归档 / 取消归档项目（设置页、应用内会话列表和项目栏、手机端共用）。
+ * 只改项目上的标记：会话、聊天记录、工作目录都原样留着，对话页把它收进最下面的「已归档」分组；
+ * 归档后飞书专属群不再认领它、定时任务和 AI 排程不再投给它、也不再盯缺陷（见 archivedAt 的说明）。
+ * 给了通道（手机端、应用内）就只能动归这个应用内通道的项目；设置页不传，可以管全部项目。
+ */
+export function setProjectArchivedByUser(
+  projectId: string,
+  archived: boolean,
+  opts?: { channelId: string },
+): { ok: boolean; name?: string; error?: string } {
+  ensureStore()
+  const target = getProject(String(projectId || "").trim())
+  if (!target) return { ok: false, error: "项目不存在" }
+  if (opts && (!appChatKeyOf(opts.channelId) || !isProjectOwnedBy(target, opts.channelId))) {
+    return { ok: false, error: projectNotOwnedHint("归档") }
+  }
+  if (!setProjectArchived(target.id, archived)) return { ok: false, error: "项目不存在" }
   return { ok: true, name: target.name }
 }
 

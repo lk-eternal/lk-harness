@@ -78,7 +78,7 @@ import {
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
-import { createProjectFromApp, deleteProjectByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
+import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
 import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
 import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
 import { bugWatchUnsupportedReason } from "../src/shared/project-bug-watch.js"
@@ -2001,6 +2001,8 @@ export function initDaemonManager(): void {
   ipcMain.handle("project:list", () => listProjectItems())
   ipcMain.handle("project:delete", (_e, projectId: string, channelId?: string) =>
     deleteProjectByUser(projectId, channelId ? { channelId } : undefined))
+  ipcMain.handle("project:set-archived", (_e, projectId: string, archived: boolean, channelId?: string) =>
+    setProjectArchivedByUser(projectId, archived === true, channelId ? { channelId } : undefined))
   ipcMain.handle("project:update", (_e, patch: {
     id: string
     name?: string
@@ -2009,7 +2011,6 @@ export function initDaemonManager(): void {
     relatedDocs?: string
     productDocUrl?: string
     techDocUrl?: string
-    status?: string
     groupId?: string
     groupIds?: string[]
     metadata?: Record<string, string>
@@ -2050,11 +2051,6 @@ export function initDaemonManager(): void {
       } else {
         delete p.metadata
       }
-    }
-    if (typeof patch.status === "string") {
-      const st = patch.status.trim()
-      if (st === "active" || st === "paused" || st === "done") p.status = st
-      else return { ok: false, error: "状态无效" }
     }
     if (Array.isArray(patch.groupIds) || typeof patch.groupId === "string") {
       if (!Array.isArray(patch.groupIds) && !String(patch.groupId).trim()) {

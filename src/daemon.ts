@@ -1410,7 +1410,7 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
   if (!resolved.viaReply && chatId && chatType === "group" && routedId === chatId) {
     const rawChat = parseChatKey(chatId).chatId;
     const owned = listProjects().filter((p) => {
-      if (p.status !== "active" || !p.sessionKey) return false;
+      if (p.archivedAt || !p.sessionKey) return false;
       const n = p.notifyChatId || "";
       return n === chatId || parseChatKey(n).chatId === rawChat;
     });
@@ -5711,7 +5711,7 @@ function taskOutboundChatKey(task: ScheduledTask): string | undefined {
 
 type TaskAgentTarget =
   | { ok: true; sessionKey: string; chatKey: string; chatType: "p2p" | "project"; label: string }
-  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已完成 / 创建排程的会话被删） */ retire: boolean };
+  | { ok: false; error: string; /** 目标永久失效（项目没了 / 已归档 / 创建排程的会话被删） */ retire: boolean };
 
 /** AI 排程的创建者是应用内的非主会话（其他目录 / 临时会话）时返回它的会话键，其余返回空 */
 function aiChatOwnerSessionKey(task: ScheduledTask): string {

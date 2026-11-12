@@ -20,6 +20,7 @@ import {
   listProjectRepoOptions,
   listProjectTemplates,
   runProjectStepFromApp,
+  setProjectArchivedByUser,
   syncProjectSteps,
 } from "./project-create"
 import { parseGatewayCreateInput } from "../src/shared/project-create-plan.js"
@@ -624,6 +625,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     case "/api/mobile/project-delete": {
       // 手机端必须带通道：只能删归这个应用内通道的项目（设置里管全部项目，是电脑端的事）
       sendJson(res, 200, await deleteProjectByUser(String(body.projectId ?? ""), { channelId: String(body.channelId ?? "") }))
+      return
+    }
+    case "/api/mobile/project-archive": {
+      // 同样必须带通道；archived=false 是取消归档
+      sendJson(res, 200, setProjectArchivedByUser(String(body.projectId ?? ""), body.archived === true, { channelId: String(body.channelId ?? "") }))
       return
     }
     default:

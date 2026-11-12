@@ -6,7 +6,9 @@ import {
   PROJECT_NAME_MAX,
   PROJECT_REPOS_MAX,
   PROJECT_TEXT_MAX,
+  projectDeleteConfirmText,
   projectDeleteNote,
+  projectNotOwnedHint,
   repoDisplayName,
   repoPicksProblem,
   sortTemplatesForPicker,
@@ -242,7 +244,7 @@ describe("buildProjectView", () => {
   const base = path.resolve(path.sep, "work", "p1")
   const project = (extra: Partial<Project> = {}): Project => ({
     id: "abc123def456", name: "周报", goal: "每周五出报告", repoPath: "", baseBranch: "", featureBranch: "",
-    worktreePath: path.join(base, "workspace"), workspaceType: "plain", status: "active",
+    worktreePath: path.join(base, "workspace"), workspaceType: "plain",
     groupIds: ["report"], groupId: "report", createdAt: 1, updatedAt: 2, ...extra,
   })
 
@@ -294,6 +296,14 @@ describe("buildProjectView", () => {
     const withSnap = project({ groupSnapshot: snap })
     expect(buildProjectView(withSnap, { channelId: CH, groups: snap, globals, fileExists: () => true }).canSyncSteps).toBe(true)
     expect(buildProjectView(withSnap, { channelId: CH, groups: snap, globals: groups(), fileExists: () => true }).canSyncSteps).toBe(false)
+  })
+
+  it("有归档时间才是已归档；视图里没有项目状态", () => {
+    const opts = { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true }
+    const live = buildProjectView(project(), opts)
+    expect(live.archived).toBe(false)
+    expect(live).not.toHaveProperty("status")
+    expect(buildProjectView(project({ archivedAt: 1700000000000 }), opts).archived).toBe(true)
   })
 
   it("项目归不归当前通道：按项目现在绑的会话判断", () => {
@@ -417,6 +427,27 @@ describe("projectDeleteNote（删项目确认框里的那句话）", () => {
     expect(t).not.toContain("回收站")
     expect(projectDeleteNote({ externalDir: false, dir: "x", isCode: true }, "电脑的回收站")).toContain("移到电脑的回收站")
     expect(projectDeleteNote({ externalDir: false, dir: "x", isCode: false }, "电脑的回收站")).toContain("移到电脑的回收站")
+  })
+})
+
+describe("项目的删除确认和归档提示", () => {
+  const view = { name: "官网改版", externalDir: false, dir: "D:\\p", isCode: false }
+
+  it("删除确认：说清删什么，并提醒想留着成果可以归档", () => {
+    const t = projectDeleteConfirmText(view)
+    expect(t).toContain("确定删除项目「官网改版」吗？")
+    expect(t).toContain("清除聊天记录")
+    expect(t).toContain(projectDeleteNote(view))
+    expect(t).toContain("可以归档")
+  })
+
+  it("手机端把回收站说成电脑的", () => {
+    expect(projectDeleteConfirmText(view, "电脑的回收站")).toContain("移到电脑的回收站")
+  })
+
+  it("项目归别的通道管：删除 / 归档都指到设置的项目管理里做", () => {
+    expect(projectNotOwnedHint("删除")).toContain("删除可以在设置的项目管理里做")
+    expect(projectNotOwnedHint("归档")).toContain("归档可以在设置的项目管理里做")
   })
 })
 

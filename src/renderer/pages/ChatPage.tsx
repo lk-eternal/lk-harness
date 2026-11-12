@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, Check, ChevronRight, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -35,7 +35,8 @@ import { CHANNEL_TYPE_LABELS, workspaceDirFromSessionKey, type AgentResource } f
 import { describeAppChannelIssue, ensureAppChannel, planAppChannel, type AppChannelIssue, type EnsureAppChannelIO } from "../../shared/app-channel-ensure"
 import { emptyChannel } from "../channel-defaults"
 import { notifyChannelsChanged } from "../channel-events"
-import { projectIdOfSessionKey, type ProjectCreateResult } from "../../shared/project-app-types"
+import { projectDeleteConfirmText, projectIdOfSessionKey, projectNotOwnedHint, type ProjectCreateResult } from "../../shared/project-app-types"
+import { ARCHIVED_GROUP_TITLE, pickDefaultTab, splitArchived } from "../../shared/session-archive"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
@@ -120,6 +121,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 没有可用的应用内通道时的原因：被停用 / 自动创建失败（下一次刷新会重试） */
   const [channelIssue, setChannelIssue] = useState<AppChannelIssue | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  /** 侧栏最下面「已归档」分组是否展开；默认收起，只有一行标题 */
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
   const [resources, setResources] = useState<AgentResource[]>([])
   const [modelBusy, setModelBusy] = useState(false)
@@ -229,7 +232,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     const current = withTabs.flatMap((v) => v.tabs).find((t) => sameChatSession(t.sessionKey, selected))
     if (current) return
     const first = withTabs[0]
-    const pick = first.tabs.find((t) => sameChatSession(t.sessionKey, first.activeKey)) ?? first.tabs[0]
+    // 默认进没归档的会话，别一进来就落在收起来的归档分组里
+    const pick = pickDefaultTab(first.tabs, first.activeKey, sameChatSession) ?? first.tabs[0]
     setSelected(pick.sessionKey)
   }, [views, selected])
 
@@ -291,6 +295,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
   /** 当前会话是项目会话时的项目 id */
   const projectId = tab?.kind === "project" ? projectIdOfSessionKey(tab.sessionKey) : undefined
+  // 选中的会话在归档分组里（点通知跳过来的、刚把当前项目归档了）：把分组展开，不然列表里找不到自己在哪
+  const selectedArchived = !!tab?.archived
+  useEffect(() => { if (selectedArchived) setArchivedOpen(true) }, [selected, selectedArchived])
   /** 用户给会话选的工作目录：服务端带回来的优先，刚选还没刷新到的用本地的 */
   const boundDirOf = (t: ChatTab): string | undefined => t.boundDir ?? pickedDirs[t.sessionKey]
   /** 会话的工作目录；没选过目录的临时会话没有，它自己的临时文件夹对用户不可见 */
@@ -500,6 +507,49 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     void refreshUsage()
   }
 
+  /** 会话所在的应用内通道：项目的归档、删除要带上它，主进程据此判断项目归不归这个通道 */
+  const channelOf = (t: ChatTab): string | undefined =>
+    views.find((v) => v.tabs.some((x) => sameChatSession(x.sessionKey, t.sessionKey)))?.channelId
+
+  /**
+   * 项目的归档状态变了（侧栏或项目栏里点的）：先在本地列表里改掉，马上归到对的分组；
+   * 再重新读一次，刷新正好在途时晚到的旧结果会把它盖回去，所以稍后补读一次。
+   */
+  const archiveChanged = (sessionKey: string, archived: boolean) => {
+    setViews((prev) => prev.map((v) => ({
+      ...v,
+      tabs: v.tabs.map((t) => (sameChatSession(t.sessionKey, sessionKey) ? { ...t, archived: archived || undefined } : t)),
+    })))
+    void refresh()
+    window.setTimeout(() => { void refresh() }, 600)
+  }
+
+  /** 侧栏行上归档 / 取消归档项目 */
+  const toggleArchive = async (t: ChatTab) => {
+    const projectId = projectIdOfSessionKey(t.sessionKey)
+    const channelId = channelOf(t)
+    if (!projectId || !channelId) return
+    const next = !t.archived
+    const r = await window.electronAPI.setProjectArchived(projectId, next, channelId)
+    if (!r.ok) { setActionError(r.error ?? (next ? "归档失败" : "取消归档失败")); return }
+    archiveChanged(t.sessionKey, next)
+  }
+
+  /** 侧栏行上删除项目：确认框和删除路径都和项目栏里的「删除项目」一样 */
+  const deleteProjectRow = async (t: ChatTab) => {
+    const projectId = projectIdOfSessionKey(t.sessionKey)
+    const channelId = channelOf(t)
+    if (!projectId || !channelId) return
+    const view = await window.electronAPI.getProjectView(projectId, channelId)
+    if (!view) { setActionError("项目不存在"); return }
+    // 归别的通道管的项目删不了，先说明，别让用户确认完才报错
+    if (!view.ownedHere) { setActionError(projectNotOwnedHint("删除")); return }
+    if (!await showConfirm("删除项目", projectDeleteConfirmText(view), "删除")) return
+    const r = await window.electronAPI.deleteProject(projectId, channelId)
+    if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
+    await projectDeleted(t)
+  }
+
   // 会话进程在线 ≠ AI 在干活（回复完 Agent 仍挂在 poll 上）：以未收口的回合卡 / 待处理的用户消息为准
   const hasLiveTurn = items.some((it) => it.kind === "assistant" && !it.finished)
   const busy = !!tab?.running && (hasLiveTurn || items[items.length - 1]?.kind === "user")
@@ -525,6 +575,72 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   // 新建会话后选中的是它，列表要滚到它那里；只认选中变化，后台刷新多出几个会话不该把用户正在翻的位置拽回去
   const sidebarListRef = useRef<HTMLDivElement>(null)
   useScrollActiveIntoView(sidebarListRef, selected, 0)
+
+  /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面一个折叠分组里；一个都没有就不出现这个分组 */
+  const archivedTabs = views.flatMap((v) => splitArchived(v.tabs).archived)
+
+  const renderRow = (t: ChatTab) => {
+    const on = sameChatSession(t.sessionKey, selected)
+    const at = activeAt(t)
+    const pinned = pins.isPinned(t.sessionKey)
+    const status = sessionStatus(t.sessionKey, t.running)
+    const isProject = t.kind === "project"
+    const deletable = !!t.removable
+    return (
+      <div key={t.sessionKey} className={`group/row relative ${t.archived ? "opacity-70 transition hover:opacity-100" : ""}`}>
+        <button
+          type="button"
+          onClick={() => setSelected(t.sessionKey)}
+          aria-current={on ? "true" : undefined}
+          title={dirOf(t) ?? sessionName(t)}
+          className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
+        >
+          {status === "working" ? (
+            <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
+          ) : (
+            <span className="relative shrink-0">
+              {t.kind === "project"
+                ? <FolderKanban size={14} className="text-fg-faint" />
+                : <MessageCircle size={14} className="text-fg-faint" />}
+              {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
+            </span>
+          )}
+          <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
+          {pinned && <Pin size={11} aria-label="已置顶" className="shrink-0 text-accent group-hover/row:invisible" />}
+          {at !== undefined && (
+            <span className="shrink-0 text-[11px] font-normal text-fg-faint group-hover/row:invisible">{formatTimeAgo(at, now)}</span>
+          )}
+        </button>
+        <div className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 items-center rounded bg-raised group-hover/row:flex">
+          <button
+            type="button"
+            onClick={() => pins.toggle(t.sessionKey)}
+            title={pinned ? "取消置顶" : "置顶会话"}
+            aria-label={pinned ? "取消置顶" : "置顶会话"}
+            className="rounded p-1 text-fg-muted transition hover:text-accent"
+          >{pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>
+          {isProject && (
+            <button
+              type="button"
+              onClick={() => void toggleArchive(t)}
+              title={t.archived ? "取消归档" : "归档项目"}
+              aria-label={t.archived ? "取消归档" : "归档项目"}
+              className="rounded p-1 text-fg-muted transition hover:text-accent"
+            >{t.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}</button>
+          )}
+          {deletable && (
+            <button
+              type="button"
+              onClick={() => void (isProject ? deleteProjectRow(t) : deleteSession(t))}
+              title={isProject ? "删除项目" : "删除会话"}
+              aria-label={isProject ? "删除项目" : "删除会话"}
+              className="rounded p-1 text-fg-muted transition hover:text-danger"
+            ><Trash2 size={13} /></button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <PreviewContext.Provider value={preview.api}>
@@ -563,61 +679,26 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                     </div>
                   </div>
                   <div className="space-y-0.5">
-                    {listOrder(v.tabs).map((t) => {
-                      const on = sameChatSession(t.sessionKey, selected)
-                      const at = activeAt(t)
-                      const pinned = pins.isPinned(t.sessionKey)
-                      const status = sessionStatus(t.sessionKey, t.running)
-                      // 项目会话背后是项目本身，删除走 /p del，不在对话页里处理
-                      const deletable = !!t.removable && t.kind !== "project"
-                      return (
-                        <div key={t.sessionKey} className="group/row relative">
-                          <button
-                            type="button"
-                            onClick={() => setSelected(t.sessionKey)}
-                            aria-current={on ? "true" : undefined}
-                            title={dirOf(t) ?? sessionName(t)}
-                            className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
-                          >
-                            {status === "working" ? (
-                              <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
-                            ) : (
-                              <span className="relative shrink-0">
-                                {t.kind === "project"
-                                  ? <FolderKanban size={14} className="text-fg-faint" />
-                                  : <MessageCircle size={14} className="text-fg-faint" />}
-                                {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
-                              </span>
-                            )}
-                            <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
-                            {pinned && <Pin size={11} aria-label="已置顶" className="shrink-0 text-accent group-hover/row:invisible" />}
-                            {at !== undefined && (
-                              <span className="shrink-0 text-[11px] font-normal text-fg-faint group-hover/row:invisible">{formatTimeAgo(at, now)}</span>
-                            )}
-                          </button>
-                          <div className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 items-center rounded bg-raised group-hover/row:flex">
-                            <button
-                              type="button"
-                              onClick={() => pins.toggle(t.sessionKey)}
-                              title={pinned ? "取消置顶" : "置顶会话"}
-                              aria-label={pinned ? "取消置顶" : "置顶会话"}
-                              className="rounded p-1 text-fg-muted transition hover:text-accent"
-                            >{pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>
-                            {deletable && (
-                              <button
-                                type="button"
-                                onClick={() => void deleteSession(t)}
-                                title="删除会话"
-                                className="rounded p-1 text-fg-muted transition hover:text-danger"
-                              ><Trash2 size={13} /></button>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })}
+                    {listOrder(splitArchived(v.tabs).live).map(renderRow)}
                   </div>
                 </div>
               ))}
+              {archivedTabs.length > 0 && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setArchivedOpen((o) => !o)}
+                    aria-expanded={archivedOpen}
+                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition hover:bg-strong/25 hover:text-fg-2"
+                  >
+                    <ChevronRight size={12} className={`shrink-0 transition-transform ${archivedOpen ? "rotate-90" : ""}`} />
+                    <Archive size={12} className="shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{ARCHIVED_GROUP_TITLE}</span>
+                    <span className="shrink-0 text-[11px] text-fg-faint">{archivedTabs.length}</span>
+                  </button>
+                  {archivedOpen && <div className="space-y-0.5">{listOrder(archivedTabs).map(renderRow)}</div>}
+                </div>
+              )}
               {treeError && <p className="px-2 text-[11px] text-yellow-500">{treeError}</p>}
             </div>
             <div className="flex shrink-0 items-center justify-between border-t border-line-subtle px-3 py-2 text-[11px] text-fg-faint">
@@ -691,6 +772,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                           confirm={showConfirm}
                           onStarted={() => { window.setTimeout(() => { void refresh() }, 600) }}
                           onDeleted={() => void projectDeleted(tab)}
+                          onArchiveChanged={(archived) => archiveChanged(tab.sessionKey, archived)}
                           onError={setActionError}
                         />
                       )}

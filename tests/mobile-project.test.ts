@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, syncMobileProjectSteps,
+  runMobileProjectStep, setMobileProjectArchived, syncMobileProjectSteps,
   type MobileChatTab, type RouteStatus,
 } from "../src/mobile/api"
 import { SessionDrawer } from "../src/mobile/MobileModals"
@@ -77,8 +77,17 @@ describe("手机端项目接口：请求长什么样", () => {
     expect(sent(calls[4])).toEqual({ channelId: "ch_app", projectId: "p1" })
   })
 
+  it("归档 / 取消归档：POST project-archive，带通道、项目和要归档还是取消", async () => {
+    const calls = stubFetch(json({ ok: true, name: "调研" }), json({ ok: true, name: "调研" }))
+    expect(await setMobileProjectArchived(BASE, TOKEN, "ch_app", "p1", true)).toEqual({ ok: true, name: "调研" })
+    await setMobileProjectArchived(BASE, TOKEN, "ch_app", "p1", false)
+    expect(calls[0].url).toBe("http://192.168.1.5:19529/api/mobile/project-archive")
+    expect(sent(calls[0])).toEqual({ channelId: "ch_app", projectId: "p1", archived: true })
+    expect(sent(calls[1])).toEqual({ channelId: "ch_app", projectId: "p1", archived: false })
+  })
+
   it("旧版电脑端没有项目接口（未知接口）：换成能看懂的升级提示，每个接口都一样", async () => {
-    stubFetch(...Array.from({ length: 6 }, () => json({ ok: false, error: "未知接口" }, 404)))
+    stubFetch(...Array.from({ length: 7 }, () => json({ ok: false, error: "未知接口" }, 404)))
     const rs = [
       await fetchMobileProjectTemplates(BASE, TOKEN),
       await fetchMobileProjectRepos(BASE, TOKEN),
@@ -86,6 +95,7 @@ describe("手机端项目接口：请求长什么样", () => {
       await fetchMobileProjectView(BASE, TOKEN, "c", "p"),
       await runMobileProjectStep(BASE, TOKEN, "c", "p", "n"),
       await deleteMobileProject(BASE, TOKEN, "c", "p"),
+      await setMobileProjectArchived(BASE, TOKEN, "c", "p", true),
     ]
     for (const r of rs) {
       expect(r.ok).toBe(false)
@@ -184,5 +194,39 @@ describe("会话抽屉：项目", () => {
 
   it("项目会话在抽屉里不给直接删除（删除在项目信息里，能看到归属才给删）", () => {
     expect(render([tab()])).not.toContain("删除会话")
+  })
+
+  describe("已归档分组", () => {
+    const dir = (n: string): MobileChatTab => ({
+      sessionKey: `ch|app_main::D:\\work\\${n}`, label: n, kind: "dir", running: false, current: false, removable: true,
+    })
+    const archivedTab = (over: Partial<MobileChatTab> = {}) =>
+      tab({ sessionKey: "ch|app_main::project_old", label: "做完的项目", archived: true, ...over })
+
+    it("没有归档的会话：不出现这个分组，保持页面简洁", () => {
+      expect(render([tab(), dir("a")])).not.toContain("已归档")
+    })
+
+    it("有归档的：收在最下面一个折叠分组里，默认收起（只看到数量），不在通道的列表里", () => {
+      const html = render([archivedTab(), dir("a"), tab()])
+      expect(html).toContain("已归档")
+      expect(html).toContain('aria-expanded="false"')
+      expect(html).not.toContain("做完的项目") // 收起时不渲染里面的行
+      expect(html.indexOf("已归档")).toBeGreaterThan(html.indexOf("Q4 调研"))
+    })
+
+    it("选中的会话就在归档分组里：自动展开，找得到自己在哪", () => {
+      const a = archivedTab()
+      const html = render([a, dir("a")], { selected: a.sessionKey })
+      expect(html).toContain('aria-expanded="true"')
+      expect(html).toContain("做完的项目")
+      expect(html.indexOf("做完的项目")).toBeGreaterThan(html.indexOf("a<")) // 在普通会话后面
+    })
+
+    it("所有会话都归档了：通道里没有普通行，分组照常在", () => {
+      const html = render([archivedTab()])
+      expect(html).toContain("已归档")
+      expect(html).not.toContain("临时对话")
+    })
   })
 })
