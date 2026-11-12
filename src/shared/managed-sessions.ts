@@ -20,9 +20,8 @@ import { projectIdFromSessionKey } from "./project-types.js"
 import {
   MIRROR_FILE,
   STATE_FILE,
-  globalRoutingPath,
-  listSessionEntryDirPaths,
-  readSessionKeyFromEntryDir,
+  listSessionEntries,
+  readRoutingFileView,
 } from "./session-entry-paths.js"
 import {
   getSessionRecord,
@@ -162,12 +161,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const PREVIEW_MAX_CHARS = 60
 
 export function readRoutingSnapshot(userDataDir: string): RoutingSnapshot {
-  try {
-    const raw = JSON.parse(fs.readFileSync(globalRoutingPath(userDataDir), "utf8")) as RoutingSnapshot
-    return { chatType: raw.chatType ?? {}, sessionToChat: raw.sessionToChat ?? {} }
-  } catch {
-    return {}
-  }
+  const raw = readRoutingFileView(userDataDir) as RoutingSnapshot | undefined
+  return raw ? { chatType: raw.chatType ?? {}, sessionToChat: raw.sessionToChat ?? {} } : {}
 }
 
 function norm(sessionKey: string): string {
@@ -281,9 +276,9 @@ export function listManagedSessions(env: ManagedSessionsEnv): { sessions: Manage
   return withOverridesSnapshot(() => {
     const records = readOverridesSnapshot().sessions
     const entries = new Map<string, { sessionKey: string; entryDir?: string }>()
-    for (const dir of listSessionEntryDirPaths(env.userDataDir)) {
-      const sk = readSessionKeyFromEntryDir(dir)
-      if (sk) entries.set(norm(sk), { sessionKey: norm(sk), entryDir: dir })
+    // 会话键走缓存：目录集合没变就不再逐个读 session-key.txt（清单每 8 秒刷新一次）
+    for (const { dir, sessionKey: sk } of listSessionEntries(env.userDataDir)) {
+      entries.set(norm(sk), { sessionKey: norm(sk), entryDir: dir })
     }
     for (const sk of Object.keys(routing.sessionToChat ?? {})) {
       const key = norm(sk)

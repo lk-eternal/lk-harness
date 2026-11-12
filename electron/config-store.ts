@@ -464,11 +464,12 @@ export function newSdkResourceId(): string {
   return `sdk_${randomBytes(4).toString("hex")}`
 }
 
-export function getChannels(): MessageChannel[] {
-  const cfg = getConfig()
-  // 旧版本迁移出的通道可能缺少通道级字段，用旧全局值兜底；
-  // 主/其他三开关：存量老值归主用户，其他人走独立默认值（保留开/长连接关/思考关）
-  return (cfg.channels ?? []).map((c) => ({
+/**
+ * 旧版本迁移出的通道可能缺少通道级字段，用旧全局值兜底；
+ * 主/其他三开关：存量老值归主用户，其他人走独立默认值（保留开/长连接关/思考关）
+ */
+function withChannelDefaults(c: MessageChannel, cfg: Pick<AppConfig, "allowOthers" | "digitalIdentity">): MessageChannel {
+  return {
     ...c,
     // 应用内对话没有外部身份：通道本身就是主用户私聊，绑定恒成立
     ...(c.type === "app" ? { mainUserEnabled: true, mainUserChatId: APP_CHANNEL_CHAT_ID } : {}),
@@ -485,7 +486,12 @@ export function getChannels(): MessageChannel[] {
     showThinkingOthers: c.showThinkingOthers ?? false,
     streamKeepPerKindOthers: c.streamKeepPerKindOthers ?? 5,
     hideThinkingOnFinishOthers: c.hideThinkingOnFinishOthers ?? true,
-  }))
+  }
+}
+
+export function getChannels(): MessageChannel[] {
+  const cfg = getConfig()
+  return (cfg.channels ?? []).map((c) => withChannelDefaults(c, cfg))
 }
 
 export function getEnabledChannels(): MessageChannel[] {
@@ -494,7 +500,12 @@ export function getEnabledChannels(): MessageChannel[] {
 
 export function getChannel(id?: string): MessageChannel | undefined {
   if (!id) return undefined
-  return getChannels().find((c) => c.id === id)
+  // 会话列表里每个 tab 要查好几次所属通道：命中缓存时只克隆这一个通道，不再每次克隆整份配置
+  // （含全部供应商、仓库配置……）再把所有通道都套一遍默认值
+  if (!configCache) getConfig() // 填缓存；有凭据解密失败时 getConfig 不缓存，下面走完整路径
+  if (!configCache) return getChannels().find((c) => c.id === id)
+  const hit = configCache.channels?.find((c) => c.id === id)
+  return hit ? structuredClone(withChannelDefaults(hit, configCache)) : undefined
 }
 
 /** 解析会话所属通道；解析不到时返回 undefined（禁止静默回退到「第一个启用通道」，防微信会话读到飞书配置） */

@@ -231,12 +231,25 @@ export function saveAppChatImage(bytes: ArrayBuffer, ext: string): { ok: true; p
   return { ok: true, path: file }
 }
 
-export function readAppChatImage(file: string): { ok: true; dataUrl: string } | { ok: false; error: string } {
+/**
+ * 读图片转 data URL。用异步读：对话里每张图都要来这里取一次，图大（几 MB 的截图）、会话里图多时，
+ * 同步读盘 + base64 会把主进程占住，列表、切换会话的响应都跟着卡。
+ */
+export async function readAppChatImage(file: string): Promise<{ ok: true; dataUrl: string } | { ok: false; error: string }> {
   const mime = IMAGE_MIME[path.extname(file).toLowerCase()]
   if (!mime) return { ok: false, error: "不是图片文件" }
-  if (!fs.existsSync(file)) return { ok: false, error: "文件不存在" }
-  if (fs.statSync(file).size > MAX_IMAGE_BYTES) return { ok: false, error: "图片超过 20MB" }
-  return { ok: true, dataUrl: `data:${mime};base64,${fs.readFileSync(file).toString("base64")}` }
+  let size: number
+  try {
+    size = (await fs.promises.stat(file)).size
+  } catch {
+    return { ok: false, error: "文件不存在" }
+  }
+  if (size > MAX_IMAGE_BYTES) return { ok: false, error: "图片超过 20MB" }
+  try {
+    return { ok: true, dataUrl: `data:${mime};base64,${(await fs.promises.readFile(file)).toString("base64")}` }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : "读取图片失败" }
+  }
 }
 
 function copyImage(file: string): { ok: boolean; error?: string } {

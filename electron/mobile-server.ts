@@ -426,7 +426,7 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 403, { ok: false, error: "无权访问该图片" })
       return
     }
-    sendJson(res, 200, readAppChatImage(filePath))
+    sendJson(res, 200, await readAppChatImage(filePath))
     return
   }
 

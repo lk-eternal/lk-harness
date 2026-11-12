@@ -56,6 +56,55 @@ export function globalRoutingPath(root: string): string {
   return path.join(sessionGlobalDir(root), GLOBAL_ROUTING_FILE)
 }
 
+/** routing.json 里主进程关心的两张表（其余字段如 messageSession 不暴露） */
+export interface RoutingFileView {
+  sessionToChat?: Record<string, string>
+  chatType?: Record<string, string>
+}
+
+/** 文件刚改过的这段时间内不缓存：mtime 粒度粗（部分文件系统 1~2 秒）时，同大小的改写会被误认为没变 */
+const ROUTING_CACHE_RACY_MS = 1500
+const routingViewCache = new Map<string, { mtimeNs: bigint; size: bigint; view: RoutingFileView }>()
+
+/**
+ * 读 routing.json。文件由 daemon 写、体积可到几百 KB（messageSession 封顶 5000 条），
+ * 会话列表每刷新一次每个通道都解析一遍很浪费；按 mtime + 大小缓存，文件没动就复用上次解析结果。
+ * 返回的对象是缓存共享的，只读，调用方不要改。读不到或内容不是对象时返回 undefined。
+ */
+export function readRoutingFileView(root: string): RoutingFileView | undefined {
+  const file = globalRoutingPath(root)
+  let st: fs.BigIntStats
+  try {
+    st = fs.statSync(file, { bigint: true })
+  } catch {
+    routingViewCache.delete(file)
+    return undefined
+  }
+  const hit = routingViewCache.get(file)
+  if (hit && hit.mtimeNs === st.mtimeNs && hit.size === st.size) return hit.view
+  let raw: unknown
+  try {
+    raw = JSON.parse(fs.readFileSync(file, "utf8"))
+  } catch {
+    routingViewCache.delete(file)
+    return undefined
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    routingViewCache.delete(file)
+    return undefined
+  }
+  const { sessionToChat, chatType } = raw as RoutingFileView
+  const view: RoutingFileView = { sessionToChat, chatType }
+  const ageMs = Date.now() - Number(st.mtimeNs / 1_000_000n)
+  if (ageMs > ROUTING_CACHE_RACY_MS) routingViewCache.set(file, { mtimeNs: st.mtimeNs, size: st.size, view })
+  else routingViewCache.delete(file)
+  return view
+}
+
+export function resetRoutingViewCacheForTests(): void {
+  routingViewCache.clear()
+}
+
 export function globalRecentPath(root: string): string {
   return path.join(sessionGlobalDir(root), GLOBAL_RECENT_FILE)
 }
@@ -135,20 +184,54 @@ export function readSessionKeyFromEntryDir(entryDir: string): string | undefined
 export function listSessionEntryDirPaths(root: string): string[] {
   const base = sessionStateDir(root)
   try {
-    return fs
-      .readdirSync(base)
-      .filter((d) => !isReservedSessionDirName(d))
-      .map((d) => path.join(base, d))
-      .filter((full) => {
+    const out: string[] = []
+    // withFileTypes：目录项自带类型，不用再对每个目录 stat 一次（几千个会话目录时这一项就是几十毫秒）
+    for (const e of fs.readdirSync(base, { withFileTypes: true })) {
+      if (isReservedSessionDirName(e.name)) continue
+      const full = path.join(base, e.name)
+      if (e.isDirectory()) {
+        out.push(full)
+      } else if (e.isSymbolicLink()) {
+        // 链接 / 联接点：目录项不跟随，要 stat 才知道指向的是不是目录
         try {
-          return fs.statSync(full).isDirectory()
-        } catch {
-          return false
-        }
-      })
+          if (fs.statSync(full).isDirectory()) out.push(full)
+        } catch { /* 断链 */ }
+      }
+    }
+    return out
   } catch {
     return []
   }
+}
+
+/** 会话目录名 → 会话键（目录名就是键的哈希，键不会变；按根目录缓存） */
+const entryKeyCache = new Map<string, Map<string, string>>()
+
+/**
+ * 磁盘上的会话目录及各自的会话键。
+ * 目录集合没变时不重读 session-key.txt：读它是一个目录一次文件打开，几千个目录时每轮几百毫秒，
+ * 而会话列表、会话管理页每隔几秒就要问一次。新出现的目录读一次后记住；
+ * 读不出键的（刚建到一半、还没写 session-key.txt）不记，下次再读，不会因为缓存永远丢掉它。
+ */
+export function listSessionEntries(root: string): { dir: string; sessionKey: string }[] {
+  const base = sessionStateDir(root)
+  const prev = entryKeyCache.get(base)
+  const next = new Map<string, string>()
+  const out: { dir: string; sessionKey: string }[] = []
+  for (const dir of listSessionEntryDirPaths(root)) {
+    const name = path.basename(dir)
+    const sessionKey = prev?.get(name) ?? readSessionKeyFromEntryDir(dir)
+    if (!sessionKey) continue
+    next.set(name, sessionKey)
+    out.push({ dir, sessionKey })
+  }
+  entryKeyCache.set(base, next)
+  return out
+}
+
+/** 测试用：清掉会话键缓存（测试会手写目录和 session-key.txt） */
+export function resetSessionEntryKeyCacheForTests(): void {
+  entryKeyCache.clear()
 }
 
 export function listSessionQueueDirs(root: string): string[] {

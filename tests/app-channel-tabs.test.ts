@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as fs from "node:fs"
+import fsCjs from "node:fs"
 import * as http from "node:http"
+import { syncBuiltinESMExports } from "node:module"
 import * as os from "node:os"
 import * as path from "node:path"
 import { LOCK_FILE_NAME } from "../src/shared/constants"
@@ -47,14 +49,17 @@ const APP_CHAT = makeChatKey(APP, "app_main")
 const FEISHU_CHAT = makeChatKey(FEISHU, "ou_main")
 
 let server: http.Server
+/** 假 daemon 答的「各聊天当前会话」 */
+let activeSessions: Record<string, string> = {}
 
 beforeEach(async () => {
   userData = fs.mkdtempSync(path.join(os.tmpdir(), "app-channel-tabs-"))
+  activeSessions = {}
   server = http.createServer((req, res) => {
     req.resume()
     req.on("end", () => {
       res.setHeader("content-type", "application/json")
-      res.end(JSON.stringify(req.url === "/api/active-sessions" ? { sessions: {} } : { ok: true }))
+      res.end(JSON.stringify(req.url === "/api/active-sessions" ? { sessions: activeSessions } : { ok: true }))
     })
   })
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
@@ -63,6 +68,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  vi.restoreAllMocks()
+  syncBuiltinESMExports()
   await new Promise<void>((r) => server.close(() => r()))
   fs.rmSync(userData, { recursive: true, force: true })
 })
@@ -103,7 +110,7 @@ async function boot() {
     }
     return tabs
   }
-  return { config, tabsOf }
+  return { config, tabsOf, dispatcher }
 }
 
 const keyFor = (chat: string, dir: string) => normalizeSessionKey(`${chat}::${dir}`)
@@ -125,5 +132,42 @@ describe("新建的应用内通道，会话列表是空的", () => {
     const { tabsOf } = await boot()
     const tabs = await tabsOf(FEISHU)
     expect(tabs.map((t) => t.sessionKey).sort()).toEqual(GLOBAL_DIRS.map((d) => keyFor(FEISHU_CHAT, d)).sort())
+  })
+})
+
+describe("会话树按多个通道一次算完", () => {
+  it("每个通道各自的当前会话都带出来，互不串", async () => {
+    const { dispatcher } = await boot()
+    activeSessions = {
+      [APP_CHAT]: keyFor(APP_CHAT, MINE),
+      [FEISHU_CHAT]: keyFor(FEISHU_CHAT, GLOBAL_DIRS[0]),
+    }
+    const tree = await dispatcher.listDashboardTree()
+    expect(tree.error).toBeUndefined()
+    const byId = Object.fromEntries(tree.channels.map((c) => [c.channelId, c]))
+    expect(byId[APP].activeKey).toBe(keyFor(APP_CHAT, MINE))
+    expect(byId[FEISHU].activeKey).toBe(keyFor(FEISHU_CHAT, GLOBAL_DIRS[0]))
+    expect(byId[APP].mainUserChatId).toBe(APP_CHAT)
+    expect(byId[FEISHU].mainUserChatId).toBe(FEISHU_CHAT)
+  })
+
+  it("整棵树只列一次会话根目录（所有通道共用一份快照），不随通道数增长", async () => {
+    const { dispatcher } = await boot()
+    await dispatcher.listDashboardTree() // 预热：全新目录的第一次调用会做一次性的布局迁移（也要列目录），不算稳态
+    const base = path.join(userData, "sessions")
+    const real = fsCjs.readdirSync
+    let listings = 0
+    // ESM 命名空间不能直接 spy：改 CJS 默认导出，再同步给 import * as fs 的模块
+    vi.spyOn(fsCjs, "readdirSync").mockImplementation(((p: fs.PathLike, ...rest: unknown[]) => {
+      if (String(p) === base) listings++
+      return (real as (...a: unknown[]) => unknown)(p, ...rest)
+    }) as typeof fs.readdirSync)
+    syncBuiltinESMExports()
+    const tree = await dispatcher.listDashboardTree()
+    expect(tree.channels).toHaveLength(2)
+    // 飞书通道有常用目录 tab（应用内通道没有）：证明快照那条路确实算出了东西，不是两边都空
+    expect(tree.channels.find((c) => c.channelId === FEISHU)!.mainTabs.length).toBeGreaterThan(0)
+    // 恰好 1 次：0 次说明探针没对上路径，≥2 次说明又变成每个通道各扫一遍
+    expect(listings).toBe(1)
   })
 })

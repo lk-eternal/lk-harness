@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process"
 import * as path from "node:path"
 import { chatIdFromSessionKey, normalizeSessionKey, parseChatKey, workspaceDirFromSessionKey } from "./channel-types.js"
+import { readGitHead } from "./git-head.js"
 import { projectIdFromSessionKey, type Project } from "./project-types.js"
 
 export type SessionCardTitle = { title: string; subtitle?: string }
@@ -32,7 +33,19 @@ export function sessionHeaderTemplate(sessionKey?: string): string | undefined {
   return SESSION_HEADER_TEMPLATES[h % SESSION_HEADER_TEMPLATES.length]
 }
 
+/**
+ * 当前分支。先直接读 .git/HEAD（零点几毫秒，不起进程）；
+ * 读不确定的情况（游离 HEAD、还没有提交、裸仓库……）才回落到真正的 git 命令，结果和以前一致。
+ */
 export function readGitBranch(dir: string): string | undefined {
+  const head = readGitHead(dir)
+  if (head.kind === "branch") return head.name
+  if (head.kind === "none") return undefined
+  return readGitBranchViaGit(dir)
+}
+
+/** 起 git 进程取分支：Windows 上实测每次约 200ms，而且是同步的（卡主进程），只作兜底 */
+export function readGitBranchViaGit(dir: string): string | undefined {
   try {
     const r = spawnSync("git", ["-C", dir, "rev-parse", "--abbrev-ref", "HEAD"], {
       encoding: "utf8",

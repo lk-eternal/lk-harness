@@ -39,7 +39,7 @@ import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName 
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, listProjects, getCurrentProjectId, setCurrentProjectId, saveProject } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
-import { globalChatNamesPath, globalRoutingPath, purgeSessionEntry } from "../src/shared/session-entry-paths.js"
+import { globalChatNamesPath, purgeSessionEntry, readRoutingFileView } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureCheckouts } from "./project-worktree"
 import { buildProjectSessionPrompt } from "./project-prompts"
@@ -767,18 +767,15 @@ type SessionListEntry = {
 function listRoutedSessionKeysForChat(chatId: string): string[] {
   const ck = normalizeSessionKey(chatId) || chatId
   const keys = new Set<string>()
-  try {
-    const raw = JSON.parse(fs.readFileSync(globalRoutingPath(app.getPath("userData")), "utf8")) as {
-      sessionToChat?: Record<string, string>
+  // 无路由文件 → undefined，当作没有登记
+  const routed = readRoutingFileView(app.getPath("userData"))?.sessionToChat ?? {}
+  for (const [sk, bound] of Object.entries(routed)) {
+    const norm = normalizeSessionKey(sk) || sk
+    const boundNorm = bound ? (normalizeSessionKey(bound) || bound) : ""
+    if (boundNorm === ck || bound === chatId || sessionBelongsToChat(norm, chatId)) {
+      keys.add(norm)
     }
-    for (const [sk, bound] of Object.entries(raw.sessionToChat ?? {})) {
-      const norm = normalizeSessionKey(sk) || sk
-      const boundNorm = bound ? (normalizeSessionKey(bound) || bound) : ""
-      if (boundNorm === ck || bound === chatId || sessionBelongsToChat(norm, chatId)) {
-        keys.add(norm)
-      }
-    }
-  } catch { /* 无路由文件 */ }
+  }
   return [...keys].sort((a, b) => a.localeCompare(b))
 }
 
@@ -865,15 +862,9 @@ function sameDirPath(a: string, b: string): boolean {
 }
 
 function boundChatIdForSession(sessionKey: string): string | undefined {
-  try {
-    const raw = JSON.parse(fs.readFileSync(globalRoutingPath(app.getPath("userData")), "utf8")) as {
-      sessionToChat?: Record<string, string>
-    }
-    const norm = normalizeSessionKey(sessionKey) || sessionKey
-    return raw.sessionToChat?.[sessionKey] ?? raw.sessionToChat?.[norm]
-  } catch {
-    return undefined
-  }
+  const routed = readRoutingFileView(app.getPath("userData"))?.sessionToChat
+  const norm = normalizeSessionKey(sessionKey) || sessionKey
+  return routed?.[sessionKey] ?? routed?.[norm]
 }
 
 function sessionBelongsToChat(sessionKey: string, chatId: string): boolean {
@@ -1149,11 +1140,13 @@ export function resolveSessionModels(sessionKeys: string[]): Record<string, Retu
   return Object.fromEntries(sessionKeys.map((sessionKey) => [sessionKey, tabModelFor(sessionKey)]))
 }
 
-async function buildTabsForChat(chatId: string, port: number): Promise<{ activeKey?: string; tabs: SessionTabItem[] }> {
-  const activeKey = (await getCurrentActiveSession(port, chatId)) ?? undefined
-  // 整段只读、同步：每个 tab 要查好几次会话记录（模型、所属通道、目录），不共用一份快照，
-  // 每查一次就把全部会话的 state.json 读一遍（几百个会话就是 N×N 次读文件，会卡住主进程）。
-  // 对话页和手机端每隔几秒就刷新一次会话树，这里慢了整个界面都跟着慢
+/**
+ * 一个聊天的 tab 列表。整段只读、同步：每个 tab 要查好几次会话记录（模型、所属通道、目录），
+ * 不共用一份快照的话，每查一次就要重新读盘（几百个会话就是 N×N 次读文件，会卡住主进程）。
+ * 对话页和手机端每隔几秒就刷新一次会话树，这里慢了整个界面都跟着慢。
+ * 调用方可以把多个聊天放进同一个 withOverridesSnapshot 里，让它们共用一份快照。
+ */
+function buildTabsSync(chatId: string, activeKey: string | undefined): SessionTabItem[] {
   const tabs: SessionTabItem[] = withOverridesSnapshot(() => {
     const list = buildSessionListForChat(chatId, activeKey)
     const boundDirOf = boundDirReader()
@@ -1172,7 +1165,12 @@ async function buildTabsForChat(chatId: string, port: number): Promise<{ activeK
       }
     })
   })
-  return { activeKey, tabs: disambiguateTabLabels(tabs) }
+  return disambiguateTabLabels(tabs)
+}
+
+async function buildTabsForChat(chatId: string, port: number): Promise<{ activeKey?: string; tabs: SessionTabItem[] }> {
+  const activeKey = (await getCurrentActiveSession(port, chatId)) ?? undefined
+  return { activeKey, tabs: buildTabsSync(chatId, activeKey) }
 }
 
 /**
@@ -1229,34 +1227,31 @@ export async function listDashboardTree(): Promise<{
 }> {
   const lock = cachedLock()
   const channels = getChannels().filter((c) => c.enabled !== false)
-  const out: {
-    channelId: string
-    name: string
-    mainUserChatId?: string
-    mainTabs: SessionTabItem[]
-    activeKey?: string
-  }[] = []
-  for (const c of channels) {
+  const port = lock?.port
+  const plan = channels.map((c) => {
     const rawMain = c.mainUserEnabled ? (c.mainUserChatId?.trim() || undefined) : undefined
     // 配置里是裸 chatId；会话/路由用 ch_xxx|chatId
-    const mainUserChatId = rawMain ? makeChatKey(c.id, rawMain) : undefined
-    if (!mainUserChatId || !lock?.port) {
-      out.push({ channelId: c.id, name: c.name, mainUserChatId, mainTabs: [] })
-      continue
-    }
+    return { c, mainUserChatId: rawMain ? makeChatKey(c.id, rawMain) : undefined }
+  })
+  // 先并行问各通道的当前会话（要等 daemon 的 HTTP），再把所有通道的 tab 放进同一份快照里一次算完：
+  // 以前每个通道各等一次、各读一遍盘，通道越多越慢
+  const actives = await Promise.all(plan.map(async ({ mainUserChatId }): Promise<{ ok: true; activeKey?: string } | { ok: false }> => {
+    if (!mainUserChatId || !port) return { ok: false }
     try {
-      const { activeKey, tabs } = await buildTabsForChat(mainUserChatId, lock.port)
-      out.push({
-        channelId: c.id,
-        name: c.name,
-        mainUserChatId,
-        mainTabs: tabs,
-        activeKey,
-      })
+      return { ok: true, activeKey: (await getCurrentActiveSession(port, mainUserChatId)) ?? undefined }
     } catch {
-      out.push({ channelId: c.id, name: c.name, mainUserChatId, mainTabs: [] })
+      return { ok: false }
     }
-  }
+  }))
+  const out = withOverridesSnapshot(() => plan.map(({ c, mainUserChatId }, i) => {
+    const active = actives[i]
+    if (!mainUserChatId || !active.ok) return { channelId: c.id, name: c.name, mainUserChatId, mainTabs: [] as SessionTabItem[], activeKey: undefined as string | undefined }
+    try {
+      return { channelId: c.id, name: c.name, mainUserChatId, mainTabs: buildTabsSync(mainUserChatId, active.activeKey), activeKey: active.activeKey }
+    } catch {
+      return { channelId: c.id, name: c.name, mainUserChatId, mainTabs: [] as SessionTabItem[], activeKey: undefined as string | undefined }
+    }
+  }))
   return {
     ok: true,
     channels: out,

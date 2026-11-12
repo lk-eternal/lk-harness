@@ -54,6 +54,7 @@ import {
   clearSessionRecordFields,
   readOverridesSnapshot,
   RESUME_ENTRY_TTL_MS,
+  type SessionOverrideRecord,
 } from "../src/shared/session-overrides-store.js"
 import { modelSlugFromParams, rememberModelLabel } from "../src/shared/model-utils.js"
 import { projectIdFromSessionKey } from "../src/shared/project-types.js"
@@ -152,24 +153,38 @@ function ensureModelStore(): void {
   try { initSessionModelStore(app.getPath("userData")) } catch { /* tests / early */ }
 }
 
+/** 会话记录 → 可续聊条目；没有 agentId / 目录，或超过保留期的不算 */
+function toResumeEntry(e: SessionOverrideRecord, now: number): ResumeEntry | undefined {
+  if (!e.agentId || !e.workspaceDir) return undefined
+  if (now - (e.updatedAt ?? 0) >= RESUME_ENTRY_TTL_MS) return undefined
+  return {
+    agentId: e.agentId,
+    workspaceDir: e.workspaceDir,
+    updatedAt: e.updatedAt,
+    rulesHash: e.rulesHash,
+    skillsHash: e.skillsHash,
+    daemonPort: e.daemonPort,
+    streamCardId: e.streamCardId,
+  }
+}
+
+/** 全部可续聊的会话（诊断包、模糊匹配用）；要查某一个会话用 getResumable，不用把全部会话读一遍 */
 function getResumableMap(): Map<string, ResumeEntry> {
   ensureModelStore()
   const now = Date.now()
   const map = new Map<string, ResumeEntry>()
   for (const [key, e] of Object.entries(readOverridesSnapshot().sessions)) {
-    if (!e.agentId || !e.workspaceDir) continue
-    if (now - (e.updatedAt ?? 0) >= RESUME_ENTRY_TTL_MS) continue
-    map.set(key, {
-      agentId: e.agentId,
-      workspaceDir: e.workspaceDir,
-      updatedAt: e.updatedAt,
-      rulesHash: e.rulesHash,
-      skillsHash: e.skillsHash,
-      daemonPort: e.daemonPort,
-      streamCardId: e.streamCardId,
-    })
+    const entry = toResumeEntry(e, now)
+    if (entry) map.set(key, entry)
   }
   return map
+}
+
+/** 某一个会话的可续聊条目：只读它自己的记录 */
+function getResumable(sessionKey: string): ResumeEntry | undefined {
+  ensureModelStore()
+  const rec = getSessionRecord(sessionKey)
+  return rec ? toResumeEntry(rec, Date.now()) : undefined
 }
 
 function isResumeEligible(session: SdkSessionAgent): boolean {
@@ -414,9 +429,10 @@ function findSdkSessionLoose(sessionKey: string): SdkSessionAgent | undefined {
 }
 
 function findResumableLoose(sessionKey: string): { key: string; entry: ResumeEntry } | undefined {
-  const map = getResumableMap()
-  const exact = map.get(sessionKey)
+  const exact = getResumable(sessionKey)
   if (exact) return { key: sessionKey, entry: exact }
+  // 精确键没有才要在全部会话里按「同一会话的不同写法」找
+  const map = getResumableMap()
   for (const [k, e] of map) {
     if (sessionKeyEquals(k, sessionKey)) return { key: k, entry: e }
   }
@@ -778,7 +794,7 @@ export function isSdkSessionRunning(sessionKey: string): boolean {
 
 /** 是否有可 Resume 的历史会话（上下文可恢复，无需完整冷启动提示） */
 export function hasResumableSdkSession(sessionKey: string): boolean {
-  return getResumableMap().has(sessionKey)
+  return getResumable(sessionKey) !== undefined
 }
 
 // ── 会话诊断 ─────────────────────────────────────────────
@@ -801,7 +817,7 @@ export interface SdkSessionDiagnostics {
 const lastRunResults = new Map<string, SdkRunResult>()
 
 export function getSdkSessionDiagnostics(sessionKey: string): SdkSessionDiagnostics {
-  const resume = getResumableMap().get(sessionKey)
+  const resume = getResumable(sessionKey)
   return {
     running: isSdkSessionRunning(sessionKey),
     resumeAgentId: resume?.agentId,
@@ -1153,7 +1169,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const wantResume = keepSession && !opts.newSession
       && (chatType === "project" || !taskMessage)
     if (!wantResume) forgetResumable(sessionKey)
-    const resumable = wantResume ? getResumableMap().get(sessionKey) : undefined
+    const resumable = wantResume ? getResumable(sessionKey) : undefined
     // 超时放弃之后才返回的 Agent 没人接手，必须释放，否则就是一个没人管的实例
     const releaseLateAgent = (what: string) => (late: SDKAgent, why: "timeout" | "superseded" = "timeout"): void => {
       const reason = why === "superseded" ? "并行重试已有结果，已释放这个多余的 Agent" : "超时后才返回，已释放这个晚到的 Agent"
@@ -1449,7 +1465,7 @@ export function resetSdkSessionContext(sessionKey: string): void {
   const live = findSdkSessionLoose(sessionKey)
   const workspaceDir =
     live?.workspaceDir
-    ?? getResumableMap().get(sessionKey)?.workspaceDir
+    ?? getResumable(sessionKey)?.workspaceDir
     ?? getSessionRecord(sessionKey)?.workspaceDir
     ?? workspaceDirFromSessionKey(sessionKey)
   if (live) void releaseSession(live)

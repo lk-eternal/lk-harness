@@ -13,5 +13,7 @@ export default defineConfig({
     hookTimeout: 60000,
     // 每个文件各起各的 daemon，串行跑避免抢 CPU 导致启动超时
     fileParallelism: false,
+    // 去掉从应用里继承来的 APP_DATA_DIR；用例给 daemon 子进程的数据目录由 helpers/isolated-daemon 显式传入
+    setupFiles: ["tests/setup/isolate-env.ts"],
   },
 })

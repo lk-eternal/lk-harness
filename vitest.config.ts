@@ -9,5 +9,7 @@ export default defineConfig({
     exclude: [...configDefaults.exclude, "tests/e2e/**"],
     environment: "node",
     testTimeout: 30000,
+    // 去掉从应用里继承来的 APP_DATA_DIR：否则测试会把会话目录写进真实用户数据目录
+    setupFiles: ["tests/setup/isolate-env.ts"],
   },
 })

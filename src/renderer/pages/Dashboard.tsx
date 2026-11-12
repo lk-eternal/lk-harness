@@ -458,7 +458,23 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     }
   }
 
+  // 工作台常驻（切到对话页 / 设置页只是被藏起来），但 5 秒一轮的轮询每轮都要让主进程重算一遍会话树，
+  // 看不见的时候不跑：只留两个很轻的订阅，回到工作台时下面的 effect（active 变真）和这里会马上补一次
+  const dashboardVisible = active !== false
   useEffect(() => {
+    // 日志的订阅、缓冲和滚动都在 LogPanel 里（它在整个页面生命周期内常驻，切到别的功能区只是被藏起来）
+    const unsub = window.electronAPI.onDaemonStatus((s) => {
+      setStatus(s)
+    })
+
+    if (!dashboardVisible) {
+      const unsubQuiet = window.electronAPI.onSessionAgents?.((list: typeof sessionList) => { setSessionList(list) })
+      return () => {
+        unsub()
+        unsubQuiet?.()
+      }
+    }
+
     const refresh = async () => {
       const s = await window.electronAPI.getDaemonStatus()
       setStatus(s)
@@ -469,11 +485,6 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
     refresh()
     const timer = setInterval(refresh, 5_000)
 
-    // 日志的订阅、缓冲和滚动都在 LogPanel 里（它在整个页面生命周期内常驻，切到别的功能区只是被藏起来）
-    const unsub = window.electronAPI.onDaemonStatus((s) => {
-      setStatus(s)
-    })
-
     const unsubSessions = window.electronAPI.onSessionAgents?.((list: typeof sessionList) => { setSessionList(list); void refreshDashboardTree() })
 
     return () => {
@@ -481,7 +492,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
       unsub()
       unsubSessions?.()
     }
-  }, [])
+  }, [dashboardVisible])
 
   // 会话清单（磁盘上存着的会话，含空闲的别人的会话）：只在「消息通道」/「活跃会话」功能区看得见时才读磁盘。
   // 清单由工作台持有、不跟功能区一起卸载：切走再切回来先显示旧的，同时刷新，不闪「正在加载」。

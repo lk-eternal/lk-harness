@@ -6,8 +6,7 @@ import {
   ensureSessionEntry,
   globalLastModelsPath,
   globalRecentPath,
-  listSessionEntryDirPaths,
-  readSessionKeyFromEntryDir,
+  listSessionEntries,
   sessionEntryDir,
   sessionStatePath,
 } from "./session-entry-paths.js"
@@ -150,16 +149,30 @@ export function readOverridesSnapshot(): OverrideFile {
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
   const sessions: Record<string, SessionOverrideRecord> = {}
-  for (const entryDir of listSessionEntryDirPaths(root)) {
-    const statePath = path.join(entryDir, STATE_FILE)
-    if (!fs.existsSync(statePath)) continue
-    const rec = readStateFile(statePath)
-    if (!rec) continue
-    const sessionKey = readSessionKeyFromEntryDir(entryDir)
-    if (!sessionKey) continue
-    sessions[sessionKey] = rec
+  // 会话键走缓存（目录集合不变就不重读）；每个目录只剩「读 state.json」一次系统调用，没有 state 的直接跳过
+  for (const { dir, sessionKey } of listSessionEntries(root)) {
+    const rec = readStateFile(path.join(dir, STATE_FILE))
+    if (rec) sessions[sessionKey] = rec
   }
   return { sessions, recent: loadRecent() }
+}
+
+/**
+ * 单个会话键在磁盘上登记的那个键：先按键本身直接找它的目录（不用扫全部会话），
+ * 找不到再在 Windows 上按大小写不敏感对齐（路径大小写写得不一致时，沿用已有的那份记录，不另起一份）。
+ * 只认有 state.json 的；都没有返回 undefined。
+ */
+function findStoredOnDisk(root: string, sessionKey: string): { key: string; rec: SessionOverrideRecord } | undefined {
+  const direct = readStateFile(sessionStatePath(root, sessionKey))
+  if (direct) return { key: sessionKey, rec: direct }
+  if (process.platform !== "win32") return undefined
+  const lower = sessionKey.toLowerCase()
+  for (const { sessionKey: k } of listSessionEntries(root)) {
+    if (k === sessionKey || k.toLowerCase() !== lower) continue
+    const rec = readStateFile(sessionStatePath(root, k))
+    if (rec) return { key: k, rec }
+  }
+  return undefined
 }
 
 /** Windows 路径大小写不一致时，用已有 key 对齐 */
@@ -214,8 +227,8 @@ function resolveEntryDirForKey(sessionKey: string): { root: string; entryDir: st
   assertNotInSnapshotScope("patchSessionRecord")
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
-  const snap = readOverridesSnapshot()
-  const storedKey = findStoredSessionKey(snap.sessions, sessionKey) ?? sessionKey
+  // 不再为了对齐一个键把全部会话的 state.json 读一遍：每次写记录都会走到这里
+  const storedKey = findStoredOnDisk(root, sessionKey)?.key ?? sessionKey
   ensureSessionEntry(root, storedKey)
   return { root, entryDir: sessionEntryDir(root, storedKey), canonicalKey: storedKey }
 }
@@ -244,17 +257,22 @@ export function patchSessionRecord(sessionKey: string, patch: Partial<SessionOve
 }
 
 export function getSessionRecord(sessionKey: string): SessionOverrideRecord | undefined {
-  const snap = readOverridesSnapshot()
-  const key = findStoredSessionKey(snap.sessions, sessionKey)
-  return key ? snap.sessions[key] : undefined
+  if (scopedSnapshot) {
+    const key = findStoredSessionKey(scopedSnapshot.sessions, sessionKey)
+    return key ? scopedSnapshot.sessions[key] : undefined
+  }
+  // 作用域外按键直接读它自己那个目录的 state.json（目录名是键的哈希），不扫全部会话：
+  // 预览文件、记续聊信息、查会话所属通道……都走这里，会话目录有几千个时每次扫一遍要上百毫秒
+  const root = resolveDataDir()
+  ensureSessionLayoutMigrated(root)
+  return findStoredOnDisk(root, sessionKey)?.rec
 }
 
 export function deleteSessionRecord(sessionKey: string): void {
   assertNotInSnapshotScope("deleteSessionRecord")
   const root = resolveDataDir()
   ensureSessionLayoutMigrated(root)
-  const snap = readOverridesSnapshot()
-  const key = findStoredSessionKey(snap.sessions, sessionKey)
+  const key = findStoredOnDisk(root, sessionKey)?.key
   if (!key) return
   const statePath = sessionStatePath(root, key)
   try {
