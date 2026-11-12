@@ -124,7 +124,9 @@ describe("removeNoFollow", () => {
     expect(exists(path.join(base, "中文目录", "SKILL.md"))).toBe(true)
   })
 
-  it("删链接时 unlink 不认（EISDIR / EPERM）：退一步用 rmdir，仍然只删链接", async (ctx) => {
+  // 模拟的是 Windows 的目录链接（junction）：unlink 不认，退一步用 rmdir。
+  // POSIX 上 unlink 链接从不报 EISDIR，而对链接 rmdir 会报 ENOTDIR，在那里模拟出来的场景不存在
+  it.runIf(process.platform === "win32")("删链接时 unlink 不认（EISDIR / EPERM）：退一步用 rmdir，仍然只删链接", async (ctx) => {
     write(path.join(base, "real", "SKILL.md"), "原件")
     if (!link(path.join(base, "real"), path.join(base, "link"))) return ctx.skip()
     vi.spyOn(fs.promises, "unlink").mockRejectedValue(Object.assign(new Error("is a directory"), { code: "EISDIR" }))

@@ -213,12 +213,19 @@ describe("serve：整目录令牌（html / md 引用同目录资源）", () => {
       "/..%2Foutside%2Fsecret.txt",
       "/%2e%2e/outside/secret.txt",
       "/img/../../outside/secret.txt",
-      "/..\\outside\\secret.txt",
     ]) {
       const r = store.serve(token, rel)
       expect(r.status, rel).toBe(403)
       expect(r.body, rel).toBeUndefined()
     }
+  })
+
+  it("反斜杠走出目录：Windows 上它是路径分隔符，要 403；POSIX 上它只是文件名里的一个字符，目录里没有这个文件，404", () => {
+    const store = createPreviewFileStore()
+    const token = store.register(entry(), { scopeDir: true })
+    const r = store.serve(token, "/..\\outside\\secret.txt")
+    expect(r.status).toBe(process.platform === "win32" ? 403 : 404)
+    expect(r.body).toBeUndefined()
   })
 
   it("名字前缀相同的兄弟目录（site-evil）也不能进", () => {
