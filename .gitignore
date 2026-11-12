@@ -42,3 +42,6 @@ temp/
 .run-pack-local.cmd
 
 .superpowers/
+
+# 本地运行日志
+logs/
