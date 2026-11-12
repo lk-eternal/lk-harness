@@ -53,11 +53,31 @@ export function readFormChoices(
 }
 
 /**
+ * 在选项（按题目顺序）里找一种切法，正好把答案切完：答案剩余部分以某个选项开头、后面紧跟分隔符或结束。
+ * 会回溯：选项 A 和 A、B 同时存在时，答案「A、B」先试 A 发现剩下的 B 切不了，再退回去整个当 A、B。
+ */
+function segmentAnswer(rest: string, options: readonly string[], from: number): string[] | null {
+  for (let k = from; k < options.length; k++) {
+    const o = options[k]
+    if (!o) continue
+    if (rest === o) return [o]
+    if (rest.startsWith(o + MULTI_ANSWER_SEP)) {
+      const tail = segmentAnswer(rest.slice(o.length + MULTI_ANSWER_SEP.length), options, k + 1)
+      if (tail) return [o, ...tail]
+    }
+  }
+  return null
+}
+
+/**
  * 从答案还原勾选（joinChoices 的反过程）。按题目顺序逐项对：答案剩余部分以这个选项开头、
- * 后面紧跟分隔符或结束，才算选了它——这样选项文本里自己带「、」也不会被拆错。认不出来的部分忽略。
+ * 后面紧跟分隔符或结束，才算选了它——这样选项文本里自己带「、」也不会被拆错。
+ * 答案整个切不干净（比如选项后来改过）时退回宽松模式：能认出来的认，认不出来的部分忽略。
  */
 export function splitChoices(answer: string | undefined, options: readonly string[]): string[] {
   if (!answer) return []
+  const exact = segmentAnswer(answer, options, 0)
+  if (exact) return exact
   const out: string[] = []
   let rest = answer
   for (const o of options) {

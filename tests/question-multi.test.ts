@@ -73,6 +73,18 @@ describe("splitChoices 从答案还原勾选", () => {
     expect(splitChoices("A、C", options)).toEqual(["A", "C"])
     expect(splitChoices("AB", options)).toEqual(["AB"])
   })
+
+  it("一个选项自带分隔符、前半段又恰好是另一个选项：回溯后整体认成一项", () => {
+    const options = ["A", "A、B", "C"]
+    expect(splitChoices("A、B", options)).toEqual(["A、B"])
+    expect(splitChoices("A、B、C", options)).toEqual(["A、B", "C"])
+    expect(splitChoices("A、C", options)).toEqual(["A", "C"])
+    expect(splitChoices("A", options)).toEqual(["A"])
+  })
+
+  it("答案切不干净（选项后来改过）：能认的认，认不出的忽略", () => {
+    expect(splitChoices("SUB_TEEN、已经删掉的选项", OPTIONS)).toEqual(["SUB_TEEN"])
+  })
 })
 
 describe("checkerFieldName 勾选框 name", () => {
