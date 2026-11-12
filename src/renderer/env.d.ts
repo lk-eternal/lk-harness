@@ -396,11 +396,15 @@ declare global {
     respondAppModal(requestId: string, response: number): Promise<void>
     startTempConnection(appId: string, appSecret: string): Promise<{ ok: boolean; chatId?: string; error?: string }>
     stopTempConnection(): Promise<{ ok: boolean }>
+    /** 运行所在的系统（process.platform）：界面据此决定标题栏用自绘按钮还是系统的红绿灯 */
+    platform: string
     windowMinimize(): Promise<void>
     windowMaximize(): Promise<void>
     windowClose(): Promise<void>
     windowIsMaximized(): Promise<boolean>
     onWindowMaximizedChange(cb: (maximized: boolean) => void): () => void
+    windowIsFullScreen(): Promise<boolean>
+    onWindowFullScreenChange(cb: (fullScreen: boolean) => void): () => void
 
 
     testBind(channelId?: string): Promise<{ ok: boolean; error?: string }>

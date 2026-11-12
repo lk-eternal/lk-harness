@@ -509,6 +509,8 @@ const api = {
   respondAppModal: (requestId: string, response: number): Promise<void> =>
     ipcRenderer.invoke("app:modal-result", { requestId, response }),
 
+  /** 运行所在的系统（process.platform）：界面据此决定标题栏用自绘按钮还是系统的红绿灯 */
+  platform: process.platform as string,
   windowMinimize: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
   windowMaximize: (): Promise<void> => ipcRenderer.invoke("window:maximize"),
   windowClose: (): Promise<void> => ipcRenderer.invoke("window:close"),
@@ -517,6 +519,12 @@ const api = {
     const handler = (_: unknown, maximized: boolean) => cb(maximized)
     ipcRenderer.on("window:maximized-change", handler)
     return () => ipcRenderer.removeListener("window:maximized-change", handler)
+  },
+  windowIsFullScreen: (): Promise<boolean> => ipcRenderer.invoke("window:is-fullscreen"),
+  onWindowFullScreenChange: (cb: (fullScreen: boolean) => void) => {
+    const handler = (_: unknown, fullScreen: boolean) => cb(fullScreen)
+    ipcRenderer.on("window:fullscreen-change", handler)
+    return () => ipcRenderer.removeListener("window:fullscreen-change", handler)
   },
 
 }

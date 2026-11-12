@@ -59,6 +59,7 @@ import { initFilePreview, registerPreviewScheme } from "./file-preview"
 import { initPreviewBrowser } from "./preview-browser"
 import { initMobileServer, stopMobileServer } from "./mobile-server"
 import { broadcastLog } from "./ui-logger"
+import { windowChromeOptions } from "../src/shared/window-chrome"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
 const profileName = profileArg?.split("=")[1] || ""
@@ -175,7 +176,8 @@ function createWindow(): void {
     title: profileName ? `LK Harness [${profileName}]` : "LK Harness",
     icon: iconPath,
     autoHideMenuBar: true,
-    frame: false,
+    // Windows / Linux：无边框 + 自绘按钮；macOS：隐藏标题栏但保留系统红绿灯（见 window-chrome.ts）
+    ...windowChromeOptions(process.platform),
     accentColor: false,
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
@@ -195,6 +197,9 @@ function createWindow(): void {
 
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-change", true))
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-change", false))
+  // macOS 的全屏（红绿灯里的绿色）：全屏时红绿灯收起，界面据此决定标题栏要不要给它让位
+  mainWindow.on("enter-full-screen", () => mainWindow?.webContents.send("window:fullscreen-change", true))
+  mainWindow.on("leave-full-screen", () => mainWindow?.webContents.send("window:fullscreen-change", false))
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -225,6 +230,7 @@ function registerIpcHandlers(): void {
   })
   ipcMain.handle("window:close", () => mainWindow?.close())
   ipcMain.handle("window:is-maximized", () => mainWindow?.isMaximized() ?? false)
+  ipcMain.handle("window:is-fullscreen", () => mainWindow?.isFullScreen() ?? false)
 
   ipcMain.handle("config:get", () => getConfig())
   ipcMain.handle("config:save", (_, config) => saveAppConfigFromRenderer(config))
