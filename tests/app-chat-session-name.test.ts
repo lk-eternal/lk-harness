@@ -31,9 +31,20 @@ describe("appChatSessionName：应用内会话叫什么（对话页和工作台�
   })
 
   it("不是目录的会话（项目、定时任务）取不到名字，回落到传入的 label；没传就是 undefined", () => {
-    expect(appChatSessionName("ch_app|chat::project_abc123", {}, "📦 项目甲 · feat")).toBe("📦 项目甲 · feat")
+    expect(appChatSessionName("ch_app|chat::project_abc123", {}, "项目甲")).toBe("项目甲")
     expect(appChatSessionName("temp_12345678", {}, "临时 12345678")).toBe("临时 12345678")
     expect(appChatSessionName("ch_app|chat::project_abc123", {})).toBeUndefined()
+  })
+
+  it("项目会话永远叫项目名：已经存着摘要标题（或手动改的名字）也不用，没有项目名时不拿标题顶替", () => {
+    const key = "ch_app|chat::project_abc123"
+    expect(appChatSessionName(key, { [appChatSessionId(key)]: "修复订单页样式" }, "项目甲")).toBe("项目甲")
+    expect(appChatSessionName(key, { [appChatSessionId(key)]: "修复订单页样式" })).toBeUndefined()
+  })
+
+  it("只有项目会话不看标题：同样的写法落在目录会话上，标题照样优先", () => {
+    const key = keyOf(APP, "D:\\ws\\project_abc123")
+    expect(appChatSessionName(key, { [appChatSessionId(key)]: "查日志" }, "x")).toBe("查日志")
   })
 
   it("空标题当作没有标题", () => {
@@ -142,6 +153,12 @@ describe("withAppChatNames：工作台里应用内通道的会话换成会话名
 
   it("项目、任务这类不是目录的会话保持原来的 label", () => {
     const [ch] = withAppChatNames([appChannel()], appIds, titles)
+    expect(ch.groups.project.sessions[0].label).toBe("📦 项目甲")
+  })
+
+  it("项目会话即使存着摘要标题也保持原 label（旧版本生成过的标题不再显示）", () => {
+    const projectKey = "ch_app|chat::project_abc123"
+    const [ch] = withAppChatNames([appChannel()], appIds, { ...titles, [appChatSessionId(projectKey)]: "修复订单页样式" })
     expect(ch.groups.project.sessions[0].label).toBe("📦 项目甲")
   })
 

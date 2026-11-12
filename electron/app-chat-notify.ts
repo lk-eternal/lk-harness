@@ -30,7 +30,7 @@ function windowActive(win: BrowserWindow | undefined): boolean {
   return !!win && win.isVisible() && !win.isMinimized() && win.isFocused()
 }
 
-/** 会话在界面上叫什么：和对话页同一条规则（摘要标题 > 目录名 > 项目名） */
+/** 会话在界面上叫什么：和对话页同一条规则（项目会话叫项目名；其它是摘要标题 > 目录名） */
 function sessionName(sessionKey: string): string {
   let boundDir: string | undefined
   let fallback: string | undefined

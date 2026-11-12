@@ -2,6 +2,7 @@
 
 import { normalizeSessionKey, workspaceDirFromSessionKey } from "./channel-types.js";
 import { isTempChatWorkspace } from "./temp-workspace.js";
+import { projectIdOfSessionKey } from "./project-app-types.js";
 
 export interface AppChatTool {
   name: string;
@@ -253,9 +254,10 @@ export function chatDirOptions<T extends { kind: string; sessionKey: string }>(
 
 /**
  * 应用内会话在界面上叫什么（对话页的会话列表、工作台的会话清单共用这一条规则）：
- * 摘要标题（或手动改的名字）优先；还没有时，选了目录的会话显示目录名，没选目录的临时会话叫「新会话」，
+ * 项目会话永远叫项目名（fallback），不看摘要标题：项目本身就是名字，摘要出来的标题反而盖掉它；
+ * 其它会话：摘要标题（或手动改的名字）优先；还没有时，选了目录的会话显示目录名，没选目录的临时会话叫「新会话」，
  * 其它显示键里的目录名（不带「（主）」和分支）；
- * 连目录都取不到（项目、定时任务这类不是目录的会话）就用 fallback。
+ * 连目录都取不到（定时任务这类不是目录的会话）就用 fallback。
  */
 export function appChatSessionName(
   sessionKey: string,
@@ -263,6 +265,7 @@ export function appChatSessionName(
   fallback?: string,
   boundDir?: string,
 ): string | undefined {
+  if (projectIdOfSessionKey(sessionKey)) return fallback;
   const title = titles[appChatSessionId(sessionKey)];
   if (title) return title;
   const dir = boundDir || workspaceDirFromSessionKey(sessionKey);

@@ -11,6 +11,7 @@ import { getAgentEngine } from "./agent-engine"
 import { broadcastLog } from "./ui-logger"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
 import { appChatSessionId } from "../src/shared/app-chat-types"
+import { projectIdFromSessionKey } from "../src/shared/project-types"
 import { initSessionModelStore, getSessionOverride } from "../src/shared/session-model-store.js"
 import { initSessionResourceStore, resolveResourceForSession } from "../src/shared/session-resource-store.js"
 
@@ -127,8 +128,12 @@ async function generate(sessionKey: string, firstMessage: string): Promise<strin
   return title
 }
 
-/** 会话还没有标题、也没在生成时，取第一条文字消息生成并保存；loadFirstMessage 只在确实需要时才调用 */
+/**
+ * 会话还没有标题、也没在生成时，取第一条文字消息生成并保存；loadFirstMessage 只在确实需要时才调用。
+ * 项目会话不生成：它的名字就是项目名（见 appChatSessionName），不花一次模型调用去生成一个不会显示的标题。
+ */
 export async function ensureAppChatTitle(sessionKey: string, loadFirstMessage: () => Promise<string | undefined>): Promise<void> {
+  if (projectIdFromSessionKey(sessionKey)) return
   const id = appChatSessionId(sessionKey)
   if (titles()[id] || inflight.has(id)) return
   const token = Symbol(id)

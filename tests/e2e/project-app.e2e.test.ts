@@ -176,7 +176,7 @@ describe("应用内项目：真实 daemon", () => {
     expect(p.workspaceType).toBe("worktree")
     expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/order")
     expect((await d.get("/api/active-sessions")).sessions[APP_CHAT]).toBe(r.sessionKey)
-    expect((await tabs()).find((t) => t.sessionKey === r.sessionKey)).toMatchObject({ kind: "project", label: "订单页改版 · feature/order", current: true })
+    expect((await tabs()).find((t) => t.sessionKey === r.sessionKey)).toMatchObject({ kind: "project", label: "订单页改版", current: true })
 
     expect(await create.runProjectStepFromApp(CH, r.projectId!, "plan")).toEqual({ ok: true })
     const texts = await pollKey(r.sessionKey!)

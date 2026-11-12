@@ -900,7 +900,8 @@ function tabLabelForSession(
   const pid = projectIdFromSessionKey(sessionKey)
   if (pid) {
     const p = getProject(pid)
-    if (p) return `${p.name}${p.featureBranch ? ` · ${p.featureBranch}` : ""}`
+    // 项目会话就叫项目名：分支不拼进名字
+    if (p) return p.name
     return pid
   }
   if (sessionKey.startsWith("temp_")) {

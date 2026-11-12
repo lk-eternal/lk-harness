@@ -296,7 +296,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 会话的工作目录；没选过目录的临时会话没有，它自己的临时文件夹对用户不可见 */
   const dirOf = (t: ChatTab): string | undefined => appChatSessionDir(t.sessionKey, boundDirOf(t))
   const workspaceDir = tab ? dirOf(tab) : undefined
-  /** 会话名：摘要标题；还没有时选了目录的显示目录名，没选的临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
+  /** 会话名：项目会话叫项目名；其它是摘要标题，还没有时选了目录的显示目录名，没选的临时会话叫「新会话」，其它显示目录名（不带「（主）」和分支） */
   const sessionName = (t: ChatTab) => appChatSessionName(t.sessionKey, titles, t.label, boundDirOf(t)) ?? t.label
   const activeAt = (t: ChatTab): number | undefined => lastActive[appChatSessionId(t.sessionKey)]
   /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
@@ -643,7 +643,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line-subtle px-6">
                   {sidebarToggle}
                   <div className="min-w-0 flex-1">
-                    <SessionTitle key={selected} name={sessionName(tab)} onRename={(name) => void renameSession(name)} />
+                    <SessionTitle key={selected} name={sessionName(tab)} onRename={tab.kind === "project" ? undefined : (name) => void renameSession(name)} />
                   </div>
                   <button
                     type="button"

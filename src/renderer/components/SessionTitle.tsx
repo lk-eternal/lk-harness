@@ -3,8 +3,8 @@ import { Pencil } from "lucide-react"
 
 interface Props {
   name: string
-  /** 留空表示恢复自动命名 */
-  onRename: (name: string) => void
+  /** 留空表示恢复自动命名；不传表示名字是固定的（比如项目会话叫项目名），只读显示、没有重命名入口 */
+  onRename?: (name: string) => void
 }
 
 const MAX_CHARS = 30
@@ -22,19 +22,21 @@ export default function SessionTitle({ name, onRename }: Props) {
   const commit = () => {
     const next = (draft ?? "").trim()
     setDraft(null)
-    if (!cancelled.current && next !== name) onRename(next)
+    if (!cancelled.current && next !== name) onRename?.(next)
   }
 
   if (draft === null) {
     return (
       <div className="flex min-w-0 items-center gap-1.5">
         <p className="min-w-0 truncate text-sm font-semibold">{name}</p>
-        <button
-          type="button"
-          onClick={start}
-          title="重命名"
-          className="shrink-0 rounded p-1 text-fg-faint transition hover:bg-raised hover:text-fg-soft"
-        ><Pencil size={13} /></button>
+        {onRename && (
+          <button
+            type="button"
+            onClick={start}
+            title="重命名"
+            className="shrink-0 rounded p-1 text-fg-faint transition hover:bg-raised hover:text-fg-soft"
+          ><Pencil size={13} /></button>
+        )}
       </div>
     )
   }
