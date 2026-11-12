@@ -439,6 +439,45 @@ export function renameProject(id: string, name: string): Project | undefined {
   return getProject(id)
 }
 
+/** 文件刚改过的这段时间内不缓存：mtime 粒度粗（部分文件系统 1~2 秒）时，同大小的改写会被误认为没变 */
+const ARCHIVED_CACHE_RACY_MS = 1500
+const archivedCache = new Map<string, { mtimeNs: bigint; size: bigint; archived: boolean }>()
+
+/**
+ * 项目是否已归档。会话列表每隔几秒刷新一次，每个项目会话都要问一次，
+ * 不能每次都把整个项目文件读出来解析（项目多了在主进程里同步读盘，随项目数线性变慢）。
+ * 按文件的 mtime + 大小缓存：文件没动只 stat 一次；归档 / 取消归档会改文件，下一次就读到新值。
+ * 项目不存在、文件读不出来都按「没归档」算，不缓存，下次再读。
+ */
+export function isProjectArchived(id: string): boolean {
+  if (!baseDir || !id) return false
+  const file = projectPath(id)
+  let st: fs.BigIntStats
+  try {
+    st = fs.statSync(file, { bigint: true })
+  } catch {
+    archivedCache.delete(file)
+    return false
+  }
+  const hit = archivedCache.get(file)
+  if (hit && hit.mtimeNs === st.mtimeNs && hit.size === st.size) return hit.archived
+  const p = getProject(id)
+  if (!p) {
+    archivedCache.delete(file)
+    return false
+  }
+  const archived = !!p.archivedAt
+  const ageMs = Date.now() - Number(st.mtimeNs / 1_000_000n)
+  if (ageMs > ARCHIVED_CACHE_RACY_MS) archivedCache.set(file, { mtimeNs: st.mtimeNs, size: st.size, archived })
+  else archivedCache.delete(file)
+  return archived
+}
+
+/** 测试用：清掉归档缓存（测试会手写项目文件） */
+export function resetProjectArchivedCacheForTests(): void {
+  archivedCache.clear()
+}
+
 export function getCurrentProjectId(): string | null {
   const data = readJsonSafe<{ id?: string }>(currentPath(), {})
   return data.id ?? null

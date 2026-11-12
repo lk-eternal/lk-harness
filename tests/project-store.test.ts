@@ -1,14 +1,18 @@
 import * as fs from "node:fs"
+import fsCjs from "node:fs"
+import { syncBuiltinESMExports } from "node:module"
 import * as os from "node:os"
 import * as path from "node:path"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   createProject,
   findProjectByGroupChat,
   getCurrentProject,
   getNodeGroups,
   getProject,
+  isProjectArchived,
   renameProject,
+  resetProjectArchivedCacheForTests,
   saveProject,
   setProjectArchived,
   getProjectNodes,
@@ -204,6 +208,122 @@ describe("project-store", () => {
       expect(findProjectByGroupChat("ch_a|oc_grp")).toBeUndefined()
       setProjectArchived(p.id, false)
       expect(findProjectByGroupChat("ch_a|oc_grp")?.id).toBe(p.id)
+    })
+
+    describe("isProjectArchived（会话列表每次刷新都问：文件没动就不重读）", () => {
+      /** 数这个项目文件被 readFileSync 读了几次 */
+      const countReads = (id: string, fn: () => void): number => {
+        const file = fileOf(id)
+        const real = fsCjs.readFileSync
+        let n = 0
+        // ESM 命名空间不能直接 spy：改 CJS 默认导出，再同步给 import * as fs 的模块
+        vi.spyOn(fsCjs, "readFileSync").mockImplementation(((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+          if (String(p) === file) n++
+          return (real as (...a: unknown[]) => unknown)(p, ...rest)
+        }) as typeof fs.readFileSync)
+        syncBuiltinESMExports()
+        try {
+          fn()
+        } finally {
+          vi.restoreAllMocks()
+          syncBuiltinESMExports()
+        }
+        return n
+      }
+      /** 把文件的修改时间拨到一分钟前：过了「刚改过不缓存」的窗口，缓存才会生效 */
+      const backdate = (id: string) => {
+        const past = new Date(Date.now() - 60_000)
+        fs.utimesSync(fileOf(id), past, past)
+      }
+
+      beforeEach(() => { resetProjectArchivedCacheForTests() })
+      afterEach(() => {
+        vi.restoreAllMocks()
+        syncBuiltinESMExports()
+        resetProjectArchivedCacheForTests()
+      })
+
+      it("归档 / 取消归档后马上读到新值；项目不存在、文件被删、id 为空都是没归档", () => {
+        const p = make("a")
+        expect(isProjectArchived(p.id)).toBe(false)
+        setProjectArchived(p.id, true)
+        expect(isProjectArchived(p.id)).toBe(true)
+        setProjectArchived(p.id, false)
+        expect(isProjectArchived(p.id)).toBe(false)
+
+        setProjectArchived(p.id, true)
+        expect(isProjectArchived(p.id)).toBe(true)
+        fs.rmSync(fileOf(p.id))
+        expect(isProjectArchived(p.id)).toBe(false)
+        expect(isProjectArchived("nope")).toBe(false)
+        expect(isProjectArchived("")).toBe(false)
+      })
+
+      it("旧数据 status=done 也算已归档，status=paused / active 不算", () => {
+        const done = make("old-done")
+        const doneRaw = rawOf(done.id)
+        doneRaw.status = "done"
+        doneRaw.updatedAt = 1700000000000
+        fs.writeFileSync(fileOf(done.id), JSON.stringify(doneRaw), "utf-8")
+        expect(isProjectArchived(done.id)).toBe(true)
+
+        const paused = make("old-paused")
+        const pausedRaw = rawOf(paused.id)
+        pausedRaw.status = "paused"
+        fs.writeFileSync(fileOf(paused.id), JSON.stringify(pausedRaw), "utf-8")
+        expect(isProjectArchived(paused.id)).toBe(false)
+      })
+
+      it("文件没动：第一次读一次，之后只 stat、不再读文件（对照：getProject 每次都读，探针数得到）", () => {
+        const p = make("a")
+        setProjectArchived(p.id, true)
+        backdate(p.id)
+
+        expect(countReads(p.id, () => { getProject(p.id) })).toBe(1)
+        expect(countReads(p.id, () => { expect(isProjectArchived(p.id)).toBe(true) })).toBe(1)
+        expect(countReads(p.id, () => {
+          for (let i = 0; i < 5; i++) expect(isProjectArchived(p.id)).toBe(true)
+        })).toBe(0)
+      })
+
+      it("归档状态变了：下一次就读到新值，不会一直用旧缓存", () => {
+        const p = make("a")
+        setProjectArchived(p.id, true)
+        backdate(p.id)
+        expect(isProjectArchived(p.id)).toBe(true) // 已缓存
+
+        setProjectArchived(p.id, false)
+        expect(isProjectArchived(p.id)).toBe(false)
+        backdate(p.id)
+        expect(isProjectArchived(p.id)).toBe(false) // 又缓存了「没归档」
+
+        setProjectArchived(p.id, true)
+        expect(isProjectArchived(p.id)).toBe(true)
+      })
+
+      it("刚改过的文件（1.5 秒内）不缓存：每次都读，点归档后紧接着的几次刷新不会读到旧值", () => {
+        const p = make("a")
+        setProjectArchived(p.id, true) // 修改时间就是现在
+        expect(countReads(p.id, () => {
+          for (let i = 0; i < 3; i++) expect(isProjectArchived(p.id)).toBe(true)
+        })).toBe(3)
+      })
+
+      it("读不出来的文件按没归档算，而且不缓存：修好之后下一次就能读到", () => {
+        const p = make("a")
+        setProjectArchived(p.id, true)
+        const good = fs.readFileSync(fileOf(p.id), "utf-8")
+
+        fs.writeFileSync(fileOf(p.id), "{ 写到一半", "utf-8")
+        backdate(p.id)
+        expect(countReads(p.id, () => {
+          expect(isProjectArchived(p.id)).toBe(false)
+          expect(isProjectArchived(p.id)).toBe(false)
+        })).toBe(2)
+
+        fs.writeFileSync(fileOf(p.id), good, "utf-8")
+        expect(isProjectArchived(p.id)).toBe(true)
+      })
     })
   })
 

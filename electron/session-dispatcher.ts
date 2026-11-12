@@ -37,7 +37,7 @@ import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
-import { getProject, findProjectByGroupChat, initProjectStore, listProjects, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
+import { getProject, findProjectByGroupChat, initProjectStore, isProjectArchived, listProjects, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
 import { globalChatNamesPath, purgeSessionEntry, readRoutingFileView } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
@@ -1127,8 +1127,9 @@ function archivedProjectIds(sessionKeys: readonly string[]): Set<string> {
   const archived = new Set<string>()
   if (ids.size === 0) return archived
   try { initProjectStore(app.getPath("userData")) } catch { return archived }
+  // 只问「归没归档」：按文件 mtime 缓存，不是每次刷新都把全部项目文件读一遍
   for (const id of ids) {
-    if (getProject(id)?.archivedAt) archived.add(id)
+    if (isProjectArchived(id)) archived.add(id)
   }
   return archived
 }
