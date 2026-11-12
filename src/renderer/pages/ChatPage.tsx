@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Check, FolderKanban, GitBranch, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Check, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -15,6 +15,7 @@ import { PreviewContext, usePreviewController } from "../components/preview/Prev
 import { sendNowOutcome, type SendNowOutcome } from "../components/chat/queued-strip-text"
 import SessionSchedules from "../components/chat/SessionSchedules"
 import DirPicker from "../components/chat/DirPicker"
+import BranchPicker from "../components/chat/BranchPicker"
 import NewProjectDialog from "../components/project/NewProjectDialog"
 import { PROJECT_TEMPLATES_TARGET } from "../components/project/projects-nav"
 import ProjectBar from "../components/project/ProjectBar"
@@ -29,6 +30,7 @@ import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
+import { canSwitchBranch, sharedSessionCount } from "../../shared/git-branch"
 import { CHANNEL_TYPE_LABELS, workspaceDirFromSessionKey, type AgentResource } from "../../shared/channel-types"
 import { describeAppChannelIssue, ensureAppChannel, planAppChannel, type AppChannelIssue, type EnsureAppChannelIO } from "../../shared/app-channel-ensure"
 import { emptyChannel } from "../channel-defaults"
@@ -207,6 +209,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     return () => { window.clearInterval(timer); unsub() }
   }, [active, refresh, refreshModels])
 
+  // 分支被切换（手机端切的也会推）：马上重读会话列表，列表上的分支才是新的
+  useEffect(() => window.electronAPI.onAppChatBranchChanged(() => void refresh()), [refresh])
+
   // 会话摘要标题：先订阅再拉取，生成完成/清空/删除都会整体推送
   useEffect(() => {
     const unsub = window.electronAPI.onAppChatTitles(setTitles)
@@ -304,6 +309,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 还没开始的临时会话可以直接改它的目录；开始了或目录是会话身份的，选目录只能用该目录新开一个会话 */
   const sessionStarted = !!tab && (activeAt(tab) !== undefined || allItems.length > 0)
   const canRebindDir = !!tab && canRebindSessionDir(tab.sessionKey, sessionStarted)
+  /** 分支是工作目录的：用这个目录的会话（含自己）都受切换影响；其中有在回复的，现在就不能切 */
+  const branchTabs = (ownerView?.tabs ?? []).filter((t) => t.kind !== "project")
+  const branchShared = sharedSessionCount(branchTabs, dirOf, workspaceDir)
+  const branchWorking = branchTabs.some((t) => sameChatDir(dirOf(t), workspaceDir) && sessionStatus(t.sessionKey, t.running) === "working")
   const modelLabel = tab?.model
     ? (quickModels.find((m) => m.model === tab.model && (m.modelParams ?? "") === (tab.modelParams ?? ""))?.label || modelSlug(tab.model, tab.modelParams))
     : "默认模型"
@@ -689,22 +698,33 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                       <QueuedStrip items={queuedItems} onEdit={editQueued} onRemove={removeQueued} onSendNow={sendQueuedNow} />
                     </>
                   }
-                  footer={
+                  below={!projectId ? (
+                    // 目录和分支决定「在哪干活」，放在输入框下方，和输入框里「怎么回答」的模型分开。
+                    // 项目会话的目录和分支是项目自己的（项目栏里看），在这里选目录只会另开一个无关的新会话，所以不显示
                     <>
-                      {/* 项目会话的目录是项目自己的（项目栏的「项目信息」里看），在这里选目录只会另开一个无关的新会话 */}
-                      {!projectId && (
-                        <DirPicker
-                          currentName={dirName(workspaceDir)}
-                          options={dirOptions}
-                          isCurrent={(dir) => sameChatDir(dir, workspaceDir)}
-                          onSelect={(dir) => void chooseDir(dir)}
-                          onPickNew={() => void pickNewDir()}
-                          hint={canRebindDir ? "为这个会话选择工作目录，多个会话可以共用同一个目录" : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
+                      <DirPicker
+                        currentName={dirName(workspaceDir)}
+                        options={dirOptions}
+                        isCurrent={(dir) => sameChatDir(dir, workspaceDir)}
+                        onSelect={(dir) => void chooseDir(dir)}
+                        onPickNew={() => void pickNewDir()}
+                        hint={canRebindDir ? "为这个会话选择工作目录，多个会话可以共用同一个目录" : "会话开始后目录不再更换，选择目录会用它新开一个会话"}
+                      />
+                      {tab.branch && workspaceDir && canSwitchBranch(tab.kind) && (
+                        <BranchPicker
+                          key={selected}
+                          sessionKey={selected}
+                          branch={tab.branch}
+                          shared={branchShared}
+                          working={branchWorking}
+                          onSwitched={() => void refresh()}
+                          onError={setActionError}
                         />
                       )}
-                      {tab.branch && (
-                        <span className="inline-flex items-center gap-1 px-1 text-[12.5px] text-fg-muted" title="当前分支"><GitBranch size={14} />{tab.branch}</span>
-                      )}
+                    </>
+                  ) : undefined}
+                  footer={
+                    <>
                       <ModelPicker
                         resources={resources}
                         currentResourceId={tab.resourceId ?? ownerView?.agentResourceId}

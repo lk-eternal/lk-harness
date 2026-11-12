@@ -39,6 +39,8 @@ import {
   subscribeAppChatEvent,
 } from "./app-chat"
 import { getAppChatPins, subscribeAppChatPins } from "./app-chat-pins"
+import { listSessionBranches, subscribeBranchChanged, switchSessionBranch } from "./session-branch"
+import { parseBranchTarget } from "../src/shared/git-branch"
 import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
 import { broadcastLog, subscribeSessionStatus } from "./ui-logger"
 import { initSessionModelStore, listQuickModels } from "../src/shared/session-model-store.js"
@@ -492,6 +494,15 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 200, setAppChatSessionPinned(sessionKey, body.pinned === true))
       return
     }
+    case "/api/mobile/list-branches": {
+      sendJson(res, 200, await listSessionBranches(String(body.sessionKey ?? "")))
+      return
+    }
+    case "/api/mobile/switch-branch": {
+      const target = parseBranchTarget(body)
+      sendJson(res, 200, target ? await switchSessionBranch(String(body.sessionKey ?? ""), target) : { ok: false, error: "没有指定要切换的分支" })
+      return
+    }
     case "/api/mobile/clear-session": {
       const sessionKey = typeof body.sessionKey === "string" ? body.sessionKey : undefined
       const channelId = typeof body.channelId === "string" ? body.channelId : undefined
@@ -651,6 +662,8 @@ export async function startMobileServer(portInput?: number): Promise<{ ok: boole
         subscribeAppChatTitles((titles) => broadcastSse({ type: "titles", titles })),
         subscribeAppChatPins((pins) => broadcastSse({ type: "pins", pins })),
         subscribeSessionStatus(() => broadcastSse({ type: "sessions" })),
+        // 分支切换后手机端重拉会话树，列表上的分支才会变（桌面端切的、手机端自己切的都一样）
+        subscribeBranchChanged(() => broadcastSse({ type: "sessions" })),
       ]
       keepAliveTimer = setInterval(() => {
         for (const client of [...sseClients]) {

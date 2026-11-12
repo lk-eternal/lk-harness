@@ -67,6 +67,11 @@ export function readGitBranchCached(dir: string): string | undefined {
   return branch
 }
 
+/** 切换分支后清掉缓存：不清的话各处要等 30 秒才显示新分支（同一个仓库可能用不同写法的路径缓存了好几份，整体清最稳） */
+export function clearGitBranchCache(): void {
+  branchCache.clear()
+}
+
 export function dirBaseName(dir: string): string {
   return dir.split(/[\\/]/).filter(Boolean).pop() ?? dir
 }

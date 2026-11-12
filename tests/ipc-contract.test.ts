@@ -114,4 +114,30 @@ describe("IPC 接线", () => {
       expect(envDts, `env.d.ts 缺 ${method}`).toMatch(new RegExp(`\\b${method}\\(`))
     }
   })
+
+  it("会话切分支：读/切两个 invoke 通道和一个「分支变了」推送通道，三头（preload / 主进程 / 界面类型）对得上", () => {
+    const envDts = read("src/renderer/env.d.ts")
+    const expectChannel: Record<string, string> = {
+      appChatListBranches: "app-chat:list-branches",
+      appChatSwitchBranch: "app-chat:switch-branch",
+    }
+    for (const [method, channel] of Object.entries(expectChannel)) {
+      expect(envDts, `env.d.ts 缺 ${method}`).toMatch(new RegExp(`\\b${method}\\(`))
+      expect(handled.has(channel), `主进程没注册 ${channel}`).toBe(true)
+      const start = preload.indexOf(`\n  ${method}: `)
+      expect(start, `preload 缺 ${method}`).toBeGreaterThan(-1)
+      const rest = preload.slice(start + 1)
+      const next = rest.slice(1).search(/\n  \w+: /)
+      const block = next < 0 ? rest : rest.slice(0, next + 1)
+      expect([...block.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1]), method).toEqual([channel])
+    }
+    // 主进程推、preload 订阅同一个通道；订阅返回取消函数（界面 effect 清理要用）
+    expect(read("electron/app-chat.ts")).toMatch(/webContents\.send\("app-chat:branch-changed"/)
+    const start = preload.indexOf("\n  onAppChatBranchChanged: ")
+    expect(start, "preload 缺 onAppChatBranchChanged").toBeGreaterThan(-1)
+    const block = preload.slice(start, start + 400)
+    expect(block).toMatch(/ipcRenderer\.on\("app-chat:branch-changed"/)
+    expect(block).toMatch(/removeListener\("app-chat:branch-changed"/)
+    expect(envDts, "env.d.ts 缺 onAppChatBranchChanged").toMatch(/\bonAppChatBranchChanged\(/)
+  })
 })

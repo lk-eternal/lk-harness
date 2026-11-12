@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Check,
   ClipboardPaste,
@@ -24,12 +24,16 @@ import {
 import type { AgentResource } from "../shared/channel-types"
 import { appChatSessionDir, sameChatDir, type ChatDirOption } from "../shared/app-chat-types"
 import { isSessionPinned, pinFirst } from "../shared/app-chat-pins"
+import { branchGroups, branchNotices, type BranchOption } from "../shared/git-branch"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
+import { useBranchMenu } from "../renderer/components/chat/useBranchMenu"
 import { modelSlug } from "../renderer/model-utils"
 import { formatTimeAgo } from "../renderer/time-ago"
 import {
+  listMobileBranches,
   listMobileProviderModels,
   parsePairInput,
+  switchMobileBranch,
   type MobileChannelView,
   type MobileChatTab,
   type MobilePairConfig,
@@ -737,6 +741,133 @@ export function DirSheet({
                 </button>
               )
             })
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+interface BranchSheetProps {
+  open: boolean
+  onClose: () => void
+  baseUrl: string
+  token: string
+  sessionKey: string
+  /** 用这个目录的会话个数（含当前这个）：切换对它们都生效 */
+  shared: number
+  /** 切换成功，参数是切过去之后的分支 */
+  onSwitched: (current: string) => void
+  /** 切换失败而抽屉已经关掉了（切的过程中被拖下去）：原因没有地方显示，交给外面提示 */
+  onError: (message: string) => void
+}
+
+/** 「切换分支」抽屉：分支是工作目录的，手机端的入口在顶栏会话名下面的分支小胶囊。只在打开时才挂载内容，每次打开都是全新的 */
+export function BranchSheet(props: BranchSheetProps) {
+  if (!props.open) return null
+  return <BranchSheetBody {...props} />
+}
+
+function BranchSheetBody({ onClose, baseUrl, token, sessionKey, shared, onSwitched, onError }: BranchSheetProps) {
+  const [query, setQuery] = useState("")
+  const closedRef = useRef(false)
+  useEffect(() => () => { closedRef.current = true }, [])
+  const menu = useBranchMenu(true, {
+    load: () => listMobileBranches(baseUrl, token, sessionKey),
+    switchTo: (target) => switchMobileBranch(baseUrl, token, sessionKey, target),
+  })
+  useBackToClose(true, onClose)
+  const { panelRef, grip } = useSheetDrag(onClose)
+
+  const data = menu.data
+  const groups = data ? branchGroups(data, query) : []
+  const notices = data ? branchNotices({ blocked: data.blocked, dirty: data.dirty, shared, truncated: data.truncated }) : []
+
+  const pick = async (option: BranchOption) => {
+    if (option.current) { onClose(); return }
+    const r = await menu.choose(option)
+    if (!r) return
+    if (r.ok) {
+      onSwitched(r.current)
+      onClose()
+    } else if (closedRef.current) {
+      onError(r.error)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col justify-end">
+      <div onClick={onClose} className="fixed inset-0 bg-black/60 backdrop-blur-[2px]" />
+      <div ref={panelRef} className="relative z-10 flex max-h-[78vh] flex-col rounded-t-3xl border-t border-line bg-surface pb-safe shadow-2xl">
+        {grip}
+        <div className="flex items-center justify-between px-4 pb-2 pt-1">
+          <div className="flex items-center gap-2">
+            <GitBranch size={16} className="text-accent" />
+            <span className="text-sm font-semibold text-fg">切换分支</span>
+            {menu.switching && <Loader2 size={13} className="animate-spin text-accent" />}
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-fg-muted active:bg-raised">
+            <X size={16} />
+          </button>
+        </div>
+
+        {notices.length > 0 && (
+          <div className="space-y-1 px-4 pb-2">
+            {notices.map((n) => (
+              <p key={n.text} className={`text-[11px] leading-relaxed ${n.tone === "warn" ? "text-amber-500" : "text-fg-muted"}`}>{n.text}</p>
+            ))}
+          </div>
+        )}
+
+        <div className="px-4 pb-2.5">
+          <div className="flex items-center gap-2 rounded-xl border border-line bg-page px-3 py-2">
+            <Search size={14} className="shrink-0 text-fg-muted" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索分支…"
+              className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-fg-faint"
+            />
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+          {(menu.loading || (!data && !menu.error)) && (
+            <p className="flex items-center justify-center gap-1.5 py-6 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin" />读取分支…</p>
+          )}
+          {data && groups.length === 0 && <p className="py-6 text-center text-xs text-fg-muted">没有匹配的分支</p>}
+          {groups.map((g) => (
+            <div key={g.kind} className="space-y-1">
+              <p className="px-1 pb-0.5 pt-2 text-[11px] text-fg-faint">{g.label}</p>
+              {g.rows.map((row) => {
+                const cur = !!row.option.current
+                const busy = menu.switching === row.key
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    disabled={row.disabled || (menu.switching !== null && !busy)}
+                    aria-current={cur ? "true" : undefined}
+                    onClick={() => void pick(row.option)}
+                    className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left transition disabled:opacity-45 ${
+                      cur ? "border-blue-500/50 bg-blue-600/15 text-fg" : "border-line-subtle bg-page/60 text-fg-2"
+                    }`}
+                  >
+                    {g.kind === "remote" ? <Cloud size={14} className="shrink-0 text-fg-muted" /> : <GitBranch size={14} className={`shrink-0 ${cur ? "text-accent" : "text-fg-muted"}`} />}
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{row.option.name}</span>
+                      {row.note && <span className="mt-0.5 block truncate text-[10px] text-fg-muted">{row.note}</span>}
+                    </span>
+                    {busy ? <Loader2 size={14} className="shrink-0 animate-spin text-accent" /> : cur && <Check size={14} className="shrink-0 text-accent" />}
+                  </button>
+                )
+              })}
+              {g.hidden > 0 && <p className="px-1 py-1 text-[10.5px] text-fg-faint">还有 {g.hidden} 个，输入关键字缩小范围</p>}
+            </div>
+          ))}
+          {menu.error && (
+            <p className="rounded-xl border border-danger-line/40 bg-danger-tint/20 px-3 py-2 text-xs leading-relaxed text-danger">{menu.error}</p>
           )}
         </div>
       </div>

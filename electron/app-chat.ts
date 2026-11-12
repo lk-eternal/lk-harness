@@ -12,6 +12,8 @@ import { getAgentResource, getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
 import { getAppChatPins, removeAppChatPin, setAppChatPinned } from "./app-chat-pins"
+import { listSessionBranches, subscribeBranchChanged, switchSessionBranch } from "./session-branch"
+import { parseBranchTarget } from "../src/shared/git-branch"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
 import { initSessionOverridesStore, patchSessionRecord } from "../src/shared/session-overrides-store"
@@ -280,6 +282,15 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:get-pins", () => getAppChatPins())
   ipcMain.handle("app-chat:set-pinned", (_e, sessionKey: string, pinned: boolean) => setAppChatSessionPinned(sessionKey, pinned === true))
+  ipcMain.handle("app-chat:list-branches", (_e, sessionKey: string) => listSessionBranches(String(sessionKey ?? "")))
+  ipcMain.handle("app-chat:switch-branch", async (_e, sessionKey: string, target: unknown) => {
+    const t = parseBranchTarget(target)
+    return t ? switchSessionBranch(String(sessionKey ?? ""), t) : { ok: false as const, error: "没有指定要切换的分支" }
+  })
+  // 分支被切换（桌面端或手机端）：让对话页马上刷新会话列表上的分支
+  subscribeBranchChanged(() => {
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send("app-chat:branch-changed")
+  })
   ipcMain.handle("app-chat:delete-session", (_e, sessionKey: string) => deleteAppChatSession(sessionKey))
   ipcMain.handle("app-chat:rename-session", (_e, sessionKey: string, name: string) => renameAppChatSession(sessionKey, name))
   ipcMain.handle("app-chat:queue-edit", (_e, sessionKey: string, messageId: string, text: string) => editQueuedAppChatMessage(sessionKey, messageId, text))

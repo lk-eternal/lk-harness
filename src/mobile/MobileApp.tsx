@@ -20,12 +20,13 @@ import {
   Trash2,
   X,
 } from "lucide-react"
-import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
+import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, upsertChatItems as upsertItems, type AppChatItem } from "../shared/app-chat-types"
 import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedHistory, replaceHistoryTail, type HistoryCursor } from "../shared/app-chat-history-page"
 import { slashMenuItems } from "../shared/command-catalog"
 import { createDraftStore } from "../shared/composer-drafts"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
+import { canSwitchBranch, isDetachedLabel, makeBranchOverride, sharedSessionCount, shownBranch, type BranchOverride } from "../shared/git-branch"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
   APP_CHANNEL_CHAT_ID,
@@ -78,7 +79,7 @@ import { useBackToClose } from "./back-stack"
 import { composerAction } from "./composer-action"
 import { isTouchPrimary, shouldSendOnEnter } from "./enter-key"
 import MobileItemList from "./MobileItems"
-import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
+import { BranchSheet, DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 import MobileProjectBar, { NewProjectSheet } from "./MobileProject"
 import { installExternalLinkHandler } from "./external-links"
 import { installNativeBackHandler } from "./native-back"
@@ -174,6 +175,9 @@ export default function MobileApp() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [modelSheetOpen, setModelSheetOpen] = useState(false)
   const [dirSheetOpen, setDirSheetOpen] = useState(false)
+  const [branchSheetOpen, setBranchSheetOpen] = useState(false)
+  /** 刚切完分支、会话树还没刷新到：顶栏先显示新分支（见 shownBranch） */
+  const [branchOverride, setBranchOverride] = useState<BranchOverride | null>(null)
   /** 正在为哪个通道新建项目（项目归这个通道） */
   const [newProjectFor, setNewProjectFor] = useState<string | null>(null)
   /** 刚建好的项目会话：等它出现在会话列表里再切过去（直接选一个列表里还没有的会话，会被「选中项失效」回落掉） */
@@ -632,6 +636,14 @@ export default function MobileApp() {
   const sessionStarted = !!selected && (!drafts.some((d) => sameChatSession(d.sessionKey, selected)) || items.length > 0)
   const canRebindDir = !!selected && canRebindSessionDir(selected, sessionStarted)
 
+  // 分支是工作目录的：用这个目录的会话（含自己）都受切换影响；其中有在回复的，现在就不能切（电脑端会再核对）。项目会话的分支由项目管，只显示
+  const branchLabel = shownBranch(currentTab?.branch, branchOverride, Date.now())
+  const branchTabs = (ownerView?.tabs ?? []).filter((t) => t.kind !== "project")
+  const branchDirOf = (t: MobileChatTab) => appChatSessionDir(t.sessionKey, boundDirOf(t))
+  const branchShared = sharedSessionCount(branchTabs, branchDirOf, workspaceDir)
+  const branchWorking = branchTabs.some((t) => sameChatDir(branchDirOf(t), workspaceDir) && sessionStatus(t.sessionKey, t.running) === "working")
+  const canPickBranch = !!branchLabel && !!workspaceDir && !!currentTab && canSwitchBranch(currentTab.kind)
+
   // 同模型有好几档推理参数：名字要按模型 + 参数找，否则几档都显示成同一个名字
   const modelLabel = useMemo(
     () => currentModelLabel(currentTab?.model, currentTab?.modelParams, quickModels),
@@ -830,6 +842,11 @@ export default function MobileApp() {
   }
 
   // 重命名当前会话
+  const startRename = () => {
+    if (!currentTab) return
+    setRenameDraft(sessionName(currentTab))
+    setRenaming(true)
+  }
   const submitRename = async () => {
     if (!selected || !route.activeUrl || !pairCfg.token) {
       setRenaming(false)
@@ -977,31 +994,45 @@ export default function MobileApp() {
               </button>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => {
-                if (!currentTab) return
-                setRenameDraft(sessionName(currentTab))
-                setRenaming(true)
-              }}
-              className="flex max-w-full flex-col items-start text-left"
-            >
-              <div className="flex max-w-full items-center gap-1">
+            <div className="flex max-w-full flex-col items-start">
+              <button
+                type="button"
+                onClick={startRename}
+                className="flex max-w-full items-center gap-1 text-left"
+              >
                 <span className="truncate text-[14px] font-semibold text-fg">
                   {currentTab ? sessionName(currentTab) : "LK Harness"}
                 </span>
                 {busy && <Loader2 size={12} className="shrink-0 animate-spin text-accent" />}
-              </div>
-              <div className="flex max-w-full items-center gap-1 text-[11px] text-fg-muted">
-                <span className="truncate">{projectId ? "项目" : workspaceLabel || hostname || "手机端对话"}</span>
-                {currentTab?.branch && (
-                  <span className="inline-flex shrink-0 items-center gap-0.5 text-fg-faint">
-                    · <GitBranch size={10} />
-                    {currentTab.branch}
-                  </span>
+              </button>
+              <div className="flex max-w-full items-center gap-1.5 text-[11px] text-fg-muted">
+                <button type="button" onClick={startRename} className="min-w-0 max-w-[55%] truncate text-left">
+                  {projectId ? "项目" : workspaceLabel || hostname || "手机端对话"}
+                </button>
+                {canPickBranch ? (
+                  // 分支是工作目录的，可以在这里切；点开是底部抽屉，和目录、模型的抽屉一致
+                  <button
+                    type="button"
+                    onClick={() => setBranchSheetOpen(true)}
+                    title={branchWorking ? "有会话正在这个目录里回复，暂时不能切换分支" : "切换分支"}
+                    className={`relative inline-flex min-w-0 items-center gap-0.5 rounded-full border border-line bg-page/70 px-1.5 py-0.5 transition before:absolute before:-inset-x-2 before:-inset-y-1 before:content-[''] active:bg-raised ${
+                      branchWorking ? "text-fg-faint" : isDetachedLabel(branchLabel ?? "") ? "text-amber-500" : "text-fg-2"
+                    }`}
+                  >
+                    <GitBranch size={10} className="shrink-0" />
+                    <span className="truncate">{branchLabel}</span>
+                    <ChevronDown size={10} className="shrink-0 text-fg-faint" />
+                  </button>
+                ) : (
+                  currentTab?.branch && (
+                    <span className="inline-flex min-w-0 items-center gap-0.5 text-fg-faint">
+                      · <GitBranch size={10} className="shrink-0" />
+                      <span className="truncate">{currentTab.branch}</span>
+                    </span>
+                  )
                 )}
               </div>
-            </button>
+            </div>
           )}
         </div>
 
@@ -1394,6 +1425,20 @@ export default function MobileApp() {
         currentDir={workspaceDir}
         canRebind={canRebindDir}
         onSelect={(dir) => void handleChooseDir(dir)}
+      />
+
+      <BranchSheet
+        open={branchSheetOpen && !!selected}
+        onClose={() => setBranchSheetOpen(false)}
+        baseUrl={route.activeUrl}
+        token={pairCfg.token}
+        sessionKey={selected ?? ""}
+        shared={branchShared}
+        onSwitched={(current) => {
+          setBranchOverride(makeBranchOverride(currentTab?.branch ?? "", current, Date.now()))
+          void refreshBootstrap(route.activeUrl, pairCfg.token)
+        }}
+        onError={setActionError}
       />
 
       <PairSheet

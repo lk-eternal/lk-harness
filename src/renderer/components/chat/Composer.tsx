@@ -12,8 +12,10 @@ interface Props {
   busy: boolean
   /** 输入框正上方的内容（排队消息的暂存区） */
   top?: ReactNode
-  /** 底部一行左侧的会话设置（目录、分支、模型等） */
+  /** 输入框内底部一行左侧的会话设置（模型等：决定「怎么回答」） */
   footer?: ReactNode
+  /** 输入框下方的一行（目录、分支：决定「在哪干活」）；不传就不占这一行 */
+  below?: ReactNode
   onSend: (text: string, images: string[]) => void
   onStop: () => void
   onError: (message: string) => void
@@ -30,7 +32,7 @@ const EXT_BY_MIME: Record<string, string> = {
 const MAX_TEXTAREA_PX = 200
 
 /** 输入区：Enter 发送、Shift+Enter 换行；粘贴/拖入/选择图片；`/` 唤起指令菜单 */
-export default function Composer({ draftKey, disabled, busy, top, footer, onSend, onStop, onError }: Props) {
+export default function Composer({ draftKey, disabled, busy, top, footer, below, onSend, onStop, onError }: Props) {
   const getDraft = () => composerDrafts.get(draftKey)
   const { text, images } = useSyncExternalStore(composerDrafts.subscribe, getDraft, getDraft)
   const setText = (value: string) => composerDrafts.update(draftKey, (d) => ({ ...d, text: value }))
@@ -211,6 +213,7 @@ export default function Composer({ draftKey, disabled, busy, top, footer, onSend
             )}
           </div>
         </div>
+        {below && <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 px-1">{below}</div>}
       </div>
       {previewSrc && (
         <ImageLightbox

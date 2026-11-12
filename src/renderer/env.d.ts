@@ -18,6 +18,11 @@ import type {
   AppChatSendPayload as AppChatSendPayloadType,
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
+import type {
+  BranchListResult as BranchListResultType,
+  BranchSwitchResult as BranchSwitchResultType,
+  BranchTarget as BranchTargetType,
+} from "../shared/git-branch"
 import type { ProjectNodeGroupDef as ProjectNodeGroupDefType } from "../shared/project-types"
 import type {
   InspectRepoResult as InspectRepoResultType,
@@ -265,6 +270,11 @@ declare global {
     appChatPins(): Promise<string[]>
     appChatSetPinned(sessionKey: string, pinned: boolean): Promise<AppChatResultType>
     onAppChatPins(cb: (pins: string[]) => void): () => void
+    /** 会话工作目录的分支列表（现读 git）；项目会话、没选目录的会话返回原因 */
+    appChatListBranches(sessionKey: string): Promise<BranchListResultType>
+    appChatSwitchBranch(sessionKey: string, target: BranchTargetType): Promise<BranchSwitchResultType>
+    /** 分支被切换了（手机端切的也会推）：重新读会话列表上的分支 */
+    onAppChatBranchChanged(cb: () => void): () => void
     onAppChatEvent(cb: (event: AppChatEventType) => void): () => void
     /** 对话页告诉主进程用户正看着哪个会话（不在对话页传 null）；主进程据此决定要不要弹「回复完成」通知 */
     appChatViewing(sessionKey: string | null): void

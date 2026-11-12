@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
+import type { BranchListResult, BranchSwitchResult, BranchTarget } from "../src/shared/git-branch"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types"
 import type { InspectRepoResult, ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectView } from "../src/shared/project-app-types"
 import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
@@ -223,6 +224,15 @@ const api = {
     const handler = (_: unknown, pins: string[]) => cb(pins)
     ipcRenderer.on("app-chat:pins", handler)
     return () => ipcRenderer.removeListener("app-chat:pins", handler)
+  },
+  /** 会话工作目录的分支列表（现读 git）；项目会话、没选目录的会话返回原因 */
+  appChatListBranches: (sessionKey: string): Promise<BranchListResult> => ipcRenderer.invoke("app-chat:list-branches", sessionKey),
+  appChatSwitchBranch: (sessionKey: string, target: BranchTarget): Promise<BranchSwitchResult> => ipcRenderer.invoke("app-chat:switch-branch", sessionKey, target),
+  /** 分支被切换了（手机端切的也会推）：重新读会话列表上的分支 */
+  onAppChatBranchChanged: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on("app-chat:branch-changed", handler)
+    return () => ipcRenderer.removeListener("app-chat:branch-changed", handler)
   },
   onAppChatEvent: (cb: (event: AppChatEvent) => void) => {
     const handler = (_: unknown, event: AppChatEvent) => cb(event)

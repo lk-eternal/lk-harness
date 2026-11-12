@@ -5,6 +5,7 @@ import type { AppChatEvent, AppChatItem } from "../shared/app-chat-types"
 import type { HistoryQuery } from "../shared/app-chat-history-page"
 import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
+import { OLD_DESKTOP_BRANCH, type BranchListResult, type BranchSwitchResult, type BranchTarget } from "../shared/git-branch"
 import type {
   ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo, ProjectView,
 } from "../shared/project-app-types"
@@ -418,6 +419,18 @@ export async function renameMobileSession(baseUrl: string, token: string, sessio
 export async function setMobileSessionPinned(baseUrl: string, token: string, sessionKey: string, pinned: boolean): Promise<{ ok: boolean; pins?: string[]; error?: string }> {
   const r = await callApi<{ ok: boolean; pins?: string[]; error?: string }>(baseUrl, token, "/api/mobile/pin-session", { sessionKey, pinned })
   return !r.ok && r.error === "未知接口" ? { ...r, error: "电脑端版本过旧，不支持置顶，请把电脑端升级到最新版本" } : r
+}
+
+/** 会话工作目录的分支列表（电脑端现读 git）。旧版电脑端没有这个接口，网关回「未知接口」 */
+export async function listMobileBranches(baseUrl: string, token: string, sessionKey: string): Promise<BranchListResult> {
+  const r = await callApi<BranchListResult>(baseUrl, token, "/api/mobile/list-branches", { sessionKey })
+  return !r.ok && r.error === "未知接口" ? { ok: false, error: OLD_DESKTOP_BRANCH } : r
+}
+
+/** 切换会话工作目录的分支：由电脑端执行，有会话在回复、有冲突时会拒绝并说明原因 */
+export async function switchMobileBranch(baseUrl: string, token: string, sessionKey: string, target: BranchTarget): Promise<BranchSwitchResult> {
+  const r = await callApi<BranchSwitchResult>(baseUrl, token, "/api/mobile/switch-branch", { sessionKey, ...target })
+  return !r.ok && r.error === "未知接口" ? { ok: false, error: OLD_DESKTOP_BRANCH } : r
 }
 
 export async function clearMobileSession(baseUrl: string, token: string, opts: { sessionKey?: string; channelId?: string }): Promise<{ ok: boolean; error?: string }> {
