@@ -12,13 +12,31 @@ export const MOBILE_APK_URL = "https://github.com/lk-eternal/lk-harness/releases
 /** 最新发布页，APK 下载失败时给用户手动去的地方 */
 export const MOBILE_RELEASES_URL = "https://github.com/lk-eternal/lk-harness/releases/latest"
 
+/**
+ * 电脑端自己提供 APK 下载的路径（安装包里内置了和电脑端同一版本的 APK）。
+ * 不要求令牌：APK 本来就是公开发布物、不含密钥，手机网页包同样无需令牌就能取；
+ * 这样电脑设置页的二维码给没配对的新手机扫也能装。
+ */
+export const MOBILE_APK_PATH = "/lk-harness-mobile.apk"
+
 /** 电脑端 `/api/mobile/update-info` 的响应 */
 export interface MobileUpdateInfo {
   ok: boolean
-  /** 最新已发布版本，如 "1.1.3"；查询失败时没有 */
+  /**
+   * 手机应该更新到的版本，如 "1.1.3"；查询失败时没有。
+   * source=desktop 时是电脑端内置 APK 的版本（手机跟着电脑走），source=github 时是 GitHub 上最新发布的版本。
+   */
   latestVersion?: string
+  /**
+   * 绝对下载地址。source=desktop 时由电脑端按「手机是用哪个地址连上我的」拼出来，
+   * 只为旧版 App 服务（旧版直接用它）；新版 App 优先用 apkPath 拼自己当前连着的地址。
+   */
   apkUrl?: string
+  /** 电脑端内置 APK 的相对路径（接在手机当前连着的电脑地址后面）；只有 source=desktop 才有 */
+  apkPath?: string
   releaseUrl?: string
+  /** 下载来源。旧版电脑端没有这个字段，按 github 理解 */
+  source?: "desktop" | "github"
   error?: string
 }
 

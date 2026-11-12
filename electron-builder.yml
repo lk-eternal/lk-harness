@@ -35,6 +35,9 @@ extraResources:
     to: icon.ico
   - from: resources/template
     to: template
+  # 手机端 APK，由 CI 在打包前放进来（build.yml）；本地没有这个目录时 electron-builder 会直接跳过
+  - from: resources/mobile-apk
+    to: mobile-apk
   - from: changelog.json
     to: changelog.json
 

@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   Cpu,
+  Download,
   Edit3,
   FolderKanban,
   FolderOpen,
@@ -51,7 +52,6 @@ import {
   fetchBootstrap,
   fetchHistory,
   fetchSessionModels,
-  fetchUpdateInfo,
   imageExtOf,
   loadMobileTheme,
   loadPairConfig,
@@ -74,20 +74,19 @@ import {
   type MobileTheme,
   type RouteStatus,
 } from "./api"
-import { APP_VERSION } from "./app-version"
 import { useBackToClose } from "./back-stack"
 import { composerAction } from "./composer-action"
 import { isTouchPrimary, shouldSendOnEnter } from "./enter-key"
 import MobileItemList from "./MobileItems"
 import { DirSheet, ModelSheet, PairSheet, SessionDrawer } from "./MobileModals"
 import MobileProjectBar, { NewProjectSheet } from "./MobileProject"
-import { isNativeShell, tryOpenInSystemBrowser } from "./native-browser"
 import { installExternalLinkHandler } from "./external-links"
 import { installNativeBackHandler } from "./native-back"
 import { withDrafts, type DraftSession, type TabModel } from "./session-drafts"
 import SlashMenu from "./SlashMenu"
 import UpdateBanner from "./UpdateBanner"
-import { loadDismissedUpdate, pendingUpdate, saveDismissedUpdate, type PendingUpdate } from "./update-check"
+import { describeUpdateStatus } from "./update-controller"
+import { useAppUpdate } from "./useAppUpdate"
 import { useDrawerSwipe } from "./useDrawerSwipe"
 
 function dirName(dir: string | undefined): string | undefined {
@@ -160,8 +159,6 @@ export default function MobileApp() {
     setHasMore(more)
   }, [])
   const [actionError, setActionError] = useState("")
-  /** App（APK）有新版本时的提示；网页版由电脑端直接提供，版本天然一致，不查 */
-  const [update, setUpdate] = useState<PendingUpdate | null>(null)
   // 输入框草稿按会话分开存：A 会话没发出去的字和图，切到/新建 B 会话时不会带过去，切回来还在
   const [draftStore] = useState(() => createDraftStore<{ path: string; previewUrl: string }>())
   const draftKey = selected ? appChatSessionId(selected) : null
@@ -315,18 +312,14 @@ export default function MobileApp() {
     void connectWithConfig(pairCfg)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 打开 App 连上电脑端后查一次有没有新版（只在 APK 里查）。
-  // 电脑端没查到时不算查过，下次线路变化再试；失败一律静默，不打扰对话
-  const updateCheckedRef = useRef(false)
-  useEffect(() => {
-    if (updateCheckedRef.current || !route.connected || !route.activeUrl || !pairCfg.token) return
-    if (!isNativeShell()) return
-    void fetchUpdateInfo(route.activeUrl, pairCfg.token).then((info) => {
-      if (!info.ok) return
-      updateCheckedRef.current = true
-      setUpdate(pendingUpdate(info, APP_VERSION, loadDismissedUpdate()))
-    })
-  }, [route.connected, route.activeUrl, pairCfg.token])
+  // App 里的更新检查（只在 APK 里生效）：连上电脑端后查，之后每次回到前台再查，失败会自己重试；菜单里可手动检查。
+  // 自动检查失败一律静默，不打扰对话（见 update-controller.ts）
+  const appUpdate = useAppUpdate({
+    baseUrl: route.activeUrl,
+    token: pairCfg.token,
+    connected: route.connected,
+    onError: setActionError,
+  })
 
   // APK 里点聊天中的链接：交给系统浏览器，不让 WebView 自己跳走。
   // 跳走后聊天界面被目标页替换，而 APK 里没人处理返回键，按返回会直接退出应用、回不到会话
@@ -334,19 +327,6 @@ export default function MobileApp() {
 
   // APK 里的返回键：有浮层先关浮层，没有就退到后台。原生壳自己不会替页面做这件事（见 native-back.ts）
   useEffect(() => installNativeBackHandler(), [])
-
-  const startUpdate = useCallback(async () => {
-    if (!update) return
-    // 交给系统浏览器下载 APK，下完点开即由系统安装器接手；签名一致才能覆盖安装
-    const opened = await tryOpenInSystemBrowser(update.apkUrl)
-    if (!opened.ok) {
-      setActionError(`无法调起系统浏览器（${opened.reason}），请手动打开下载：${update.releaseUrl}`)
-    }
-  }, [update])
-  const dismissUpdate = useCallback(() => {
-    if (update) saveDismissedUpdate(update.version)
-    setUpdate(null)
-  }, [update])
 
   // 线路重选：Wi-Fi ↔ 移动网络切换后原地址可能已不通，而实时流只会对着它一直重试
   const pairCfgRef = useRef(pairCfg)
@@ -1096,6 +1076,27 @@ export default function MobileApp() {
                   {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
                   主题：{theme === "system" ? "跟随系统" : theme === "dark" ? "深色" : "浅色"}
                 </button>
+                {appUpdate.isApp && (
+                  <button
+                    type="button"
+                    disabled={appUpdate.status.phase === "checking"}
+                    onClick={() => {
+                      void appUpdate.checkNow().then((r) => {
+                        // 查到新版本就收起菜单，顶部的提示条才看得见
+                        if (r === "update") setMoreMenuOpen(false)
+                      })
+                    }}
+                    className="flex w-full items-start gap-2 rounded-xl px-3 py-2 text-left text-xs text-fg-2 active:bg-raised disabled:opacity-60"
+                  >
+                    <Download size={13} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      检查更新
+                      <span className="mt-0.5 block break-words text-[10px] leading-snug text-fg-muted">
+                        {describeUpdateStatus(appUpdate.status, appUpdate.currentVersion)}
+                      </span>
+                    </span>
+                  </button>
+                )}
                 {selected && (
                   <button
                     type="button"
@@ -1113,12 +1114,12 @@ export default function MobileApp() {
       </header>
 
       {/* 新版本提示条（仅 App 内出现） */}
-      {update && (
+      {appUpdate.update && (
         <UpdateBanner
-          update={update}
-          currentVersion={APP_VERSION}
-          onUpdate={() => void startUpdate()}
-          onDismiss={dismissUpdate}
+          update={appUpdate.update}
+          currentVersion={appUpdate.currentVersion}
+          onUpdate={appUpdate.startUpdate}
+          onDismiss={appUpdate.dismiss}
         />
       )}
 

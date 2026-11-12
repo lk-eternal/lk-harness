@@ -159,6 +159,8 @@ declare global {
     pairUrl: string
     pairPayload: { v: 1; name: string; token: string; pub: string; lan: string }
     qrDataUrl: string
+    /** 安装包里内置的手机端 APK：版本，和各个地址下的下载链接（局域网优先）；没有内置时是 null */
+    apk: { version: string; urls: string[] } | null
     error?: string
   }
 

@@ -3,10 +3,12 @@ import { MOBILE_APK_URL, MOBILE_RELEASES_URL, type MobileUpdateInfo } from "../s
 /**
  * 给手机端的「最新版本」查询。
  *
+ * 优先用安装包里内置的 APK（见 mobile-apk.ts）：版本和下载都在电脑上，本地读出来，不碰外网，也不会失败。
+ *
+ * 没有内置 APK 时（开发环境、没带 APK 的构建）退回到 GitHub：
  * 版本信息由电脑端去查（updater 里已有 GitHub API / 镜像 / 探测等多条兜底，是为国内网络做的），
  * 手机自己不需要能访问 GitHub 才知道有没有新版；只有点「更新」下载 APK 时才会走 GitHub。
- *
- * 带缓存：多台手机、反复打开 App 不应该每次都去打外网，而外网查询可能要十几秒才超时。
+ * 这条路带缓存：多台手机、反复打开 App 不应该每次都去打外网，而外网查询可能要十几秒才超时。
  */
 
 export interface LatestReleaseLike {
@@ -15,6 +17,8 @@ export interface LatestReleaseLike {
 
 export interface UpdateInfoProviderDeps {
   fetchLatest: () => Promise<LatestReleaseLike | null>
+  /** 内置 APK 的信息；没有内置 APK 时返回 null。每次请求都问一次（只读本地文件），所以换了安装包不用重启网关 */
+  bundledApk?: () => MobileUpdateInfo | null
   now?: () => number
   /** 查到结果后多久内直接用缓存 */
   okTtlMs?: number
@@ -52,6 +56,7 @@ export function createMobileUpdateInfoProvider(deps: UpdateInfoProviderDeps): ()
         latestVersion: version,
         apkUrl: MOBILE_APK_URL,
         releaseUrl: MOBILE_RELEASES_URL,
+        source: "github",
       }
       lastGood = { info, at: now() }
       lastFailAt = 0
@@ -63,6 +68,8 @@ export function createMobileUpdateInfoProvider(deps: UpdateInfoProviderDeps): ()
   }
 
   return async () => {
+    const bundled = deps.bundledApk?.()
+    if (bundled) return bundled
     const t = now()
     if (lastGood && t - lastGood.at < okTtl) return lastGood.info
     if (lastFailAt && t - lastFailAt < failTtl) return fallback()

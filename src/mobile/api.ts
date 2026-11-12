@@ -323,7 +323,10 @@ export async function resolveBestRoute(cfg: MobilePairConfig): Promise<RouteStat
 interface ApiResult { ok: boolean; error?: string }
 
 /** 断网、网关返回非 JSON 等传输层失败也按 `{ ok: false, error }` 返回，调用方只需处理 ok */
-async function callApi<T extends ApiResult>(baseUrl: string, token: string, path: string, body?: Record<string, unknown>, method: "GET" | "POST" = "POST"): Promise<T> {
+/** timeoutMs：给的话，这么久没收完响应就放弃（默认不设限，流式、大响应的接口不能设） */
+async function callApi<T extends ApiResult>(baseUrl: string, token: string, path: string, body?: Record<string, unknown>, method: "GET" | "POST" = "POST", timeoutMs?: number): Promise<T> {
+  const controller = timeoutMs ? new AbortController() : null
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null
   let res: Response
   try {
     res = await fetch(`${trimUrl(baseUrl)}${path}`, {
@@ -333,14 +336,18 @@ async function callApi<T extends ApiResult>(baseUrl: string, token: string, path
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
+      ...(controller ? { signal: controller.signal } : {}),
     })
   } catch {
-    return { ok: false, error: "无法连接到电脑端，请检查网络" } as T
+    if (timer) clearTimeout(timer)
+    return { ok: false, error: controller?.signal.aborted ? "电脑端没有及时响应" : "无法连接到电脑端，请检查网络" } as T
   }
   try {
     return await res.json() as T
   } catch {
-    return { ok: false, error: `电脑端返回异常（HTTP ${res.status}）` } as T
+    return { ok: false, error: controller?.signal.aborted ? "电脑端没有及时响应" : `电脑端返回异常（HTTP ${res.status}）` } as T
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 
@@ -348,9 +355,12 @@ export async function fetchBootstrap(baseUrl: string, token: string): Promise<Mo
   return await callApi<MobileBootstrapData>(baseUrl, token, "/api/mobile/bootstrap", undefined, "GET")
 }
 
-/** 向电脑端问最新发布的版本（电脑端负责去查并缓存） */
+/** 电脑端回答版本的最长等待时间：内置 APK 时是本地读出来的，没内置时电脑端查 GitHub 可能要几十秒，不能让手机陪着干等 */
+export const UPDATE_INFO_TIMEOUT_MS = 8000
+
+/** 向电脑端问手机该更新到哪个版本、从哪下载 */
 export async function fetchUpdateInfo(baseUrl: string, token: string): Promise<MobileUpdateInfo> {
-  return await callApi<MobileUpdateInfo>(baseUrl, token, "/api/mobile/update-info", undefined, "GET")
+  return await callApi<MobileUpdateInfo>(baseUrl, token, "/api/mobile/update-info", undefined, "GET", UPDATE_INFO_TIMEOUT_MS)
 }
 
 /** 带 query.limit 只给最近一页（返回 hasMore），query.before* 往前翻页；不带 query 是整段历史（老版本电脑端只认这种） */

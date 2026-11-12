@@ -215,9 +215,38 @@ jobs:
             exit 1
           fi
 
+      # 桌面安装包会把这个 APK 内置进去，由电脑端直接发给手机（electron/mobile-apk.ts），旁边要有一份清单写明版本和大小。
+      # 版本必须和 package.json（也就是 APK 的 versionName）、打 tag 时的 tag 一致：对不上就是打错了包，直接失败，
+      # 别让手机被告知「更新到 X」却装上 Y。电脑端读清单时还会核对文件大小，不一致就当没有这个 APK。
+      - name: Write APK manifest for desktop bundling
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          BADGING=$("$BT/aapt2" dump badging lk-harness-mobile.apk | head -1)
+          python3 - "$BADGING" <<'PY'
+          import json, os, re, sys
+          from pathlib import Path
+
+          badging = sys.argv[1]
+          m = re.search(r"versionName='([^']*)'", badging)
+          if not m:
+              raise SystemExit(f"aapt2 的输出里没有 versionName: {badging}")
+          apk_version = m.group(1)
+          pkg_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+          if apk_version != pkg_version:
+              raise SystemExit(f"APK 的 versionName={apk_version} 和 package.json 的 version={pkg_version} 不一致")
+          ref = os.environ.get("GITHUB_REF", "")
+          if ref.startswith("refs/tags/v") and ref[len("refs/tags/v"):] != pkg_version:
+              raise SystemExit(f"{ref} 和 package.json 的 version={pkg_version} 不一致，先改版本号再打 tag")
+          size = Path("lk-harness-mobile.apk").stat().st_size
+          Path("mobile-apk.json").write_text(json.dumps({"version": pkg_version, "size": size}) + "\n", encoding="utf-8")
+          print(f"mobile-apk.json: version={pkg_version} size={size}")
+          PY
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: lk-harness-mobile-apk
-          path: lk-harness-mobile.apk
+          path: |
+            lk-harness-mobile.apk
+            mobile-apk.json
           retention-days: 30

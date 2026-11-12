@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   build:
+    # 桌面安装包里内置手机端 APK（电脑端直接发给手机，国内手机不用访问 GitHub，见 electron/mobile-apk.ts），所以要等 APK 先构建完
+    needs: mobile-apk
     strategy:
       fail-fast: false
       matrix:
@@ -66,6 +68,21 @@ jobs:
 
       - name: Build app
         run: npm run build
+
+      # 放进 resources/mobile-apk/，electron-builder.yml 的 extraResources 会把它带进安装包。
+      # 缺了不能悄悄打出一个「没有内置 APK」的安装包：用户的手机就退回 GitHub 下载，这个功能等于白做
+      - name: Download mobile APK (bundled into the installer)
+        uses: actions/download-artifact@v4
+        with:
+          name: lk-harness-mobile-apk
+          path: resources/mobile-apk
+
+      - name: Check bundled mobile APK
+        shell: bash
+        run: |
+          test -s resources/mobile-apk/lk-harness-mobile.apk
+          test -s resources/mobile-apk/mobile-apk.json
+          cat resources/mobile-apk/mobile-apk.json
 
       - name: Package - Windows
         if: matrix.platform == 'win'

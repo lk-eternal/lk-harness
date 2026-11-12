@@ -49,6 +49,7 @@ import { MOBILE_NONCE_PATTERN } from "../src/shared/mobile-challenge.js"
 import { handleMobilePreviewRequest } from "../src/shared/mobile-preview-http.js"
 import { PREVIEW_CHECK_MAX_PATHS } from "../src/shared/preview-types.js"
 import { mobilePreview } from "./file-preview"
+import { apkDownloadUrls, bundledApkInfo, findBundledApk, handleMobileApkRequest, requestOrigin, withDesktopApkUrl } from "./mobile-apk"
 import { createMobileUpdateInfoProvider } from "./mobile-update-info"
 import { fetchLatestRelease } from "./updater"
 import { buildPairPayload, encodePairPayload } from "../src/shared/mobile-pair.js"
@@ -82,6 +83,8 @@ export interface MobileServerStatus {
   pairUrl: string
   pairPayload: MobilePairPayload
   qrDataUrl: string
+  /** 安装包里内置的手机端 APK：版本，和各个地址下的下载链接（局域网优先）；没有内置时是 null */
+  apk: { version: string; urls: string[] } | null
   error?: string
 }
 
@@ -90,7 +93,20 @@ let activePort = DEFAULT_MOBILE_PORT
 let lastError = ""
 const sseClients = new Set<http.ServerResponse>()
 const fileTickets = createFileTicketStore()
-const getMobileUpdateInfo = createMobileUpdateInfoProvider({ fetchLatest: fetchLatestRelease })
+/** 安装包里内置的手机端 APK（CI 在打包前放进 resources/mobile-apk，见 mobile-apk.ts）；开发环境和没带 APK 的构建里是 null */
+function currentBundledApk() {
+  return findBundledApk([
+    ...(app.isPackaged ? [path.join(process.resourcesPath, "mobile-apk")] : []),
+    path.join(app.getAppPath(), "resources/mobile-apk"),
+  ])
+}
+const getMobileUpdateInfo = createMobileUpdateInfoProvider({
+  fetchLatest: fetchLatestRelease,
+  bundledApk: () => {
+    const apk = currentBundledApk()
+    return apk ? bundledApkInfo(apk) : null
+  },
+})
 let unsubEvents: (() => void)[] = []
 
 function ensureToken(): string {
@@ -318,6 +334,9 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
   const pathname = url.pathname
 
+  // 手机端安装包：不需要令牌（见 MOBILE_APK_PATH 的说明），必须在网页兜底之前处理
+  if (handleMobileApkRequest(currentBundledApk, req, res, pathname)) return
+
   if (!pathname.startsWith("/api/mobile/")) {
     serveStatic(pathname, res)
     return
@@ -374,9 +393,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     return
   }
 
-  // 手机 App 的「有没有新版」：由电脑端去查并缓存，手机自己不用能访问 GitHub
+  // 手机 App 的「有没有新版」：电脑端内置了 APK 时以它的版本为准、从电脑下载；没有就由电脑端去查 GitHub 并缓存
   if (req.method === "GET" && pathname === "/api/mobile/update-info") {
-    sendJson(res, 200, await getMobileUpdateInfo())
+    sendJson(
+      res,
+      200,
+      withDesktopApkUrl(await getMobileUpdateInfo(), requestOrigin(req.headers, normalizeUrl(getConfig().mobilePublicUrl ?? ""))),
+    )
     return
   }
 
@@ -678,6 +701,7 @@ export async function getMobileServerStatus(): Promise<MobileServerStatus> {
     qrDataUrl = await QRCode.toDataURL(pairUrl, { width: 640, margin: 2, errorCorrectionLevel: "L" })
   } catch { /* ignore */ }
 
+  const bundledApk = currentBundledApk()
   return {
     enabled: !!cfg.mobileEnabled,
     running: server !== null,
@@ -688,6 +712,7 @@ export async function getMobileServerStatus(): Promise<MobileServerStatus> {
     pairUrl,
     pairPayload,
     qrDataUrl,
+    apk: bundledApk ? { version: bundledApk.version, urls: apkDownloadUrls(lanUrls, publicUrl) } : null,
     ...(lastError ? { error: lastError } : {}),
   }
 }

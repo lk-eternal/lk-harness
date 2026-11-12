@@ -45,3 +45,6 @@ temp/
 
 # 本地运行日志
 logs/
+
+# 手机端 APK（CI 打包桌面安装包前放进来的构建产物，不入库）
+resources/mobile-apk/

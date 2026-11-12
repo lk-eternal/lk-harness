@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react"
 import { Check, Copy, Eye, EyeOff, RefreshCw, Smartphone } from "lucide-react"
 import QRCode from "qrcode"
-// 手机端 Android 安装包地址（始终指向 GitHub 最新发布；资产名由 mobile-apk.yml 固定为 lk-harness-mobile.apk）
+// GitHub 上的安装包地址（始终指向最新发布；资产名由 mobile-apk.yml 固定为 lk-harness-mobile.apk）：
+// 电脑端没内置安装包（开发环境）或网关没开时用它
 import { MOBILE_APK_URL } from "../../shared/app-update"
 
 export default function MobilePairPanel() {
@@ -14,13 +15,17 @@ export default function MobilePairPanel() {
   const [showGuide, setShowGuide] = useState(false)
   const [apkQr, setApkQr] = useState("")
 
+  // 安装包内置了手机端 APK 且网关在跑：直接从电脑下载（局域网优先），不用手机去访问 GitHub
+  const desktopApkUrl = status?.running ? status.apk?.urls[0] : undefined
+  const apkLink = desktopApkUrl ?? MOBILE_APK_URL
+
   useEffect(() => {
     let alive = true
-    QRCode.toDataURL(MOBILE_APK_URL, { width: 320, margin: 1, errorCorrectionLevel: "M" })
+    QRCode.toDataURL(apkLink, { width: 320, margin: 1, errorCorrectionLevel: "M" })
       .then((url) => { if (alive) setApkQr(url) })
       .catch(() => { /* 二维码生成失败时仍可复制下方链接 */ })
     return () => { alive = false }
-  }, [])
+  }, [apkLink])
 
   const load = useCallback(async () => {
     const s = await window.electronAPI.mobileStatus()
@@ -179,16 +184,28 @@ export default function MobilePairPanel() {
               用手机浏览器扫码下载并安装 APK。
             </p>
             <div className="flex items-center gap-2">
-              <input type="text" readOnly value={MOBILE_APK_URL} className="w-full rounded border border-line bg-page px-2.5 py-1.5 font-mono text-[11px] text-fg-3 outline-none" />
+              <input type="text" readOnly value={apkLink} className="w-full rounded border border-line bg-page px-2.5 py-1.5 font-mono text-[11px] text-fg-3 outline-none" />
               <button
                 type="button"
-                onClick={() => void copyText("apkUrl", MOBILE_APK_URL)}
+                onClick={() => void copyText("apkUrl", apkLink)}
                 className="shrink-0 rounded border border-line px-2.5 py-1.5 text-fg-2 hover:bg-raised"
                 title="复制下载链接"
               >
                 {copiedKey === "apkUrl" ? <Check size={13} className="text-success" /> : <Copy size={13} />}
               </button>
             </div>
+            {desktopApkUrl ? (
+              <p className="text-fg-muted leading-relaxed">
+                直接从这台电脑下载 v{status.apk?.version}（手机需和电脑在同一 Wi-Fi，或能访问下方公网地址），不用访问 GitHub。
+                已安装的 APP 之后有新版时也会从电脑更新。
+              </p>
+            ) : status.apk ? (
+              <p className="text-fg-muted leading-relaxed">
+                当前是 GitHub 下载链接。开启上方手机端网关后，这里会换成从这台电脑直接下载 v{status.apk.version} 的地址。
+              </p>
+            ) : (
+              <p className="text-fg-muted leading-relaxed">这个版本的电脑端没有内置安装包，使用 GitHub 下载链接。</p>
+            )}
             <p className="text-fg-muted leading-relaxed">
               iOS 暂无安装包：用 Safari 打开下方「配对链接」，点「分享 → 添加到主屏幕」，即可像 APP 一样使用。
             </p>
