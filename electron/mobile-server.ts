@@ -565,7 +565,8 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       return
     }
     case "/api/mobile/project-repos": {
-      // 常用仓库：建研发类项目时在手机上勾选（手机上选不了电脑里的文件夹，所以只能从记过的里选，或填远程地址）
+      // 常用仓库：建研发类项目时在手机上勾选（手机界面上选不了电脑里的文件夹，所以让用户从记过的里选，或填远程地址；
+      // 服务端不再另设限制：能调这个网关的就是已配对的本机用户）
       sendJson(res, 200, { ok: true, repos: listProjectRepoOptions() })
       return
     }

@@ -3,6 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { isRemoteRepoRef } from "../src/shared/project-types.js"
+import { removeNoFollow } from "../src/shared/safe-remove.js"
 
 export { isRemoteRepoRef }
 
@@ -27,14 +28,38 @@ export interface WorktreeRepoRef {
   baseBranch: string
 }
 
-function runGit(cwd: string, args: string[], timeoutMs?: number): Promise<{ ok: boolean; stdout: string; stderr: string; code: number }> {
+interface GitResult {
+  ok: boolean
+  stdout: string
+  stderr: string
+  code: number
+  /** 超时被杀掉的 */
+  timedOut?: boolean
+}
+
+/** 连带子进程一起杀：git 克隆会再起 git-remote-https / ssh，Windows 上只杀 git 本身，它们会留着占住目录 */
+function killTree(child: ReturnType<typeof spawn>): void {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" }).on("error", () => child.kill())
+      return
+    } catch { /* 退回下面的 kill */ }
+  }
+  child.kill()
+}
+
+/**
+ * 这里没有终端：git 要输入用户名密码时没人能回答，会一直等下去，所以一律让它直接失败（GIT_TERMINAL_PROMPT=0）。
+ * 图形的凭据管理器（Windows 的 GCM 弹窗）不受这个影响，用户还能在弹窗里登录，超时兜底。
+ */
+function runGit(cwd: string, args: string[], timeoutMs?: number, extraEnv?: Record<string, string>): Promise<GitResult> {
   const withSafe = ["-c", "safe.directory=*", ...args]
   return new Promise((resolve) => {
-    const child = spawn("git", withSafe, { cwd, windowsHide: true })
+    const child = spawn("git", withSafe, { cwd, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv } })
     let stdout = ""
     let stderr = ""
     let settled = false
-    const finish = (result: { ok: boolean; stdout: string; stderr: string; code: number }) => {
+    const finish = (result: GitResult) => {
       if (settled) return
       settled = true
       if (timer) clearTimeout(timer)
@@ -45,8 +70,8 @@ function runGit(cwd: string, args: string[], timeoutMs?: number): Promise<{ ok: 
     let timer: ReturnType<typeof setTimeout> | undefined
     if (timeoutMs != null) {
       timer = setTimeout(() => {
-        child.kill()
-        finish({ ok: false, stdout: stdout.trim(), stderr: stderr.trim() || "timeout", code: 1 })
+        killTree(child)
+        finish({ ok: false, stdout: stdout.trim(), stderr: stderr.trim() || "timeout", code: 1, timedOut: true })
       }, timeoutMs)
     }
     child.on("error", (err) => {
@@ -72,6 +97,20 @@ export async function removeDirRobust(dir: string): Promise<void> {
     if (!fs.existsSync(dir)) return
     await new Promise<void>((resolve) => setTimeout(resolve, 200))
   }
+}
+
+/** 克隆最多等多久：大仓库、慢网络要给够时间，但不能无限等（要登录又没人能回答时会一直卡着） */
+const CLONE_TIMEOUT_MS = 10 * 60_000
+
+/**
+ * 远程仓库走 ssh 时，没有可用密钥或没确认过主机指纹，ssh 会等人输入——这里没有终端，永远等不到。
+ * 让它直接失败并说原因（BatchMode）。用户自己配了 ssh 命令（环境变量或 core.sshCommand）就不动它。
+ */
+async function sshBatchEnv(cwd: string): Promise<Record<string, string> | undefined> {
+  if (process.env.GIT_SSH_COMMAND || process.env.GIT_SSH) return undefined
+  const cfg = await runGit(cwd, ["config", "--get", "core.sshCommand"], 10_000)
+  if (cfg.ok && cfg.stdout) return undefined
+  return { GIT_SSH_COMMAND: "ssh -o BatchMode=yes" }
 }
 
 function resolveReal(p: string): string {
@@ -174,18 +213,26 @@ export async function addProjectClone(input: CloneAddInput): Promise<WorktreeRes
   }
 
   // 本地 clone 加速（硬链接）；源有 dubious ownership 时本地 clone 会失败，回退到 origin 远程
-  let clone = await runGit(parent, ["clone", repoPath, worktreePath])
-  if (!clone.ok && !remote && originUrl) {
+  const netEnv = remote || originUrl ? await sshBatchEnv(parent) : undefined
+  let clone = await runGit(parent, ["clone", repoPath, worktreePath], CLONE_TIMEOUT_MS, netEnv)
+  if (!clone.ok && !clone.timedOut && !remote && originUrl) {
     await removeDirRobust(worktreePath)
-    clone = await runGit(parent, ["clone", originUrl, worktreePath])
+    clone = await runGit(parent, ["clone", originUrl, worktreePath], CLONE_TIMEOUT_MS, netEnv)
   }
   if (!clone.ok) {
+    if (clone.timedOut) {
+      return fail(`git clone 超时（超过 ${CLONE_TIMEOUT_MS / 60_000} 分钟）：仓库太大、网络太慢，或需要登录凭据。可以先在终端里手动 git clone 一次，确认能克隆下来再试`)
+    }
     const detail = clone.stderr || clone.stdout
     const ownership = /dubious ownership/i.test(detail)
+    // 这里没有终端，git 要输入用户名密码 / ssh 要确认主机指纹时只能直接失败：告诉用户怎么办
+    const needLogin = /terminal prompts disabled|could not read (Username|Password)|Authentication failed|Permission denied \(publickey|Host key verification failed/i.test(detail)
     return fail(
       ownership
         ? `git clone 失败（主仓所有者与当前用户不一致，且无法从远程拉取） ${detail}`
-        : `git clone 失败: ${detail}`,
+        : needLogin
+          ? `git clone 失败（需要登录凭据：先在终端里手动 git clone 一次，让 git 记住凭据或确认主机，再回来建项目） ${detail}`
+          : `git clone 失败: ${detail}`,
     )
   }
 
@@ -201,7 +248,7 @@ export async function addProjectClone(input: CloneAddInput): Promise<WorktreeRes
   }
 
   if (input.fetch !== false && hasOrigin) {
-    const fetch = await runGit(worktreePath, ["fetch", "origin", "--prune"], 60_000)
+    const fetch = await runGit(worktreePath, ["fetch", "origin", "--prune"], 60_000, netEnv)
     if (!fetch.ok) return fail(`git fetch 失败: ${fetch.stderr || fetch.stdout}`)
   }
 
@@ -307,10 +354,9 @@ export async function removeProjectWorktree(repoPath: string, worktreePath: stri
   try {
     if (localRepo) await runGit(repoPath, ["worktree", "remove", "--force", worktreePath])
   } catch { /* ignore */ }
+  // 不能直接 fs.rmSync：Electron 的 Node 里它会顺着目录里的链接把目标也删了（见 shared/safe-remove.ts）
   try {
-    if (fs.existsSync(worktreePath)) {
-      fs.rmSync(worktreePath, { recursive: true, force: true })
-    }
+    if (fs.existsSync(worktreePath)) await removeNoFollow(worktreePath)
   } catch { /* ignore */ }
   try {
     if (localRepo) await runGit(repoPath, ["worktree", "prune"])

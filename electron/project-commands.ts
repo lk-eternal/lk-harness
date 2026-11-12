@@ -50,6 +50,7 @@ import { findMergeRequest } from "./project-gitlab"
 import { syncArtifactToFeishu } from "./project-feishu-sync"
 import { httpPost, syncActiveSession, enqueueToSession, getCurrentActiveSession, purgeSessionRouting, readLockFile } from "./daemon-client"
 import { clearAppChatRecords } from "./app-chat"
+import { removeNoFollow } from "../src/shared/safe-remove.js"
 import { pushUiLog } from "./ui-logger"
 import { leaveProjectSession, formatCurrentSessionBlock } from "./session-dispatcher"
 import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
@@ -1553,10 +1554,12 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
           if (!r.worktreePath || !fs.existsSync(r.worktreePath)) continue
           try { await removeProjectWorktree(r.repoPath, r.worktreePath) } catch { /* 尽力清理 */ }
         }
-        try {
-          if (fs.existsSync(rootDir)) fs.rmSync(rootDir, { recursive: true, force: true })
-          pushUiLog("Project", "INFO", `[Delete] 已强制删除: ${rootDir}`)
-        } catch { /* 尽力清理 */ }
+        // 不能直接 fs.rmSync：Electron 的 Node 里它会顺着目录里的链接把目标也删了（见 shared/safe-remove.ts）
+        if (fs.existsSync(rootDir)) {
+          const removed = await removeNoFollow(rootDir)
+          if (removed.ok) pushUiLog("Project", "INFO", `[Delete] 已强制删除: ${rootDir}`)
+          else pushUiLog("Project", "WARN", `[Delete] 强制删除失败 ${rootDir}: ${removed.error}`)
+        }
       }
     }
   }

@@ -511,6 +511,23 @@ describe("应用内建开发项目（接代码仓库）", () => {
     expect(fs.readFileSync(path.join(orphan, "shop", "旧.txt"), "utf8")).toBe("上次留下的")
   })
 
+  it("两个同名项目同时建：各占各的目录，其中一个失败清理时不会动另一个的克隆", async () => {
+    const { store, create } = await boot()
+    const repo = makeRepo(repoParent, "shop")
+    const [good, bad] = await Promise.all([
+      create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }] }),
+      // 基线分支不存在：克隆完、检出 feature 时才失败，失败后清理的只能是它自己占的目录
+      create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "no-such-branch" }] }),
+    ])
+    expect(good.ok).toBe(true)
+    expect(bad.ok).toBe(false)
+    const wt = store.getProject(good.projectId!)!.worktreePath
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toMatch(/^feature\//)
+    expect(fs.existsSync(path.join(wt, "README.md"))).toBe(true)
+    // 失败的那个没留下半成品目录
+    expect(fs.readdirSync(path.join(userData, "claw-projects"))).toEqual([path.basename(path.dirname(wt))])
+  })
+
   it("daemon 没启动：项目照样建好，带提示", async () => {
     const { store, create } = await boot()
     fs.rmSync(path.join(userData, LOCK_FILE_NAME))

@@ -1,4 +1,5 @@
 import * as fs from "node:fs"
+import * as http from "node:http"
 import * as os from "node:os"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
@@ -79,6 +80,44 @@ describe("project-worktree (independent checkout)", () => {
     await removeProjectWorktree(repo, wt)
     expect(fs.existsSync(wt)).toBe(false)
   })
+
+  it("远程要登录凭据：直接失败说明原因，不会卡着等输入，也不留半成品目录", async () => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(401, { "WWW-Authenticate": 'Basic realm="x"' })
+      res.end()
+    })
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r))
+    const { port } = server.address() as { port: number }
+    // 不让本机的凭据管理器（Windows 的 GCM 会弹窗）和询问程序插手：只测「没人能回答时不挂住」
+    const keys = ["GIT_CONFIG_NOSYSTEM", "GIT_CONFIG_GLOBAL", "GIT_ASKPASS", "SSH_ASKPASS"] as const
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]))
+    const emptyConfig = path.join(root, "empty-gitconfig")
+    fs.writeFileSync(emptyConfig, "")
+    process.env.GIT_CONFIG_NOSYSTEM = "1"
+    process.env.GIT_CONFIG_GLOBAL = emptyConfig
+    delete process.env.GIT_ASKPASS
+    delete process.env.SSH_ASKPASS
+    try {
+      const wt = path.join(wtRoot, "remote")
+      const started = Date.now()
+      const r = await addProjectClone({
+        repoPath: `http://127.0.0.1:${port}/x.git`, worktreePath: wt, featureBranch: "feature/a", baseBranch: "main",
+      })
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain("git clone 失败")
+      // 说清楚是缺登录凭据（不是「No such file or directory」这类看不懂的），并告诉用户怎么办
+      expect(r.error).toContain("terminal prompts disabled")
+      expect(r.error).toContain("需要登录凭据")
+      expect(Date.now() - started).toBeLessThan(20_000)
+      expect(fs.existsSync(wt)).toBe(false)
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k]
+        else process.env[k] = saved[k]
+      }
+      await new Promise<void>((r) => server.close(() => r()))
+    }
+  }, 30_000)
 
   it("succeeds even when the branch is checked out in the source repo", async () => {
     git(repo, ["checkout", "-b", "feature/busy"])

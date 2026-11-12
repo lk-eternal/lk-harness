@@ -122,6 +122,36 @@ function prepareFolderWorkspace(name: string, folder: string | undefined): Folde
   return { ok: true, workDir, external: false }
 }
 
+/**
+ * 占一个项目目录：不递归地 mkdir，同名已经存在就换个名字再试。
+ * 「检查不存在」和「创建」是一步完成的，两个同名项目同时在建时不会拿到同一个目录
+ * （否则后到的那个失败清理时，会把先到的那份克隆一起删掉）；磁盘上没人认领的同名旧目录也不会撞上。
+ */
+function claimProjectDir(root: string, slug: string): { ok: true; dir: string } | { ok: false; error: string } {
+  try {
+    fs.mkdirSync(root, { recursive: true })
+    for (let i = 0; i < 20; i++) {
+      const dir = path.join(root, i === 0 ? slug : `${slug}-${Date.now().toString(36)}${i > 1 ? i : ""}`)
+      try {
+        fs.mkdirSync(dir)
+        return { ok: true, dir }
+      } catch (e: unknown) {
+        if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e
+      }
+    }
+    return { ok: false, error: `无法创建项目目录：「${slug}」的同名目录太多` }
+  } catch (e: unknown) {
+    return { ok: false, error: `无法创建项目目录：${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
+/** 落盘失败后收拾新建的空目录：只删空的（目录里已经有东西就不是这次建的，不动），用户自己选的文件夹不会走到这里 */
+async function dropEmptyWorkspace(workDir: string): Promise<void> {
+  for (const dir of [workDir, path.dirname(workDir)]) {
+    try { await fs.promises.rmdir(dir) } catch { return }
+  }
+}
+
 type CodeWorkspace =
   | { ok: true; repos: ProjectRepo[]; featureBranch: string; undo: () => Promise<void> }
   | { ok: false; error: string }
@@ -143,14 +173,12 @@ async function prepareCodeWorkspace(plan: Extract<ProjectCreatePlan, { ok: true 
     }
   }
 
-  const root = projectsRootDir()
-  let slug = uniqueProjectSlug(plan.name)
-  // 磁盘上可能有没人认领的同名目录（上次没清干净）：换个名字，别撞上
-  if (fs.existsSync(path.join(root, slug))) slug = `${slug}-${Date.now().toString(36)}`
-  const slugDir = path.join(root, slug)
+  const claimed = claimProjectDir(projectsRootDir(), uniqueProjectSlug(plan.name))
+  if (!claimed.ok) return { ok: false, error: claimed.error }
+  const slugDir = claimed.dir
 
   const repos: ProjectRepo[] = []
-  // 上面已经确认过 slugDir 原先不存在，里面的东西全是这次克隆出来的，整个删掉
+  // slugDir 是上面刚建出来的（不是原来就有的），里面的东西全是这次克隆出来的，整个删掉
   const undo = () => removeDirRobust(slugDir)
 
   const usedNames = new Set<string>()
@@ -231,6 +259,7 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
     })
   } catch (e: unknown) {
     await code?.undo()
+    if (folder && !folder.external) await dropEmptyWorkspace(folder.workDir)
     setCurrentProjectId(prevCurrent)
     return { ok: false, error: `无法保存项目：${e instanceof Error ? e.message : String(e)}` }
   }
