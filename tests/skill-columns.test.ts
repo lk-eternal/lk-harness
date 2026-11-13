@@ -55,7 +55,7 @@ describe("SkillRootColumn（第一级：目录）", () => {
 })
 
 describe("SkillListColumn（第二级：这个目录里的 Skill）", () => {
-  const base = { root: roots[0], activeSkill: null, creating: false, onSelect: vi.fn(), onNew: vi.fn() }
+  const base = { root: roots[0], activeSkill: null, creating: false, onSelect: vi.fn(), onNew: vi.fn(), onOpenRoot: vi.fn() }
   const skills = [
     { skillPath: "pdf", content: "---\nname: pdf\ndescription: 读写 PDF\n---\n" },
     { skillPath: "group/report", content: "# 周报\n每周五写" },
@@ -113,6 +113,25 @@ describe("SkillListColumn（第二级：这个目录里的 Skill）", () => {
     expect(onNew).toHaveBeenCalledTimes(1)
   })
 
+  it("标题旁有「打开目录」，点了调 onOpenRoot；不管列表是在读、空的还是有内容都在，不挤掉标题", () => {
+    for (const s of [null, [], skills]) {
+      const html = renderToStaticMarkup(createElement(SkillListColumn, { ...base, skills: s }))
+      expect(count(html, 'title="打开目录"')).toBe(1)
+      expect(count(html, 'aria-label="打开目录"')).toBe(1)
+      expect(html).toContain("Cursor")
+    }
+    const onOpenRoot = vi.fn()
+    const onSelect = vi.fn()
+    const onNew = vi.fn()
+    const btns = findAll(SkillListColumn({ ...base, skills, onOpenRoot, onSelect, onNew }), byProp("title", "打开目录"))
+    expect(btns).toHaveLength(1)
+    ;(btns[0].props.onClick as () => void)()
+    expect(onOpenRoot).toHaveBeenCalledTimes(1)
+    // 点它不能顺带选中 / 新建任何东西
+    expect(onSelect).not.toHaveBeenCalled()
+    expect(onNew).not.toHaveBeenCalled()
+  })
+
   it("「返回」只在给了 onBack（目录列被收起）时出现，点了调它", () => {
     expect(renderToStaticMarkup(createElement(SkillListColumn, { ...base, skills }))).not.toContain("全部目录")
     const onBack = vi.fn()
@@ -132,7 +151,7 @@ describe("SkillFilesColumn（第三级：一个 Skill 里的文件）", () => {
   const base = {
     rootId: "cursor", skillPath: "my-skill", tree, expanded: new Set<string>(),
     skillMdActive: false, activeFile: null as string | null,
-    onToggle: vi.fn(), onOpenSkillMd: vi.fn(), onOpenFile: vi.fn(), onCreate: vi.fn(), onDeleteFolder: vi.fn(),
+    onToggle: vi.fn(), onOpenSkillMd: vi.fn(), onOpenFile: vi.fn(), onCreate: vi.fn(), onDeleteFolder: vi.fn(), onReveal: vi.fn(),
   }
 
   it("标题是 Skill 路径；SKILL.md 单独占第一行，不在树里重复；只显示这个 Skill 的文件", () => {
@@ -156,10 +175,36 @@ describe("SkillFilesColumn（第三级：一个 Skill 里的文件）", () => {
   it("Skill 根目录下的「新建文件 / 新建文件夹」在标题行，建在根目录（父路径为空串）", () => {
     const onCreate = vi.fn()
     const btns = findAll(SkillFilesColumn({ ...base, onCreate }), (el) => typeof el.props.title === "string" && typeof el.props.onClick === "function")
-    // 文件夹行里的按钮属于 SkillTreeList（它有自己的测试），这里只有标题行的两个
-    expect(btns.map((b) => b.props.title)).toEqual(["新建文件", "新建文件夹"])
+    // 文件夹行里的按钮属于 SkillTreeList（它有自己的测试），这里只有标题行的三个
+    expect(btns.map((b) => b.props.title)).toEqual(["打开 Skill 文件夹", "新建文件", "新建文件夹"])
     btns.forEach((b) => (b.props.onClick as () => void)())
     expect(onCreate.mock.calls).toEqual([["file", ""], ["folder", ""]])
+  })
+
+  it("标题旁有「打开 Skill 文件夹」：相对路径传空串（Skill 文件夹自己），不触发新建", () => {
+    const onReveal = vi.fn()
+    const onCreate = vi.fn()
+    const html = renderToStaticMarkup(createElement(SkillFilesColumn, { ...base, onReveal, onCreate }))
+    expect(count(html, 'title="打开 Skill 文件夹"')).toBe(1)
+    expect(count(html, 'aria-label="打开 Skill 文件夹"')).toBe(1)
+    const [btn] = findAll(SkillFilesColumn({ ...base, onReveal, onCreate }), byProp("title", "打开 Skill 文件夹"))
+    ;(btn.props.onClick as () => void)()
+    expect(onReveal.mock.calls).toEqual([[""]])
+    expect(onCreate).not.toHaveBeenCalled()
+  })
+
+  it("树里的行用同一个 onReveal（文件夹和文件都带完整相对路径）", () => {
+    const onReveal = vi.fn()
+    const [tree] = findAll(SkillFilesColumn({ ...base, onReveal }), (el) => typeof el.type === "function" && "onDeleteFolder" in el.props)
+    expect(tree.props.onReveal).toBe(onReveal)
+  })
+
+  it("Skill 名很长时标题仍可截断，不把「打开 Skill 文件夹」挤出列", () => {
+    const long = "g".repeat(120)
+    const html = renderToStaticMarkup(createElement(SkillFilesColumn, { ...base, skillPath: long, tree: [dir(long, [file("SKILL.md")])] }))
+    expect(html).toContain('title="打开 Skill 文件夹"')
+    expect(html).toMatch(/class="min-w-0 flex-1"[^>]*><p class="truncate/)
+    expect(html).toMatch(/title="打开 Skill 文件夹"[^>]*class="[^"]*shrink-0|class="[^"]*shrink-0[^"]*"[^>]*title="打开 Skill 文件夹"/)
   })
 
   it("文件夹展开后里面的文件才出现；开着的文件高亮", () => {

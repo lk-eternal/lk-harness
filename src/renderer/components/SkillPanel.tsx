@@ -8,7 +8,7 @@ import { skillDeleteConfirm } from "./skill/skill-delete"
 import { pickInitialRoot, skillsColumns } from "./skill/skills-nav"
 import { useOpenFirstOnce } from "./panel-default"
 import { EmptyPane, dashedBtn } from "./project/project-ui"
-import { ancestorExpandKeys, findEntryConflict, isSameOrInside, joinEntryPath, locationLabel, validateEntryName, validateSkillPath, type SkillEntryKind } from "./skill-entry"
+import { ancestorExpandKeys, diskLocationOf, findEntryConflict, isSameOrInside, joinEntryPath, locationLabel, validateEntryName, validateSkillPath, type SkillEntryKind } from "./skill-entry"
 
 interface SkillFile { rootId: string; skillPath: string; name: string; content: string }
 /** 某个目录读回来的内容；带着 rootId，切目录后旧的结果一眼就能认出来不用 */
@@ -223,6 +223,26 @@ export default function SkillPanel() {
     await reloadAll()
   }
 
+  /**
+   * 在系统文件管理器里打开：skillPath、relativePath 都为空串是目录自己，只有 relativePath 为空是 Skill 文件夹。
+   * 文件夹直接打开，文件是显示它的位置。只是看一眼位置，不动编辑区，所以不用问「有未保存的修改」。
+   */
+  const reveal = async (skillPath: string, relativePath: string) => {
+    if (!rootId) return
+    try {
+      const res = await window.electronAPI.revealSkillPath(rootId, skillPath, relativePath)
+      if (!res.ok) void showAlert("打开失败", res.error ?? "")
+    } catch (e) {
+      void showAlert("打开失败", messageOf(e))
+    }
+  }
+
+  /** 编辑区里这个文件在磁盘上的位置；Skill 的路径框里改了没保存的名字不算，磁盘上还是原来的 */
+  const revealEditing = () => {
+    const at = edit ? diskLocationOf(edit) : null
+    if (at) void reveal(at.skillPath, at.relativePath)
+  }
+
   const handleSave = async (): Promise<boolean> => {
     if (!edit || !rootId) return false
     setSaveError(null)
@@ -308,6 +328,7 @@ export default function SkillPanel() {
             creating={creating}
             onSelect={(p) => void openSkill(p)}
             onNew={() => void openAdd()}
+            onOpenRoot={() => void reveal("", "")}
             onBack={cols.back === "roots" ? () => void backToList() : undefined}
           />
         )}
@@ -324,6 +345,7 @@ export default function SkillPanel() {
             onOpenFile={(rel) => void openFile(rel)}
             onCreate={(kind, parent) => void openCreate(kind, parent)}
             onDeleteFolder={(rel) => void deleteFolder(rel)}
+            onReveal={(rel) => void reveal(skillSel, rel)}
             back={cols.back === "skills" ? { label: "全部 Skill", onClick: () => void backToList() } : undefined}
           />
         )}
@@ -341,6 +363,7 @@ export default function SkillPanel() {
               onSave={() => void handleSave()}
               onRevert={handleRevert}
               onDelete={() => void handleDelete()}
+              onReveal={revealEditing}
             />
           ) : noSkills ? (
             <EmptyPane title="这个目录里还没有 Skill">

@@ -30,6 +30,7 @@ function makeProps(expanded: string[], activeFile: string | null = null) {
     onOpenFile: vi.fn(),
     onCreate: vi.fn(),
     onDeleteFolder: vi.fn(),
+    onReveal: vi.fn(),
   }
 }
 
@@ -70,15 +71,17 @@ function findButtonClick(node: ReactNode, text: string): (() => void) | undefine
 }
 
 describe("SkillTreeList 的行内按钮", () => {
-  it("每个文件夹行都有「新建文件」「新建文件夹」「删除文件夹」，文件行没有", () => {
+  it("每个文件夹行都有「打开文件夹」「新建文件」「新建文件夹」「删除文件夹」，文件行只有「显示文件位置」", () => {
     const html = renderToStaticMarkup(createElement(SkillTreeList, makeProps([...OPEN_SCRIPTS, dirExpandKey(ROOT, SKILL, "scripts/lib")])))
-    // 可见的行：scripts、run.sh、lib、deep.txt、notes.md；带按钮的是 scripts 和 lib
+    // 可见的行：scripts、run.sh、lib、deep.txt、notes.md；文件夹是 scripts 和 lib，文件是另外三个
     expect(html).toContain("run.sh")
     expect(html).toContain("deep.txt")
     expect(html).toContain("notes.md")
+    expect(count(html, 'title="打开文件夹"')).toBe(2)
     expect(count(html, 'title="新建文件"')).toBe(2)
     expect(count(html, 'title="新建文件夹"')).toBe(2)
     expect(count(html, 'title="删除文件夹"')).toBe(2)
+    expect(count(html, 'title="显示文件位置"')).toBe(3)
   })
 
   it("文件夹没展开时，里面的东西不渲染", () => {
@@ -106,6 +109,9 @@ describe("SkillTreeList 的行内按钮", () => {
   it("每个按钮都有 aria-label，读屏和测试都能按名字找到", () => {
     const html = renderToStaticMarkup(createElement(SkillTreeList, makeProps(OPEN_SCRIPTS)))
     expect(count(html, 'aria-label="新建文件"')).toBe(2)
+    // 只展开了 scripts：可见的文件夹是 scripts、lib，可见的文件是 run.sh、notes.md（deep.txt 在没展开的 lib 里）
+    expect(count(html, 'aria-label="打开文件夹"')).toBe(2)
+    expect(count(html, 'aria-label="显示文件位置"')).toBe(2)
   })
 
   it("没有内容时什么都不渲染（提示文字由文件列表那一列给）", () => {
@@ -139,8 +145,11 @@ describe("SkillTreeList 的回调参数", () => {
     const props = makeProps([...OPEN_SCRIPTS, dirExpandKey(ROOT, SKILL, "scripts/lib")])
     const actions = collectActions(SkillTreeList(props))
     expect(actions.map((a) => a.title)).toEqual([
-      "新建文件", "新建文件夹", "删除文件夹", // scripts
-      "新建文件", "新建文件夹", "删除文件夹", // scripts/lib
+      "打开文件夹", "新建文件", "新建文件夹", "删除文件夹", // scripts
+      "显示文件位置", // scripts/run.sh
+      "打开文件夹", "新建文件", "新建文件夹", "删除文件夹", // scripts/lib
+      "显示文件位置", // scripts/lib/deep.txt
+      "显示文件位置", // notes.md
     ])
     actions.forEach((a) => a.onClick())
     expect(props.onCreate.mock.calls).toEqual([
@@ -150,6 +159,18 @@ describe("SkillTreeList 的回调参数", () => {
       ["folder", "scripts/lib"],
     ])
     expect(props.onDeleteFolder.mock.calls).toEqual([["scripts"], ["scripts/lib"]])
+    // 文件夹和文件走同一个回调，带的都是各自的完整相对路径（哪个是文件夹由主进程在磁盘上看）
+    expect(props.onReveal.mock.calls).toEqual([["scripts"], ["scripts/run.sh"], ["scripts/lib"], ["scripts/lib/deep.txt"], ["notes.md"]])
+  })
+
+  it("点「显示文件位置」只是显示位置：不打开文件，也不切换文件夹的展开", () => {
+    const props = makeProps([...OPEN_SCRIPTS])
+    const [, , , , show] = collectActions(SkillTreeList(props))
+    expect(show.title).toBe("显示文件位置")
+    show.onClick()
+    expect(props.onReveal.mock.calls).toEqual([["scripts/run.sh"]])
+    expect(props.onOpenFile).not.toHaveBeenCalled()
+    expect(props.onToggle).not.toHaveBeenCalled()
   })
 
   it("点文件：带完整的相对路径；点文件夹行：切换展开", () => {

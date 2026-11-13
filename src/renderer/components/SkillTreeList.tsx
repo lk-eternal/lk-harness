@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { ChevronRight, ChevronDown, Folder, FileText, FilePlus, FolderPlus, Trash2 } from "lucide-react"
+import { ChevronRight, ChevronDown, Folder, FolderOpen, FileText, FilePlus, FolderPlus, FolderSearch, Trash2 } from "lucide-react"
 import { dirExpandKey, joinEntryPath, type SkillEntryKind } from "./skill-entry"
 
 interface Props {
@@ -15,6 +15,8 @@ interface Props {
   /** parentPath 为空串表示建在 Skill 根目录下 */
   onCreate: (kind: SkillEntryKind, parentPath: string) => void
   onDeleteFolder: (relativePath: string) => void
+  /** 在系统文件管理器里打开这个文件夹 / 显示这个文件（相对 Skill 目录的路径） */
+  onReveal: (relativePath: string) => void
 }
 
 /**
@@ -39,7 +41,7 @@ function ActionButton({ title, danger, onClick, children }: { title: string; dan
 }
 
 /** 一个 Skill 里的文件和文件夹（文件夹可以一层层展开） */
-export default function SkillTreeList({ rootId, skillPath, nodes, expanded, activeFile, onToggle, onOpenFile, onCreate, onDeleteFolder }: Props) {
+export default function SkillTreeList({ rootId, skillPath, nodes, expanded, activeFile, onToggle, onOpenFile, onCreate, onDeleteFolder, onReveal }: Props) {
   const renderTree = (list: SkillTreeNode[], parentPath: string, depth: number): ReactNode =>
     list.map((node) => {
       const fullPath = joinEntryPath(parentPath, node.name)
@@ -55,6 +57,7 @@ export default function SkillTreeList({ rootId, skillPath, nodes, expanded, acti
                 <Folder size={12} className="shrink-0 text-accent/70" /><span className="truncate">{node.name}</span>
               </button>
               <RowActions>
+                <ActionButton title="打开文件夹" onClick={() => onReveal(fullPath)}><FolderOpen size={12} /></ActionButton>
                 <ActionButton title="新建文件" onClick={() => onCreate("file", fullPath)}><FilePlus size={12} /></ActionButton>
                 <ActionButton title="新建文件夹" onClick={() => onCreate("folder", fullPath)}><FolderPlus size={12} /></ActionButton>
                 <ActionButton title="删除文件夹" danger onClick={() => onDeleteFolder(fullPath)}><Trash2 size={12} /></ActionButton>
@@ -66,10 +69,15 @@ export default function SkillTreeList({ rootId, skillPath, nodes, expanded, acti
       }
       const on = activeFile === fullPath
       return (
-        <button key={nodeKey} type="button" data-file={fullPath} aria-current={on ? "true" : undefined} onClick={() => onOpenFile(fullPath)} style={{ paddingLeft: `${depth * 12 + 16}px` }}
-          className={`flex w-full items-center gap-1 rounded px-1 py-1 text-xs transition ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-muted hover:bg-raised/50 hover:text-fg-soft"}`}>
-          <FileText size={11} className="shrink-0" /><span className="truncate">{node.name}</span>
-        </button>
+        <div key={nodeKey} className="group relative">
+          <button type="button" data-file={fullPath} aria-current={on ? "true" : undefined} onClick={() => onOpenFile(fullPath)} style={{ paddingLeft: `${depth * 12 + 16}px` }}
+            className={`flex w-full items-center gap-1 rounded px-1 py-1 text-xs transition ${on ? "bg-raised/70 font-medium text-fg" : "text-fg-muted hover:bg-raised/50 hover:text-fg-soft"}`}>
+            <FileText size={11} className="shrink-0" /><span className="truncate">{node.name}</span>
+          </button>
+          <RowActions>
+            <ActionButton title="显示文件位置" onClick={() => onReveal(fullPath)}><FolderSearch size={12} /></ActionButton>
+          </RowActions>
+        </div>
       )
     })
 

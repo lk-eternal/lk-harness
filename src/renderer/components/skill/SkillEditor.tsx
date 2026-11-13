@@ -1,5 +1,6 @@
-import { Trash2 } from "lucide-react"
+import { FolderSearch, Trash2 } from "lucide-react"
 import { EditorFrame, FieldLabel, SaveButtons, dangerBtn, inputCls } from "../project/project-ui"
+import { diskLocationOf } from "../skill-entry"
 
 export type EditMode =
   | { kind: "skill"; skillPath: string; name: string; content: string; originalPath: string | null; isNew: boolean }
@@ -17,12 +18,14 @@ interface Props {
   onSave: () => void
   onRevert: () => void
   onDelete: () => void
+  /** 在系统文件管理器里显示正在编辑的这个文件（新建还没保存的 Skill 磁盘上还没有，不显示这个入口） */
+  onReveal: () => void
 }
 
 const mono = `${inputCls} font-mono text-xs leading-relaxed`
 
 /** 右边的编辑区：编辑 Skill 的 SKILL.md（还可以改路径），或 Skill 里的某个文件 */
-export default function SkillEditor({ edit, rootLabel, dirty, justSaved, error, onChange, onSave, onRevert, onDelete }: Props) {
+export default function SkillEditor({ edit, rootLabel, dirty, justSaved, error, onChange, onSave, onRevert, onDelete, onReveal }: Props) {
   const isSkill = edit.kind === "skill"
   const title = isSkill ? (edit.isNew ? "新 Skill" : edit.originalPath ?? edit.skillPath) : edit.relativePath
   const where = isSkill
@@ -33,10 +36,20 @@ export default function SkillEditor({ edit, rootLabel, dirty, justSaved, error, 
   return (
     <EditorFrame
       header={
-        <>
-          <p className="truncate text-sm font-medium text-fg-2" title={title}>{title}</p>
-          <p className="truncate font-mono text-[11px] text-fg-muted" title={where}>{where}</p>
-        </>
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-fg-2" title={title}>{title}</p>
+            <p className="truncate font-mono text-[11px] text-fg-muted" title={where}>{where}</p>
+          </div>
+          {diskLocationOf(edit) && (
+            <button
+              type="button"
+              title="在文件管理器中显示这个文件"
+              onClick={onReveal}
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs text-fg-3 transition hover:bg-raised hover:text-fg"
+            ><FolderSearch size={13} />显示位置</button>
+          )}
+        </div>
       }
       footer={
         <>

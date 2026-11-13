@@ -428,6 +428,7 @@ const api = {
   renameSkill: (rootId: string, oldPath: string, newPath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:rename", rootId, oldPath, newPath),
   deleteSkill: (rootId: string, skillPath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:delete", rootId, skillPath),
   getSkillLinkTarget: (rootId: string, skillPath: string): Promise<string | null> => ipcRenderer.invoke("skills:link-target", rootId, skillPath),
+  revealSkillPath: (rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("skills:reveal", rootId, skillPath, relativePath),
   onMcpLoginComplete: (cb: (data: { serverName: string; ok: boolean }) => void) => {
     const handler = (_: unknown, data: { serverName: string; ok: boolean }) => cb(data)
     ipcRenderer.on("mcp:login-complete", handler)

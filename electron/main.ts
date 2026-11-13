@@ -42,6 +42,7 @@ import {
   resolveRootAbs,
   deleteSkill,
   deleteSkillEntry,
+  revealSkillPath,
 } from "./skill-store"
 import { linkTargetOf } from "../src/shared/safe-remove.js"
 import {
@@ -400,6 +401,12 @@ function registerIpcHandlers(): void {
   })
 
   ipcMain.handle("skills:delete", (_, rootId: string, skillPath: string) => deleteSkill(String(rootId), String(skillPath)))
+
+  // 在系统文件管理器里打开 Skill 目录 / Skill 文件夹 / 其中的文件夹（文件则是在所在文件夹里选中它）。
+  // skillPath、relativePath 都传空串是 Skill 根目录；校验和「是文件还是文件夹」的判断在 skill-store，那边能在临时目录里测
+  ipcMain.handle("skills:reveal", (_, rootId: string, skillPath: string, relativePath: string) => (
+    revealSkillPath(String(rootId), String(skillPath), String(relativePath), shell)
+  ))
 
   // 删除前问一下：这个 Skill 是不是指向别处的链接（是则返回真实路径，空串是悬空链接，null 是普通文件夹）
   ipcMain.handle("skills:link-target", (_, rootId: string, skillPath: string) => {

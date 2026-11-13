@@ -387,6 +387,8 @@ declare global {
     deleteSkill(rootId: string, skillPath: string): Promise<{ ok: boolean; error?: string }>
     /** 这个 Skill 是不是指向别处的链接：是则返回真实路径（空串是悬空链接），普通文件夹返回 null */
     getSkillLinkTarget(rootId: string, skillPath: string): Promise<string | null>
+    /** 在系统文件管理器里打开：文件夹直接打开，文件是在所在文件夹里选中它。skillPath、relativePath 都传空串是 Skill 根目录 */
+    revealSkillPath(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; error?: string }>
     onMcpLoginComplete(cb: (data: { serverName: string; ok: boolean }) => void): () => void
     onDaemonStatus(cb: (status: DaemonStatus) => void): () => void
     onDaemonLog(cb: (line: string) => void): () => void

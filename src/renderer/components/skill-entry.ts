@@ -82,6 +82,22 @@ export function isSameOrInside(relPath: string, target: string): boolean {
   return relPath === target || relPath.startsWith(target + "/")
 }
 
+/** 编辑区里正在编辑的东西（只列出算「在磁盘上哪里」要用到的字段，和 EditMode 结构一致） */
+export type EditedEntry =
+  | { kind: "skill"; skillPath: string; originalPath: string | null; isNew: boolean }
+  | { kind: "file"; skillPath: string; relativePath: string }
+
+/**
+ * 编辑区里这个东西在磁盘上的位置：Skill 路径 + 相对 Skill 文件夹的路径（SKILL.md 就是它本身）。
+ * 新建还没保存的 Skill 磁盘上还没有，返回 null。
+ * Skill 的路径框里改了但还没保存的名字不算：磁盘上还是原来的路径，所以用 originalPath，不用 skillPath。
+ */
+export function diskLocationOf(edit: EditedEntry): { skillPath: string; relativePath: string } | null {
+  if (edit.kind === "file") return { skillPath: edit.skillPath, relativePath: edit.relativePath }
+  if (edit.isNew || edit.originalPath === null) return null
+  return { skillPath: edit.originalPath, relativePath: "SKILL.md" }
+}
+
 export type SkillPathResult = { ok: true; path: string } | { ok: false; error: string }
 
 /**

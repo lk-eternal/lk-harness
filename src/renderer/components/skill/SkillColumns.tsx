@@ -1,4 +1,4 @@
-import { ChevronLeft, FilePlus, FolderPlus, FileText, Plus } from "lucide-react"
+import { ChevronLeft, FilePlus, FolderOpen, FolderPlus, FileText, Plus } from "lucide-react"
 import SkillTreeList from "../SkillTreeList"
 import ScrollActiveList from "../ScrollActiveList"
 import type { SkillEntryKind } from "../skill-entry"
@@ -9,6 +9,8 @@ const itemCls = (on: boolean) =>
   `flex w-full flex-col rounded-md px-2.5 py-1.5 text-left transition ${on ? "bg-raised/70 text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`
 
 const columnCls = "flex w-44 shrink-0 flex-col border-r border-line-subtle"
+
+const iconBtn = "rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-2"
 
 function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
@@ -76,17 +78,22 @@ interface SkillListProps {
   creating: boolean
   onSelect: (skillPath: string) => void
   onNew: () => void
+  /** 在系统文件管理器里打开这个目录 */
+  onOpenRoot: () => void
   /** 最左的目录列收起来时，给一个回到目录的入口 */
   onBack?: () => void
 }
 
-export function SkillListColumn({ root, skills, activeSkill, creating, onSelect, onNew, onBack }: SkillListProps) {
+export function SkillListColumn({ root, skills, activeSkill, creating, onSelect, onNew, onOpenRoot, onBack }: SkillListProps) {
   return (
     <aside className={columnCls} aria-label="Skill 列表">
       <div className="px-2 pt-1">{onBack && <BackButton label="全部目录" onClick={onBack} />}</div>
-      <div className="px-2.5 pb-1 pt-1">
-        <p className="truncate text-sm font-medium text-fg-2" title={root.path}>{rootDisplayName(root)}</p>
-        <p className="truncate font-mono text-[10px] text-fg-faint" title={root.path}>{root.label}</p>
+      <div className="flex items-start gap-1 px-2.5 pb-1 pt-1">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-fg-2" title={root.path}>{rootDisplayName(root)}</p>
+          <p className="truncate font-mono text-[10px] text-fg-faint" title={root.path}>{root.label}</p>
+        </div>
+        <button type="button" title="打开目录" aria-label="打开目录" onClick={onOpenRoot} className={`${iconBtn} shrink-0`}><FolderOpen size={14} /></button>
       </div>
       {/* 「新建 Skill」在列表外面，Skill 再多也一直看得见 */}
       <div className="shrink-0 px-2 pb-2">
@@ -136,20 +143,23 @@ interface FilesProps {
   onOpenFile: (relativePath: string) => void
   onCreate: (kind: SkillEntryKind, parentPath: string) => void
   onDeleteFolder: (relativePath: string) => void
+  /** 在系统文件管理器里打开：相对路径为空串是 Skill 文件夹自己，否则是里面的文件夹 / 文件（文件是显示它的位置） */
+  onReveal: (relativePath: string) => void
   /** 左边的列都收起来了：回到上一级的入口（文字是回到哪） */
   back?: { label: string; onClick: () => void }
 }
 
-const iconBtn = "rounded p-1 text-fg-muted transition hover:bg-raised hover:text-fg-2"
-
-export function SkillFilesColumn({ rootId, skillPath, tree, expanded, skillMdActive, activeFile, onToggle, onOpenSkillMd, onOpenFile, onCreate, onDeleteFolder, back }: FilesProps) {
+export function SkillFilesColumn({ rootId, skillPath, tree, expanded, skillMdActive, activeFile, onToggle, onOpenSkillMd, onOpenFile, onCreate, onDeleteFolder, onReveal, back }: FilesProps) {
   const nodes = withoutSkillMd(tree.find((t) => t.name === skillPath)?.children)
   return (
     <aside className={columnCls} aria-label="Skill 里的文件">
       <div className="px-2 pt-1">{back && <BackButton label={back.label} onClick={back.onClick} />}</div>
-      <div className="px-2.5 pb-1 pt-1">
-        <p className="truncate text-sm font-medium text-fg-2" title={skillPath}>{skillPath}</p>
-        <p className="text-[10px] text-fg-faint">Skill 里的内容</p>
+      <div className="flex items-start gap-1 px-2.5 pb-1 pt-1">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-fg-2" title={skillPath}>{skillPath}</p>
+          <p className="text-[10px] text-fg-faint">Skill 里的内容</p>
+        </div>
+        <button type="button" title="打开 Skill 文件夹" aria-label="打开 Skill 文件夹" onClick={() => onReveal("")} className={`${iconBtn} shrink-0`}><FolderOpen size={14} /></button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <button
@@ -178,6 +188,7 @@ export function SkillFilesColumn({ rootId, skillPath, tree, expanded, skillMdAct
             onOpenFile={onOpenFile}
             onCreate={onCreate}
             onDeleteFolder={onDeleteFolder}
+            onReveal={onReveal}
           />
           {nodes.length === 0 && <p className="px-2.5 py-1.5 text-[11px] leading-snug text-fg-faint">没有别的文件。需要脚本或参考资料时，点右上角的图标添加。</p>}
         </div>

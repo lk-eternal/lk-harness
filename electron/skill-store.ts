@@ -154,7 +154,7 @@ export function resolveSkillFile(rootId: string, skillPath: string, relativePath
 
 export type SkillDeleteResult = { ok: true } | { ok: false; error: string }
 
-const INVALID_PATH: SkillDeleteResult = { ok: false, error: "路径无效" }
+const INVALID_PATH: Extract<SkillDeleteResult, { ok: false }> = { ok: false, error: "路径无效" }
 
 /** a 严格在 b 里面（不含 b 自己）。isPathInside 把自身也算在里面，删除绝不能这样放行 */
 function isStrictlyInside(b: string, a: string): boolean {
@@ -196,4 +196,67 @@ export function deleteSkill(rootId: string, skillPath: string): Promise<SkillDel
 export function deleteSkillEntry(rootId: string, skillPath: string, relativePath: string): Promise<SkillDeleteResult> {
   const rootAbs = absRoot(rootId)
   return rootAbs ? removeSkillEntryUnder(rootAbs, skillPath, relativePath) : Promise.resolve(INVALID_PATH)
+}
+
+export type SkillOpenTarget =
+  | { ok: true; kind: "directory" | "file"; path: string }
+  | { ok: false; error: string }
+
+const MISSING_ROOT = "这个目录还不存在，新建第一个 Skill 时会自动创建"
+const MISSING_ENTRY = "文件或文件夹不存在，可能已被删除"
+
+/**
+ * 设置页「打开目录 / 显示文件位置」要在系统文件管理器里打开的位置（只读，不改任何东西）：
+ * skillPath 和 relativePath 都为空 → Skill 根目录自己；只有 skillPath → 那个 Skill 的文件夹；
+ * 两个都有 → Skill 里的某个文件或文件夹。skillPath 为空却给了 relativePath，不知道相对谁，拒绝。
+ * 链接（含 Windows 的 junction）按它指向的东西算：指向文件夹就打开文件夹。
+ */
+export function resolveSkillOpenTargetUnder(rootAbs: string, skillPath: string, relativePath: string): SkillOpenTarget {
+  // 参数来自界面传过来的值，类型声明是 string 但运行时不保证；不是字符串的当成路径无效，不要悄悄当成「打开根目录」
+  if (typeof skillPath !== "string" || typeof relativePath !== "string") return INVALID_PATH
+  const skill = skillPath
+  const rel = relativePath
+  if (skill === "" && rel !== "") return INVALID_PATH
+  const skillDir = path.resolve(rootAbs, skill)
+  if (!isPathInside(rootAbs, skillDir)) return INVALID_PATH
+  const target = path.resolve(skillDir, rel)
+  if (!isPathInside(skillDir, target)) return INVALID_PATH
+  let stat: fs.Stats
+  try {
+    stat = fs.statSync(target)
+  } catch (e) {
+    const missing = (e as NodeJS.ErrnoException).code === "ENOENT" || (e as NodeJS.ErrnoException).code === "ENOTDIR"
+    if (missing) return { ok: false, error: path.resolve(rootAbs) === target ? MISSING_ROOT : MISSING_ENTRY }
+    return { ok: false, error: `无法访问：${e instanceof Error ? e.message : String(e)}` }
+  }
+  return { ok: true, kind: stat.isDirectory() ? "directory" : "file", path: target }
+}
+
+/** 主进程里 Electron 的 shell 满足这个形状；单测里换成假的，不用真的弹文件管理器 */
+export interface ShellOpener {
+  /** 用系统文件管理器打开文件夹；成功返回空串，失败返回原因 */
+  openPath(target: string): Promise<string>
+  /** 在所在文件夹里打开并选中这个文件 */
+  showItemInFolder(target: string): void
+}
+
+/** 文件夹直接打开，文件是在它所在的文件夹里选中它 */
+export async function revealSkillPathUnder(rootAbs: string, skillPath: string, relativePath: string, opener: ShellOpener): Promise<SkillDeleteResult> {
+  const target = resolveSkillOpenTargetUnder(rootAbs, skillPath, relativePath)
+  if (!target.ok) return target
+  try {
+    if (target.kind === "file") {
+      opener.showItemInFolder(target.path)
+      return { ok: true }
+    }
+    const failure = await opener.openPath(target.path)
+    return failure ? { ok: false, error: failure } : { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+export function revealSkillPath(rootId: string, skillPath: string, relativePath: string, opener: ShellOpener): Promise<SkillDeleteResult> {
+  const rootAbs = absRoot(rootId)
+  return rootAbs ? revealSkillPathUnder(rootAbs, skillPath, relativePath, opener) : Promise.resolve(INVALID_PATH)
 }

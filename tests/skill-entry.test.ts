@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import {
   ancestorExpandKeys,
   dirExpandKey,
+  diskLocationOf,
   findEntryConflict,
   isSameOrInside,
   joinEntryPath,
@@ -125,5 +126,28 @@ describe("展开状态的 key", () => {
     expect(isSameOrInside("a/b/c.txt", "a/b")).toBe(true)
     expect(isSameOrInside("a/bc", "a/b")).toBe(false)
     expect(isSameOrInside("a", "a/b")).toBe(false)
+  })
+
+  describe("diskLocationOf：编辑区里的东西在磁盘上的位置（「显示位置」打开哪里）", () => {
+    it("已有的 Skill：它的 SKILL.md", () => {
+      expect(diskLocationOf({ kind: "skill", skillPath: "pdf", originalPath: "pdf", isNew: false })).toEqual({ skillPath: "pdf", relativePath: "SKILL.md" })
+      expect(diskLocationOf({ kind: "skill", skillPath: "group/pdf", originalPath: "group/pdf", isNew: false })).toEqual({ skillPath: "group/pdf", relativePath: "SKILL.md" })
+    })
+
+    it("路径框里改了名字但还没保存：磁盘上还是原来的路径，要用原路径（用新名字会指向一个不存在的地方）", () => {
+      expect(diskLocationOf({ kind: "skill", skillPath: "pdf-renamed", originalPath: "pdf", isNew: false })).toEqual({ skillPath: "pdf", relativePath: "SKILL.md" })
+    })
+
+    it("新建还没保存的 Skill：磁盘上还没有，返回 null（哪怕已经填了路径）", () => {
+      expect(diskLocationOf({ kind: "skill", skillPath: "", originalPath: null, isNew: true })).toBeNull()
+      expect(diskLocationOf({ kind: "skill", skillPath: "typed-name", originalPath: null, isNew: true })).toBeNull()
+      // 不一致的数据（标成已有、却没有原路径）也不能猜一个路径出来
+      expect(diskLocationOf({ kind: "skill", skillPath: "typed-name", originalPath: null, isNew: false })).toBeNull()
+    })
+
+    it("Skill 里的文件：Skill 路径加文件的相对路径，原样带上", () => {
+      expect(diskLocationOf({ kind: "file", skillPath: "pdf", relativePath: "scripts/run.sh" })).toEqual({ skillPath: "pdf", relativePath: "scripts/run.sh" })
+      expect(diskLocationOf({ kind: "file", skillPath: "group/pdf", relativePath: "notes.md" })).toEqual({ skillPath: "group/pdf", relativePath: "notes.md" })
+    })
   })
 })
