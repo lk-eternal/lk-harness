@@ -63,6 +63,7 @@ import { broadcastLog } from "./ui-logger"
 import { windowChromeOptions } from "../src/shared/window-chrome"
 import { createIdleRestartProbes } from "./idle-probes"
 import { consumeStayHiddenMarker } from "./update-restart-marker"
+import { devTaskbarDetails } from "./dev-taskbar"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
 const profileName = profileArg?.split("=")[1] || ""
@@ -189,6 +190,23 @@ function createWindow(): void {
     },
     show: false,
   })
+
+  // 开发模式（electron.exe）：窗口单独设任务栏身份，免得任务栏拿默认 ID 匹配到开始菜单的 Electron.lnk、显示成原子图标
+  const devTaskbar = devTaskbarDetails({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    execPath: process.execPath,
+    appPath: app.getAppPath(),
+    iconPath,
+    profileName,
+  })
+  if (devTaskbar) {
+    try {
+      mainWindow.setAppDetails(devTaskbar)
+    } catch (e) {
+      console.error("[main] 设置开发模式任务栏图标失败:", e)
+    }
+  }
 
   mainWindow.on("ready-to-show", () => {
     // 空闲自动重启安装之前窗口就收在托盘里：装完仍留在托盘，别在人不在电脑前时弹到最前面（记号读完即删，过期作废）
