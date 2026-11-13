@@ -24,6 +24,15 @@ const DRAG_THRESHOLD = 3
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 
+// 深色底 + 白描边：控件叠在任何颜色的图片上都看得清（半透明白底遇到浅色图会消失）
+const CHIP = "bg-black/70 text-white shadow-lg ring-1 ring-white/40 backdrop-blur-sm"
+/**
+ * 查看器里圆形工具按钮的样式和图标大小：缩放、关闭，以及外面传进来的复制/另存为（actions）共用这一份，
+ * 这样几个按钮大小一致；以后要调整只改这里。
+ */
+export const LIGHTBOX_TOOL_BUTTON = `rounded-full p-2.5 transition hover:bg-black/90 active:scale-95 ${CHIP}`
+export const LIGHTBOX_ICON_SIZE = 18
+
 function stagePoint(e: { currentTarget: HTMLElement; clientX: number; clientY: number }): Point {
   const rect = e.currentTarget.getBoundingClientRect()
   return { x: e.clientX - rect.left - rect.width / 2, y: e.clientY - rect.top - rect.height / 2 }
@@ -137,9 +146,8 @@ export function ImageLightbox({ src, onClose, actions }: { src: string; onClose:
 
   const zoomBy = (ratio: number) => apply(scaleAbout(viewRef.current, ratio, ORIGIN, ORIGIN))
 
-  // 深色底 + 白描边：控件叠在任何颜色的图片上都看得清（半透明白底遇到浅色图会消失）
-  const chip = "bg-black/70 text-white shadow-lg ring-1 ring-white/40 backdrop-blur-sm"
-  const toolButton = `rounded-full p-2.5 transition hover:bg-black/90 active:scale-95 ${chip}`
+  const chip = CHIP
+  const toolButton = LIGHTBOX_TOOL_BUTTON
   const toolbarTop = "top-[calc(env(safe-area-inset-top)+1rem)]"
 
   return createPortal(
@@ -165,14 +173,14 @@ export function ImageLightbox({ src, onClose, actions }: { src: string; onClose:
         />
       </div>
       <div className={`absolute left-4 flex items-center gap-1.5 ${toolbarTop}`}>
-        <button type="button" onClick={() => zoomBy(1 / BUTTON_STEP)} title="缩小" className={toolButton}><ZoomOut size={18} /></button>
+        <button type="button" onClick={() => zoomBy(1 / BUTTON_STEP)} title="缩小" className={toolButton}><ZoomOut size={LIGHTBOX_ICON_SIZE} /></button>
         <span className={`min-w-12 rounded-full px-2.5 py-1.5 text-center text-xs tabular-nums ${chip}`}>{Math.round(view.scale * fitRatio * 100)}%</span>
-        <button type="button" onClick={() => zoomBy(BUTTON_STEP)} title="放大" className={toolButton}><ZoomIn size={18} /></button>
-        <button type="button" onClick={() => apply(FIT)} title="适配窗口" className={toolButton}><Maximize size={18} /></button>
+        <button type="button" onClick={() => zoomBy(BUTTON_STEP)} title="放大" className={toolButton}><ZoomIn size={LIGHTBOX_ICON_SIZE} /></button>
+        <button type="button" onClick={() => apply(FIT)} title="适配窗口" className={toolButton}><Maximize size={LIGHTBOX_ICON_SIZE} /></button>
       </div>
       <div className={`absolute right-4 flex items-start gap-2 ${toolbarTop}`}>
         {actions}
-        <button type="button" onClick={onClose} title="关闭" className={toolButton}><X size={18} /></button>
+        <button type="button" onClick={onClose} title="关闭" className={toolButton}><X size={LIGHTBOX_ICON_SIZE} /></button>
       </div>
     </div>,
     document.body,

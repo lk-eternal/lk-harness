@@ -5,7 +5,7 @@ import { joinChoices, splitChoices, toggleChoice } from "../../../shared/questio
 import { formatFullTime, formatMessageTime } from "../../time-ago"
 import { canOpenWithDefaultApp, isPreviewable, previewTypeOf } from "../../../shared/preview-kinds"
 import { usePreview } from "../preview/PreviewContext"
-import { ImageLightbox } from "./ImageLightbox"
+import { ImageLightbox, LIGHTBOX_ICON_SIZE, LIGHTBOX_TOOL_BUTTON } from "./ImageLightbox"
 import { CopyButton } from "./Markdown"
 
 // ── 本地图片：经主进程读成 data URL（渲染层不直接访问文件系统），带小缓存 ──
@@ -32,11 +32,15 @@ function useLocalImage(path: string): { url?: string; failed: boolean } {
   return state
 }
 
-/** 复制到系统剪贴板 / 另存为；悬浮在图片上和放大查看器里共用 */
-function ImageActions({ path }: { path: string }) {
+/**
+ * 复制到系统剪贴板 / 另存为；悬浮在图片上和放大查看器里共用。
+ * large：放在放大查看器里，按钮和查看器自己的缩放、关闭按钮同样大；否则是缩略图上悬浮的小按钮
+ */
+export function ImageActions({ path, large }: { path: string; large?: boolean }) {
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState("")
-  const buttonClass = "rounded bg-black/70 p-1 text-white ring-1 ring-white/40 transition hover:bg-black/90"
+  const buttonClass = large ? LIGHTBOX_TOOL_BUTTON : "rounded bg-black/70 p-1 text-white ring-1 ring-white/40 transition hover:bg-black/90"
+  const iconSize = large ? LIGHTBOX_ICON_SIZE : 12
 
   const copy = async () => {
     const r = await window.electronAPI.appChatCopyImage(path)
@@ -52,9 +56,9 @@ function ImageActions({ path }: { path: string }) {
 
   return (
     <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
-      <div className="flex gap-1">
-        <button type="button" onClick={() => void copy()} title="复制图片" className={buttonClass}>{copied ? <Check size={12} /> : <Copy size={12} />}</button>
-        <button type="button" onClick={() => void save()} title="另存为" className={buttonClass}><Download size={12} /></button>
+      <div className={`flex ${large ? "gap-2" : "gap-1"}`}>
+        <button type="button" onClick={() => void copy()} title="复制图片" className={buttonClass}>{copied ? <Check size={iconSize} /> : <Copy size={iconSize} />}</button>
+        <button type="button" onClick={() => void save()} title="另存为" className={buttonClass}><Download size={iconSize} /></button>
       </div>
       {error && <span className="max-w-full break-all rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-white">{error}</span>}
     </div>
@@ -77,7 +81,7 @@ export function LocalImage({ path, className }: { path: string; className: strin
         <img src={url} alt="" onClick={() => setZoom(true)} className={`cursor-zoom-in rounded object-cover ${className}`} />
         <div className="absolute inset-x-1.5 top-1.5 hidden justify-end group-hover/img:flex"><ImageActions path={path} /></div>
       </div>
-      {zoom && <ImageLightbox src={url} onClose={() => setZoom(false)} actions={<ImageActions path={path} />} />}
+      {zoom && <ImageLightbox src={url} onClose={() => setZoom(false)} actions={<ImageActions path={path} large />} />}
     </>
   )
 }
