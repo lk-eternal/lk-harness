@@ -45,7 +45,8 @@ export function CodeBlock({ children }: { children?: ReactNode }) {
   const lang = /language-([\w+#-]+)/.exec(className)?.[1] ?? ""
   return (
     <div className="my-3 overflow-hidden rounded-lg border border-line-subtle bg-code">
-      <div className="flex items-center justify-between bg-code-head px-3 py-1 text-xs text-fg-muted">
+      {/* data-find-skip：语言标签和复制按钮不是正文，预览里 Ctrl+F 查找时不算（不然搜 text 会命中每个代码块的标签） */}
+      <div data-find-skip className="flex items-center justify-between bg-code-head px-3 py-1 text-xs text-fg-muted">
         <span>{lang || "text"}</span>
         <CopyButton text={textOf(children).replace(/\n$/, "")} />
       </div>

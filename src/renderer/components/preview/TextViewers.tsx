@@ -10,6 +10,7 @@ import { detectDelimiter, formatBytes, parseCsv } from "../../../shared/preview-
 import { PREVIEW_MAX_TEXT_BYTES, type PreviewFileInfo, type PreviewTextResult } from "../../../shared/preview-types"
 import { CodeBlock, SafeLink, remarkPlugins, rehypePlugins } from "../chat/Markdown"
 import { HIGHLIGHT_MAX_CHARS, MAX_RENDER_LINES, toCodeLines } from "./code-highlight"
+import FindScope from "./FindScope"
 import { usePreviewHost } from "./preview-host"
 import { BarTextButton, CenterMessage, Segmented, ViewerBar, ViewerNotice } from "./preview-ui"
 
@@ -195,7 +196,8 @@ export function CodeViewReady({ info, state, line }: { info: PreviewFileInfo; st
       </ViewerBar>
       <TruncatedNotice state={state} />
       {formatted && <FormatNotice result={formatted} />}
-      <div className="min-h-0 flex-1 overflow-auto">
+      {/* 折叠起来的行不在界面上，查找找不到：打开查找时先全部展开 */}
+      <FindScope onOpen={() => setCollapsed(NO_COLLAPSED)}>
         <CodeText
           text={text}
           lang={info.lang}
@@ -204,7 +206,7 @@ export function CodeViewReady({ info, state, line }: { info: PreviewFileInfo; st
           line={showFormatted ? undefined : line}
           fold={regions.length > 0 ? { regions, collapsed, onToggle: (start) => setCollapsed((c) => toggleFold(c, start)) } : undefined}
         />
-      </div>
+      </FindScope>
     </div>
   )
 }
@@ -258,9 +260,9 @@ export function MarkdownView({ info }: { info: PreviewFileInfo }) {
         <span className="ml-auto">{sourceSummary(state)}</span>
       </ViewerBar>
       <TruncatedNotice state={state} />
-      <div className="min-h-0 flex-1 overflow-auto">
+      <FindScope>
         {mode === "render" ? <MarkdownRender text={state.text} baseUrl={info.url} /> : <CodeText text={state.text} wrap={wrap} />}
-      </div>
+      </FindScope>
     </div>
   )
 }
@@ -298,7 +300,7 @@ export function HtmlView({ info }: { info: PreviewFileInfo }) {
       ) : state.status === "ready" ? (
         <>
           <TruncatedNotice state={state} />
-          <div className="min-h-0 flex-1 overflow-auto"><CodeText text={state.text} lang="xml" wrap={wrap} /></div>
+          <FindScope><CodeText text={state.text} lang="xml" wrap={wrap} /></FindScope>
         </>
       ) : <TextStatus state={state} />}
     </div>
@@ -329,13 +331,13 @@ export function CsvView({ info }: { info: PreviewFileInfo }) {
       </ViewerBar>
       <TruncatedNotice state={state} />
       {table.cut && <ViewerNotice>数据较多，表格只显示前 {MAX_CSV_ROWS.toLocaleString()} 行。</ViewerNotice>}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <FindScope>
         {mode === "text" ? <CodeText text={state.text} wrap={wrap} /> : (
           <table className="border-collapse text-xs">
             {header && (
               <thead className="sticky top-0 z-[1]">
                 <tr>
-                  <th className="border border-line bg-raised px-2 py-1 text-right font-normal text-fg-faint">#</th>
+                  <th data-find-skip className="border border-line bg-raised px-2 py-1 text-right font-normal text-fg-faint">#</th>
                   {Array.from({ length: table.columns }, (_, c) => (
                     <th key={c} className="max-w-[320px] truncate border border-line bg-raised px-2.5 py-1 text-left font-semibold text-fg" title={header[c]}>{header[c] ?? ""}</th>
                   ))}
@@ -345,7 +347,7 @@ export function CsvView({ info }: { info: PreviewFileInfo }) {
             <tbody>
               {body.map((row, r) => (
                 <tr key={r} className="odd:bg-surface/40">
-                  <td className="border border-line-subtle px-2 py-0.5 text-right tabular-nums text-fg-faint">{r + 1}</td>
+                  <td data-find-skip className="border border-line-subtle px-2 py-0.5 text-right tabular-nums text-fg-faint">{r + 1}</td>
                   {Array.from({ length: table.columns }, (_, c) => (
                     <td key={c} className="max-w-[320px] truncate border border-line-subtle px-2.5 py-0.5 text-fg-2" title={row[c]}>{row[c] ?? ""}</td>
                   ))}
@@ -354,7 +356,7 @@ export function CsvView({ info }: { info: PreviewFileInfo }) {
             </tbody>
           </table>
         )}
-      </div>
+      </FindScope>
     </div>
   )
 }

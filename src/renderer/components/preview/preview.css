@@ -101,6 +101,16 @@
 }
 .preview-code .fold-pill:hover { color: var(--color-fg); background: var(--color-raised); }
 
+/* 文档内查找（Ctrl+F）：用 CSS Custom Highlight API 画，不往 DOM 里插东西。
+   所有命中是半透明的警示色底（文字颜色不变）；当前这一处用实底，文字换成页面底色，深浅两套主题下都有足够对比度 */
+::highlight(preview-find) {
+  background-color: color-mix(in srgb, var(--color-warning) 38%, transparent);
+}
+::highlight(preview-find-active) {
+  background-color: var(--color-warning);
+  color: var(--color-page);
+}
+
 /* 透明图片的棋盘格底 */
 .preview-checker {
   background-color: var(--color-surface);

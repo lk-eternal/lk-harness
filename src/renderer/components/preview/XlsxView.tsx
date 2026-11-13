@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from "react"
 import { formatBytes } from "../../../shared/preview-text"
 import { columnLabel, openXlsx, type XlsxMerge, type XlsxSheetData, type XlsxWorkbook } from "../../../shared/preview-xlsx"
 import type { PreviewFileInfo } from "../../../shared/preview-types"
+import FindScope from "./FindScope"
 import { CenterMessage, FileNotice, Loading, ViewerBar, ViewerNotice } from "./preview-ui"
 import { useLoaded, usePreviewHost } from "./preview-host"
 
@@ -33,7 +34,8 @@ function SheetGrid({ sheet }: { sheet: XlsxSheetData }) {
   return (
     <>
       <table className="border-collapse text-xs">
-        <thead>
+        {/* 列字母和行号是表格自己的刻度，不是单元格内容：不参与查找 */}
+        <thead data-find-skip>
           <tr>
             <th className={`${th} left-0 z-[3]`} />
             {Array.from({ length: sheet.columns }, (_, c) => <th key={c} className={th}>{columnLabel(c)}</th>)}
@@ -42,7 +44,7 @@ function SheetGrid({ sheet }: { sheet: XlsxSheetData }) {
         <tbody>
           {rows.map((row, r) => (
             <tr key={r}>
-              <td className="sticky left-0 z-[1] border border-line bg-raised px-2 py-0.5 text-right tabular-nums text-fg-faint">{r + 1}</td>
+              <td data-find-skip className="sticky left-0 z-[1] border border-line bg-raised px-2 py-0.5 text-right tabular-nums text-fg-faint">{r + 1}</td>
               {Array.from({ length: sheet.columns }, (_, c) => {
                 if (covered.has(r * KEY + c)) return null
                 const merge = anchors.get(r * KEY + c)
@@ -122,11 +124,11 @@ export default function XlsxView({ info, actions }: { info: PreviewFileInfo; act
       </ViewerBar>
       {sheet.status === "ready" && sheet.value.truncatedRows && <ViewerNotice>这个工作表的行数很多，只读取了前 {sheet.value.rowCount.toLocaleString()} 行。</ViewerNotice>}
       {sheet.status === "ready" && sheet.value.truncatedCols && <ViewerNotice>这个工作表的列数很多，只读取了前 {sheet.value.columns} 列。</ViewerNotice>}
-      <div className="min-h-0 flex-1 overflow-auto">
+      <FindScope>
         {sheet.status === "loading" ? <Loading />
           : sheet.status === "error" ? <CenterMessage>{sheet.error || "读取工作表失败"}</CenterMessage>
           : <SheetGrid key={`${current}`} sheet={sheet.value} />}
-      </div>
+      </FindScope>
       {visible.length > 1 && (
         <div className="flex shrink-0 items-stretch overflow-x-auto border-t border-line-subtle bg-surface/60 text-xs [scrollbar-width:thin]">
           {visible.map((s) => (
