@@ -67,6 +67,7 @@ declare global {
     theme: "system" | "light" | "dark"
     autoUpgradePrompt?: boolean
     silentUpdate?: boolean
+    silentUpdateIdleRestart?: boolean
     allowOthers: boolean
     digitalIdentity: string
     // 旧字段（Setup 向导兼容）
@@ -196,7 +197,7 @@ declare global {
     applyAppUpdate(): Promise<{ ok: boolean; error?: string; message?: string; downloadUrl?: string }>
     onUpdaterProgress(cb: (percent: number) => void): () => void
     onUpdaterError(cb: (message: string) => void): () => void
-    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string; silent?: boolean } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
+    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string; silent?: boolean; idleRestart?: boolean } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
     getConfig(): Promise<AppConfig>
     getProjectNodeGroups(): Promise<(Omit<ProjectNodeGroupDefType, "nodes"> & { nodes: (ProjectNodeGroupDefType["nodes"][number] & { defaultPrompt?: string })[] })[]>
     saveProjectNodeGroups(groups: ProjectNodeGroupDefType[]): Promise<{ ok: boolean }>

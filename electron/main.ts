@@ -61,6 +61,8 @@ import { initPreviewBrowser } from "./preview-browser"
 import { initMobileServer, stopMobileServer } from "./mobile-server"
 import { broadcastLog } from "./ui-logger"
 import { windowChromeOptions } from "../src/shared/window-chrome"
+import { createIdleRestartProbes } from "./idle-probes"
+import { consumeStayHiddenMarker } from "./update-restart-marker"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
 const profileName = profileArg?.split("=")[1] || ""
@@ -189,6 +191,8 @@ function createWindow(): void {
   })
 
   mainWindow.on("ready-to-show", () => {
+    // 空闲自动重启安装之前窗口就收在托盘里：装完仍留在托盘，别在人不在电脑前时弹到最前面（记号读完即删，过期作废）
+    if (consumeStayHiddenMarker(app.getPath("userData"))) return
     mainWindow?.show()
   })
 
@@ -488,7 +492,8 @@ app.whenReady().then(() => {
   applyLoginItemSetting(getConfig().autoStart)
   nativeTheme.themeSource = getConfig().theme
   createWindow()
-  initAppUpdater(() => mainWindow)
+  // 空闲自动重启安装只有 Windows 的静默更新用得上
+  initAppUpdater(() => mainWindow, process.platform === "win32" ? createIdleRestartProbes() : undefined)
   initTray()
   initDaemonManager()
   warmupMcpCache()

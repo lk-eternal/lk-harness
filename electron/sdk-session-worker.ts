@@ -17,6 +17,7 @@ import {
 import { assembleSdkWorkerTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
+import { noteAgentActivity } from "./agent-activity"
 import type { InterruptTurnResult } from "./agent-engine/types"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
@@ -67,6 +68,11 @@ export function isSdkWorkerActive(sessionKey: string): boolean {
 
 export function getSdkWorkerPhase(sessionKey: string): SdkWorkerPhase | null {
   return findWorkerState(sessionKey)?.phase ?? null
+}
+
+/** 所有 worker 此刻的阶段（空闲自动重启判断「有没有 Agent 在跑回合」用） */
+export function listSdkWorkerPhases(): SdkWorkerPhase[] {
+  return [...workers.values()].map((w) => w.phase)
 }
 
 /** 取消会话当前的 run（best-effort，不等待结果；没有进行中的 run 就什么都不做） */
@@ -216,6 +222,8 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
   try {
     while (!abort.signal.aborted && !session.abortController.signal.aborted) {
+      // 刚收完一个回合才记一笔（poll 挂起到点后的 continue 不算动静，否则长连接会话每次超时都会刷新）
+      if (state.phase === "processing") noteAgentActivity()
       state.phase = "listening"
       flushTurnEndWaiters(state)
 
@@ -254,6 +262,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       } catch { /* best-effort */ }
 
       state.phase = "processing"
+      noteAgentActivity()
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
@@ -339,6 +348,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(errorDetail)
     }
   } finally {
+    noteAgentActivity()
     state.phase = "stopping"
     if (workers.get(sessionKey) === state) workers.delete(sessionKey)
     try {

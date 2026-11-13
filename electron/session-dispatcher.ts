@@ -110,6 +110,11 @@ export function isSessionAgentRunning(key: string): boolean {
   return isSessionAgentRunningInner(key)
 }
 
+/** 有没有会话正在被调度拉起（已预留名额、引擎还没登记）。空闲自动重启判断「有没有在忙」用 */
+export function hasLaunchesInFlight(): boolean {
+  return launchReserved.size > 0
+}
+
 export async function stopSessionAgent(key: string): Promise<void> {
   releaseLaunch(key)
   await Promise.all(getAllAgentEngines().map((e) => e.stop(key)))

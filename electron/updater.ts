@@ -13,7 +13,18 @@ import { DownloadRetryExhausted, errorMessage as downloadErrorMessage } from "./
 import { createRotatingFetch, formatRetryNotice, pickWindowsInstaller, prefetchInstaller } from "./update-prefetch"
 import { macInstallerUrl, summarizeBrewFailure } from "./brew-update"
 import { broadcastLog } from "./ui-logger"
-import { SILENT_CHECK_INTERVAL_MS, decideSilentUpdate } from "../src/shared/silent-update.js"
+import {
+  IDLE_RESTART_CHECK_INTERVAL_MS,
+  IDLE_RESTART_RETRY_AFTER_MS,
+  IDLE_RESTART_USER_IDLE_SEC,
+  SILENT_CHECK_INTERVAL_MS,
+  decideIdleRestart,
+  decideSilentUpdate,
+  idleRestartWaitText,
+  isPermanentIdleWait,
+  type IdleRestartInput,
+  type IdleRestartWaitReason,
+} from "../src/shared/silent-update.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -26,6 +37,8 @@ const HOMEBREW_TAP = "lk-eternal/homebrew-tap"
 const HOMEBREW_CASK = "lk-harness"
 
 const STARTUP_CHECK_DELAY_MS = 4_000
+/** 空闲自动重启里，问 daemon、查注册表这类慢探针最多等多久 */
+const IDLE_PROBE_TIMEOUT_MS = 15_000
 
 const DEV_FAKE_LATEST_VERSION = "99.99.99"
 
@@ -103,6 +116,36 @@ let silentRunActive = false
 let silentCycleBusy = false
 /** 本进程里已经下好、等着安装的版本。不跨重启，也不影响上面原有的 downloadedUpdateVersion（它每次检查都会被重置） */
 let installReadyVersion: string | null = null
+
+/**
+ * 「空闲时自动重启安装」判断现场情况要用的探针。取值都在 electron/idle-probes.ts，由 main 在应用就绪后注入；
+ * 没注入就不会自动重启。这里只有接线，决策在 shared/silent-update.ts 的 decideIdleRestart。
+ */
+export interface IdleRestartProbes {
+  /** 距离用户最后一次操作电脑（键盘、鼠标，含睡眠唤醒、解锁）过了多少秒；取不到为 null */
+  userIdleSeconds(): number | null
+  /** 此刻有没有 Agent 在跑回合或正在拉起（监听中的长连接会话不算） */
+  agentWorkInFlight(): boolean
+  /** 距离 Agent 最后一次开始或结束回合过了多少毫秒 */
+  agentQuietMs(): number
+  /** daemon 队列里排队和处理中的消息数；daemon 没在跑为 0；拿不到为 null */
+  queuedMessages(): Promise<number | null>
+  /** 是不是确认的「仅当前用户」安装；没能确认一律 false，从不 reject */
+  perUserInstall(): Promise<boolean>
+  /** 退出重启之前：记下窗口是不是收在托盘里，装完启动时据此决定要不要弹出来 */
+  beforeRestart(info: { keepHidden: boolean }): void
+  /** 重启没有真正发生：撤销上面记下的东西 */
+  cancelRestart(): void
+}
+let idleRestartProbes: IdleRestartProbes | null = null
+/** 一轮空闲检查还在跑（要去问 daemon 和注册表，别叠起来） */
+let idleCheckBusy = false
+/** 已经发起了自动重启，正等着应用退出 */
+let idleRestartTriggered = false
+/** 每个版本已经自动重启过几次 */
+const idleRestartAttempts = new Map<string, number>()
+/** 已经确定不会自动重启、也写过日志的版本：不再每分钟评估 */
+const idleRestartGaveUp = new Set<string>()
 
 /**
  * 注意：这个路径**不是** electron-updater 的缓存目录。
@@ -187,6 +230,11 @@ function isAutoUpgradePromptEnabled(): boolean {
 /** 静默更新是否生效：只在 Windows 的安装版里，且设置里开着；开着时优先于「启动时提示升级」 */
 function isSilentUpdateEnabled(): boolean {
   return process.platform === "win32" && app.isPackaged && getConfig().silentUpdate === true
+}
+
+/** 空闲时自动重启安装是否生效：静默更新开着，且设置里没有把它单独关掉（默认开） */
+function isIdleRestartEnabled(): boolean {
+  return isSilentUpdateEnabled() && getConfig().silentUpdateIdleRestart !== false
 }
 
 /** 静默更新没有任何窗口，出了问题只能靠日志排查，所以写进应用日志（界面日志和日志文件） */
@@ -914,6 +962,105 @@ async function runSilentUpdateCycle(reason: string, known?: LatestRelease | null
   }
 }
 
+/** 探针抛了异常：按「最不该重启」的方向取值，宁可晚装 */
+function probeOr<T>(read: () => T, fallback: T): T {
+  try {
+    return read()
+  } catch {
+    return fallback
+  }
+}
+
+/** 慢探针（问 daemon、查注册表）：抛异常或超过时限都按 fallback 取值，免得一个卡住的探针把后面每一轮检查都挡住 */
+async function probeOrAsync<T>(read: () => Promise<T>, fallback: T, timeoutMs = IDLE_PROBE_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      read(),
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), timeoutMs)
+      }),
+    ])
+  } catch {
+    return fallback
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+/** 只有「这个版本不会再自动重启」才值得写日志（每个版本一次）；暂时等一等的原因每分钟都在变，不写 */
+function noteIdleRestartWait(version: string, reason: IdleRestartWaitReason): void {
+  if (!isPermanentIdleWait(reason) || idleRestartGaveUp.has(version)) return
+  idleRestartGaveUp.add(version)
+  silentLog(`v${version} 不会自动重启安装：${idleRestartWaitText(reason)}`, "WARN")
+}
+
+/** 发起一次自动重启安装：记下窗口状态，再让 electron-updater 静默安装并重启 */
+function startIdleRestart(probes: IdleRestartProbes, version: string): void {
+  const win = getMainWindow()
+  // 窗口原本收在托盘（隐藏）或最小化着：装完留在托盘，别在人不在电脑前时弹到最前面
+  const keepHidden = !win || win.isDestroyed() || !win.isVisible() || win.isMinimized()
+  idleRestartAttempts.set(version, (idleRestartAttempts.get(version) ?? 0) + 1)
+  idleRestartTriggered = true
+  // 正常情况下应用会在几秒内退出；万一安装器没接手、应用还活着，隔一阵允许再试（次数有上限）
+  setTimeout(() => {
+    idleRestartTriggered = false
+  }, IDLE_RESTART_RETRY_AFTER_MS).unref()
+  probeOr(() => probes.beforeRestart({ keepHidden }), undefined)
+  silentLog(`电脑空闲且没有 AI 在工作，自动重启安装 v${version}${keepHidden ? "（窗口原本在托盘里，装完仍留在托盘）" : ""}`)
+  try {
+    autoUpdater.quitAndInstall(true, true)
+  } catch (err) {
+    idleRestartTriggered = false
+    probeOr(() => probes.cancelRestart(), undefined)
+    silentLog(`自动重启安装没有成功：${downloadErrorMessage(err)}`, "WARN")
+  }
+}
+
+/**
+ * 空闲时自动重启安装的一次检查（每分钟一次）：已经下好新版本、开关开着，并且人不在、AI 没在干活，就重启装上。
+ * 没开、没有下好的版本时立刻返回，什么都不查。要去问 daemon 和注册表的条件放在便宜的条件都满足之后再查，
+ * 查完整套条件再读一遍：那几十毫秒里情况可能变了。
+ */
+async function runIdleRestartCheck(): Promise<void> {
+  const probes = idleRestartProbes
+  const version = installReadyVersion
+  if (!probes || !version || idleCheckBusy || idleRestartTriggered) return
+  if (idleRestartGaveUp.has(version) || !isIdleRestartEnabled()) return
+  idleCheckBusy = true
+  try {
+    const decide = (slow: Pick<IdleRestartInput, "perUserInstall" | "queued">) =>
+      decideIdleRestart({
+        enabled: isIdleRestartEnabled(),
+        readyVersion: installReadyVersion,
+        current: app.getVersion(),
+        downloading: silentRunActive || winDownloadRequested || activeWinDownload !== null,
+        attempts: idleRestartAttempts.get(version) ?? 0,
+        userIdleSec: probeOr(() => probes.userIdleSeconds(), null),
+        agentBusy: probeOr(() => probes.agentWorkInFlight(), true),
+        agentQuietMs: probeOr(() => probes.agentQuietMs(), 0),
+        ...slow,
+      })
+    const quick = decide({ perUserInstall: true, queued: 0 })
+    if (quick.action === "wait") {
+      noteIdleRestartWait(version, quick.reason)
+      return
+    }
+    const [perUserInstall, queued] = await Promise.all([
+      probeOrAsync(() => probes.perUserInstall(), false),
+      probeOrAsync(() => probes.queuedMessages(), null),
+    ])
+    const final = decide({ perUserInstall, queued })
+    if (final.action === "wait") {
+      noteIdleRestartWait(version, final.reason)
+      return
+    }
+    startIdleRestart(probes, final.version)
+  } finally {
+    idleCheckBusy = false
+  }
+}
+
 function wireAutoUpdater(): void {
   if (autoUpdaterWired || !app.isPackaged) {
     return
@@ -952,19 +1099,30 @@ function wireAutoUpdater(): void {
     installReadyVersion = downloadedUpdateVersion
     syncAutoInstallOnQuit()
     const silent = isSilentUpdateEnabled()
+    const idleRestart = isIdleRestartEnabled()
     getMainWindow()?.webContents.send("updater:status", {
       kind: "downloaded" as const,
       version: downloadedUpdateVersion ?? version,
       silent,
+      idleRestart,
     })
     if (silent) {
-      silentLog(`v${downloadedUpdateVersion ?? version} 已下载好，退出应用时自动静默安装`)
+      const idleNote = idleRestart
+        ? `；电脑 ${IDLE_RESTART_USER_IDLE_SEC / 60} 分钟没人操作、也没有 AI 在工作时，会自动重启并安装`
+        : ""
+      silentLog(`v${downloadedUpdateVersion ?? version} 已下载好，退出应用时自动静默安装${idleNote}`)
       return
     }
     promptInstallDownloaded(downloadedUpdateVersion ?? version)
   })
 
   autoUpdater.on("error", (err) => {
+    // 空闲自动重启已经发起、安装器却没能接手：应用还活着，撤销重启记号，之后（有限次数地）再试
+    if (idleRestartTriggered) {
+      idleRestartTriggered = false
+      idleRestartProbes?.cancelRestart()
+      silentLog(`自动重启安装没有成功：${err.message}`, "WARN")
+    }
     if (winDownloadRequested && process.platform === "win32") {
       winDownloadRequested = false
       reportWinDownloadFailure(err)
@@ -1255,8 +1413,9 @@ export function registerUpdaterIpc(): void {
   })
 }
 
-export function initAppUpdater(getMainWindow: () => BrowserWindow | null): void {
+export function initAppUpdater(getMainWindow: () => BrowserWindow | null, idleProbes?: IdleRestartProbes): void {
   mainWindowGetter = getMainWindow
+  idleRestartProbes = idleProbes ?? null
   registerUpdaterIpc()
   wireAutoUpdater()
   void applyAppNetworkProxy()
@@ -1270,5 +1429,9 @@ export function initAppUpdater(getMainWindow: () => BrowserWindow | null): void 
     setInterval(() => {
       void runSilentUpdateCycle("定时")
     }, SILENT_CHECK_INTERVAL_MS).unref()
+    // 空闲时自动重启安装：每分钟看一眼，没开或没有下好的版本时什么都不查
+    setInterval(() => {
+      void runIdleRestartCheck()
+    }, IDLE_RESTART_CHECK_INTERVAL_MS).unref()
   }
 }

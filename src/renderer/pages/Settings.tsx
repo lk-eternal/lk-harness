@@ -37,7 +37,7 @@ import useInlineModal from "../components/useInlineModal"
 import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
 import { THEME_OPTIONS, type Theme } from "../theme-options"
-import { silentReadyMessage } from "../../shared/silent-update"
+import { IDLE_RESTART_USER_IDLE_SEC, silentReadyMessage } from "../../shared/silent-update"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
 
@@ -86,6 +86,10 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   /** 静默更新（仅 Windows 显示）：后台自动下载，退出应用时自动安装，不弹窗、不出安装向导 */
   const [silentUpdate, setSilentUpdate] = useState(false)
   const silentUpdateRef = useRef(false)
+  /** 静默更新下的「空闲时自动重启安装」（默认开，只在静默更新开着时有意义） */
+  const [idleRestart, setIdleRestart] = useState(true)
+  /** 静默更新开着且没关掉空闲重启：给「已下载好」那句提示用，事件回调里读不到最新的 state */
+  const idleRestartRef = useRef(false)
   /** 帮助引导页飞书控制台链接用 */
   const [firstFeishuAppId, setFirstFeishuAppId] = useState("")
   const { showAlert, showConfirm, ModalPortal } = useInlineModal()
@@ -116,7 +120,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
 
   useEffect(() => {
     silentUpdateRef.current = silentUpdate
-  }, [silentUpdate])
+    idleRestartRef.current = silentUpdate && idleRestart
+  }, [silentUpdate, idleRestart])
 
   useEffect(() => {
     const offS = window.electronAPI.onUpdaterStatus((s) => {
@@ -133,7 +138,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       if (s.kind === "downloaded") {
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)
-        setUpdateMsg(s.silent ? silentReadyMessage(s.version) : `新版本 v${s.version} 已下载，可立即安装。`)
+        setUpdateMsg(s.silent ? silentReadyMessage(s.version, s.idleRestart === true) : `新版本 v${s.version} 已下载，可立即安装。`)
         void window.electronAPI.checkAppUpdate().then((r) => {
           if (r.status === "ready" || r.status === "available") {
             setUpdateCheck(r)
@@ -170,7 +175,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setUpdateCheck(r)
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)
-        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
+        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion, idleRestartRef.current) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
       } else if (r.status === "available") {
         setUpdateCheck(r)
         if (!updateDownloading) {
@@ -198,6 +203,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       window.electronAPI.getConfig().then((config) => {
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
         setSilentUpdate(config.silentUpdate === true)
+        setIdleRestart(config.silentUpdateIdleRestart !== false)
       })
     }
   }, [tab])
@@ -235,7 +241,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
       } else if (r.status === "available") {
         setUpdateMsg(`发现新版本 v${r.latestVersion}，当前 v${r.currentVersion}。`)
       } else if (r.status === "ready") {
-        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
+        setUpdateMsg(silentUpdateRef.current ? silentReadyMessage(r.latestVersion, idleRestartRef.current) : `新版本 v${r.latestVersion} 已下载，可立即安装。`)
       }
     } finally {
       setUpdateBusy(false)
@@ -285,6 +291,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     await window.electronAPI.saveConfig({ silentUpdate: next })
     // 刚打开：马上查一次，有新版本就开始后台下载（不用等下一个 6 小时的周期）
     if (next) void window.electronAPI.checkAppUpdate()
+  }
+
+  const handleIdleRestartToggle = async () => {
+    const next = !idleRestart
+    setIdleRestart(next)
+    await window.electronAPI.saveConfig({ silentUpdateIdleRestart: next })
   }
 
   const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
@@ -574,6 +586,23 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${silentUpdate ? "bg-green-500" : "bg-stronger"}`}
                     >
                       <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${silentUpdate ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                    </button>
+                  </div>
+                )}
+                {window.electronAPI?.platform === "win32" && silentUpdate && (
+                  <div className="flex items-center justify-between rounded-lg border border-line px-4 py-3">
+                    <div className="min-w-0 pr-3">
+                      <p className="text-sm font-medium">空闲时自动重启安装</p>
+                      <p className="text-xs text-fg-muted">新版本下载好后，电脑 {IDLE_RESTART_USER_IDLE_SEC / 60} 分钟没人操作、也没有 AI 在工作时，自动重启并安装；窗口原本在托盘里的，装完仍留在托盘。适合常驻托盘、很少退出应用的用户。只对「仅为当前用户安装」的应用生效，装在所有用户下的需要管理员确认，不会自动重启</p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={idleRestart}
+                      onClick={() => void handleIdleRestartToggle()}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${idleRestart ? "bg-green-500" : "bg-stronger"}`}
+                    >
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${idleRestart ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
                     </button>
                   </div>
                 )}

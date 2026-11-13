@@ -41,6 +41,11 @@ export interface AppConfig {
    * 开着时优先于 autoUpgradePrompt；默认关，行为和以前一样。
    */
   silentUpdate: boolean
+  /**
+   * 静默更新开着时，新版本下载好后，电脑空闲（15 分钟没人操作）且没有 AI 在工作，就自动重启并安装，
+   * 给常驻托盘、从不退出的用户用。只在静默更新开着时有意义；缺省（旧配置里没有）按开处理，显式 false 才是关。
+   */
+  silentUpdateIdleRestart: boolean
   /** 界面主题：system=跟随系统；light/dark=固定。主进程同步给 nativeTheme，渲染层 CSS 用 prefers-color-scheme 响应 */
   theme: "system" | "light" | "dark"
   /** 主会话 chatId 映射（`channelId:workspaceDir` → chatId），用于 --resume 恢复上下文 */
@@ -113,6 +118,7 @@ const defaults: AppConfig = {
   closeWindowAction: "ask",
   autoUpgradePrompt: true,
   silentUpdate: false,
+  silentUpdateIdleRestart: true,
   theme: "system",
   mainChatIds: {},
   daemonPort: 19528,

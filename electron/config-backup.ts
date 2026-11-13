@@ -146,6 +146,7 @@ export interface ConfigExportGeneral {
   autoUpgradePrompt: boolean
   /** 旧版备份里没有这个字段 */
   silentUpdate?: boolean
+  silentUpdateIdleRestart?: boolean
   daemonPort: number
   setupComplete: boolean
 }
@@ -449,6 +450,7 @@ function buildManifest(sections?: ConfigSection[]): Partial<ConfigExportManifest
         closeWindowAction: cfg.closeWindowAction ?? "ask",
         autoUpgradePrompt: cfg.autoUpgradePrompt ?? true,
         silentUpdate: cfg.silentUpdate ?? false,
+        silentUpdateIdleRestart: cfg.silentUpdateIdleRestart ?? true,
         daemonPort: cfg.daemonPort ?? 19528,
         setupComplete: cfg.setupComplete ?? false,
       },
@@ -570,6 +572,7 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
         closeWindowAction: manifest.general.closeWindowAction,
         autoUpgradePrompt: manifest.general.autoUpgradePrompt,
         silentUpdate: manifest.general.silentUpdate ?? cfg.silentUpdate,
+        silentUpdateIdleRestart: manifest.general.silentUpdateIdleRestart ?? cfg.silentUpdateIdleRestart,
         daemonPort: manifest.general.daemonPort,
         setupComplete: cfg.setupComplete || manifest.general.setupComplete,
       })

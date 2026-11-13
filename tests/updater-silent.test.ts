@@ -37,6 +37,8 @@ const h = await vi.hoisted(async () => {
 
   const win = {
     isDestroyed: () => false,
+    isVisible: () => s.winVisible,
+    isMinimized: () => s.winMinimized,
     webContents: { send: vi.fn() },
   }
 
@@ -53,6 +55,9 @@ const h = await vi.hoisted(async () => {
      * 它的顺序是先 emit update-downloaded，再看 autoInstallOnAppQuit 决定登记（BaseUpdater.executeDownload），这里照样模拟
      */
     quitHandlerRegistered: null as boolean | null,
+    /** 主窗口此刻的状态：收在托盘里（不可见）、最小化 */
+    winVisible: true,
+    winMinimized: false,
   }
 
   return {
@@ -128,14 +133,19 @@ function logsAt(level: string): string[] {
 }
 
 type UpdaterModule = typeof import("../electron/updater")
+type IdleRestartProbes = import("../electron/updater").IdleRestartProbes
 
 /** 每个用例拿一份全新的 updater.ts（它有模块级状态），再按给定配置启动 */
-async function boot(config: Record<string, unknown>, remoteVersion: string | null = "1.4.2"): Promise<UpdaterModule> {
+async function boot(
+  config: Record<string, unknown>,
+  remoteVersion: string | null = "1.4.2",
+  probes?: IdleRestartProbes,
+): Promise<UpdaterModule> {
   h.s.config = config
   h.s.remoteVersion = remoteVersion
   vi.resetModules()
   const mod = await import("../electron/updater")
-  mod.initAppUpdater(() => h.win as never)
+  mod.initAppUpdater(() => h.win as never, probes)
   return mod
 }
 
@@ -194,6 +204,8 @@ beforeEach(() => {
   h.s.checkMode = "available"
   h.s.flagAtDownload = null
   h.s.quitHandlerRegistered = null
+  h.s.winVisible = true
+  h.s.winMinimized = false
   h.updater.checkForUpdates.mockImplementation(async () => {
     if (h.s.checkMode === "noop") {
       return null
@@ -252,7 +264,7 @@ describe("静默更新开着（Windows 安装版）", () => {
     expect(sent("app:modal-request")).toEqual([])
     expect(h.showMessageBox).not.toHaveBeenCalled()
     // 界面收到的是带 silent 标记的「已下载」
-    expect(sent("updater:status")).toContainEqual([{ kind: "downloaded", version: "1.4.2", silent: true }])
+    expect(sent("updater:status")).toContainEqual([{ kind: "downloaded", version: "1.4.2", silent: true, idleRestart: true }])
     expect(logs().some((l) => l.includes("静默更新") && l.includes("已下载好"))).toBe(true)
   })
 
@@ -531,7 +543,7 @@ describe("静默更新关着（默认）：行为和以前一样", () => {
     expect(h.updater.downloadUpdate).toHaveBeenCalledTimes(1)
     expect(h.updater.autoInstallOnAppQuit).toBe(false)
     expect(modalTitles()).toEqual(["发现新版本", "更新已就绪"])
-    expect(sent("updater:status")).toContainEqual([{ kind: "downloaded", version: "1.4.2", silent: false }])
+    expect(sent("updater:status")).toContainEqual([{ kind: "downloaded", version: "1.4.2", silent: false, idleRestart: false }])
   })
 
   it("用户发起的下载失败：弹「自动更新失败」（静默更新才只写日志）", async () => {
@@ -595,5 +607,336 @@ describe("只对 Windows 安装版生效", () => {
     await runPeriodic()
     expect(h.updater.checkForUpdates).not.toHaveBeenCalled()
     expect(h.netFetch).not.toHaveBeenCalled()
+  })
+})
+
+// ── 空闲时自动重启安装 ───────────────────────────────────────────────
+
+const MINUTE = 60 * 1000
+
+/** 一个全部条件都满足的现场：电脑空闲 20 分钟、Agent 安静 30 分钟、没有排队的消息、确认是仅当前用户安装 */
+function makeProbes(over: Partial<IdleRestartProbes> = {}) {
+  const base = {
+    userIdleSeconds: vi.fn((): number | null => 20 * 60),
+    agentWorkInFlight: vi.fn(() => false),
+    agentQuietMs: vi.fn(() => 30 * MINUTE),
+    queuedMessages: vi.fn(async (): Promise<number | null> => 0),
+    perUserInstall: vi.fn(async () => true),
+    beforeRestart: vi.fn(),
+    cancelRestart: vi.fn(),
+  }
+  return { ...base, ...over } as typeof base
+}
+
+/** 推进若干分钟（空闲检查每分钟一次） */
+async function runIdleTicks(minutes = 1): Promise<void> {
+  await vi.advanceTimersByTimeAsync(minutes * MINUTE)
+  await settle()
+}
+
+/** 启动 → 后台下载好新版本 1.4.2，停在「等着安装」 */
+async function bootWithReadyUpdate(config: Record<string, unknown>, probes: IdleRestartProbes | undefined): Promise<void> {
+  await boot(config, "1.4.2", probes)
+  await runStartup()
+  expect(h.updater.downloadUpdate).toHaveBeenCalledTimes(1)
+  expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+}
+
+describe("空闲时自动重启安装（静默更新开着、新版本已下载好）", () => {
+  it("电脑空闲、AI 没在工作：自动静默安装并重启，不弹任何窗口", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    await runIdleTicks()
+
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    // isSilent=true（不出安装向导）、isForceRunAfter=true（装完自己起来）
+    expect(h.updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(h.updater.autoInstallOnAppQuit).toBe(true)
+    expect(logs().some((l) => l.includes("自动重启安装 v1.4.2"))).toBe(true)
+    expect(sent("app:modal-request")).toEqual([])
+    expect(h.showMessageBox).not.toHaveBeenCalled()
+  })
+
+  it("窗口开着时重启：记下「窗口原本不在托盘」，装完照常弹出来", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks()
+    expect(probes.beforeRestart).toHaveBeenCalledWith({ keepHidden: false })
+    // 记号要在退出之前写好
+    expect(probes.beforeRestart.mock.invocationCallOrder[0]).toBeLessThan(h.updater.quitAndInstall.mock.invocationCallOrder[0])
+  })
+
+  it("窗口收在托盘里（隐藏）时重启：记下 keepHidden，装完留在托盘", async () => {
+    h.s.winVisible = false
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks()
+    expect(probes.beforeRestart).toHaveBeenCalledWith({ keepHidden: true })
+    expect(logs().some((l) => l.includes("装完仍留在托盘"))).toBe(true)
+  })
+
+  it("窗口最小化时重启：同样留在托盘", async () => {
+    h.s.winMinimized = true
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks()
+    expect(probes.beforeRestart).toHaveBeenCalledWith({ keepHidden: true })
+  })
+
+  it("电脑最近有人在操作：不重启，也不去问 daemon 和注册表；人走开满 15 分钟后下一分钟就重启", async () => {
+    const probes = makeProbes({ userIdleSeconds: vi.fn((): number | null => 120) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    // 便宜的条件都没过，不该花力气去问慢的
+    expect(probes.queuedMessages).not.toHaveBeenCalled()
+    expect(probes.perUserInstall).not.toHaveBeenCalled()
+
+    probes.userIdleSeconds.mockReturnValue(15 * 60)
+    await runIdleTicks()
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ["有 Agent 在跑回合", { agentWorkInFlight: vi.fn(() => true) }],
+    ["Agent 刚刚还在工作（回合之间的空档）", { agentQuietMs: vi.fn(() => 2 * MINUTE) }],
+    ["队列里有排队或处理中的消息", { queuedMessages: vi.fn(async (): Promise<number | null> => 3) }],
+    ["队列数取不到", { queuedMessages: vi.fn(async (): Promise<number | null> => null) }],
+    ["电脑空闲时间取不到", { userIdleSeconds: vi.fn((): number | null => null) }],
+  ] as const)("%s：不重启", async (_name, over) => {
+    const probes = makeProbes(over as Partial<IdleRestartProbes>)
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(probes.beforeRestart).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ["电脑空闲时间", () => ({ userIdleSeconds: vi.fn((): number | null => { throw new Error("powerMonitor boom") }) })],
+    ["Agent 是否在忙", () => ({ agentWorkInFlight: vi.fn((): boolean => { throw new Error("boom") }) })],
+    ["Agent 安静时长", () => ({ agentQuietMs: vi.fn((): number => { throw new Error("boom") }) })],
+    ["daemon 队列", () => ({ queuedMessages: vi.fn(async (): Promise<number | null> => { throw new Error("daemon boom") }) })],
+    ["安装方式", () => ({ perUserInstall: vi.fn(async (): Promise<boolean> => { throw new Error("reg boom") }) })],
+  ] as const)("取%s的探针抛异常：按「最不该重启」处理，不重启，也不把异常抛出来", async (_name, makeOver) => {
+    await bootWithReadyUpdate({ silentUpdate: true }, makeProbes(makeOver() as Partial<IdleRestartProbes>))
+    await runIdleTicks(3)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it("问 daemon 卡住：最多等一会儿就当取不到，不把后面每一轮检查都挡住；之后恢复了照常重启", async () => {
+    const probes = makeProbes({ queuedMessages: vi.fn(() => new Promise<number | null>(() => {})) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    await runIdleTicks(4)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    // 没有被第一次卡住的调用永远占着：每分钟都在重新问
+    expect(probes.queuedMessages.mock.calls.length).toBeGreaterThanOrEqual(3)
+
+    probes.queuedMessages.mockImplementation(async () => 0)
+    await runIdleTicks()
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it("问 daemon 和查注册表的那一小段时间里情况变了（AI 又开始工作）：整套条件重新读一遍，不重启", async () => {
+    const probes = makeProbes()
+    probes.queuedMessages.mockImplementation(async () => {
+      probes.agentWorkInFlight.mockReturnValue(true)
+      return 0
+    })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks(2)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it("不是确认的「仅当前用户」安装：不自动重启，只写一次警告日志，之后不再每分钟去查", async () => {
+    const probes = makeProbes({ perUserInstall: vi.fn(async () => false) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    await runIdleTicks(6)
+
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    const notes = logsAt("WARN").filter((l) => l.includes("不会自动重启安装"))
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toContain("退出应用时仍会安装")
+    expect(probes.perUserInstall).toHaveBeenCalledTimes(1)
+    // 退出时安装不受影响：开关仍是开的
+    expect(h.updater.autoInstallOnAppQuit).toBe(true)
+  })
+
+  it("没有注入探针（比如测试或旧调用方）：不自动重启", async () => {
+    await bootWithReadyUpdate({ silentUpdate: true }, undefined)
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it("设置里单独关掉「空闲时自动重启安装」：不重启，也不碰任何探针；仍然只在退出时安装", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true, silentUpdateIdleRestart: false }, probes)
+    await runIdleTicks(5)
+
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(probes.userIdleSeconds).not.toHaveBeenCalled()
+    expect(probes.agentWorkInFlight).not.toHaveBeenCalled()
+    expect(probes.queuedMessages).not.toHaveBeenCalled()
+    expect(h.updater.autoInstallOnAppQuit).toBe(true)
+    expect(sent("updater:status")).toContainEqual([{ kind: "downloaded", version: "1.4.2", silent: true, idleRestart: false }])
+    expect(logs().some((l) => l.includes("已下载好") && !l.includes("自动重启并安装"))).toBe(true)
+  })
+
+  it("旧配置里没有这个字段：按开处理；下好的提示里说明空闲时会自动重启，并写明空闲多久", async () => {
+    await bootWithReadyUpdate({ silentUpdate: true }, makeProbes())
+    expect(logs().some((l) => l.includes("已下载好") && l.includes("15 分钟") && l.includes("自动重启并安装"))).toBe(true)
+  })
+
+  it("下载好之后用户把空闲重启关了：之后不再重启", async () => {
+    const probes = makeProbes({ userIdleSeconds: vi.fn((): number | null => 60) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks(2)
+
+    h.s.config = { silentUpdate: true, silentUpdateIdleRestart: false }
+    probes.userIdleSeconds.mockReturnValue(3600)
+    await runIdleTicks(3)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it("下载好之后用户把静默更新整个关了：不重启，退出时安装也不再登记", async () => {
+    const probes = makeProbes({ userIdleSeconds: vi.fn((): number | null => 60) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks(2)
+
+    h.s.config = { silentUpdate: false }
+    probes.userIdleSeconds.mockReturnValue(3600)
+    await runIdleTicks(3)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it("静默更新关着（默认）：不自动重启，探针一个都不碰", async () => {
+    const probes = makeProbes()
+    await boot({}, "1.4.2", probes)
+    await runStartup()
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(probes.userIdleSeconds).not.toHaveBeenCalled()
+  })
+
+  it("没有下好的新版本（远端和本机同版本）：每分钟的检查什么探针都不碰", async () => {
+    const probes = makeProbes()
+    await boot({ silentUpdate: true }, "1.4.1", probes)
+    await runStartup()
+    await runIdleTicks(10)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(probes.userIdleSeconds).not.toHaveBeenCalled()
+    expect(probes.agentWorkInFlight).not.toHaveBeenCalled()
+    expect(probes.queuedMessages).not.toHaveBeenCalled()
+  })
+
+  it("macOS / Linux：配置里有开关也不生效，探针不碰", async () => {
+    for (const platform of ["darwin", "linux"]) {
+      setPlatform(platform)
+      const probes = makeProbes()
+      await boot({ silentUpdate: true, silentUpdateIdleRestart: true }, "1.4.2", probes)
+      await runStartup()
+      await runIdleTicks(5)
+      expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+      expect(probes.userIdleSeconds).not.toHaveBeenCalled()
+    }
+  })
+
+  it("未打包（开发版）：不注册空闲检查", async () => {
+    h.app.isPackaged = false
+    const probes = makeProbes()
+    await boot({ silentUpdate: true }, "1.4.2", probes)
+    await runStartup()
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(probes.userIdleSeconds).not.toHaveBeenCalled()
+  })
+
+  it("又有一版在后台下载：等它下完再装，装的是最新的那一版", async () => {
+    // 先让用户「在用」：下好 1.4.2 之后不重启，一直撑到 6 小时的定时检查去下 1.4.3
+    const probes = makeProbes({ userIdleSeconds: vi.fn((): number | null => 60) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    let finishDownload: () => void = () => undefined
+    h.prefetchInstaller.mockImplementationOnce(() => new Promise((resolve) => {
+      finishDownload = () => resolve({ reusedExisting: false, attempts: 1 })
+    }))
+    h.s.remoteVersion = "1.4.3"
+    await runPeriodic()
+    expect(h.prefetchInstaller).toHaveBeenCalledTimes(2)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+
+    // 人走开了，但 1.4.3 还没下完：不能把旧的 1.4.2 装上
+    probes.userIdleSeconds.mockReturnValue(3600)
+    await runIdleTicks(3)
+    expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
+
+    finishDownload()
+    await settle()
+    await runIdleTicks()
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(logs().some((l) => l.includes("自动重启安装 v1.4.3"))).toBe(true)
+  })
+})
+
+describe("空闲自动重启：装不上时不会反复关应用", () => {
+  it("应用没有退出（安装器没接手）：隔一阵再试一次，同一个版本最多两次，之后写一次日志就不再试", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    // quitAndInstall 是空操作：应用「还活着」
+    await runIdleTicks(1)
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+    // 重试间隔内不会再来
+    await runIdleTicks(5)
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+
+    await runIdleTicks(8)
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(2)
+
+    await runIdleTicks(40)
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(2)
+    const notes = logsAt("WARN").filter((l) => l.includes("不会自动重启安装") && l.includes("几次都没装上"))
+    expect(notes).toHaveLength(1)
+  })
+
+  it("发起重启后 electron-updater 报错（安装器没能启动）：撤销重启记号，写警告日志，之后还能再试", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    await runIdleTicks()
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+
+    h.updater.emit("error", new Error("installer spawn failed"))
+    await settle()
+
+    expect(probes.cancelRestart).toHaveBeenCalledTimes(1)
+    expect(logsAt("WARN").some((l) => l.includes("自动重启安装没有成功") && l.includes("installer spawn failed"))).toBe(true)
+
+    await runIdleTicks()
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(2)
+  })
+
+  it("没有发起重启时的 electron-updater 报错：不去动重启记号", async () => {
+    const probes = makeProbes({ userIdleSeconds: vi.fn((): number | null => 60) })
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+    h.updater.emit("error", new Error("some other error"))
+    await settle()
+    expect(probes.cancelRestart).not.toHaveBeenCalled()
+  })
+
+  it("quitAndInstall 直接抛异常：撤销记号、写警告日志，不抛出来；有限次数地再试", async () => {
+    h.updater.quitAndInstall.mockImplementation(() => {
+      throw new Error("spawn EACCES")
+    })
+    const probes = makeProbes()
+    await bootWithReadyUpdate({ silentUpdate: true }, probes)
+
+    await runIdleTicks(10)
+    expect(probes.cancelRestart).toHaveBeenCalled()
+    expect(logsAt("WARN").some((l) => l.includes("自动重启安装没有成功") && l.includes("spawn EACCES"))).toBe(true)
+    // 每次失败后立刻允许下一分钟再试，但次数有上限
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(2)
   })
 })

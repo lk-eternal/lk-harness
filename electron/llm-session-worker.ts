@@ -20,6 +20,7 @@ import { isFeishuStreamEnabled } from "./stream-card"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { assembleTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
+import { noteAgentActivity } from "./agent-activity"
 
 export type LlmWorkerPhase = "listening" | "processing" | "stopping"
 
@@ -169,6 +170,8 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
   try {
     while (!abort.signal.aborted) {
+      // 刚收完一个回合才记一笔（poll 挂起到点后的 continue 不算动静，否则长连接会话每次超时都会刷新）
+      if (state.phase === "processing") noteAgentActivity()
       state.phase = "listening"
 
       let pollResult
@@ -209,6 +212,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       } catch { /* best-effort */ }
 
       state.phase = "processing"
+      noteAgentActivity()
       const prompt = assembleTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
@@ -318,6 +322,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(errorDetail)
     }
   } finally {
+    noteAgentActivity()
     state.phase = "stopping"
     if (workers.get(sessionKey) === state) workers.delete(sessionKey)
     try {
