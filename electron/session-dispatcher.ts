@@ -991,6 +991,40 @@ export async function leaveProjectSession(
   }
 }
 
+/**
+ * 项目归档后，把停在它上面的飞书 / 微信聊天挪回各自通道的主会话。
+ * 归档只改项目上的标记，聊天的「当前会话」指针不动：飞书私聊停在这个项目上，
+ * 之后发给私聊的普通消息还会进它的会话（入站路由对 ::project_ 后缀的活跃会话原样尊重，不看归档），
+ * 在已归档项目的工作目录里干活；定时任务结果等出站卡片也会被标成它发的。
+ * 不动的：
+ *  - 应用内通道：它的指针每次发消息都会重设，界面上选哪个会话也不靠它；
+ *  - 项目自己的专属群：归档后仍可以 /p use 回去继续，群里的对话不该被悄悄换走。
+ * 返回被挪走的聊天键。daemon 没起来 / 读不到活跃会话表时什么都不做。
+ */
+export async function releaseProjectRoutes(
+  port: number,
+  project: { id: string; groupChatId?: string },
+): Promise<string[]> {
+  let sessions: Record<string, string> | undefined
+  try {
+    const res = (await httpGet(`http://127.0.0.1:${port}/api/active-sessions`)) as { sessions?: Record<string, string> } | null
+    sessions = res?.sessions
+  } catch {
+    return []
+  }
+  const moved: string[] = []
+  for (const [chatKey, sessionKey] of Object.entries(sessions ?? {})) {
+    if (projectIdFromSessionKey(sessionKey) !== project.id) continue
+    if (projectGroupChatMatches(project, chatKey)) continue
+    const channel = resolveChannelForSession(chatKey)
+    if (!channel || channel.type === "app") continue
+    const mainKey = resolveMainSessionKey(chatKey)
+    if (!mainKey) continue
+    if (await syncActiveSession(port, chatKey, mainKey)) moved.push(chatKey)
+  }
+  return moved
+}
+
 /** 生成某会话的完整状态块（同 /s 当前对话段），供 /p leave 等场景复用 */
 export async function formatCurrentSessionBlock(
   sessionKey: string,

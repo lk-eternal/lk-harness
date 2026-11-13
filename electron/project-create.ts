@@ -16,7 +16,7 @@ import {
   startProjectNode,
   uniqueProjectSlug,
 } from "./project-commands"
-import { leaveProjectSession, stopSessionAgent } from "./session-dispatcher"
+import { leaveProjectSession, releaseProjectRoutes, stopSessionAgent } from "./session-dispatcher"
 import { addProjectClone, ensureArtifactDir, inspectLocalRepo, isUsableRepoRef, isValidBranchName, removeDirRobust } from "./project-worktree"
 import { pushUiLog } from "./ui-logger"
 import {
@@ -376,7 +376,20 @@ export function setProjectArchivedByUser(
     return { ok: false, error: projectNotOwnedHint("归档") }
   }
   if (!setProjectArchived(target.id, archived)) return { ok: false, error: "项目不存在" }
+  if (archived) releaseArchivedProject(target)
   return { ok: true, name: target.name }
+}
+
+/**
+ * 归档后别让聊天还停在这个项目上：「当前项目」指针清掉，飞书 / 微信聊天的活跃会话挪回主会话（见 releaseProjectRoutes）。
+ * 归档只改了项目上的标记，不做这一步，私聊会一直停在已归档的项目里。
+ * 挪会话要问 daemon，是 best-effort，不拖归档本身：daemon 没起来就算了。
+ */
+function releaseArchivedProject(project: { id: string; groupChatId?: string }): void {
+  if (getCurrentProjectId() === project.id) setCurrentProjectId(null)
+  const lock = readLockFile()
+  if (!lock?.port) return
+  void releaseProjectRoutes(lock.port, project).catch(() => { /* best-effort */ })
 }
 
 /** 把项目步骤同步成最新模板（只对有自己步骤副本的项目有意义） */
