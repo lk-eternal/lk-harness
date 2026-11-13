@@ -4,7 +4,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
 import { resolveTaskLaunchModel, type ChannelModelFields } from "../src/shared/launch-model"
-import { resolveTaskChannelId, taskCardFooter, taskSessionOverride, tasksWithChangedModelSetting, type ScheduledTask } from "../src/shared/scheduled-task"
+import { resolveTaskChannelId, taskCardFooter, taskCardHeader, taskSessionOverride, tasksWithChangedModelSetting, type ScheduledTask } from "../src/shared/scheduled-task"
 import { initSessionOverridesStore, resetSessionOverridesStoreForTests } from "../src/shared/session-overrides-store"
 import { setSessionOverride } from "../src/shared/session-model-store"
 import { taskTabModel } from "../src/shared/task-tab-model"
@@ -328,5 +328,56 @@ describe("taskCardFooter", () => {
   it("什么键都没有：没有页脚", () => {
     expect(taskCardFooter({ tasks, modelLabelOf: labelOf })).toBeUndefined()
     expect(taskCardFooter({ invokerSessionKey: "  ", sessionKey: "", tasks, modelLabelOf: labelOf })).toBeUndefined()
+  })
+})
+
+/**
+ * 独立任务发到飞书的卡片头部。以前头部一律借「聊天当前的活跃会话」，
+ * 周报任务的结果因此被标成了一个已归档项目发的。这里锁住：独立任务的头部只认任务自己。
+ */
+describe("taskCardHeader", () => {
+  const tasks = [task({ name: "周报编写" })]
+
+  it("独立任务：头部是「⏰ 任务名」，配色键是任务 id", () => {
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, sessionKey: "ch_b|oc_main", tasks })).toEqual({ title: "⏰ 周报编写", colorKey: TASK_ID })
+  })
+
+  it("按调用方（任务 id）认任务，不是按发送目标（聊天键）认", () => {
+    // 发送目标是聊天键，认不出任务；调用方是任务 id
+    expect(taskCardHeader({ sessionKey: "ch_b|oc_main", tasks })).toBeUndefined()
+    expect(taskCardHeader({ sessionKey: "ch_b|oc_main", invokerSessionKey: TASK_ID, tasks })?.colorKey).toBe(TASK_ID)
+  })
+
+  it("没有调用方时退回用发送的会话键（它本身就是任务 id 的情形）", () => {
+    expect(taskCardHeader({ sessionKey: TASK_ID, tasks })?.title).toBe("⏰ 周报编写")
+  })
+
+  it("不是独立任务的会话没有任务头部：主会话 / 项目会话 / 目录会话 / 别的 id 都照旧按会话取", () => {
+    for (const key of ["ch_b|oc_main", "ch_b|oc_main::D:\\ws", "ch_b|oc_main::project_8b75777e7d36", "other-id"]) {
+      expect(taskCardHeader({ invokerSessionKey: key, sessionKey: "ch_b|oc_main", tasks })).toBeUndefined()
+    }
+  })
+
+  it("非独立任务（走主会话队列，有流式卡）没有任务头部", () => {
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, tasks: [task({ independent: false })] })).toBeUndefined()
+  })
+
+  it("独立默认值：没写 independent 的任务按独立处理", () => {
+    const t = task({ name: "旧任务" })
+    delete (t as { independent?: boolean }).independent
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, tasks: [t] })?.title).toBe("⏰ 旧任务")
+  })
+
+  it("任务名只有空白：头部用「定时任务」，不留一个孤零零的 ⏰", () => {
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, tasks: [task({ name: "   " })] })?.title).toBe("⏰ 定时任务")
+  })
+
+  it("任务名去掉首尾空白", () => {
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, tasks: [task({ name: "  周报编写 " })] })?.title).toBe("⏰ 周报编写")
+  })
+
+  it("什么键都没有：没有头部", () => {
+    expect(taskCardHeader({ tasks })).toBeUndefined()
+    expect(taskCardHeader({ invokerSessionKey: "  ", sessionKey: "", tasks })).toBeUndefined()
   })
 })

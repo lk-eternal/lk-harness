@@ -244,14 +244,36 @@ export function formatAiSelfReminder(
   return `⏰ 定时任务「${task.name}」（${stamp(now)}，${n}）\n\n${prompt}`;
 }
 
+/** AI 没提交结果时发给接收方的一句话（不含任务名；只在通知到 IM 时发） */
+export const TASK_MISSING_RESULT_BODY = "已运行结束，但没有提交结果。";
+
+/**
+ * 发到 IM 的任务消息，同一条消息的两种写法：
+ *  - text：正文第一行带任务名（⏰ **任务名**）。微信、应用内、飞书群聊这些没有任务横幅的地方用这份，收到的人才知道是哪个任务；
+ *  - titledText：不带任务名。飞书主用户私聊的卡片横幅已经是「⏰ 任务名」，再带一遍就重复了。
+ * 用哪份由发送处看横幅有没有真的显示来定（daemon 的 resolveSendCardText），这里只负责把两份写对。
+ * kind=result 是 AI 交的结果（任务名单独一行）；kind=notice 是系统提示（任务名接在句首）。
+ */
+export function formatTaskImMessage(
+  task: Pick<ScheduledTask, "name">,
+  kind: "result" | "notice",
+  text: string,
+): { text: string; titledText: string } {
+  const bare = text.trim();
+  return {
+    text: kind === "result" ? `⏰ **${task.name}**\n\n${bare}` : `⏰ **${task.name}** ${bare}`,
+    titledText: bare,
+  };
+}
+
 /** 发到 IM 的结果：带上任务名，收到的人才知道是哪个任务 */
 export function formatTaskImResult(task: Pick<ScheduledTask, "name">, text: string): string {
-  return `⏰ **${task.name}**\n\n${text.trim()}`;
+  return formatTaskImMessage(task, "result", text).text;
 }
 
 /** AI 没提交结果时发给接收方的一句话（只在通知到 IM 时发） */
 export function taskMissingResultText(task: Pick<ScheduledTask, "name">): string {
-  return `⏰ **${task.name}** 已运行结束，但没有提交结果。`;
+  return formatTaskImMessage(task, "notice", TASK_MISSING_RESULT_BODY).text;
 }
 
 /**

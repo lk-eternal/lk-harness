@@ -59,18 +59,18 @@ import {
 } from "./shared/channel-types.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import {
+  TASK_MISSING_RESULT_BODY,
   TASK_RESULT_TOOL,
   TaskRunTracker,
   chooseNewTaskChannel,
   describeManagedTaskOutcome,
   formatAiSelfReminder,
-  formatTaskImResult,
+  formatTaskImMessage,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
   shouldNoticeMissingResult,
-  taskMissingResultText,
 } from "./shared/task-delivery.js";
 import { resolveProjectAgentTarget } from "./shared/task-agent-target.js";
 import {
@@ -1048,13 +1048,18 @@ function preferWorkspaceSessionKey(...keys: (string | undefined)[]): string | un
   return hit || keys.find((k) => !!k);
 }
 
+/** 飞书里的「主用户私聊」：卡片头部（会话标题 / 任务标识）只在这里显示；群聊 / 非主用户 / 缺 chatId 一律不露 */
+function isMainUserPrivateChat(ch: ResolvedChannel): ch is Extract<ResolvedChannel, { type: "feishu" }> & { chatId: string } {
+  if (ch.type !== "feishu") return false;
+  const { mainUserEnabled, mainUserChatId } = ch.rt.cfg;
+  if (!mainUserEnabled || !mainUserChatId?.trim()) return false;
+  return !!ch.chatId && ch.chatId === mainUserChatId.trim();
+}
+
 /** 仅主用户私聊显示会话标题（目录/项目 + 分支）；群聊/非主用户/缺 chatId 一律不露。
  * 主用户私聊只要认定身份，就尽量给出标题——否则飞书卡片无 header，看起来就像「没颜色」。 */
 function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle | undefined {
-  if (ch.type !== "feishu") return undefined;
-  const { mainUserEnabled, mainUserChatId } = ch.rt.cfg;
-  if (!mainUserEnabled || !mainUserChatId?.trim()) return undefined;
-  if (!ch.chatId || ch.chatId !== mainUserChatId.trim()) return undefined;
+  if (!isMainUserPrivateChat(ch)) return undefined;
 
   const chatKey = makeChatKey(ch.rt.cfg.id, ch.chatId);
   const sk = sessionKey
@@ -1081,6 +1086,43 @@ function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle 
     }) || { title: wsDir.split(/[\\/]/).filter(Boolean).pop() || wsDir };
   }
   return { title: "会话" };
+}
+
+/**
+ * send_text / send_question 发到飞书的卡片头部：横幅标题 + 配色键。
+ *  - 独立定时任务：任务自己的标识（⏰ 任务名），不借聊天当前的活跃会话。
+ *    出站目标是聊天键、不带会话，借了就会把任务结果标成活跃会话发的（可能是某个项目，甚至是已归档的项目）。
+ *  - 其余：会话键 > 消息所属会话 > 聊天当前的活跃会话（带工作区的优先，保证标题和配色稳定在同一个会话上）。
+ * 标题仍只在主用户私聊显示。
+ * taskTitled：这条的横幅是任务自己的标识（⏰ 任务名）且会显示。发任务消息时据此决定正文里还要不要再写一遍任务名，见 resolveSendCardText。
+ */
+export function resolveSendCardHeader(
+  ch: Extract<ResolvedChannel, { type: "feishu" }>,
+  input: { sessionKey?: string; invokerSessionKey?: string; messageId?: string; tasks: ScheduledTask[] },
+): { title: CardTitle | undefined; colorKey: string | undefined; taskTitled: boolean } {
+  const task = taskCardHeader({ sessionKey: input.sessionKey, invokerSessionKey: input.invokerSessionKey, tasks: input.tasks });
+  if (task) {
+    const shown = isMainUserPrivateChat(ch);
+    return { title: shown ? task.title : undefined, colorKey: task.colorKey, taskTitled: shown };
+  }
+  const colorKey = preferWorkspaceSessionKey(
+    input.sessionKey,
+    input.messageId ? messageSessionMap.get(input.messageId) : undefined,
+    ch.chatId ? lookupActiveSessionKey(makeChatKey(ch.rt.cfg.id, ch.chatId)) : undefined,
+  );
+  return { title: resolveReplyTitle(ch, colorKey || input.sessionKey), colorKey, taskTitled: false };
+}
+
+/**
+ * 任务消息在飞书里发哪份正文（formatTaskImMessage 的两份）：
+ * 横幅已经是「⏰ 任务名」时用不带任务名的 titledText，不然正文第一行又写一遍；其余用带任务名的 text。
+ * 含 @ 的消息发送端会降级成纯文本、没有横幅（LarkSender.formatForSend），这时任务名只能留在正文里。
+ * 没带 titledText（不是任务消息、或老调用方）一律原样用 text。
+ */
+export function resolveSendCardText(header: { taskTitled: boolean }, text: string, titledText?: string): string {
+  if (!header.taskTitled || typeof titledText !== "string" || !titledText.trim()) return text;
+  if (LarkSender.containsAtTag(text)) return text;
+  return titledText;
 }
 
 type ResolvedChannel =
@@ -2902,7 +2944,7 @@ function resolveCardActionChatType(rt: ChannelRuntime, chatKey: string, rawChatI
 }
 
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
@@ -4836,7 +4878,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
   // ── 消息发送 API ──
   if (method === "POST" && pathname === "/api/send-text") {
     const body = JSON.parse(await readBody(req));
-    const { text, message_id, session_key, invoker_session_key } = body as { text: string; message_id?: string; session_key?: string; invoker_session_key?: string };
+    const { text, message_id, session_key, invoker_session_key, titled_text } = body as { text: string; message_id?: string; session_key?: string; invoker_session_key?: string; titled_text?: string };
     if (!text) { json(res, { ok: false, error: "text is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-text", session_key, message_id)) return true;
 
@@ -4865,12 +4907,15 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         }
         // fall through：无卡（降级/建卡失败）、刷卡失败 → 独立消息兜底
       }
-      const colorKey = preferWorkspaceSessionKey(
-        session_key,
-        message_id ? messageSessionMap.get(message_id) : undefined,
-        ch.chatId ? lookupActiveSessionKey(makeChatKey(ch.rt.cfg.id, ch.chatId)) : undefined,
-      );
-      const title = resolveReplyTitle(ch, colorKey || session_key);
+      const header = resolveSendCardHeader(ch, {
+        sessionKey: session_key,
+        invokerSessionKey: invoker_session_key,
+        messageId: message_id,
+        tasks: readTasksSafe(),
+      });
+      const { title, colorKey } = header;
+      // 任务消息：横幅已经是任务名时，正文不再重复写一遍
+      const cardText = resolveSendCardText(header, text, titled_text);
       const headerTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
       // 独立定时任务不建流式卡，没有收口页脚；它的卡片在这里补一行「用的哪个模型」。其余会话（走不到这里的、或不是独立任务的）不加
       const footer = taskCardFooter({
@@ -4882,14 +4927,14 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       let sentMsgId: string | undefined;
       // p2p 直发砍引用条；群聊保留 reply；internal_ 不可 reply
       if (shouldReplyToMessage(ch, message_id)) {
-        sentMsgId = await sender.sendMessage(text, message_id, undefined, title, headerTemplate, false, footer);
+        sentMsgId = await sender.sendMessage(cardText, message_id, undefined, title, headerTemplate, false, footer);
         if (!sentMsgId) {
           log("INFO", `回复退避: message_id=${message_id} → ${ch.chatId ? `chat_id=${ch.chatId}` : "无目标"}`);
-          if (ch.chatId) sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, false, footer);
+          if (ch.chatId) sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, headerTemplate, false, footer);
         }
       } else {
         if (!ch.chatId) { json(res, { ok: false, error: "无法解析发送目标 chatId" }, 400); return true; }
-        sentMsgId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, false, footer);
+        sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, headerTemplate, false, footer);
       }
       if (sentMsgId && session_key) trackMessageSession(sentMsgId, session_key);
       json(res, { ok: !!sentMsgId, message_id: sentMsgId });
@@ -5096,12 +5141,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           return true;
         }
       }
-      const colorKey = preferWorkspaceSessionKey(
-        session_key,
-        message_id ? messageSessionMap.get(message_id) : undefined,
-        ch.chatId ? lookupActiveSessionKey(makeChatKey(ch.rt.cfg.id, ch.chatId)) : undefined,
-      );
-      const title = resolveReplyTitle(ch, colorKey || session_key);
+      const { title, colorKey } = resolveSendCardHeader(ch, {
+        sessionKey: session_key,
+        invokerSessionKey: invoker_session_key,
+        messageId: message_id,
+        tasks: readTasksSafe(),
+      });
       // 问题卡与普通回复同色：用会话稳定色，关闭/点选时不变色
       const displayBody = questionBodyWithOptions(text, opts);
       const pendingTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
@@ -5794,7 +5839,10 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
   return { ok: true };
 }
 
-/** 把一段文字按任务的通知方式送出去。kind=notice 是系统提示（如「AI 没提交结果」），不套「汇报」外壳 */
+/**
+ * 把一段文字按任务的通知方式送出去。text 传不带任务名的正文，任务名由各通知方式自己按需加。
+ * kind=notice 是系统提示（如「AI 没提交结果」），不套「汇报」外壳
+ */
 async function deliverTaskText(
   task: ScheduledTask,
   text: string,
@@ -5804,7 +5852,7 @@ async function deliverTaskText(
   if (mode === "agent") {
     const target = resolveTaskAgentTarget(task);
     if (!target.ok) return { ok: false, error: target.error };
-    const body = kind === "result" ? formatTaskResultForAgent(task, text) : text;
+    const body = kind === "result" ? formatTaskResultForAgent(task, text) : formatTaskImMessage(task, "notice", text).text;
     if (!pushToAgentSession(target, body, `internal_taskresult_${task.id}_${Date.now()}`)) {
       return { ok: false, error: "写入会话队列失败" };
     }
@@ -5814,9 +5862,11 @@ async function deliverTaskText(
   if (mode === "im") {
     const routeKey = taskOutboundChatKey(task);
     if (!routeKey) return { ok: false, error: "找不到发送目标：发送通道不存在，或没填聊天 ID 且该通道未绑定主用户" };
-    const body = kind === "result" ? formatTaskImResult(task, text) : text;
+    // 两份正文：带任务名的 text（没有任务横幅的通道用）、不带的 titled_text（飞书横幅已是任务名时用，见 resolveSendCardText）
+    const msg = formatTaskImMessage(task, kind, text);
     const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), {
-      text: body,
+      text: msg.text,
+      titled_text: msg.titledText,
       session_key: routeKey,
       invoker_session_key: task.id,
     });
@@ -5878,7 +5928,7 @@ function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
     return;
   }
   log("WARN", `定时任务「${task.name}」运行结束但没有提交结果（未调用 ${TASK_RESULT_TOOL}）`);
-  deliverTaskText(task, taskMissingResultText(task), "notice")
+  deliverTaskText(task, TASK_MISSING_RESULT_BODY, "notice")
     .then((r) => { if (!r.ok) log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`); })
     .catch((e: unknown) => log("WARN", `定时任务「${task.name}」兜底提示异常: ${e instanceof Error ? e.message : String(e)}`));
 }

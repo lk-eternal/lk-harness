@@ -211,6 +211,8 @@ describe("send_result：独立任务交付结果", () => {
     expect(await sendResult("r-im", { text: "IM 结论" })).toContain("结果已处理")
     expect(await waitFor(() => chatHas("IM 结论"))).toBe(true)
     expect(await chatHas("任务-r-im")).toBe(true)
+    // 应用内通道没有任务横幅，任务名要留在正文第一行（飞书私聊横幅已有任务名时才省掉，那一半在单测里）
+    expect(await chatHas("⏰ **任务-r-im**")).toBe(true)
   })
 
   it("旧任务（没有 notify 字段）：有聊天 ID 视为通知到 IM，照常送达", async () => {
@@ -291,6 +293,7 @@ describe("兜底提示：独立任务跑完却没有提交结果", () => {
     writeTasks([task("f-im", { notify: "im" })])
     await runTurn("f-im")
     expect(await waitFor(() => chatHas("没有提交结果"))).toBe(true)
+    expect(await chatHas("⏰ **任务-f-im** 已运行结束，但没有提交结果。")).toBe(true)
   })
 
   it("不通知：没提交也不发任何东西", async () => {

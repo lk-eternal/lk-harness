@@ -8,6 +8,7 @@ import {
   type ScheduledTask,
 } from "../src/shared/scheduled-task.js"
 import {
+  TASK_MISSING_RESULT_BODY,
   TaskRunTracker,
   buildTaskProtocolSection,
   chooseNewTaskChannel,
@@ -15,6 +16,7 @@ import {
   describeManagedTaskOutcome,
   describeTaskDelivery,
   formatAiSelfReminder,
+  formatTaskImMessage,
   formatTaskImResult,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
@@ -291,6 +293,31 @@ describe("消息文案", () => {
   it("AI 没提交结果的提示：一句话点名任务", () => {
     const t = taskMissingResultText({ name: "周报编写" })
     expect(t).toBe("⏰ **周报编写** 已运行结束，但没有提交结果。")
+  })
+
+  it("IM 任务消息有两份写法：带任务名的 text（没有任务横幅的通道用）、不带的 titledText（飞书横幅已是任务名时用）", () => {
+    expect(formatTaskImMessage({ name: "周报编写" }, "result", " 周报已更新 ")).toEqual({
+      text: "⏰ **周报编写**\n\n周报已更新",
+      titledText: "周报已更新",
+    })
+    expect(formatTaskImMessage({ name: "周报编写" }, "notice", TASK_MISSING_RESULT_BODY)).toEqual({
+      text: "⏰ **周报编写** 已运行结束，但没有提交结果。",
+      titledText: "已运行结束，但没有提交结果。",
+    })
+  })
+
+  it("不带任务名的那份确实没有任务名：横幅已经写了，正文再来一遍就是重复（回归：飞书私聊里「⏰ 周报编写」出现两次）", () => {
+    const result = formatTaskImMessage({ name: "周报编写" }, "result", "周报已更新")
+    const notice = formatTaskImMessage({ name: "周报编写" }, "notice", TASK_MISSING_RESULT_BODY)
+    expect(result.titledText).not.toContain("周报编写")
+    expect(notice.titledText).not.toContain("周报编写")
+    expect(result.text).toContain("周报编写")
+    expect(notice.text).toContain("周报编写")
+  })
+
+  it("旧入口输出不变：formatTaskImResult / taskMissingResultText 就是新函数的 text（两处文案不会各改各的）", () => {
+    expect(formatTaskImResult({ name: "x" }, " 内容 ")).toBe(formatTaskImMessage({ name: "x" }, "result", "内容").text)
+    expect(taskMissingResultText({ name: "x" })).toBe(formatTaskImMessage({ name: "x" }, "notice", TASK_MISSING_RESULT_BODY).text)
   })
 
   it("没提交结果要不要提示：只有通知到 IM（含旧任务按聊天 ID 推断为 IM）；Agent / 不通知 / 非独立都不提示", () => {
