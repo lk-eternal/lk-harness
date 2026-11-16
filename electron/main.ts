@@ -66,6 +66,8 @@ import { windowChromeOptions } from "../src/shared/window-chrome"
 import { createIdleRestartProbes } from "./idle-probes"
 import { consumeStayHiddenMarker } from "./update-restart-marker"
 import { devTaskbarDetails } from "./dev-taskbar"
+import { buildSavedBounds, resolveWindowPlacement } from "./window-bounds"
+import type { SavedDisplay, SavedWindowBounds, WindowPlacement } from "./window-bounds"
 
 const profileArg = process.argv.find((a) => a.startsWith("--profile="))
 const profileName = profileArg?.split("=")[1] || ""
@@ -111,28 +113,44 @@ function installWindowCloseHandler(win: BrowserWindow): void {
   })
 }
 
-/** 上次窗口位置：不可见（显示器拔掉）则回落默认，避免窗口开到看不见的地方 */
-function loadWindowBounds(): NonNullable<AppConfig["windowBounds"]> | undefined {
+/** 上次记下的窗口位置；读不出来按没有处理 */
+function readSavedWindowBounds(): SavedWindowBounds | undefined {
   try {
-    const b = getConfig().windowBounds
-    if (!b || b.width < 400 || b.height < 300) return undefined
-    const visible = screen.getAllDisplays().some((d) => {
-      const a = d.workArea
-      return b.x + b.width > a.x + 50 && b.x + 50 < a.x + a.width
-        && b.y + b.height > a.y + 50 && b.y + 50 < a.y + a.height
-    })
-    return visible ? b : undefined
+    return getConfig().windowBounds
   } catch { return undefined }
 }
 
-/** 移动/缩放防抖落盘 + 关闭时必存一次（含隐藏到托盘） */
-function trackWindowBounds(win: BrowserWindow): void {
+/**
+ * 启动时窗口怎么摆：位置看不见（显示器拔掉）则回落默认；最大化的先放到记下的那块屏上再最大化，
+ * 不然副屏上最大化的窗口重启后会回到主屏（规则见 window-bounds.ts）
+ */
+function loadWindowPlacement(saved: SavedWindowBounds | undefined): WindowPlacement {
+  try {
+    return resolveWindowPlacement(saved, screen.getAllDisplays())
+  } catch { return resolveWindowPlacement(undefined, []) }
+}
+
+/** 移动/缩放/最大化防抖落盘 + 关闭时必存一次（含隐藏到托盘） */
+function trackWindowBounds(win: BrowserWindow, initial: { maximized: boolean; display: SavedDisplay | undefined }): void {
   let timer: NodeJS.Timeout | null = null
+  // 最小化时窗口自己报的「是否最大化」「在哪块屏」都不可靠，沿用上一次记下的；不用每次回头读配置（读配置要解密全部凭据）
+  let lastDisplay = initial.display
+  let lastMaximized = initial.maximized
   const persist = () => {
     if (win.isDestroyed()) return
     try {
-      const b = win.getNormalBounds()
-      saveConfig({ windowBounds: { x: b.x, y: b.y, width: b.width, height: b.height, maximized: win.isMaximized() } })
+      const minimized = win.isMinimized()
+      const next = buildSavedBounds({
+        normal: win.getNormalBounds(),
+        maximized: win.isMaximized(),
+        minimized,
+        display: minimized ? undefined : screen.getDisplayMatching(win.getBounds()),
+        previousMaximized: lastMaximized,
+        previousDisplay: lastDisplay,
+      })
+      lastDisplay = next.display
+      lastMaximized = next.maximized
+      saveConfig({ windowBounds: next })
     } catch { /* 落盘失败不阻断 */ }
   }
   const schedule = () => {
@@ -141,6 +159,9 @@ function trackWindowBounds(win: BrowserWindow): void {
   }
   win.on("resize", schedule)
   win.on("move", schedule)
+  // 最大化/还原、用快捷键把最大化的窗口送到另一块屏上，都要重新记下所在的显示器
+  win.on("maximize", schedule)
+  win.on("unmaximize", schedule)
   win.on("close", () => {
     if (timer) { clearTimeout(timer); timer = null }
     persist()
@@ -171,14 +192,16 @@ function applyLoginItemSetting(enabled: boolean): void {
 
 function createWindow(): void {
   const iconPath = resolveIcon()
-  const saved = loadWindowBounds()
+  const saved = readSavedWindowBounds()
+  const placement = loadWindowPlacement(saved)
 
   mainWindow = new BrowserWindow({
-    width: saved?.width ?? 900,
-    height: saved?.height ?? 680,
+    width: placement.width,
+    height: placement.height,
     minWidth: 780,
     minHeight: 560,
-    ...(saved && !saved.maximized ? { x: saved.x, y: saved.y } : {}),
+    // 最大化的也要带位置：系统按窗口当前所在的屏来最大化，不带就总是在主屏
+    ...(placement.x !== undefined && placement.y !== undefined ? { x: placement.x, y: placement.y } : {}),
     title: profileName ? `LK Harness [${profileName}]` : "LK Harness",
     icon: iconPath,
     autoHideMenuBar: true,
@@ -217,8 +240,8 @@ function createWindow(): void {
   })
 
   installWindowCloseHandler(mainWindow)
-  trackWindowBounds(mainWindow)
-  if (saved?.maximized) mainWindow.maximize()
+  trackWindowBounds(mainWindow, { maximized: placement.maximize, display: saved?.display })
+  if (placement.maximize) mainWindow.maximize()
 
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window:maximized-change", true))
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window:maximized-change", false))
