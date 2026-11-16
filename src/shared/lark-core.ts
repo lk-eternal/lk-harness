@@ -1,9 +1,12 @@
 import { DEFAULT_NODE_GROUP_ID, encodeRepoPairOption } from "./project-types.js";
 import { checkerFieldName } from "./question-multi.js";
+import { RepeatLogGate } from "./stream-card-failure.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as Lark from "@larksuiteoapi/node-sdk";
+
+const UTF8 = new TextEncoder();
 
 // ── 媒体缓存目录（飞书/微信下载的图片、文件、语音共用）─────
 
@@ -1232,6 +1235,30 @@ export class LarkSender {
   /** 飞书 CardKit JSON 2.0：单卡组件/元素合计 ≤200（含嵌套 tag） */
   static readonly STREAM_ELEMENT_BUDGET = 180;
   /**
+   * 飞书 200860：整张卡不能超过 30 KB。按卡片 JSON 的 UTF-8 字节数算（汉字 3 字节），默认留到 24 KB，
+   * 给「飞书的量法比我们多算一点」和构建之后的小改动留余量；真超了 daemon 按飞书的报错再收紧这张卡的预算。
+   */
+  static readonly STREAM_CARD_BYTE_BUDGET = 24 * 1024;
+
+  /** 卡片 JSON 的 UTF-8 字节数 */
+  static cardBytes(card: unknown): number {
+    return UTF8.encode(JSON.stringify(card)).length;
+  }
+
+  /**
+   * 正文太长放不下时：留开头 keepChars 个字符（尽量在行尾断开，断在代码块里就补上结束标记），
+   * 末尾写明省略了多少字。留开头而不是结尾：回答的结论和脉络通常在前面，也和流式过程中看到的一致。
+   */
+  static clipReplyForCard(text: string, keepChars: number): string {
+    if (text.length <= keepChars) return text;
+    let head = text.slice(0, Math.max(0, keepChars));
+    const lastBreak = head.lastIndexOf("\n");
+    if (lastBreak >= head.length - 200 && lastBreak > 0) head = head.slice(0, lastBreak);
+    const openFence = (head.match(/^```/gm) ?? []).length % 2 === 1;
+    const omitted = text.length - head.length;
+    return `${head.trimEnd()}${openFence ? "\n```" : ""}\n\n<font color='grey'>_…（内容过长，后面约 ${omitted} 字因飞书卡片大小限制未显示）_</font>`;
+  }
+  /**
    * 保留最近 N 个「过程段」：连续的思考/工具块算一段（一个折叠组或一个单独的块都是一段），
    * 更早的整段一起丢；每段内部每类也最多留最近 N 个。reply 与 todos 永不丢。
    * 名字沿用旧的 per-kind，是因为它已经落进用户配置（streamKeepPerKind*）。
@@ -1453,6 +1480,8 @@ export class LarkSender {
     status?: "streaming" | "completed" | "error";
     showThinking?: boolean;
     keepPerKind?: number;
+    /** 整卡 JSON 的 UTF-8 字节上限，默认 STREAM_CARD_BYTE_BUDGET；daemon 在飞书报 200860 后对这张卡收紧 */
+    byteBudget?: number;
     sessionTitle?: CardTitle;
     sessionTemplate?: string;
     segments?: Array<
@@ -1660,8 +1689,33 @@ export class LarkSender {
         }
       }
     }
+    const interactive = (opts?.buttons?.length ?? 0) > 0 || !!opts?.input
+      || (segments ?? []).some((s) => s.type === "question" && ((s as { buttons?: CardButton[] }).buttons?.length || (s as { form?: QuestionMultiForm }).form));
+    const cardOf = (els: Record<string, unknown>[]): Record<string, unknown> => ({
+      schema: "2.0",
+      config: {
+        streaming_mode: status === "streaming" && !interactive,
+        update_multi: true,
+        width_mode: "fill",
+        summary: { content: status === "streaming" ? "思考中…" : status === "completed" ? "已完成" : "出错" },
+        style: {
+          color: {
+            "cus-hdr": {
+              light_mode: `rgba(${sessionRgb},0.14)`,
+              dark_mode: `rgba(${sessionRgb},0.26)`,
+            },
+          },
+        },
+      },
+      body: { horizontal_align: "left", elements: els },
+    });
+
+    // 两道上限：飞书 300305（元素个数 ≤200）和 200860（整卡 ≤30 KB）。任何一道超了都走同一套收敛
+    const byteBudget = Math.max(1024, opts?.byteBudget ?? LarkSender.STREAM_CARD_BYTE_BUDGET);
     let elements = buildBodyElements(segs);
-    const overBudget = () => LarkSender.countCardElements(elements) > LarkSender.STREAM_ELEMENT_BUDGET;
+    const overElements = () => LarkSender.countCardElements(elements) > LarkSender.STREAM_ELEMENT_BUDGET;
+    const overBytes = () => LarkSender.cardBytes(cardOf(elements)) > byteBudget;
+    const overBudget = () => overElements() || overBytes();
     if (overBudget()) {
       // 1) 轻量降级：非最新工具块剥 detail
       const lastTools = LarkSender.lastToolsIndex(segs);
@@ -1675,14 +1729,17 @@ export class LarkSender {
       // 2) 仍超限：按时间从早到晚继续丢（无省略文案）。
       //    过程段整段丢（组里的思考和工具一起走，不留孤零零的思考）；
       //    只有含最新工具块的那一段受保护，只能从它内部丢最早的思考/非最新工具。
+      //    一个工具块都没有时（纯思考）受保护的是最后一段里的最后一个思考——否则按体积收敛时会把过程丢光，卡片变空
       while (overBudget()) {
+        const ranges = LarkSender.processUnitRanges(segs);
         const lt = LarkSender.lastToolsIndex(segs);
+        const anchor = lt >= 0 ? lt : (ranges.length ? ranges[ranges.length - 1][1] : -1);
         let dropped = false;
-        for (const [start, end] of LarkSender.processUnitRanges(segs)) {
-          if (lt >= start && lt <= end) {
+        for (const [start, end] of ranges) {
+          if (anchor >= start && anchor <= end) {
             let idx = -1;
             for (let i = start; i <= end; i++) {
-              if (segs[i].type === "thinking" || (segs[i].type === "tools" && i !== lt)) { idx = i; break; }
+              if (i !== anchor && (segs[i].type === "thinking" || segs[i].type === "tools")) { idx = i; break; }
             }
             if (idx < 0) continue;
             segs.splice(idx, 1);
@@ -1715,28 +1772,41 @@ export class LarkSender {
           elements = buildBodyElements(segs);
         }
       }
+
+      // 4) 体积仍超：剩下的思考只留尾部，逐级收紧（800 → 400 → 200 字）
+      for (const cap of [800, 400, 200]) {
+        if (!overBytes()) break;
+        segs = segs.map((s) =>
+          s.type === "thinking" && s.text.length > cap ? { ...s, text: `…${s.text.slice(-cap)}` } : s,
+        );
+        elements = buildBodyElements(segs);
+      }
+
+      // 5) 只剩正文还超：正文永不丢，只截掉最长那条的后半（前面完整、末尾写明省略了多少字）。
+      //    这一步只会动「放不进卡片」的正文；放得下的正文原样保留（过去这种卡整张更新失败，卡片停在旧内容上）
+      if (overBytes()) {
+        let longest = -1;
+        segs.forEach((s, i) => {
+          if (s.type === "reply" && (longest < 0 || s.text.length > (segs[longest] as { text: string }).text.length)) longest = i;
+        });
+        if (longest >= 0) {
+          const full = (segs[longest] as { text: string }).text;
+          // 不算这条正文卡片本身就超了：截正文救不了，不去动它
+          segs[longest] = { type: "reply", text: "" };
+          const restOver = LarkSender.cardBytes(cardOf(buildBodyElements(segs))) >= byteBudget;
+          segs[longest] = { type: "reply", text: full };
+          let keep = full.length;
+          for (let round = 0; !restOver && round < 6 && overBytes() && keep > 200; round++) {
+            const ratio = Math.min(0.9, (byteBudget / LarkSender.cardBytes(cardOf(elements))) * 0.9);
+            keep = Math.max(200, Math.floor(keep * ratio));
+            segs[longest] = { type: "reply", text: LarkSender.clipReplyForCard(full, keep) };
+            elements = buildBodyElements(segs);
+          }
+        }
+      }
     }
 
-    const interactive = (opts?.buttons?.length ?? 0) > 0 || !!opts?.input
-      || (segments ?? []).some((s) => s.type === "question" && ((s as { buttons?: CardButton[] }).buttons?.length || (s as { form?: QuestionMultiForm }).form));
-    return {
-      schema: "2.0",
-      config: {
-        streaming_mode: status === "streaming" && !interactive,
-        update_multi: true,
-        width_mode: "fill",
-        summary: { content: status === "streaming" ? "思考中…" : status === "completed" ? "已完成" : "出错" },
-        style: {
-          color: {
-            "cus-hdr": {
-              light_mode: `rgba(${sessionRgb},0.14)`,
-              dark_mode: `rgba(${sessionRgb},0.26)`,
-            },
-          },
-        },
-      },
-      body: { horizontal_align: "left", elements },
-    };
+    return cardOf(elements);
   }
 
   /**
@@ -1811,12 +1881,25 @@ export class LarkSender {
     }
   }
 
-  /** 全量更新 CardKit 卡片（时间线刷新 / 收口绿头） */
+  /** 流式卡更新失败的日志合并：同一张卡同一种错误 30 秒内只打一条（失败会随新内容每秒重试，过去每次都打一条把日志刷满） */
+  private readonly updateFailLog = new RepeatLogGate();
+
+  /**
+   * 全量更新 CardKit 卡片（时间线刷新 / 收口绿头）。
+   * 失败时 onFailure 拿到飞书的错误码（异常时没有 code），调用方据此决定怎么应对（比如 200860 体积超限就收紧后重试）。
+   */
   async updateStreamingCard(
     cardId: string,
     cardJson: Record<string, unknown>,
     sequence: number,
+    onFailure?: (failure: { code?: number; msg?: string }) => void,
   ): Promise<boolean> {
+    const failed = (key: string, text: string, failure: { code?: number; msg?: string }): false => {
+      const gate = this.updateFailLog.shouldLog(`${cardId}|${key}`);
+      if (gate) this.log("WARN", `${text}${gate.merged ? `（此前 ${gate.merged} 次相同失败已合并不再逐条打印）` : ""}`);
+      onFailure?.(failure);
+      return false;
+    };
     try {
       const res = await this.client.request({
         method: "PUT",
@@ -1828,13 +1911,12 @@ export class LarkSender {
       }) as any;
       const code = res?.code;
       if (code !== undefined && code !== 0) {
-        this.log("WARN", `全量更新流式卡片失败 code=${code} msg=${res?.msg ?? ""} seq=${sequence}`);
-        return false;
+        return failed(`code:${code}`, `全量更新流式卡片失败 code=${code} msg=${res?.msg ?? ""} seq=${sequence} size=${LarkSender.cardBytes(cardJson)}B`, { code, msg: res?.msg });
       }
+      this.updateFailLog.resolve(`${cardId}|`);
       return true;
     } catch (e: any) {
-      this.log("WARN", `全量更新流式卡片异常: ${e?.message ?? e} seq=${sequence}`);
-      return false;
+      return failed(`exc:${e?.message ?? e}`, `全量更新流式卡片异常: ${e?.message ?? e} seq=${sequence}`, { msg: String(e?.message ?? e) });
     }
   }
 

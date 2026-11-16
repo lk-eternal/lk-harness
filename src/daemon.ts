@@ -16,6 +16,7 @@ import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./share
 import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
+import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
@@ -1830,6 +1831,12 @@ interface AgentStreamCardState {
   modelLabel?: string;
   /** 回合没跑完就被收口（Electron 随 finish 下发），页脚标注「Agent 已中断」 */
   interrupted?: boolean;
+  /** 这张卡的体积预算（字节）：飞书报 200860 后收紧；没设就用默认值。只收紧不放宽，卡只活一个回合 */
+  byteBudget?: number;
+  /** 整卡更新连续失败的次数；成功清零 */
+  updateFailures?: number;
+  /** 失败后的退避：这个时刻之前不再发流式刷新（收口不受限），期间的新内容留在 lastSegments 里，放行时一并带上 */
+  retryNotBefore?: number;
 }
 
 const agentStreamCards = new Map<string, AgentStreamCardState>();
@@ -2266,6 +2273,7 @@ function buildAgentStreamCardJson(
     status,
     showThinking: state.showThinking,
     keepPerKind: LarkSender.normalizeStreamKeepPerKind(daemonFlagsForSession(sessionKey, ch.rt.cfg).streamKeepPerKind),
+    byteBudget: state.byteBudget,
     sessionTitle: state.sessionTitle,
     sessionTemplate: state.sessionTemplate,
     segments: cardSegs,
@@ -2283,7 +2291,7 @@ async function refreshAgentStreamCard(
   opts: { finish: boolean },
 ): Promise<boolean> {
   const run = async (): Promise<boolean> => {
-    const { cardJson } = buildAgentStreamCardJson(sessionKey, state, ch, opts.finish);
+    let { cardJson } = buildAgentStreamCardJson(sessionKey, state, ch, opts.finish);
     const merged = buildCardMergedPayload(sessionKey, state);
     const terminal = opts.finish || state.finished === true;
     const sender = ch.rt.sender!;
@@ -2299,8 +2307,25 @@ async function refreshAgentStreamCard(
       }
     }
     state.sequence += 1;
-    const ok = await sender.updateStreamingCard(state.cardId, cardJson, state.sequence);
+    let failure: { code?: number; msg?: string } = {};
+    let ok = await sender.updateStreamingCard(state.cardId, cardJson, state.sequence, (f) => { failure = f; });
+    if (!ok && failure.code === CARD_OVER_SIZE_CODE) {
+      // 飞书说卡片超过 30 KB：我们的估算偏松（或这一帧有估算不到的内容）。
+      // 以飞书的报错为准，把这张卡的体积预算收紧后重建再发一次，并记住新预算——之后每一帧都按它收敛，不再一帧帧撞墙
+      const before = state.byteBudget ?? LarkSender.STREAM_CARD_BYTE_BUDGET;
+      state.byteBudget = tightenByteBudget(before);
+      log("WARN", `[StreamCard] 卡片体积超限(200860)，预算 ${Math.round(before / 1024)}KB → ${Math.round(state.byteBudget / 1024)}KB 后重试 session=${sessionKey} card=${state.cardId}`);
+      ({ cardJson } = buildAgentStreamCardJson(sessionKey, state, ch, opts.finish));
+      state.sequence += 1;
+      failure = {};
+      ok = await sender.updateStreamingCard(state.cardId, cardJson, state.sequence, (f) => { failure = f; });
+    }
     if (ok) {
+      if (state.updateFailures) {
+        log("INFO", `[StreamCard] 整卡更新已恢复 session=${sessionKey} card=${state.cardId}（此前连续失败 ${state.updateFailures} 次）`);
+      }
+      state.updateFailures = 0;
+      state.retryNotBefore = undefined;
       if (opts.finish) state.finished = true;
       state.lastHash = payloadFingerprint(merged, opts.finish);
       const sk = normalizeSessionKey(sessionKey) || sessionKey;
@@ -2310,6 +2335,11 @@ async function refreshAgentStreamCard(
         const rt = getSessionRuntime(sessionKey);
         if (rt === "llm" || rt === "sdk") touchSessionLastReply(sk);
       }
+    } else {
+      // 失败了：记下连续失败次数并退避（流式刷新在 retryNotBefore 之前不再发，见 updateAgentStreamCard）。
+      // 过去失败后没有任何应对，下一次新内容立刻再发一遍同样会失败的整卡，约每秒一次
+      state.updateFailures = (state.updateFailures ?? 0) + 1;
+      state.retryNotBefore = Date.now() + streamCardBackoffMs(state.updateFailures);
     }
     return ok;
   };
@@ -2452,7 +2482,7 @@ async function updateAgentStreamCard(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   expectCardId?: string,
   modelLabel?: string,
-): Promise<{ ok: boolean; cardId?: string; messageId?: string; error?: string; gone?: boolean }> {
+): Promise<{ ok: boolean; cardId?: string; messageId?: string; error?: string; gone?: boolean; skipped?: boolean }> {
   let state = agentStreamCards.get(sessionKey);
   if (!state) {
     const ensured = await ensureAgentStreamCard(sessionKey, payload, ch);
@@ -2477,6 +2507,10 @@ async function updateAgentStreamCard(
     if (fp === state.lastHash) {
       return { ok: true, cardId: state.cardId, messageId: state.messageId };
     }
+  }
+  // 上次整卡更新失败、还在退避期：新内容已经记在 state.lastSegments 里，放行的那一次会一并发出；收口不受这个限制
+  if (state.retryNotBefore && Date.now() < state.retryNotBefore) {
+    return { ok: true, skipped: true, cardId: state.cardId, messageId: state.messageId };
   }
   const ok = await refreshAgentStreamCard(sessionKey, state, ch, { finish: false });
   if (!ok) return { ok: false, cardId: state.cardId, messageId: state.messageId, error: "更新流式卡片失败" };
@@ -2944,7 +2978,7 @@ function resolveCardActionChatType(rt: ChannelRuntime, chatKey: string, rawChatI
 }
 
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
