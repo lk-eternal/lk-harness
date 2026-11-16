@@ -46,6 +46,7 @@ export interface AppConfig {
   gitlabHost?: string
   repoRoots?: string[]
   worktreeRoot?: string
+  gitPrinciples?: string
 }
 
 export interface DaemonStatus {

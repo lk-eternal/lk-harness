@@ -7,7 +7,7 @@ import type {
 } from "./flow-hub-types.js"
 import { computeGroupContentHash, computeNodeContentHash } from "./flow-hub-hash.js"
 import { parseNodeGroupExport } from "./project-store.js"
-import type { ProjectNodeDef, ProjectNodeGroupDef } from "./project-types.js"
+import { normalizeWorkBranchMode, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
 
 export function ensureHubId<T extends { hubId?: string }>(item: T): T & { hubId: string } {
   return { ...item, hubId: item.hubId?.trim() || randomUUID() }
@@ -87,6 +87,7 @@ export function parseGroupEnvelope(raw: unknown): FlowHubGroupEnvelope | null {
     id: (env.group.id ?? "").trim() || "import",
     name: env.group.name.trim(),
     ...(env.group.workspace === "plain" || env.group.workspace === "worktree" ? { workspace: env.group.workspace } : {}),
+    ...(normalizeWorkBranchMode(env.group.branchMode) !== "new" ? { branchMode: normalizeWorkBranchMode(env.group.branchMode) } : {}),
     nodes: env.group.nodes
       .filter((n) => n?.id?.trim() && n?.label?.trim())
       .map((n) => ({
@@ -136,6 +137,7 @@ function legacyGroupToEnvelope(group: ProjectNodeGroupDef): FlowHubGroupEnvelope
     id: group.id,
     name: group.name,
     ...(group.workspace ? { workspace: group.workspace } : {}),
+    ...(group.branchMode ? { branchMode: group.branchMode } : {}),
     nodes: group.nodes.map((n) => nodeDefToPayload(n)),
   }
   return buildGroupEnvelope({
@@ -160,6 +162,7 @@ export function groupDefToBody(g: ProjectNodeGroupDef): FlowHubGroupBody {
     id: g.id,
     name: g.name,
     ...(g.workspace ? { workspace: g.workspace } : {}),
+    ...(g.branchMode ? { branchMode: g.branchMode } : {}),
     nodes: g.nodes.map((n) => nodeDefToPayload(n)),
   }
 }
@@ -169,6 +172,7 @@ export function envelopeToGroupDef(env: FlowHubGroupEnvelope): ProjectNodeGroupD
     id: env.group.id,
     name: env.group.name,
     ...(env.group.workspace ? { workspace: env.group.workspace } : {}),
+    ...(env.group.branchMode ? { branchMode: env.group.branchMode } : {}),
     nodes: env.group.nodes.map((n) => ({
       id: n.id,
       label: n.label,

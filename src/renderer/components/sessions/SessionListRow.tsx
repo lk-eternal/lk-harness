@@ -79,7 +79,7 @@ export default function SessionListRow({
     : undefined
   const managed = item.owner === "others" ? item.managed : undefined
   const deleteTitle = item.owner === "mine"
-    ? (item.type === "project" ? "删除项目（连带移除 AI 工作目录）" : "删除会话")
+    ? (item.type === "project" ? "删除项目（连带移除项目目录）" : "删除会话")
     : !managed?.manageable ? managed?.blockedReason : !daemonRunning ? DAEMON_DOWN_HINT : "删除会话"
 
   return (

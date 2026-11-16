@@ -1,7 +1,16 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { randomBytes, randomUUID } from "node:crypto"
-import { DEFAULT_NODE_GROUPS, DEFAULT_NODE_GROUP_ID, projectGroupChatMatches, type Project, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
+import {
+  DEFAULT_NODE_GROUPS,
+  DEFAULT_NODE_GROUP_ID,
+  normalizeWorkBranchMode,
+  projectGroupChatMatches,
+  type Project,
+  type ProjectNodeDef,
+  type ProjectNodeGroupDef,
+} from "./project-types.js"
+import { migrateLegacyRepoFields } from "./project-repo-info.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
 import { cloneGroupPlain, normalizeFieldDefs } from "./project-templates.js"
 import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
@@ -12,6 +21,45 @@ let baseDir = ""
 export function initProjectStore(userDataDir: string): void {
   baseDir = path.join(userDataDir, "projects")
   ensureDir(baseDir)
+  migrateLegacyProjectFilesOnce()
+}
+
+const LEGACY_MIGRATION_MARKER = ".repo-info-migrated"
+/** 旧文件迁移的备份目录：迁之前把要改的项目文件原样拷一份进来，出问题可以手工还原 */
+export const LEGACY_BACKUP_DIR = "backup-before-repo-info"
+const LEGACY_FIELDS = ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]
+const migratedDirs = new Set<string>()
+
+/**
+ * 一次性迁移：把还带着旧版仓库、分支字段（repoPath / baseBranch / featureBranch / repos / workspaceType）的项目文件
+ * 改写成新版（折进项目信息）。迁之前先备份；做完写一个标记文件，以后不再扫描。
+ * 即使没跑成也不影响使用：读项目时每次都会做同样的转换（见 normalizeProject），这里只是让旧字段尽早从文件里消失。
+ */
+function migrateLegacyProjectFilesOnce(): void {
+  if (migratedDirs.has(baseDir)) return
+  migratedDirs.add(baseDir)
+  const marker = path.join(baseDir, LEGACY_MIGRATION_MARKER)
+  if (fs.existsSync(marker)) return
+  let allOk = true
+  try {
+    for (const f of fs.readdirSync(baseDir)) {
+      if (!f.endsWith(".json") || f === "current.json") continue
+      const fp = path.join(baseDir, f)
+      try {
+        const raw = readJsonSafe<(Project & Record<string, unknown>) | null>(fp, null)
+        if (!raw || typeof raw.id !== "string") continue
+        if (!LEGACY_FIELDS.some((k) => raw[k] !== undefined)) continue
+        const backupDir = path.join(baseDir, LEGACY_BACKUP_DIR)
+        ensureDir(backupDir)
+        const backup = path.join(backupDir, f)
+        if (!fs.existsSync(backup)) fs.copyFileSync(fp, backup)
+        writeJson(fp, normalizeProject(raw))
+      } catch {
+        allOk = false
+      }
+    }
+    if (allOk) fs.writeFileSync(marker, new Date().toISOString(), "utf-8")
+  } catch { /* 读目录失败：下次启动再试 */ }
 }
 
 export function getProjectStoreDir(): string {
@@ -47,6 +95,8 @@ function sanitizeGroups(groups: ProjectNodeGroupDef[] | null | undefined): Proje
       id: g.id.trim(),
       name: g.name.trim(),
       ...(g.workspace === "plain" || g.workspace === "worktree" ? { workspace: g.workspace } : {}),
+      // 只存非默认值：缺省就是「新建分支」，存量模板的文件内容和中心库哈希都不变
+      ...(normalizeWorkBranchMode(g.branchMode) !== "new" ? { branchMode: normalizeWorkBranchMode(g.branchMode) } : {}),
       ...(typeof g.description === "string" && g.description.trim() ? { description: g.description.trim() } : {}),
       ...(normalizeFieldDefs(g.fields) ? { fields: normalizeFieldDefs(g.fields) } : {}),
       ...pickHubTrack(g),
@@ -92,6 +142,7 @@ export function parseNodeGroupExport(raw: unknown): ProjectNodeGroupDef | null {
     id: (c.id ?? "").trim() || "import",
     name: c.name,
     workspace: c.workspace === "plain" || c.workspace === "worktree" ? c.workspace : "worktree",
+    branchMode: c.branchMode,
     description: c.description,
     fields: c.fields,
     nodes: c.nodes,
@@ -195,9 +246,11 @@ function seedMissingDefaults(file: NodeGroupsFile): boolean {
     }
     mark(`group:${dg.id}`)
     if (!group) { for (const n of dg.nodes) mark(n.id); continue }
-    // 旧版本无 workspace 字段：按默认组补上（用户在新版设置页保存后字段固化，不再覆盖）
+    // 旧版本无 workspace 字段：按默认组补上（用户在新版设置页保存后字段固化，不再覆盖）。
+    // 「测试」组以前是不接代码仓库的，老文件里缺这个字段的按老行为补，别悄悄变成接仓库；
+    // branchMode 不补：只有全新安装的默认「测试」模板才自带，存量模板由用户自己在模板里打开
     if (group.workspace === undefined && dg.workspace) {
-      group.workspace = dg.workspace
+      group.workspace = dg.id === "test" ? "plain" : dg.workspace
       changed = true
     }
     // 旧版本没有模板说明：补上默认组的说明（只补空的，不覆盖用户写的）
@@ -352,7 +405,9 @@ function writeJson(filePath: string, data: unknown): void {
  */
 function normalizeProject(raw: Project & { status?: unknown; watchBugs?: unknown }): Project {
   // status 是旧版的三态；watchBugs 是旧版「自动盯缺陷」的开关（功能已去掉）：老项目文件里留着的都不要了，下次保存时一并清掉
-  const { status, watchBugs, ...rest } = raw
+  const { status, watchBugs, ...legacyRest } = raw
+  // 旧版的仓库、分支字段折进项目信息（见 project-repo-info.ts）：读出来就是新形状，下次保存时旧字段从文件里消失
+  const rest = migrateLegacyRepoFields(legacyRest)
   const p: Project = { ...rest }
   if (status === "done" && !p.archivedAt) p.archivedAt = p.updatedAt || p.createdAt || Date.now()
   if (!p.lastArtifactPath && Array.isArray(p.actions) && p.actions.length) {
@@ -511,14 +566,9 @@ export function createProject(input: Omit<Project, "id" | "archivedAt" | "create
     relatedDocs: input.relatedDocs,
     productDocUrl: input.productDocUrl,
     techDocUrl: input.techDocUrl,
-    repoPath: input.repoPath,
-    baseBranch: input.baseBranch,
-    featureBranch: input.featureBranch,
     worktreePath: input.worktreePath,
-    repos: input.repos,
     groupIds,
     groupId: groupIds[0],
-    workspaceType: input.workspaceType,
     ...(input.groupSnapshot?.length ? { groupSnapshot: input.groupSnapshot } : {}),
     ...(input.externalWorkspace ? { externalWorkspace: true } : {}),
     ...(input.metadata && Object.keys(input.metadata).length ? { metadata: input.metadata } : {}),

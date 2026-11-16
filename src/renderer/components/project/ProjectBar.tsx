@@ -147,7 +147,6 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
             </div>
             <p className="mt-0.5 text-[11.5px] text-fg-muted">
               {view.templateNames.join(" + ")}
-              {view.featureBranch ? ` · 分支 ${view.featureBranch}` : ""}
             </p>
           </div>
 

@@ -1,3 +1,4 @@
+import * as path from "node:path"
 import { describe, expect, it } from "vitest"
 import {
   ACTION_ID_RESERVED, TEMPLATE_FIELDS_MAX, TEMPLATE_ID_RE, TEMPLATE_NAME_MAX,
@@ -92,13 +93,26 @@ describe("buildNewTemplate / applyTemplateEdit", () => {
     expect(plan.ok).toBe(true)
   })
 
-  it("研发类新模板：建项时要求接代码仓库", () => {
+  it("接代码仓库的新模板：建项时可以选仓库（可选，不选也能建）；默认工作分支是新建分支，不写 branchMode", () => {
     const g = buildNewTemplate({ name: "后端", description: "", workspace: "worktree", fields: [] }, [], [])
     expect(g.workspace).toBe("worktree")
     expect(g.description).toBeUndefined()
     expect(g.fields).toBeUndefined()
+    expect("branchMode" in g).toBe(false)
     const plan = planProjectCreate({ name: "x", templateId: g.id }, [g])
-    expect(plan.ok).toBe(false)
+    expect(plan.ok && plan.repos).toEqual([])
+  })
+
+  it("新模板可以选默认工作分支；不接仓库的模板不留这个值", () => {
+    const test = buildNewTemplate({ name: "测试", description: "", workspace: "worktree", branchMode: "test", fields: [] }, [], [])
+    expect(test.branchMode).toBe("test")
+    const repo = [{ repoPath: path.resolve(path.sep, "r", "shop"), baseBranch: "main" }]
+    const plan = planProjectCreate({ name: "x", templateId: test.id, repos: repo }, [test])
+    expect(plan.ok && plan.workBranch).toBe("test")
+    const plain = buildNewTemplate({ name: "调研", description: "", workspace: "plain", branchMode: "test", fields: [] }, [], [])
+    expect("branchMode" in plain).toBe(false)
+    const dirty = buildNewTemplate({ name: "脏", description: "", workspace: "worktree", branchMode: "bogus" as never, fields: [] }, [], [])
+    expect("branchMode" in dirty).toBe(false)
   })
 
   it("两次建同名模板：id 不同；起步快捷操作 id 也避开已有的", () => {
@@ -108,19 +122,35 @@ describe("buildNewTemplate / applyTemplateEdit", () => {
     expect(b.nodes[0].id).not.toBe(a.nodes[0].id)
   })
 
-  it("编辑已有模板：只改名称、说明、要填的信息；类型、id、快捷操作、共享空间跟踪信息原样保留；清空说明和字段会真的清掉", () => {
+  it("编辑已有模板：改名称、说明、要填的信息、接不接代码仓库和默认工作分支；id、快捷操作、共享空间跟踪信息原样保留；清空说明和字段会真的清掉", () => {
     const g: ProjectNodeGroupDef = {
       id: "design", name: "设计", workspace: "worktree", description: "旧说明", fields: [{ label: "旧字段" }],
       hubId: "h1", hubRevision: 3, nodes: [{ id: "a", label: "A", prompt: "p" }],
     }
     const edited = applyTemplateEdit(g, { name: " 设计2 ", description: "新说明", workspace: "plain", fields: [{ label: "新字段" }] })
     expect(edited).toEqual({
-      id: "design", name: "设计2", workspace: "worktree", description: "新说明", fields: [{ label: "新字段" }],
+      id: "design", name: "设计2", workspace: "plain", description: "新说明", fields: [{ label: "新字段" }],
       hubId: "h1", hubRevision: 3, nodes: [{ id: "a", label: "A", prompt: "p" }],
     })
     const cleared = applyTemplateEdit(g, { name: "设计", description: "  ", workspace: "worktree", fields: [] })
     expect("description" in cleared).toBe(false)
     expect("fields" in cleared).toBe(false)
     expect(g.description).toBe("旧说明")
+  })
+
+  it("已有模板可以随时打开 / 关掉「接入代码仓库」，也可以改默认工作分支", () => {
+    const plain: ProjectNodeGroupDef = { id: "visit", name: "拜访", workspace: "plain", nodes: [{ id: "a", label: "A" }] }
+    const on = applyTemplateEdit(plain, { name: "拜访", description: "", workspace: "worktree", branchMode: "develop", fields: [] })
+    expect(on).toMatchObject({ id: "visit", workspace: "worktree", branchMode: "develop" })
+    // 改回默认「新建分支」：不留 branchMode，也就是回到存量模板的样子
+    const back = applyTemplateEdit(on, { name: "拜访", description: "", workspace: "worktree", branchMode: "new", fields: [] })
+    expect("branchMode" in back).toBe(false)
+    // 关掉仓库：工作分支一并清掉，免得以后又打开时悄悄带着旧值
+    const off = applyTemplateEdit(on, { name: "拜访", description: "", workspace: "plain", branchMode: "develop", fields: [] })
+    expect(off.workspace).toBe("plain")
+    expect("branchMode" in off).toBe(false)
+    // 草稿没带 branchMode（老调用方）：按默认处理
+    const none = applyTemplateEdit(on, { name: "拜访", description: "", workspace: "worktree", fields: [] })
+    expect("branchMode" in none).toBe(false)
   })
 })

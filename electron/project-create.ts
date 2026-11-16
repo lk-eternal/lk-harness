@@ -5,21 +5,21 @@
 import { app } from "electron"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { addRepoProfilesIfMissing, findRepoProfile, getChannel, getConfig, getRepoProfiles } from "./config-store"
+import { addRepoProfilesIfMissing, getChannel, getRepoProfiles } from "./config-store"
 import { readLockFile, resolveMainChatId } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import {
   archiveProjectGroup,
-  defaultFeatureBranch,
   enterProjectSession,
   executeProjectDelete,
   startProjectNode,
-  uniqueProjectSlug,
 } from "./project-commands"
 import { leaveProjectSession, releaseProjectRoutes, stopSessionAgent } from "./session-dispatcher"
-import { addProjectClone, ensureArtifactDir, inspectLocalRepo, isUsableRepoRef, isValidBranchName, removeDirRobust } from "./project-worktree"
+import { inspectLocalRepo } from "./project-worktree"
+import { prepareProjectWorkspace, projectsRootDir } from "./project-workspace"
 import { pushUiLog } from "./ui-logger"
 import {
+  isRemoteRepoUrl,
   projectNotOwnedHint,
   repoDisplayName,
   type InspectRepoResult,
@@ -39,7 +39,6 @@ import {
   planProjectCreate,
   syncedSnapshot,
   templateInfos,
-  type ProjectCreatePlan,
 } from "../src/shared/project-create-plan.js"
 import {
   createProject,
@@ -57,7 +56,9 @@ import {
 } from "../src/shared/project-store.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
 import { APP_CHANNEL_CHAT_ID, makeChatKey } from "../src/shared/channel-types.js"
-import { projectRootDir, projectSessionKey, repoShortName, type Project, type ProjectRepo } from "../src/shared/project-types.js"
+import { projectRootDir, projectSessionKey, type Project } from "../src/shared/project-types.js"
+
+export { projectsRootDir }
 
 function ensureStore(): void {
   initProjectStore(app.getPath("userData"))
@@ -77,7 +78,13 @@ export function listProjectTemplates(): ProjectTemplateInfo[] {
 
 /** 常用仓库（建项时勾选）：设置里配的和以前建项时自动记下的 */
 export function listProjectRepoOptions(): ProjectRepoOption[] {
-  return getRepoProfiles().map((p) => ({ path: p.path, name: repoDisplayName(p.path), baseBranch: p.baseBranch }))
+  return getRepoProfiles().map((p) => ({
+    path: p.path,
+    name: repoDisplayName(p.path),
+    baseBranch: p.baseBranch,
+    // 远程地址本机没有副本可用，一律克隆（设置页里这个勾选对它不可改）
+    clone: isRemoteRepoUrl(p.path) || p.clone !== false,
+  }))
 }
 
 /** 桌面端「添加本地仓库」：确认是 git 仓库根目录，给出默认基线分支和分支提示 */
@@ -88,132 +95,28 @@ export async function inspectProjectRepo(repoPath: string): Promise<InspectRepoR
   return { ok: true, path: path.resolve(dir), name: repoDisplayName(dir), baseBranch: r.info.defaultBranch, branches: r.info.branches }
 }
 
-/** 项目文件夹的存放根目录：设置里配了就用它，没配用应用数据目录下的 claw-projects */
-export function projectsRootDir(): string {
-  return (getConfig().worktreeRoot || "").trim() || path.join(app.getPath("userData"), "claw-projects")
-}
+type FolderWorkspace = { ok: true; dir: string } | { ok: false; error: string }
 
-type FolderWorkspace = { ok: true; workDir: string; external: boolean } | { ok: false; error: string }
-
-/** 不接代码仓库的项目：用户选的已有文件夹，或在存放根目录下新建一个 */
-function prepareFolderWorkspace(name: string, folder: string | undefined): FolderWorkspace {
-  if (folder?.trim()) {
-    const checked = checkExternalFolder(folder, {
-      userDataDir: app.getPath("userData"),
-      projects: listProjects().map((p) => ({
-        name: p.name,
-        dir: projectRootDir(p) || p.worktreePath || "",
-        external: p.externalWorkspace === true,
-      })),
-    })
-    if (!checked.ok) return { ok: false, error: checked.error }
-    try {
-      if (!fs.statSync(checked.dir).isDirectory()) return { ok: false, error: `不是文件夹：${checked.dir}` }
-    } catch {
-      return { ok: false, error: `文件夹不存在：${checked.dir}` }
-    }
-    return { ok: true, workDir: checked.dir, external: true }
-  }
-  const workDir = path.join(projectsRootDir(), uniqueProjectSlug(name), "workspace")
+/** 用户选了已有文件夹当项目目录（只有不接代码仓库的模板才能选）：校验一下，应用不动里面的任何东西 */
+function prepareFolderWorkspace(folder: string): FolderWorkspace {
+  const checked = checkExternalFolder(folder, {
+    userDataDir: app.getPath("userData"),
+    projects: listProjects().map((p) => ({
+      name: p.name,
+      dir: projectRootDir(p) || p.worktreePath || "",
+      external: p.externalWorkspace === true,
+    })),
+  })
+  if (!checked.ok) return { ok: false, error: checked.error }
   try {
-    fs.mkdirSync(workDir, { recursive: true })
-  } catch (e: unknown) {
-    return { ok: false, error: `无法创建项目目录：${e instanceof Error ? e.message : String(e)}` }
+    if (!fs.statSync(checked.dir).isDirectory()) return { ok: false, error: `不是文件夹：${checked.dir}` }
+  } catch {
+    return { ok: false, error: `文件夹不存在：${checked.dir}` }
   }
-  return { ok: true, workDir, external: false }
+  return { ok: true, dir: checked.dir }
 }
 
-/**
- * 占一个项目目录：不递归地 mkdir，同名已经存在就换个名字再试。
- * 「检查不存在」和「创建」是一步完成的，两个同名项目同时在建时不会拿到同一个目录
- * （否则后到的那个失败清理时，会把先到的那份克隆一起删掉）；磁盘上没人认领的同名旧目录也不会撞上。
- */
-function claimProjectDir(root: string, slug: string): { ok: true; dir: string } | { ok: false; error: string } {
-  try {
-    fs.mkdirSync(root, { recursive: true })
-    for (let i = 0; i < 20; i++) {
-      const dir = path.join(root, i === 0 ? slug : `${slug}-${Date.now().toString(36)}${i > 1 ? i : ""}`)
-      try {
-        fs.mkdirSync(dir)
-        return { ok: true, dir }
-      } catch (e: unknown) {
-        if ((e as NodeJS.ErrnoException)?.code !== "EEXIST") throw e
-      }
-    }
-    return { ok: false, error: `无法创建项目目录：「${slug}」的同名目录太多` }
-  } catch (e: unknown) {
-    return { ok: false, error: `无法创建项目目录：${e instanceof Error ? e.message : String(e)}` }
-  }
-}
-
-/** 落盘失败后收拾新建的空目录：只删空的（目录里已经有东西就不是这次建的，不动），用户自己选的文件夹不会走到这里 */
-async function dropEmptyWorkspace(workDir: string): Promise<void> {
-  for (const dir of [workDir, path.dirname(workDir)]) {
-    try { await fs.promises.rmdir(dir) } catch { return }
-  }
-}
-
-type CodeWorkspace =
-  | { ok: true; repos: ProjectRepo[]; featureBranch: string; undo: () => Promise<void> }
-  | { ok: false; error: string }
-
-/**
- * 接代码仓库的项目：给每个仓库克隆一份独立的工作目录并检出 feature 分支（用户自己的仓库不动）。
- * 任何一步失败都把已经克隆好的清掉再报错，不留半成品；调用方在后面落盘失败时也用 undo 收拾。
- */
-async function prepareCodeWorkspace(plan: Extract<ProjectCreatePlan, { ok: true }>): Promise<CodeWorkspace> {
-  const featureBranch = plan.featureBranch || defaultFeatureBranch(plan.name)
-  if (!(await isValidBranchName(featureBranch))) {
-    return { ok: false, error: `feature 分支名不合法：${featureBranch}（不能有空格，也不能以 - 开头）` }
-  }
-  for (const r of plan.repos) {
-    const label = repoDisplayName(r.repoPath)
-    if (!(await isValidBranchName(r.baseBranch))) return { ok: false, error: `「${label}」的基线分支名不合法：${r.baseBranch}` }
-    if (!(await isUsableRepoRef(r.repoPath))) {
-      return { ok: false, error: `「${label}」不是可用的仓库：本地要选 git 仓库的根目录，远程要 http(s)、ssh 或 git@ 开头的地址（${r.repoPath}）` }
-    }
-  }
-
-  const claimed = claimProjectDir(projectsRootDir(), uniqueProjectSlug(plan.name))
-  if (!claimed.ok) return { ok: false, error: claimed.error }
-  const slugDir = claimed.dir
-
-  const repos: ProjectRepo[] = []
-  // slugDir 是上面刚建出来的（不是原来就有的），里面的东西全是这次克隆出来的，整个删掉
-  const undo = () => removeDirRobust(slugDir)
-
-  const usedNames = new Set<string>()
-  for (const r of plan.repos) {
-    let short = repoShortName(r.repoPath)
-    // 两个仓库同名（不同位置的 foo）：目录名加序号
-    for (let i = 2; usedNames.has(short.toLowerCase()); i++) short = `${repoShortName(r.repoPath)}-${i}`
-    usedNames.add(short.toLowerCase())
-    const worktreePath = path.join(slugDir, short)
-    const cloned = await addProjectClone({ repoPath: r.repoPath, worktreePath, featureBranch, baseBranch: r.baseBranch })
-    if (!cloned.ok) {
-      await undo()
-      return { ok: false, error: `「${repoDisplayName(r.repoPath)}」${cloned.error ?? "克隆失败"}` }
-    }
-    // 常用仓库里配过测试/开发分支的，带到项目里（研发流程的提示词要用）
-    const known = findRepoProfile(r.repoPath)
-    repos.push({
-      repoPath: r.repoPath,
-      baseBranch: r.baseBranch,
-      ...(known?.testBranch ? { testBranch: known.testBranch } : {}),
-      ...(known?.developBranch ? { developBranch: known.developBranch } : {}),
-      worktreePath,
-    })
-  }
-  try {
-    for (const r of repos) await ensureArtifactDir(r.worktreePath)
-  } catch (e: unknown) {
-    await undo()
-    return { ok: false, error: `无法准备成果目录：${e instanceof Error ? e.message : String(e)}` }
-  }
-  return { ok: true, repos, featureBranch, undo }
-}
-
-/** 新建项目：校验 → 准备目录（或克隆仓库）→ 落盘（带模板副本）→ 进入项目会话 */
+/** 新建项目：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）→ 进入项目会话 */
 export async function createProjectFromApp(channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> {
   ensureStore()
   const chatKey = appChatKeyOf(channelId)
@@ -222,50 +125,55 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
   const plan = planProjectCreate(input, getNodeGroups())
   if (!plan.ok) return { ok: false, error: plan.error }
 
-  const isCode = plan.group.workspace !== "plain"
-  let folder: Extract<FolderWorkspace, { ok: true }> | undefined
-  let code: Extract<CodeWorkspace, { ok: true }> | undefined
-  if (isCode) {
-    const prepared = await prepareCodeWorkspace(plan)
+  // 不接代码仓库的模板可以直接用一个已有文件夹；其余情况在项目存放目录下新建
+  const folderInput = plan.group.workspace === "plain" ? (input.folder ?? "").trim() : ""
+  let cwd: string
+  let external = false
+  let repoInfo: Record<string, string> = {}
+  let undo: (() => Promise<void>) | undefined
+  if (folderInput) {
+    const prepared = prepareFolderWorkspace(folderInput)
     if (!prepared.ok) return { ok: false, error: prepared.error }
-    code = prepared
+    cwd = prepared.dir
+    external = true
   } else {
-    const prepared = prepareFolderWorkspace(plan.name, input.folder)
+    const prepared = await prepareProjectWorkspace({
+      name: plan.name,
+      repos: plan.repos,
+      workBranch: plan.workBranch,
+      featureBranch: plan.featureBranch,
+    })
     if (!prepared.ok) return { ok: false, error: prepared.error }
-    folder = prepared
+    cwd = prepared.cwd
+    repoInfo = prepared.metadata
+    undo = prepared.undo
   }
 
   // createProject 会把它设成全局当前项目；应用内建项不该改飞书私聊正在用的那个，建完还原
   const prevCurrent = getCurrentProjectId()
   let project: Project
   try {
-    const primary = code?.repos[0]
     project = createProject({
       name: plan.name,
       goal: plan.goal,
       ...(plan.storyUrl ? { storyUrl: plan.storyUrl } : {}),
       ...(plan.relatedDocs ? { relatedDocs: plan.relatedDocs } : {}),
-      repoPath: primary?.repoPath ?? "",
-      baseBranch: primary?.baseBranch ?? "",
-      featureBranch: code?.featureBranch ?? "",
-      worktreePath: primary?.worktreePath ?? folder!.workDir,
-      ...(code ? { repos: code.repos } : {}),
+      worktreePath: cwd,
       groupIds: [plan.group.id],
       groupId: plan.group.id,
       groupSnapshot: snapshotGroups([plan.group]),
-      workspaceType: code ? "worktree" : "plain",
-      ...(folder?.external ? { externalWorkspace: true } : {}),
-      metadata: plan.metadata,
+      ...(external ? { externalWorkspace: true } : {}),
+      metadata: { ...plan.metadata, ...repoInfo },
       notifyChatId: chatKey,
     })
   } catch (e: unknown) {
-    await code?.undo()
-    if (folder && !folder.external) await dropEmptyWorkspace(folder.workDir)
+    await undo?.()
     setCurrentProjectId(prevCurrent)
     return { ok: false, error: `无法保存项目：${e instanceof Error ? e.message : String(e)}` }
   }
   setCurrentProjectId(prevCurrent)
-  if (code) addRepoProfilesIfMissing(code.repos.map((r) => ({ path: r.repoPath, baseBranch: r.baseBranch })))
+  // 这次用到的、还没记过的仓库记进常用仓库，下次建项直接勾选
+  addRepoProfilesIfMissing(plan.repos.map((r) => ({ path: r.repoPath, baseBranch: r.baseBranch })))
 
   project.sessionKey = projectSessionKey(chatKey, project.id)
   saveProject(project)

@@ -26,10 +26,11 @@ export function computeNodeContentHash(node: Pick<FlowHubNodePayload, "id" | "la
   })
 }
 
-export function computeGroupContentHash(group: Pick<FlowHubGroupBody, "name" | "workspace" | "nodes">): string {
+export function computeGroupContentHash(group: Pick<FlowHubGroupBody, "name" | "workspace" | "branchMode" | "nodes">): string {
   return digest({
     name: group.name.trim(),
     ...(group.workspace ? { workspace: group.workspace } : {}),
+    ...(group.branchMode ? { branchMode: group.branchMode } : {}),
     nodes: group.nodes.map((n) => ({
       id: n.id.trim(),
       label: n.label.trim(),

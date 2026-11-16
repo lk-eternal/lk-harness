@@ -80,7 +80,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     "project_update",
 
-    "更新项目信息。通用：goal（项目目标）、story_url（项目链接）、metadata（KV merge，空值删 key；记录对象、截止时间、偏好等之后会话还要用的信息）。研发项目另有分支字段：baseBranch=生产基线（切 feature 起点，可与 feature 同步，禁止本地将 feature 合入/推送到生产基线）；testBranch=测试环境；developBranch=开发环境，可补齐 repos[].testBranch/developBranch、文档链接等；没有代码仓的项目不要传分支字段。",
+    "更新项目信息。通用：goal（项目目标）、story_url（项目链接）、metadata（KV merge，空值删 key；记录对象、截止时间、偏好、代码仓库和分支等之后会话还要用的信息）。",
 
     {
 
@@ -95,16 +95,6 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
       product_doc_url: z.string().optional(),
 
       tech_doc_url: z.string().optional(),
-
-      feature_branch: z.string().optional(),
-
-      base_branch: z.string().optional().describe("生产基线（谨慎修改；可与 feature 同步）"),
-
-      test_branch: z.string().optional().describe("主仓测试分支"),
-
-      develop_branch: z.string().optional().describe("主仓开发分支"),
-
-      repo_index: z.number().int().min(0).optional().describe("改第几个仓的分支，默认 0"),
 
       metadata: z.record(z.string(), z.string()).optional().describe("项目 KV 配置 merge 写入；value 传空字符串删 key"),
 
@@ -128,85 +118,13 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
       if (args.tech_doc_url !== undefined) p.techDocUrl = args.tech_doc_url || undefined
 
-      // 没有代码仓的项目：只改通用信息，不碰分支/仓库字段（否则会写出空仓库条目）
-      if (p.workspaceType === "plain") {
-        if (args.metadata) mergeProjectMetadata(p, args.metadata)
-        const { saveProject: savePlain } = await import("./shared/project-store.js")
-        savePlain(p)
-        return txt(`✅ 已更新项目 ${p.id}\n${JSON.stringify({ goal: p.goal, storyUrl: p.storyUrl, metadata: p.metadata }, null, 2)}`)
-      }
-
-      if (args.feature_branch !== undefined) p.featureBranch = args.feature_branch
-
-      if (args.base_branch !== undefined) {
-
-        p.baseBranch = args.base_branch
-
-      }
-
-      const repos = [...(p.repos || [{
-
-        repoPath: p.repoPath,
-
-        baseBranch: p.baseBranch,
-
-        worktreePath: p.worktreePath,
-
-      }])]
-
-      const idx = args.repo_index ?? 0
-
-      if (!repos[idx]) return txt(`❌ repos[${idx}] 不存在`)
-
-      if (args.base_branch !== undefined) repos[idx].baseBranch = args.base_branch
-
-      if (args.test_branch !== undefined) repos[idx].testBranch = args.test_branch || undefined
-
-      if (args.develop_branch !== undefined) repos[idx].developBranch = args.develop_branch || undefined
-
-      p.repos = repos
-
       if (args.metadata) mergeProjectMetadata(p, args.metadata)
-
-      if (idx === 0) {
-
-        p.repoPath = repos[0].repoPath
-
-        p.baseBranch = repos[0].baseBranch
-
-        p.worktreePath = repos[0].worktreePath
-
-      }
 
       const { saveProject } = await import("./shared/project-store.js")
 
       saveProject(p)
 
-      process.stdout.write(`__PROJECT_PROFILE_UPSERT__:${JSON.stringify({
-
-        path: repos[idx].repoPath,
-
-        baseBranch: repos[idx].baseBranch,
-
-        testBranch: repos[idx].testBranch,
-
-        developBranch: repos[idx].developBranch,
-
-      })}\n`)
-
-      return txt(`✅ 已更新项目 ${p.id}\n${JSON.stringify({
-
-        goal: p.goal,
-
-        featureBranch: p.featureBranch,
-
-        baseBranch: p.baseBranch,
-
-        repos: p.repos,
-
-        metadata: p.metadata,
-
-      }, null, 2)}`)
+      return txt(`✅ 已更新项目 ${p.id}\n${JSON.stringify({ goal: p.goal, storyUrl: p.storyUrl, metadata: p.metadata }, null, 2)}`)
 
     },
 

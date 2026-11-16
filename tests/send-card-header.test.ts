@@ -42,10 +42,12 @@ beforeEach(() => {
   wsDir = path.join(dir, "my-workspace")
   fs.mkdirSync(wsDir)
   initProjectStore(dir)
-  project = createProject({
-    name: "排课系统慢sql治理", goal: "g", repoPath: "/r", baseBranch: "main",
-    featureBranch: "feature/261110-slow-sql", worktreePath: path.join(dir, "wt"),
-  })
+  // 项目目录就是克隆下来的那个仓库：头部的分支是从它的 .git 里读出来的当前分支（不是存在项目里的字段）
+  const wt = path.join(dir, "wt")
+  fs.mkdirSync(path.join(wt, ".git", "refs", "heads", "feature"), { recursive: true })
+  fs.writeFileSync(path.join(wt, ".git", "HEAD"), "ref: refs/heads/feature/261110-slow-sql\n")
+  fs.writeFileSync(path.join(wt, ".git", "refs", "heads", "feature", "261110-slow-sql"), "0".repeat(40) + "\n")
+  project = createProject({ name: "排课系统慢sql治理", goal: "g", worktreePath: wt })
   setProjectArchived(project.id, true)
   projectSession = projectSessionKey(CHAT, project.id)
   activeSessionMap.clear()

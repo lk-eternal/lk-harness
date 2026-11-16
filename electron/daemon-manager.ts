@@ -715,7 +715,7 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
             upsertRepoProfiles([payload])
             // 单卡多视图：保存后原表单卡直接回到 setup 总览
             if (port && payload.chatId) {
-              void replySetupHub(port, payload.messageId || "", payload.chatId, payload.messageId, `✅ 已保存主仓 ${path.basename(payload.path)}`)
+              void replySetupHub(port, payload.messageId || "", payload.chatId, payload.messageId, `✅ 已保存代码仓库 ${path.basename(payload.path)}`)
             }
           } catch { /* ignore */ } })()
           continue
@@ -750,8 +750,8 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
           try {
             const payload = JSON.parse(line.slice("__PROJECT_NEW_SUBMIT__:".length)) as {
               chatId: string; messageId: string
-              name: string; goal: string; repoPath: string; worktreeRoot: string
-              baseBranch: string; featureBranch?: string
+              name: string; goal: string; worktreeRoot: string
+              featureBranch?: string
               storyUrl?: string; relatedDocs?: string; productDocUrl?: string; techDocUrl?: string
               groupId?: string
               groupIds?: string[]

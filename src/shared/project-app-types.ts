@@ -1,6 +1,6 @@
 // ── 应用内（桌面端 / 手机端）项目：接口里传的数据形状 ─────────────────────────
 
-import type { ProjectFieldDef } from "./project-types.js"
+import type { ProjectFieldDef, WorkBranchMode } from "./project-types.js"
 
 /**
  * 项目会话键 → 项目 id；不是项目会话返回 undefined。
@@ -26,8 +26,10 @@ export interface ProjectTemplateInfo {
   fields: ProjectFieldDef[]
   /** 快捷操作（点一下把这件事交给 AI）。只是常用请求的入口，没有先后顺序，随时可以直接用自然语言说 */
   steps: { id: string; label: string }[]
-  /** 要接代码仓库：建项时要选仓库和基线分支，AI 在仓库的独立克隆里干活 */
+  /** 接了代码仓库：建项时可以选仓库（选不选都行）和工作分支 */
   needsRepo: boolean
+  /** 工作分支的默认值（建项对话框里预填，可以改）；不接仓库的模板用不上 */
+  workBranchMode: WorkBranchMode
 }
 
 /**
@@ -41,7 +43,7 @@ export function sortTemplatesForPicker<T extends Pick<ProjectTemplateInfo, "id">
 /** 一次最多接几个仓库 */
 export const PROJECT_REPOS_MAX = 6
 
-/** 建项时选的一个代码仓库：本地 git 根目录或远程地址，加上这个项目从哪个分支切出去 */
+/** 建项时选的一个代码仓库：本地 git 根目录或远程地址，加上它的基线分支（新建分支从它切出；没配专门分支时的兜底） */
 export interface ProjectRepoInput {
   repoPath: string
   baseBranch: string
@@ -53,6 +55,8 @@ export interface ProjectRepoOption {
   /** 显示名：目录名或仓库名 */
   name: string
   baseBranch: string
+  /** 建项时克隆一份到项目目录；false=不克隆，只把仓库信息记进项目（在设置的「常用代码仓库」里改） */
+  clone: boolean
 }
 
 /** 桌面端「添加本地仓库」的检查结果：确认是 git 仓库根目录，给出默认基线分支和分支提示 */
@@ -82,7 +86,7 @@ export function repoIdentityKey(repoPath: string): string {
  * 没问题返回空串，有问题返回一句人话。
  */
 export function repoPicksProblem(picks: readonly ProjectRepoInput[]): string {
-  if (!picks.length) return "请至少选一个代码仓库"
+  // 仓库是可选的：一个都不选也能建项目
   if (picks.length > PROJECT_REPOS_MAX) return `最多接 ${PROJECT_REPOS_MAX} 个仓库`
   const seen = new Set<string>()
   for (const p of picks) {
@@ -101,11 +105,13 @@ export interface ProjectCreateInput {
   templateId: string
   /** 模板字段的值，键是字段名 */
   fields?: Record<string, string>
-  /** 用已有文件夹当项目目录（只有桌面端能选）；不给就由应用在工作目录下新建。要接代码仓库的模板不用它 */
+  /** 用已有文件夹当项目目录（只有桌面端能选）；不给就由应用在工作目录下新建。接代码仓库的模板不用它 */
   folder?: string
-  /** 要接代码仓库的模板必填：克隆哪些仓库、各自的基线分支 */
+  /** 接代码仓库的模板可选：要接哪些仓库、各自的基线分支。克隆还是只记信息，由仓库自己的「克隆副本」设置决定 */
   repos?: ProjectRepoInput[]
-  /** feature 分支名；不填按「feature/日期-项目名」生成 */
+  /** 克隆副本停在哪个分支；不给就用模板上的默认值 */
+  workBranch?: WorkBranchMode
+  /** 工作分支是「新建分支」时的分支名；不填按「feature/日期-项目名」生成 */
   featureBranch?: string
   /** 项目链接（需求、任务单、参考资料等入口） */
   storyUrl?: string
@@ -138,7 +144,7 @@ export interface ProjectView {
   goal: string
   /** 已归档：会话列表里收进最下面的「已归档」分组 */
   archived: boolean
-  /** 是研发项目（有代码仓和分支）；普通项目为 false */
+  /** 项目信息里记了代码仓库（删除确认框要多说一句代码副本的去向）；叫 isCode 是沿用老名字 */
   isCode: boolean
   templateNames: string[]
   steps: ProjectStepInfo[]
@@ -159,8 +165,6 @@ export interface ProjectView {
   ownedHere: boolean
   /** 模板的步骤和项目副本不一致，可以同步 */
   canSyncSteps: boolean
-  /** 研发项目的分支（只读展示） */
-  featureBranch?: string
 }
 
 /**
@@ -175,7 +179,6 @@ export interface ProjectListItem {
   relatedDocs?: string
   productDocUrl?: string
   techDocUrl?: string
-  featureBranch: string
   /** 已归档 */
   archived: boolean
   /** 项目实际在用的模板（没记模板的老项目已回落到默认模板） */
@@ -190,26 +193,24 @@ export interface ProjectListItem {
   /** 项目的快捷操作副本和全局模板不一致，可以同步 */
   canSyncSteps: boolean
   externalWorkspace: boolean
-  /** 研发项目（有代码仓库和分支） */
+  /** 项目信息里记了代码仓库；叫 isCode 是沿用老名字 */
   isCode: boolean
   /** 项目目录（用户看得到的那个） */
   dir: string
   worktreePath?: string
-  repoPath?: string
-  repoPaths: string[]
-  workspaceType?: string
+  /** 项目信息（含「代码仓库」几行）；仓库、分支都在这里，改它就是改项目信息 */
   metadata: Record<string, string>
   groupChatId?: string
 }
 
 /**
  * 删项目确认框里「哪些东西会被怎么处理」那一句（桌面、手机共用）。
- * recycleBin 手机端传「电脑的回收站」。研发项目要特别说清：代码副本里没提交/没推送的改动会跟着进回收站，
+ * recycleBin 手机端传「电脑的回收站」。记了代码仓库的项目要特别说清：克隆的代码副本里没提交/没推送的改动会跟着进回收站，
  * 而用户自己的仓库和远程分支不受影响。
  */
 export function projectDeleteNote(view: Pick<ProjectView, "externalDir" | "dir" | "isCode">, recycleBin = "回收站"): string {
   if (view.externalDir) return `你选的文件夹「${view.dir}」不会被删除，里面 AI 生成的 .lk-harness 成果文件夹会留着。`
-  if (view.isCode) return `项目文件夹（含里面的代码副本，以及还没提交或推送的改动）会移到${recycleBin}；你自己的仓库和远程分支不受影响。`
+  if (view.isCode) return `项目文件夹（含里面克隆的代码副本，以及还没提交或推送的改动）会移到${recycleBin}；你自己的仓库和远程分支不受影响。`
   return `项目文件夹（含 AI 生成的全部成果）会移到${recycleBin}。`
 }
 

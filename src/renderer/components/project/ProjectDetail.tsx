@@ -177,7 +177,7 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
           </div>
           <p className="px-2 text-[11.5px] text-fg-muted">
             {selectedNames.join("、") || "普通项目"} · {actionCount} 个快捷操作
-            {item.isCode ? " · 研发项目" : ""}
+            {item.isCode ? " · 记了代码仓库" : ""}
           </p>
         </div>
       )}
@@ -362,8 +362,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
               </span>
             ) : undefined}
           />
-          {item.isCode && item.featureBranch && <Fact label="feature 分支" value={item.featureBranch} />}
-          {item.isCode && item.repoPaths.length > 0 && <Fact label="代码仓库" value={item.repoPaths.join("\n")} />}
         </dl>
         {item.externalWorkspace && <p className="text-[11px] text-fg-muted">这是你自己选的文件夹，删除项目时不会删它。</p>}
       </Section>

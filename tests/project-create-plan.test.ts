@@ -40,13 +40,17 @@ const CH = "ch_app"
 const groups = (): ProjectNodeGroupDef[] => structuredClone(DEFAULT_NODE_GROUPS)
 
 describe("templateInfos", () => {
-  it("所有模板都能在应用内创建；开发模板标明要接代码仓库，其余不用", () => {
+  it("所有模板都能在应用内创建；开发、测试模板接代码仓库，其余不用；带出各自的默认工作分支", () => {
     const infos = templateInfos(groups())
     const byId = Object.fromEntries(infos.map((i) => [i.id, i]))
     expect(byId.develop.needsRepo).toBe(true)
     expect(byId.general.needsRepo).toBe(false)
     expect(byId.research.needsRepo).toBe(false)
-    expect(byId.test.needsRepo).toBe(false)
+    // 全新安装的默认「测试」模板接代码仓库，克隆副本直接停在测试分支上（只看代码、不改）
+    expect(byId.test.needsRepo).toBe(true)
+    expect(byId.test.workBranchMode).toBe("test")
+    expect(byId.develop.workBranchMode).toBe("new")
+    expect(byId.general.workBranchMode).toBe("new")
     // 不再有「不能建」的说法
     for (const i of infos) expect(Object.keys(i)).not.toContain("creatable")
     expect(byId.research.steps.map((s) => s.id)).toEqual(["scope", "gather", "analyze", "write-report"])
@@ -91,9 +95,12 @@ describe("planProjectCreate", () => {
     const dev = (extra: Partial<Parameters<typeof planProjectCreate>[0]> = {}) =>
       planProjectCreate({ name: "改版", templateId: "develop", repos: [{ repoPath: abs, baseBranch: "main" }], ...extra }, groups())
 
-    it("必须选仓库，每个仓库要有基线分支", () => {
-      expect(planProjectCreate({ name: "a", templateId: "develop" }, groups())).toEqual({ ok: false, error: "请至少选一个代码仓库" })
-      expect(planProjectCreate({ name: "a", templateId: "develop", repos: [] }, groups()).ok).toBe(false)
+    it("仓库是可选的：一个不选也能建；选了的每个仓库要有基线分支", () => {
+      for (const input of [{ name: "a", templateId: "develop" }, { name: "a", templateId: "develop", repos: [] }]) {
+        const r = planProjectCreate(input, groups())
+        expect(r.ok).toBe(true)
+        if (r.ok) expect(r).toMatchObject({ repos: [], workBranch: "new", featureBranch: "" })
+      }
       const noBase = planProjectCreate({ name: "a", templateId: "develop", repos: [{ repoPath: abs, baseBranch: "  " }] }, groups())
       expect(noBase).toEqual({ ok: false, error: "请填写「shop」的基线分支" })
     })
@@ -116,6 +123,31 @@ describe("planProjectCreate", () => {
       ])
       expect(r.featureBranch).toBe("feature/redesign")
       expect(r.group.id).toBe("develop")
+    })
+
+    it("工作分支：建项时的选择优先，其次模板默认，再其次新建分支；只有新建分支才收分支名", () => {
+      const g = groups()
+      const test = g.find((x) => x.id === "test")!
+      expect(test.branchMode).toBe("test")
+      const repos = [{ repoPath: abs, baseBranch: "main" }]
+      // 没指定：用模板默认
+      const byTemplate = planProjectCreate({ name: "a", templateId: "test", repos, featureBranch: "feature/ignored" }, g)
+      expect(byTemplate.ok && byTemplate.workBranch).toBe("test")
+      expect(byTemplate.ok && byTemplate.featureBranch).toBe("")
+      // 建项时临时改成新建分支：分支名收下
+      const overridden = planProjectCreate({ name: "a", templateId: "test", repos, workBranch: "new", featureBranch: " feature/x " }, g)
+      expect(overridden.ok && overridden.workBranch).toBe("new")
+      expect(overridden.ok && overridden.featureBranch).toBe("feature/x")
+      // 反过来：开发模板默认新建分支，临时改成开发分支
+      const dev = planProjectCreate({ name: "a", templateId: "develop", repos, workBranch: "develop", featureBranch: "feature/y" }, g)
+      expect(dev.ok && dev.workBranch).toBe("develop")
+      expect(dev.ok && dev.featureBranch).toBe("")
+      // 模板里没写 branchMode 的存量模板：新建分支
+      const legacy = planProjectCreate({ name: "a", templateId: "develop", repos }, g)
+      expect(legacy.ok && legacy.workBranch).toBe("new")
+      // 脏值当新建分支
+      const dirty = planProjectCreate({ name: "a", templateId: "develop", repos, workBranch: "bogus" as never }, g)
+      expect(dirty.ok && dirty.workBranch).toBe("new")
     })
 
     it("本地仓库必须是完整路径；同一个仓库选两次不行；数量有上限", () => {
@@ -151,7 +183,20 @@ describe("planProjectCreate", () => {
       featureBranch: "feature/x",
     }, groups())
     expect(r.ok).toBe(true)
-    if (r.ok) expect(r).toMatchObject({ repos: [], featureBranch: "" })
+    if (r.ok) expect(r).toMatchObject({ repos: [], featureBranch: "", workBranch: "new" })
+  })
+
+  it("不接代码仓库的模板：建项时传了工作分支也不理", () => {
+    const r = planProjectCreate({ name: "周报", templateId: "general", workBranch: "test" }, groups())
+    expect(r.ok && r.workBranch).toBe("new")
+  })
+
+  it("接了代码仓库的模板里，路径是空的仓库行当没选（不拦），路径有了但基线分支是空的才拦", () => {
+    const abs = path.resolve(path.sep, "repos", "shop")
+    const blank = planProjectCreate({ name: "n", templateId: "develop", repos: [{ repoPath: "  ", baseBranch: "" }] }, groups())
+    expect(blank.ok && blank.repos).toEqual([])
+    const noBase = planProjectCreate({ name: "n", templateId: "develop", repos: [{ repoPath: abs, baseBranch: "" }] }, groups())
+    expect(noBase).toEqual({ ok: false, error: "请填写「shop」的基线分支" })
   })
 
   it("字段值按模板声明收进 metadata，必填没填会提示", () => {
@@ -264,8 +309,8 @@ describe("项目步骤副本同步", () => {
 describe("buildProjectView", () => {
   const base = path.resolve(path.sep, "work", "p1")
   const project = (extra: Partial<Project> = {}): Project => ({
-    id: "abc123def456", name: "周报", goal: "每周五出报告", repoPath: "", baseBranch: "", featureBranch: "",
-    worktreePath: path.join(base, "workspace"), workspaceType: "plain",
+    id: "abc123def456", name: "周报", goal: "每周五出报告",
+    worktreePath: path.join(base, "workspace"),
     groupIds: ["report"], groupId: "report", createdAt: 1, updatedAt: 2, ...extra,
   })
 
@@ -281,7 +326,6 @@ describe("buildProjectView", () => {
     expect(v.isCode).toBe(false)
     expect(v.storyUrl).toBe("https://x")
     expect(v.relatedDocs).toBe("文档A")
-    expect(v.featureBranch).toBeUndefined()
     expect(v.canSyncSteps).toBe(false)
   })
 
@@ -306,11 +350,13 @@ describe("buildProjectView", () => {
     expect(buildProjectView(project(), opts(true)).artifact).toBeUndefined()
   })
 
-  it("研发项目标出 isCode 和分支；有副本且和全局不同才可同步", () => {
-    const dev = project({ workspaceType: undefined, featureBranch: "feature/x", repoPath: "/r" })
+  it("项目信息里记了代码仓库才标 isCode；视图里没有分支字段；有副本且和全局不同才可同步", () => {
+    const dev = project({ metadata: { 代码仓库: "D:\\repos\\shop（工作分支 feature/x；基线分支 main）" } })
     const v = buildProjectView(dev, { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true })
     expect(v.isCode).toBe(true)
-    expect(v.featureBranch).toBe("feature/x")
+    expect(v).not.toHaveProperty("featureBranch")
+    const plain = buildProjectView(project({ metadata: { 客户: "A" } }), { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true })
+    expect(plain.isCode).toBe(false)
 
     const snap = snapshotGroups([groups().find((g) => g.id === "report")!])
     const globals = groups().map((g) => g.id === "report" ? { ...g, name: "周报月报（新）" } : g)
@@ -412,10 +458,10 @@ describe("代码仓库表单的共用判断", () => {
     expect(repoDisplayName("")).toBe("仓库")
   })
 
-  it("repoPicksProblem：空、缺基线、重复、过多都有话说，正常返回空串", () => {
+  it("repoPicksProblem：缺基线、重复、过多都有话说，正常和一个都不选返回空串", () => {
     const ok = [{ repoPath: "D:\\a\\shop", baseBranch: "main" }]
     expect(repoPicksProblem(ok)).toBe("")
-    expect(repoPicksProblem([])).toBe("请至少选一个代码仓库")
+    expect(repoPicksProblem([])).toBe("")
     expect(repoPicksProblem([{ repoPath: "D:\\a\\shop", baseBranch: " " }])).toBe("请填写「shop」的基线分支")
     expect(repoPicksProblem([...ok, { repoPath: "d:\\A\\shop\\", baseBranch: "dev" }])).toBe("「shop」选重了")
     expect(repoPicksProblem([
@@ -475,8 +521,8 @@ describe("项目的删除确认和归档提示", () => {
 describe("withLegacyProjectStatus（旧版手机 App 要读的 status）", () => {
   const viewOf = (extra: Partial<Project> = {}) => buildProjectView(
     {
-      id: "abc123def456", name: "周报", goal: "g", repoPath: "", baseBranch: "", featureBranch: "",
-      worktreePath: path.resolve(path.sep, "work", "p1", "workspace"), workspaceType: "plain",
+      id: "abc123def456", name: "周报", goal: "g",
+      worktreePath: path.resolve(path.sep, "work", "p1", "workspace"),
       groupIds: ["report"], groupId: "report", createdAt: 1, updatedAt: 2, ...extra,
     },
     { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true },
@@ -544,10 +590,19 @@ describe("parseGatewayCreateInput（手机网关收到的建项请求体）", ()
     expect(parseGatewayCreateInput(null)).toMatchObject({ name: "", templateId: "", fields: {} })
   })
 
-  it("整理出来的空仓库会被建项校验拦下，不会被当成没选", () => {
+  it("工作分支：只认四种取值，脏值落成新建分支；没传就不带（交给模板默认）", () => {
+    expect(parseGatewayCreateInput({ name: "n", templateId: "t", workBranch: "test" }).workBranch).toBe("test")
+    expect(parseGatewayCreateInput({ name: "n", templateId: "t", workBranch: "bogus" }).workBranch).toBe("new")
+    expect("workBranch" in parseGatewayCreateInput({ name: "n", templateId: "t" })).toBe(false)
+    expect("workBranch" in parseGatewayCreateInput({ name: "n", templateId: "t", workBranch: 5 })).toBe(false)
+  })
+
+  it("整理出来的空仓库行当没选；有路径没基线分支的仍会被建项校验拦下", () => {
     const groups = DEFAULT_NODE_GROUPS
     const dev = groups.find((g) => g.workspace === "worktree")!
-    const r = planProjectCreate(parseGatewayCreateInput({ name: "n", templateId: dev.id, repos: [{}] }), groups)
-    expect(r.ok).toBe(false)
+    const blank = planProjectCreate(parseGatewayCreateInput({ name: "n", templateId: dev.id, repos: [{}] }), groups)
+    expect(blank.ok && blank.repos).toEqual([])
+    const noBase = planProjectCreate(parseGatewayCreateInput({ name: "n", templateId: dev.id, repos: [{ repoPath: "https://h/x/shop.git" }] }), groups)
+    expect(noBase.ok).toBe(false)
   })
 })

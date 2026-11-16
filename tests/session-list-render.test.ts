@@ -190,9 +190,9 @@ describe("每种会话有哪些操作", () => {
     expect(titles(mineItem({ running: true, removable: true }))).toEqual(["停止会话", "删除会话"])
   })
 
-  it("项目：删除按钮的说明写明会连带移除 AI 工作目录", () => {
+  it("项目：删除按钮的说明写明会连带移除项目目录", () => {
     const project = mineItem({ sessionKey: "ch_a|ou_me::project_abc", label: "📦 官网", removable: true }, "project")
-    expect(titles(project)).toContain("删除项目（连带移除 AI 工作目录）")
+    expect(titles(project)).toContain("删除项目（连带移除项目目录）")
   })
 
   it("别人的会话：重置 + 删除；运行中多「停止」；只改了模型才有「恢复默认」；没有「激活」", () => {

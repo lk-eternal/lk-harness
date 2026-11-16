@@ -40,10 +40,10 @@ import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
 import { getProject, findProjectByGroupChat, initProjectStore, isProjectArchived, listProjects, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
-import { projectIdFromSessionKey, projectSessionKey, projectRepoRefs, isPlainProject, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
+import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
 import { globalChatNamesPath, purgeSessionEntry, readRoutingFileView } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
-import { ensureCheckouts } from "./project-worktree"
+import { ensureProjectDir } from "./project-workspace"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { findStoredSessionKey, getSessionRecord, initSessionOverridesStore, readOverridesSnapshot, withOverridesSnapshot } from "../src/shared/session-overrides-store.js"
@@ -142,7 +142,7 @@ export const chatNameCache = new Map<string, string>()
 export const previousActiveSessionMap = new Map<string, string>()
 
 /** feature 被占用提醒节流：sessionKey → 上次提醒时间（调度器每轮都会撞到占用，避免刷屏） */
-const featureOccupiedNotifyAt = new Map<string, number>()
+const projectDirNotifyAt = new Map<string, number>()
 
 async function reportLaunchOutcome(
   sessionKey: string,
@@ -429,7 +429,6 @@ export function formatSessionStatusBlock(
   const name = hideWs ? undefined : (card?.title || (ws ? `📂 ${dirBaseName(ws)}` : s.chatName || undefined))
   const branch = hideWs ? undefined : (
     card?.subtitle
-    || (project?.featureBranch ? `🌿 ${project.featureBranch}` : undefined)
     || (ws ? (() => { const b = readGitBranch(ws); return b ? `🌿 ${b}` : undefined })() : undefined)
   )
   const agentRunning = opts?.agentRunning !== false
@@ -1900,18 +1899,18 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
     const projId = projectIdFromSessionKey(sessionKey)
     const proj = projId ? getProject(projId) : undefined
     if (proj) {
-      // 拉起前确保 AI 工作目录就绪（缺失自动重建、切回 feature）；失败拦下并节流提醒（纯会话型无 git 直接放行）
-      const co = isPlainProject(proj) ? { ok: true as const, error: undefined } : await ensureCheckouts(projectRepoRefs(proj), proj.featureBranch)
+      // 拉起前确认项目目录还在；不在就拦下并节流提醒（Agent 在不存在的目录里起不来）
+      const co = await ensureProjectDir(proj)
       if (!co.ok) {
-        broadcastLog(`[Agent] 项目「${proj.name}」AI 工作目录不可用，暂缓拉起: ${co.error}`, "WARN")
-        const lastAt = featureOccupiedNotifyAt.get(sessionKey) ?? 0
+        broadcastLog(`[Agent] 项目「${proj.name}」目录不可用，暂缓拉起: ${co.error}`, "WARN")
+        const lastAt = projectDirNotifyAt.get(sessionKey) ?? 0
         if (Date.now() - lastAt > 10 * 60_000) {
-          featureOccupiedNotifyAt.set(sessionKey, Date.now())
+          projectDirNotifyAt.set(sessionKey, Date.now())
           await notifyChat(sessionKey, [
-            `⚠️ 项目「${proj.name}」的 AI 工作目录不可用，消息暂无法处理：`,
-            co.error || "",
+            `⚠️ 项目「${proj.name}」的目录不可用，消息暂无法处理：`,
+            co.error,
             "",
-            "处理故障后重发消息即可（缺失的目录会自动重建）",
+            "把目录恢复后重发消息即可",
           ].join("\n"))
         }
         continue
@@ -1925,7 +1924,7 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           workingDirectory: proj.worktreePath,
           meta: { chatId, chatType: "project" },
           channelId: parseChatKey(chatId).channelId,
-          taskMessage: resumableP ? undefined : buildProjectSessionPrompt(proj),
+          taskMessage: resumableP ? undefined : buildProjectSessionPrompt(proj, { gitPrinciples: getConfig().gitPrinciples }),
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)

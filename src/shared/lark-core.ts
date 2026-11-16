@@ -522,7 +522,7 @@ export class LarkSender {
     }
   }
 
-  /** 项目创建大表单（一次提交；主仓/流程组可空） */
+  /** 项目创建大表单（一次提交；代码仓库/流程组可空） */
   static buildProjectNewFormCard(opts: {
     title?: string
     repoProfiles?: { path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
@@ -605,24 +605,24 @@ export class LarkSender {
     }
 
     if (profiles.length > 0) {
-      formElements.push({ tag: "markdown", content: "主仓·分支（可多选）" })
+      formElements.push({ tag: "markdown", content: "代码仓库·分支（可多选）" })
       formElements.push({
         tag: "multi_select_static",
         name: "repoPairs",
         required: false,
         width: "fill",
-        placeholder: { tag: "plain_text", content: "点此选择主仓·分支（可多选，可空）" },
+        placeholder: { tag: "plain_text", content: "点此选择代码仓库·分支（可多选，可空）" },
         options: profiles.slice(0, 50).map((pr) => ({
           text: { tag: "plain_text", content: labelOf(pr.path, pr.baseBranch, pr.testBranch, pr.developBranch) },
           value: encode(pr.path, pr.baseBranch, pr.testBranch, pr.developBranch),
         })),
       })
-      formElements.push(field("featureBranch", "feature 分支", "可空，默认 feature/yyMMdd-名；已存在则复用"))
+      formElements.push(field("featureBranch", "新建分支名", "可空，默认 feature/yyMMdd-名；只在模板的工作分支是「新建分支」时用；已存在则复用"))
     } else {
       formElements.push({
         tag: "button",
         name: "add_repo",
-        text: { tag: "plain_text", content: "添加主仓" },
+        text: { tag: "plain_text", content: "添加代码仓库" },
         type: "default",
         width: "fill",
         behaviors: [{
@@ -633,7 +633,7 @@ export class LarkSender {
     }
 
     formElements.push(
-      field("worktreeRoot", "AI 工作目录（将在此目录下以项目名称新建项目目录）", "各主仓将独立 checkout 到此目录下；无仓时仅建项目目录", false, opts.worktreeRoot || undefined),
+      field("worktreeRoot", "项目目录存放位置（将在此目录下以项目名称新建项目目录）", "勾了「克隆副本」的代码仓库会克隆到这里；不克隆仓库时仅建项目目录", false, opts.worktreeRoot || undefined),
       field("storyUrl", "项目链接", "例如飞书项目链接"),
       field("relatedDocs", "相关文档", "例如产品文档或技术文档，多个逗号分割"),
       ...chatModeSelect,
@@ -672,7 +672,7 @@ export class LarkSender {
     }
   }
 
-  /** 创建项目 · 添加主仓子页 */
+  /** 创建项目 · 添加代码仓库子页 */
   static buildProjectNewAddRepoCard(opts?: { worktreeRoot?: string; defaults?: Record<string, string> }): any {
     const def = opts?.defaults ?? {}
     const field = (name: string, label: string, placeholder: string, required?: boolean) => {
@@ -692,8 +692,8 @@ export class LarkSender {
       tag: "form",
       name: "project_new_add_repo",
       elements: [
-        field("repoPathCustom", "主仓路径", "本地绝对路径或远程地址（https/git@）", true),
-        field("baseBranchCustom", "生产基线分支", "例如 main", true),
+        field("repoPathCustom", "代码仓库路径", "本地绝对路径或远程地址（https/git@）", true),
+        field("baseBranchCustom", "基线分支", "例如 main", true),
         field("testBranchCustom", "测试分支", "可空，例如 test"),
         field("developBranchCustom", "开发分支", "可空，例如 develop"),
         {
@@ -716,14 +716,14 @@ export class LarkSender {
       schema: "2.0",
       config: { update_multi: true, width_mode: "fill" },
       header: {
-        title: { tag: "plain_text", content: "添加主仓" },
+        title: { tag: "plain_text", content: "添加代码仓库" },
         template: "orange",
       },
       body: { horizontal_align: "left", elements },
     }
   }
 
-  /** /p setup 添加主仓表单：路径+基线+测试+开发一次填完提交 */
+  /** /p setup 添加代码仓库表单：路径+基线+测试+开发一次填完提交 */
   static buildRepoSetupFormCard(opts?: { title?: string; prefix?: string }): any {
     const field = (name: string, placeholder: string, required?: boolean) => ({
       tag: "input",
@@ -734,19 +734,19 @@ export class LarkSender {
       width: "fill",
     })
     const elements: any[] = [
-      { tag: "markdown", content: `${opts?.prefix || ""}一次填完提交；红 * 为必填。生产基线只作切分支起点，不会成为交付目标。` },
+      { tag: "markdown", content: `${opts?.prefix || ""}一次填完提交；红 * 为必填。基线分支是新建分支的切出起点。` },
       {
         tag: "form",
         name: "repo_setup",
         elements: [
-          field("repoPath", "主仓本地路径或远程地址（https/git@）", true),
-          field("baseBranch", "生产基线分支，例如 main", true),
+          field("repoPath", "代码仓库本地路径或远程地址（https/git@）", true),
+          field("baseBranch", "基线分支，例如 main", true),
           field("testBranch", "测试分支，可空"),
           field("developBranch", "开发分支，可空"),
           {
             tag: "button",
             name: "submit",
-            text: { tag: "plain_text", content: "保存主仓" },
+            text: { tag: "plain_text", content: "保存代码仓库" },
             type: "primary",
             form_action_type: "submit",
             behaviors: [{ type: "callback", value: { kind: "repo_setup_form" } }],
@@ -761,7 +761,7 @@ export class LarkSender {
       schema: "2.0",
       config: { update_multi: true, width_mode: "fill" },
       header: {
-        title: { tag: "plain_text", content: opts?.title || "添加主仓" },
+        title: { tag: "plain_text", content: opts?.title || "添加代码仓库" },
         template: "orange",
       },
       body: { horizontal_align: "left", elements },
@@ -811,7 +811,7 @@ export class LarkSender {
     const isWorktree = opts.form === "worktree"
     const formElements: any[] = isWorktree
       ? [
-        field("worktreeRoot", "AI 工作目录", "绝对路径，例如 D:/claw-projects", true, opts.worktreeRoot),
+        field("worktreeRoot", "项目目录存放位置", "绝对路径，例如 D:/claw-projects", true, opts.worktreeRoot),
         {
           tag: "button", name: "submit", text: { tag: "plain_text", content: "保存" }, type: "primary",
           form_action_type: "submit",

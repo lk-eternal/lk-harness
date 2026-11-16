@@ -139,7 +139,7 @@ let WORKSPACE_DIR = (() => {
 const MESSAGE_PREFIX = process.env.LARK_MESSAGE_PREFIX ?? "";
 const APP_DATA_DIR = process.env.APP_DATA_DIR || "";
 
-/** 主仓引用规范化：本地路径 normalize，远程地址原样保留 */
+/** 代码仓库引用规范化：本地路径 normalize，远程地址原样保留 */
 function normalizeRepoRef(v: string): string {
   const t = (v || "").trim();
   return isRemoteRepoRef(t) ? t : path.normalize(t);
@@ -3347,7 +3347,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     saveProjectNewDraft(draft);
     const wt = formFieldStr(f.worktreeRoot) || cbv.worktreeRoot || "";
     return {
-      toast: { type: "info", content: "填写主仓信息" },
+      toast: { type: "info", content: "填写代码仓库信息" },
       card: { type: "raw", data: LarkSender.buildProjectNewAddRepoCard({ worktreeRoot: wt }) },
     };
   }
@@ -3377,8 +3377,8 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const baseBranch = formFieldStr(f.baseBranchCustom);
     const testBranch = formFieldStr(f.testBranchCustom) || undefined;
     const developBranch = formFieldStr(f.developBranchCustom) || undefined;
-    if (!repoPathRaw) return { toast: { type: "error", content: "请填写主仓路径" } };
-    if (!baseBranch) return { toast: { type: "error", content: "请填写生产基线分支" } };
+    if (!repoPathRaw) return { toast: { type: "error", content: "请填写代码仓库路径" } };
+    if (!baseBranch) return { toast: { type: "error", content: "请填写基线分支" } };
     const rp = normalizeRepoRef(repoPathRaw);
     const draft = getProjectNewDraft(chatKey) || {
       chatKey,
@@ -3400,7 +3400,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const profiles = combinedFormRepoProfiles(draft);
     const wt = draft.formCache?.worktreeRoot || cbv.worktreeRoot || "";
     return {
-      toast: { type: "success", content: "主仓已添加" },
+      toast: { type: "success", content: "代码仓库已添加" },
       card: {
         type: "raw",
         data: buildProjectNewFormCardData(draft, wt, draft.formCache),
@@ -3436,7 +3436,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
 
     if (!name) return { toast: { type: "error", content: "请填写项目名称" } };
 
-    // 纯会话型（存量/显式 workspaceType）：无 git 字段；storyUrl 与新表单一致可空
+    // 所选模板不接代码仓库（存量/显式 workspaceType）：不带仓库；storyUrl 与新表单一致可空
     if (workspaceType === "plain") {
       process.stdout.write(`__PROJECT_NEW_SUBMIT__:${JSON.stringify({
         chatId: chatKey,
@@ -3449,8 +3449,6 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
         existingGroupChatId,
         operatorOpenId: evt.operatorOpenId || "",
         repos: [],
-        repoPath: "",
-        baseBranch: "",
       })}\n`);
       clearProjectNewDraft(chatKey);
       return {
@@ -3476,7 +3474,6 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       repos.push({ repoPath: rp, baseBranch, testBranch, developBranch });
     }
 
-    const primary = repos[0];
     process.stdout.write(`__PROJECT_NEW_SUBMIT__:${JSON.stringify({
       chatId: chatKey,
       messageId: evt.messageId,
@@ -3488,8 +3485,6 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       existingGroupChatId,
       operatorOpenId: evt.operatorOpenId || "",
       repos,
-      repoPath: primary?.repoPath || "",
-      baseBranch: primary?.baseBranch || "",
     })}\n`);
     clearProjectNewDraft(chatKey);
     return {
@@ -3504,8 +3499,8 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     const baseBranch = formFieldStr(f.baseBranch);
     const testBranch = formFieldStr(f.testBranch) || undefined;
     const developBranch = formFieldStr(f.developBranch) || undefined;
-    if (!repoPathRaw) return { toast: { type: "error", content: "请填写主仓本地路径或远程地址" } };
-    if (!baseBranch) return { toast: { type: "error", content: "请填写生产基线分支" } };
+    if (!repoPathRaw) return { toast: { type: "error", content: "请填写代码仓库本地路径或远程地址" } };
+    if (!baseBranch) return { toast: { type: "error", content: "请填写基线分支" } };
     const repoPath = normalizeRepoRef(repoPathRaw);
     // 卡片保持可改：路径无效只 toast，不落库不更新卡片（远程地址不做本地存在性校验）
     if (!isRemoteRepoRef(repoPath) && (!fs.existsSync(repoPath) || !fs.existsSync(path.join(repoPath, ".git")))) {
@@ -3518,7 +3513,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     // 宿主保存后会把本卡 patch 回 setup 总览（单卡多视图）
     return {
       toast: { type: "success", content: "已提交" },
-      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存主仓…", "添加主仓", undefined, undefined, "orange") },
+      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存代码仓库…", "添加代码仓库", undefined, undefined, "orange") },
     };
   }
 
@@ -5123,13 +5118,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { json(res, { ok: false, error: ch.message }, 400); return true; }
     if (ch.type === "wechat" || ch.type === "app") {
-      const roots = (repo_roots || []).map((r, i) => `#${i + 1} ${r}`).join("\n") || "(无预置主仓，请在路径里手填)";
+      const roots = (repo_roots || []).map((r, i) => `#${i + 1} ${r}`).join("\n") || "(无预置代码仓库，请在路径里手填)";
       const tip = [
         `${ch.type === "wechat" ? "微信" : "应用内对话"}暂不支持表单卡片，请用一行命令：`,
-        "/p new <名> <主仓序号或路径> <基线分支> <feature分支> <目标…>",
+        "/p new <名> <代码仓库序号或路径> <基线分支> <新建分支名> <目标…>",
         "",
         `worktree 根: ${worktree_root || "(未设)"}`,
-        `主仓:\n${roots}`,
+        `代码仓库:\n${roots}`,
       ].join("\n");
       let sent = true;
       if (ch.type === "wechat") sent = await ch.rt.wechat!.sendText(ch.chatId, tip);
@@ -5184,13 +5179,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       sent = await sender.sendInteractiveCard(card, undefined, ch.chatId);
     }
     if (sent === undefined) {
-      const roots = (repo_roots || []).map((r, i) => `#${i + 1} ${r}`).join("\n") || "(无预置主仓)";
+      const roots = (repo_roots || []).map((r, i) => `#${i + 1} ${r}`).join("\n") || "(无预置代码仓库)";
       const tip = [
         "❌ 创建项目表单卡片被飞书拒绝（请检查路径/卡片格式）。临时可用一行命令：",
-        "/p new <名> <主仓序号或路径> <基线分支> <feature分支> <目标…>",
+        "/p new <名> <代码仓库序号或路径> <基线分支> <新建分支名> <目标…>",
         "",
         `worktree 根: ${worktree_root || "(未设)"}`,
-        `主仓:\n${roots}`,
+        `代码仓库:\n${roots}`,
       ].join("\n");
       if (message_id && !message_id.startsWith("internal_")) await sender.sendMessage(tip, message_id, undefined);
       else if (ch.chatId) await sender.sendMessage(tip, undefined, ch.chatId);

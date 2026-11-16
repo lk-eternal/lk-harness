@@ -1,36 +1,18 @@
-import { isPlainProject, projectRootDir, type Project, type ProjectActionType, type ProjectRepo } from "../src/shared/project-types.js"
+import { projectRootDir, type Project, type ProjectActionType } from "../src/shared/project-types.js"
 import { buildNodeActionPrompt } from "../src/shared/project-node-guides.js"
+import { projectHasRepoInfo } from "../src/shared/project-repo-info.js"
+import { resolveGitPrinciples } from "../src/shared/project-git-principles.js"
 
 // 设置页/同步服务仍从此处取默认模板（真值在 shared/project-node-guides.ts，两侧同源）
 export { ACTION_GUIDES, getDefaultNodeGuide } from "../src/shared/project-node-guides.js"
 
 // ════════════════════════════════════════════════════════════
-// 项目工作流提示词模板（改文案只动本文件下半部分；节点全文真值见 shared/project-node-guides.ts）
+// 项目工作流提示词模板（改文案只动本文件；节点全文真值见 shared/project-node-guides.ts）
+// 只告诉 AI 必要的项目信息：名称、目标、链接、项目信息（含代码仓库和分支，和别的信息一样只是几行字）、目录。
+// 流程怎么走、分支怎么用，由用户在模板的步骤提示词里和设置的「Git 基本原则」里自己定。
 // ════════════════════════════════════════════════════════════
 
-/** 单仓分支行（会话/节点上下文共用，名称必须原样使用） */
-function repoBranchLines(r: ProjectRepo, multi: boolean, index: number): string[] {
-  const head = multi ? `主仓 #${index + 1}: ${r.repoPath}` : `主仓: ${r.repoPath}`
-  const unconfigured = "（未配置，须 project_get + project_update 补齐；禁止猜测或新建 dev/test 等分支名）"
-  return [
-    head,
-    `  AI 工作目录: ${r.worktreePath}`,
-    `  生产基线: ${r.baseBranch}（切 feature 起点；允许 merge/rebase 与生产基线同步）`,
-    `  测试分支: ${r.testBranch?.trim() || unconfigured}`,
-    `  开发分支: ${r.developBranch?.trim() || unconfigured}`,
-  ]
-}
-
-function projectRepos(p: Project): ProjectRepo[] {
-  if (p.repos?.length) return p.repos
-  return [{
-    repoPath: p.repoPath,
-    baseBranch: p.baseBranch,
-    worktreePath: p.worktreePath,
-  }]
-}
-
-/** 项目上下文块（会话与节点共用）；纯会话型无仓库分支段 */
+/** 项目上下文块（会话与节点共用） */
 function contextBlock(p: Project): string[] {
   const head = [
     `项目: ${p.name}`,
@@ -44,36 +26,24 @@ function contextBlock(p: Project): string[] {
   const meta = p.metadata && Object.keys(p.metadata).length
     ? ["", "项目信息:", ...Object.entries(p.metadata).map(([k, v]) => `- ${k}: ${v}`)]
     : []
-  const root = projectRootDir(p)
-  if (isPlainProject(p)) {
-    return [...head, ...meta, `项目目录: ${root || p.worktreePath}（纯会话型项目，无代码仓）`].filter(Boolean)
-  }
-  const repos = projectRepos(p)
-  return [
-    ...head,
-    ...meta,
-    root ? `项目目录: ${root}` : "",
-    `feature 分支: ${p.featureBranch}`,
-    "",
-    "仓库与分支（git 操作必须使用下列确切全名，禁止缩写、猜测或自建分支）：",
-    ...repos.flatMap((r, i) => repoBranchLines(r, repos.length > 1, i)),
-    "分支红线：",
-    "- 开发/测试：禁止 merge 或 rebase 进 feature；与开发/测试冲突时从对应分支拉临时合流分支，合入 feature 后推送开发/测试，再切回 feature。",
-    "- 向开发/测试推送或开 MR 时，目标分支必须为上文列出的开发分支、测试分支全名。",
-    "- 生产基线：允许 merge 生产基线进 feature，或 rebase feature 到生产基线以同步线上。",
-    "- 生产基线：禁止在本地将 feature merge 或 push 到生产基线，仅允许在用户要求下创建 feature 到生产基线的 MR。",
-  ].filter(Boolean)
+  const root = projectRootDir(p) || p.worktreePath
+  return [...head, ...meta, root ? `项目目录: ${root}` : ""].filter(Boolean)
 }
 
-/** 首次进入项目会话的提示词：角色 + 工作方式（节点索引/发现协议见每轮 [本轮投递] node_protocol） */
-export function buildProjectSessionPrompt(p: Project): string {
-  const plain = isPlainProject(p)
+export interface ProjectSessionPromptOpts {
+  /** 设置里存的「Git 基本原则」（原样传，不要自己套默认值）：没设过=用默认，清空=不带 */
+  gitPrinciples?: string | null
+}
+
+/** 首次进入项目会话的提示词：项目上下文 + 工作方式（节点索引/发现协议见每轮 [本轮投递] node_protocol） */
+export function buildProjectSessionPrompt(p: Project, opts?: ProjectSessionPromptOpts): string {
+  const hasRepo = projectHasRepoInfo(p)
+  const principles = hasRepo ? resolveGitPrinciples(opts?.gitPrinciples) : ""
   return [
     `[PROJECT_SESSION] 项目「${p.name}」专属会话`,
     "",
     ...contextBlock(p),
-    "",
-    `你的角色: 该项目的${plain ? "负责人" : "开发负责人"}，在本会话中与用户协作完成${plain ? "流程" : "需求"}交付。`,
+    ...(principles ? ["", principles] : []),
     "",
     "工作方式:",
     "1. 普通对话：用户直接发消息、问答讨论、小修小改 → 直接回。",
@@ -81,21 +51,21 @@ export function buildProjectSessionPrompt(p: Project): string {
     "3. 自然语言：按每轮 [本轮投递] 内 node_protocol 判断是否拉取节点提示词。",
     "",
     "查数与写数（全会话唯一指引）:",
-    plain
-      ? `- 查：project_get(project_id=${p.id}) 查项目信息/链接/最近产物；project_get_node 查单步骤全文。内部 ID/路径不向用户复述。`
-      : `- 查：project_get(project_id=${p.id}) 查分支/metadata/文档链接/最近产物；project_get_node 查单节点全文。内部 ID/路径/分支不向用户复述。`,
-    plain
-      ? "- 写：了解到新的项目信息（对象、截止时间、偏好等）用 project_update 记进 metadata（KV merge，空值删 key），之后的会话都能看到；需跨步骤保留成果时用 project_register_artifact(project_id="
-        + `${p.id}, artifact_path, summary?)。`
-      : "- 写：补分支/metadata 用 project_update（metadata 为 KV merge，空值删 key）；需跨节点保留产物上下文时用 project_register_artifact(project_id="
-        + `${p.id}, artifact_path, summary?, mr_url?, feishu_doc_url?)。`,
-    plain
-      ? "- 成果文件写项目目录下的 .lk-harness/artifacts/，用 send_file 交付；项目目录里用户放的资料都可以读，但不要改动或删除用户原有文件，除非用户明确要求。"
-      : "- 产物文件写 AI 工作目录下的 .lk-harness/artifacts/（多仓项目写主仓对应目录），用 send_file 交付文件。",
+    `- 查：project_get(project_id=${p.id}) 查项目信息/链接/最近成果；project_get_node 查单步骤全文。内部 ID/路径不向用户复述。`,
+    `- 写：了解到新的项目信息（对象、截止时间、偏好${hasRepo ? "、仓库和分支" : ""}等）用 project_update 记进 metadata（KV merge，空值删 key），之后的会话都能看到；需跨步骤保留成果时用 project_register_artifact(project_id=${p.id}, artifact_path, summary?${hasRepo ? ", mr_url?, feishu_doc_url?" : ""})。`,
+    "- 成果文件写当前目录下的 .lk-harness/artifacts/，用 send_file 交付文件。"
+      + (p.externalWorkspace ? "项目目录里用户放的资料都可以读，但不要改动或删除用户原有文件，除非用户明确要求。" : ""),
   ].join("\n")
 }
 
 /** 节点任务提示词（按钮入口；与 project_get_node 同源，见 shared/project-node-guides.ts） */
-export function buildActionPrompt(p: Project, type: ProjectActionType, origin = "按钮点击直接下发"): string {
-  return buildNodeActionPrompt(p, type, origin)
+export function buildActionPrompt(
+  p: Project,
+  type: ProjectActionType,
+  origin = "按钮点击直接下发",
+  opts?: ProjectSessionPromptOpts,
+): string {
+  // 设置里把 Git 基本原则清空了：节点开头也别再提它
+  const gitReminder = resolveGitPrinciples(opts?.gitPrinciples) !== ""
+  return buildNodeActionPrompt(p, type, origin, { gitReminder })
 }

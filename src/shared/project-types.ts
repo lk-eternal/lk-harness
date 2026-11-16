@@ -21,8 +21,14 @@ export interface ProjectNodeDef extends FlowHubHubTrack {
   prompt?: string
 }
 
-/** 项目工作区类型：worktree=代码开发（主仓+隔离 worktree+分支借还）；plain=纯会话目录（测试/文档协作，无 git） */
+/**
+ * 模板要不要接代码仓库：worktree=建项时可以选代码仓库（选不选都行）；plain=不接，只有一个普通文件夹。
+ * 它只决定建项表单里出不出现仓库选择，项目建好后不再记这个类型：仓库和分支都是普通的项目信息。
+ */
 export type ProjectWorkspaceType = "worktree" | "plain"
+
+export { WORK_BRANCH_MODES, normalizeWorkBranchMode, type WorkBranchMode } from "./work-branch-mode.js"
+import type { WorkBranchMode } from "./work-branch-mode.js"
 
 /** 模板要用户在建项时填的一项信息；值存进项目的 metadata，键就是 label（AI 读上下文时看到的也是它） */
 export interface ProjectFieldDef {
@@ -38,8 +44,10 @@ export interface ProjectNodeGroupDef extends FlowHubHubTrack {
   id: string
   name: string
   nodes: ProjectNodeDef[]
-  /** 工作区类型：plain=普通文件夹，worktree=代码仓（应用内建项的表单按它走）。缺省按 worktree（存量） */
+  /** 接不接代码仓库：plain=不接，worktree=建项时可选仓库（应用内建项的表单按它走）。缺省按 worktree（存量） */
   workspace?: ProjectWorkspaceType
+  /** 接了代码仓库时，克隆副本停在哪个分支的默认值；缺省=新建分支（存量行为），建项时可以改 */
+  branchMode?: WorkBranchMode
   /** 一句话说明这个模板适合干什么（建项时展示） */
   description?: string
   /** 建项时要填的信息 */
@@ -68,8 +76,9 @@ export const DEFAULT_NODE_GROUPS: ProjectNodeGroupDef[] = [
   {
     id: "test",
     name: "测试",
-    description: "软件测试：评审、写用例、执行测试、提缺陷、复测。用飞书项目。",
-    workspace: "plain",
+    description: "软件测试：评审、写用例、执行测试、提缺陷、复测。用飞书项目。建项时可以选要测的代码仓库（可不选），代码停在测试分支上。",
+    workspace: "worktree",
+    branchMode: "test",
     nodes: [
       { id: "test-review", label: "测试评审" },
       { id: "test-cases", label: "用例编写" },
@@ -88,20 +97,15 @@ export const DEFAULT_NODE_GROUP_ID = DEFAULT_NODE_GROUPS[0].id
 /** 新建项目默认选的模板（不依赖 git / 飞书 / GitLab，谁都能用） */
 export const DEFAULT_NEW_PROJECT_GROUP_ID = GENERAL_NODE_GROUPS[0].id
 
+/** 常用代码仓库（设置里配的，建项时勾选）；分支都只是信息，只有「克隆副本」会让应用对仓库做 git 操作 */
 export interface RepoProfile {
   path: string
-  /** 生产基线：只作切 feature 起点，禁止默认 ship 目标 */
+  /** 基线分支：新建分支从它切出；没配专门分支时的兜底 */
   baseBranch: string
   testBranch?: string
   developBranch?: string
-}
-
-export interface ProjectRepo {
-  repoPath: string
-  baseBranch: string
-  testBranch?: string
-  developBranch?: string
-  worktreePath: string
+  /** 建项时克隆一份到项目目录（AI 在副本里改，不动你自己的仓库）；缺省=克隆。false=不克隆，只把仓库信息记进项目 */
+  clone?: boolean
 }
 
 /** @deprecated 轻量化后不再写入；仅兼容读存量 JSON */
@@ -126,18 +130,16 @@ export interface Project {
   relatedDocs?: string
   productDocUrl?: string
   techDocUrl?: string
-  repoPath: string
-  baseBranch: string
-  featureBranch: string
+  /**
+   * 项目目录：AI 工作的目录，会话从这里启动；成果放在它下面的 .lk-harness/artifacts。
+   * 名字是历史遗留（早期是 git worktree），现在就是一个普通目录。
+   * 仓库、分支这些都不再有专门的字段：记在 metadata 的「代码仓库」几行里（见 project-repo-info.ts）。
+   */
   worktreePath: string
-  /** multi-repo worktrees */
-  repos?: ProjectRepo[]
   /** 流程组 id；旧项目缺省视为默认组；多组时为首组 id（兼容） */
   groupId?: string
   /** 绑定的流程组 id 列表（多选）；缺省回落 groupId 或默认组 */
   groupIds?: string[]
-  /** 工作区类型；新建默认 worktree，缺省按 worktree 兼容存量 */
-  workspaceType?: ProjectWorkspaceType
   /**
    * 建项时从模板复制来的流程组副本（含步骤和提示词）。有它就只认它，不再随全局模板变；
    * 缺省的存量项目继续实时读全局流程组。
@@ -183,25 +185,6 @@ export const PROJECT_RESERVED_SUBCOMMANDS = [
 
 export function projectSessionKey(chatKey: string, projectId: string): string {
   return `${chatKey}::project_${projectId}`
-}
-
-/** 项目全部 worktree 路径（多仓项目逐仓，单仓项目兜底主路径） */
-export function projectWorktrees(p: Project): string[] {
-  const list = p.repos?.length ? p.repos.map((r) => r.worktreePath) : [p.worktreePath]
-  return list.filter(Boolean)
-}
-
-/** 项目全部仓库引用（repoPath/worktreePath/baseBranch），供 worktree 懒修复等 git 操作 */
-export function projectRepoRefs(p: Project): { repoPath: string; worktreePath: string; baseBranch: string }[] {
-  const list = p.repos?.length
-    ? p.repos.map((r) => ({ repoPath: r.repoPath, worktreePath: r.worktreePath, baseBranch: r.baseBranch }))
-    : [{ repoPath: p.repoPath, worktreePath: p.worktreePath, baseBranch: p.baseBranch }]
-  return list.filter((r) => r.repoPath && r.worktreePath)
-}
-
-/** 纯会话型项目（无 git 仓，跳过 worktree/分支借还等全部 git 行为） */
-export function isPlainProject(p: Pick<Project, "workspaceType">): boolean {
-  return p.workspaceType === "plain"
 }
 
 /** 当前 chat 是否命中项目的独立群（两边 chatKey / 裸 chatId 皆可） */
@@ -384,23 +367,15 @@ export function splitRepoPairValues(raw: unknown): string[] {
   return out
 }
 
-/** 项目根目录：单仓为 worktree 父层 root/slug；多仓取各 worktree 公共父目录 */
-export function projectRootDir(p: Project): string {
+/**
+ * 项目根目录（删项目时整个移走的那个）：应用自己建的项目都是 root/<名字>/ 下面放工作目录，所以取工作目录的上一层——
+ * 工作目录要么是 root/<名字>/workspace，要么是里面唯一那个克隆副本 root/<名字>/<仓库名>。
+ */
+export function projectRootDir(p: Pick<Project, "worktreePath" | "externalWorkspace">): string {
+  const wt = (p.worktreePath || "").trim()
   // 用户自己选的文件夹就是项目目录本身：别按约定取上一层，上一层是用户的别的东西
-  if (p.externalWorkspace) return (p.worktreePath || "").trim()
-  const wts = projectWorktrees(p).filter(Boolean)
-  if (!wts.length) return (p.worktreePath || "").trim()
-  if (wts.length === 1) return path.dirname(wts[0])
-  const parts = wts.map((wt) => path.normalize(wt).split(path.sep))
-  const minLen = Math.min(...parts.map((p) => p.length))
-  const common: string[] = []
-  for (let i = 0; i < minLen; i++) {
-    const seg = parts[0][i]
-    if (parts.every((p) => p[i] === seg)) common.push(seg)
-    else break
-  }
-  if (common.length >= 2) return common.join(path.sep)
-  return path.dirname(wts[0])
+  if (p.externalWorkspace || !wt) return wt
+  return path.dirname(wt)
 }
 
 export function repoShortName(repoPath: string): string {

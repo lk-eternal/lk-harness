@@ -91,8 +91,10 @@ declare global {
     flowHubToken?: string
     flowHubAuthor?: string
     repoRoots?: string[]
-    repoProfiles?: { path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
+    repoProfiles?: { path: string; baseBranch: string; testBranch?: string; developBranch?: string; clone?: boolean }[]
     worktreeRoot?: string
+    /** 项目会话里的 Git 基本原则；没设过=用默认文案，空串=不带 */
+    gitPrinciples?: string
   }
 
   interface SkillTreeNode {

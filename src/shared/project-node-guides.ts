@@ -1,5 +1,6 @@
 import { projectNodeLabelOf, projectNodeOf } from "./project-store.js"
-import { isPlainProject, type Project } from "./project-types.js"
+import type { Project } from "./project-types.js"
+import { projectHasRepoInfo } from "./project-repo-info.js"
 
 export const ACTION_GUIDES: Record<string, string[]> = {
   plan: [
@@ -12,7 +13,7 @@ export const ACTION_GUIDES: Record<string, string[]> = {
   ],
   build: [
     "按最近一次通过的规划实现代码（无规划产物时先读飞书项目工作项与技术文档补齐上下文，仍不明确就问用户）：",
-    "- 在 AI 工作目录内编码并本地验证（编译 / 测试 / 关键路径自测）",
+    "- 在代码仓库目录（项目信息「代码仓库」里写的那个）内编码并本地验证（编译 / 测试 / 关键路径自测）",
     "- 提交到 feature 分支，提交信息说明动机",
     "- 产物写实现说明：改了什么、为什么、如何验证、遗留事项",
   ],
@@ -26,7 +27,7 @@ export const ACTION_GUIDES: Record<string, string[]> = {
   deploy: [
     "部署到开发分支：",
     "- 核对全部改动已提交 feature 分支，推送 feature 到 origin 同名分支",
-    "- 在 AI 工作目录执行 git push origin HEAD:<开发分支全名> 推送到配置的开发分支",
+    "- 在代码仓库目录执行 git push origin HEAD:<开发分支全名> 推送到配置的开发分支",
     "- 被拒（non-fast-forward）时用临时合流分支解决，feature 分支必须保持纯净：",
     "  1. git fetch origin",
     "  2. git checkout -b <feature名>-deploy origin/<开发分支全名>（从远端开发分支拉临时分支）",
@@ -39,7 +40,7 @@ export const ACTION_GUIDES: Record<string, string[]> = {
   mr: [
     "提测：推送代码、创建指向测试分支的 MR：",
     "- 推送 feature 到 origin 同名分支",
-    "- 创建 feature → 测试分支的 MR：在 AI 工作目录执行 git push origin HEAD -o merge_request.create -o merge_request.target=<测试分支全名> -o merge_request.title=\"Draft: <项目名>\"，命令输出中会返回 MR 链接",
+    "- 创建 feature → 测试分支的 MR：在代码仓库目录执行 git push origin HEAD -o merge_request.create -o merge_request.target=<测试分支全名> -o merge_request.title=\"Draft: <项目名>\"，命令输出中会返回 MR 链接",
     "- push option 建不出 MR 时改用 glab CLI；仍不行则给出 GitLab 新建 MR 页面链接引导用户手动创建，拿到 MR 链接后继续",
     "- 建完 MR 必查冲突（glab/API 看 has_conflicts / merge_status，detected_merge_conflicts 即有冲突），有冲突时用临时合流分支解决，feature 必须保持纯净：",
     "  1. git fetch origin && git checkout -b <feature名>-mr origin/<测试分支全名>",
@@ -54,7 +55,7 @@ export const ACTION_GUIDES: Record<string, string[]> = {
   "submit-test": [
     "提测：推送代码、创建指向测试分支的 MR，并让测试同学在飞书项目里看到完整提测信息：",
     "- 推送 feature 到 origin 同名分支",
-    "- 创建 feature → 测试分支的 MR：在 AI 工作目录执行 git push origin HEAD -o merge_request.create -o merge_request.target=<测试分支全名> -o merge_request.title=\"Draft: <项目名>\"，命令输出中会返回 MR 链接",
+    "- 创建 feature → 测试分支的 MR：在代码仓库目录执行 git push origin HEAD -o merge_request.create -o merge_request.target=<测试分支全名> -o merge_request.title=\"Draft: <项目名>\"，命令输出中会返回 MR 链接",
     "- **禁止勾选「删除源分支」**：feature 需保留供后续修复缺陷/迭代；push option 不要加 merge_request.remove_source_branch；若 GitLab 项目默认仍勾选，建完后执行 glab mr update --remove-source-branch=false（或 API 设 remove_source_branch=false）",
     "- push option 建不出 MR 时改用 glab CLI（必须带 --remove-source-branch=false）；仍不行则给出 GitLab 新建 MR 页面链接引导用户手动创建（手动创建时也取消勾选删除源分支），拿到 MR 链接后继续",
     "- 建完 MR 必查冲突（glab/API 看 has_conflicts / merge_status，detected_merge_conflicts 即有冲突），有冲突时用临时合流分支解决，feature 必须保持纯净：",
@@ -80,7 +81,7 @@ export const ACTION_GUIDES: Record<string, string[]> = {
   ],
   "fix-bug": [
     "修复缺陷（以最近一次通过的缺陷分析报告为准；无报告时先拉取指派给自己的待解决缺陷，拉不到则如实说明）：",
-    "- 逐个缺陷：按分析报告定位根因 → 在 AI 工作目录内修复 → 本地验证（编译 / 测试 / 关键路径自测），禁止未验证就收尾",
+    "- 逐个缺陷：按分析报告定位根因 → 在代码仓库目录内修复 → 本地验证（编译 / 测试 / 关键路径自测），禁止未验证就收尾",
     "- 每个缺陷单独提交到 feature 分支（提交信息注明缺陷标题与工作项 ID），推送 feature 到 origin 同名分支",
     "",
     "【MR——只认「合并到测试分支」这一条】",
@@ -329,40 +330,33 @@ export function getNodeGuideLines(id: string, customPrompt: string | undefined, 
 
 /** 节点任务提示词全文组装（按钮与 project_get_node 同源；真值住下层） */
 export function buildNodeActionPrompt(
-  p: Pick<Project, "id" | "name" | "groupId" | "groupIds" | "groupSnapshot" | "workspaceType">,
+  p: Pick<Project, "id" | "name" | "groupId" | "groupIds" | "groupSnapshot" | "metadata">,
   nodeId: string,
   origin: string,
+  /** gitReminder=false：设置里把「Git 基本原则」清空了，不要再提它（缺省按项目里有没有记代码仓库决定） */
+  opts?: { gitReminder?: boolean },
 ): string {
-  // 纯会话型项目没有代码仓：不出现分支红线、MR、飞书等只属于研发流程的措辞
-  const plain = isPlainProject(p)
   const label = projectNodeLabelOf(p, nodeId)
   const guide = getNodeGuideLines(nodeId, projectNodeOf(p, nodeId)?.prompt, label)
+  const gitReminder = opts?.gitReminder !== false && projectHasRepoInfo(p)
   return [
-    `[PROJECT_ACTION] ${label}${plain ? "步骤" : "节点"}`,
-    plain
-      ? `来源：${origin}。信息齐备直接执行，缺关键输入（如资料、链接、环境信息、对象、截止时间）先问清再干，不硬猜。`
-      : `来源：${origin}。信息齐备直接执行，缺关键输入（如文档链接、环境信息、MR地址）先问清再干，不硬猜。`,
+    `[PROJECT_ACTION] ${label}步骤`,
+    `来源：${origin}。信息齐备直接执行，缺关键输入（如资料、链接、环境信息、对象、截止时间）先问清再干，不硬猜。`,
     "",
     `项目: ${p.name}（project_id=${p.id}）`,
-    ...(plain
-      ? []
-      : ["分支与红线：git 操作只用会话上下文中的确切全名；严禁把开发/测试分支 merge 或 rebase 进 feature 分支，冲突一律从目标分支拉临时合流分支解决（生产基线规则见会话上下文分支红线）。"]),
-    plain
-      ? `项目信息/链接/最近成果以 project_get(project_id=${p.id}) 为准。`
-      : `分支/metadata/文档链接/最近产物以 project_get(project_id=${p.id}) 为准。`,
+    ...(gitReminder ? ["Git 操作遵守会话开头给出的「Git 基本原则」。"] : []),
+    `项目信息/链接/最近成果以 project_get(project_id=${p.id}) 为准。`,
     "",
-    plain ? "本步骤要求:" : "本节点要求:",
+    "本步骤要求:",
     ...guide,
     "",
     "交付分级（按需，不硬造）:",
-    plain
-      ? "- 有实质文件成果时：写项目目录下的 .lk-harness/artifacts/，用 send_file 交付；需跨步骤保留时调 project_register_artifact。"
-      : "- 有实质文件产物时：写 AI 工作目录下的 .lk-harness/artifacts/，用 send_file 交付；需跨节点保留时调 project_register_artifact。",
-    "- 无实质文件产物时（如纯评审结论、只问一句即答、只做状态确认）：以回复正文为交付，不造空文件、不硬登记。产物=文件；登记=跨节点上下文；报告=正文结论。",
+    "- 有实质文件成果时：写当前目录下的 .lk-harness/artifacts/，用 send_file 交付；需跨步骤保留时调 project_register_artifact。",
+    "- 无实质文件产物时（如纯评审结论、只问一句即答、只做状态确认）：以回复正文为交付，不造空文件、不硬登记。成果=文件；登记=跨步骤上下文；报告=正文结论。",
     "",
     "收尾（每次必须）:",
     "1. 结论先行（一句话：干了什么、成没成）。",
-    plain ? "2. 成果链接（如有：文件/文档/网页）。" : "2. 产物链接（如有：文件/MR/飞书文档）。",
+    projectHasRepoInfo(p) ? "2. 成果链接（如有：文件/MR/文档/网页）。" : "2. 成果链接（如有：文件/文档/网页）。",
     "3. 遗留事项与下一步（如无写“无”）。",
   ].join("\n")
 }

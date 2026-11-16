@@ -15,6 +15,8 @@ export interface RepoPickItem {
   baseBranch: string
   checked: boolean
   remote: boolean
+  /** 建项时会克隆一份副本到项目目录（来自设置里的「克隆副本」；远程仓库、新加的仓库恒为 true）。只用来给用户看，不在建项时改 */
+  clone: boolean
   /** 基线分支的输入提示（桌面端读本地仓库得到；手机端没有） */
   branches: string[]
   /** 本地仓库读过一次了（读失败也算，避免反复读） */
@@ -40,6 +42,7 @@ export function repoItemsFromOptions(options: readonly ProjectRepoOption[]): Rep
       baseBranch: o.baseBranch || DEFAULT_REMOTE_BASE_BRANCH,
       checked: false,
       remote: isRemoteRepoUrl(o.path),
+      clone: isRemoteRepoUrl(o.path) || o.clone !== false,
       branches: [],
       inspected: false,
       note: "",
@@ -74,6 +77,7 @@ export function upsertPickedRepo(
     baseBranch: (add.baseBranch ?? "").trim() || DEFAULT_REMOTE_BASE_BRANCH,
     checked: true,
     remote: isRemoteRepoUrl(path),
+    clone: true,
     branches: add.branches ?? [],
     inspected: !!add.branches,
     note: "",

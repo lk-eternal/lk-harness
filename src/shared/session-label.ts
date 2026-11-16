@@ -104,7 +104,8 @@ export function buildSessionCardTitle(opts: {
   if (pid || opts.project) {
     const p = opts.project
     const name = p?.name || pid || "project"
-    const branch = p?.featureBranch || (p?.worktreePath ? readGitBranch(p.worktreePath) : undefined)
+    // 项目目录本身是 git 仓库时（只克隆了一个仓库）显示它当前所在的分支；否则不显示
+    const branch = p?.worktreePath ? readGitBranch(p.worktreePath) : undefined
     return { title: `📦 ${name}`, subtitle: branch ? `🌿 ${branch}` : undefined }
   }
   const dir = opts.workspaceDir || opts.fallbackDir

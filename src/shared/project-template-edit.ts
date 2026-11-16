@@ -3,6 +3,7 @@
  * 模板和快捷操作的 id 是内部标识，不该让用户操心：这里按名字自动生成。
  */
 import type { ProjectFieldDef, ProjectNodeDef, ProjectNodeGroupDef } from "./project-types.js"
+import { normalizeWorkBranchMode, type WorkBranchMode } from "./work-branch-mode.js"
 import { normalizeFieldDefs } from "./project-templates.js"
 
 export const TEMPLATE_ID_RE = /^[a-z][a-z0-9-]*$/
@@ -73,8 +74,18 @@ export function templateFieldsProblem(fields: readonly ProjectFieldDef[]): strin
 export interface TemplateDraft {
   name: string
   description: string
+  /** 接不接代码仓库：任何模板都可以随时打开或关掉 */
   workspace: "plain" | "worktree"
+  /** 接了仓库时克隆副本停在哪个分支的默认值；不接仓库时无意义，保存时丢掉 */
+  branchMode?: WorkBranchMode
   fields: ProjectFieldDef[]
+}
+
+/** 草稿里的工作分支落到模板上的样子：不接仓库、或就是默认的「新建分支」都不存（缺省=新建分支） */
+function draftBranchMode(d: TemplateDraft): { branchMode: WorkBranchMode } | Record<string, never> {
+  if (d.workspace !== "worktree") return {}
+  const mode = normalizeWorkBranchMode(d.branchMode)
+  return mode === "new" ? {} : { branchMode: mode }
 }
 
 /** 保存模板前的校验；otherNames 是别的模板的名字（新建项目时靠名字挑，重名会分不清）。没问题返回空串 */
@@ -106,20 +117,26 @@ export function buildNewTemplate(
     id: makeUniqueId(d.name, existingGroupIds, "template"),
     name: d.name.trim(),
     workspace: d.workspace,
+    ...draftBranchMode(d),
     ...(description ? { description } : {}),
     ...(fields ? { fields } : {}),
     nodes: [{ id: actionId, label: STARTER_ACTION.label, prompt: STARTER_ACTION.prompt }],
   }
 }
 
-/** 把编辑后的草稿合并回已有模板：只动名称、说明、要填的信息，类型和 id、快捷操作、共享空间的跟踪信息都不动 */
+/**
+ * 把编辑后的草稿合并回已有模板：动名称、说明、要填的信息、接不接代码仓库和工作分支；
+ * id、快捷操作、共享空间的跟踪信息都不动。已经建好的项目有自己的模板副本，不受影响。
+ */
 export function applyTemplateEdit(g: ProjectNodeGroupDef, d: TemplateDraft): ProjectNodeGroupDef {
-  const { description: _d, fields: _f, ...rest } = g
+  const { description: _d, fields: _f, branchMode: _b, ...rest } = g
   const description = d.description.trim()
   const fields = normalizeFieldDefs(d.fields)
   return {
     ...rest,
     name: d.name.trim(),
+    workspace: d.workspace,
+    ...draftBranchMode(d),
     ...(description ? { description } : {}),
     ...(fields ? { fields } : {}),
   }

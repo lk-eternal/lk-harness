@@ -9,6 +9,8 @@ export interface RepoProfileRow {
   baseBranch: string
   testBranch?: string
   developBranch?: string
+  /** 建项时克隆一份副本到项目目录。不写=克隆（默认）；false=不克隆，只把仓库信息记进项目，AI 直接用本机这份 */
+  clone?: boolean
 }
 
 export interface ProjectSettingsValues {
@@ -16,6 +18,8 @@ export interface ProjectSettingsValues {
   gitlabToken: string
   gitlabHost: string
   repoProfiles: RepoProfileRow[]
+  /** 项目会话里的 Git 基本原则。界面里显示的是实际生效的文本（没改过就是默认文案），清空=不带 */
+  gitPrinciples: string
   flowHubUrl: string
   flowHubToken: string
   flowHubAuthor: string
@@ -23,7 +27,7 @@ export interface ProjectSettingsValues {
 
 export type ProjectSettingsField = keyof ProjectSettingsValues
 
-/** 去掉空行和多余空白；测试/开发分支没填就不留这个键 */
+/** 去掉空行和多余空白；测试/开发分支没填就不留这个键；克隆只在「不克隆」时留着（默认就是克隆，不用存） */
 export function cleanRepoProfiles(rows: readonly RepoProfileRow[]): RepoProfileRow[] {
   return rows
     .map((p) => ({
@@ -31,6 +35,7 @@ export function cleanRepoProfiles(rows: readonly RepoProfileRow[]): RepoProfileR
       baseBranch: p.baseBranch.trim(),
       testBranch: p.testBranch?.trim() || undefined,
       developBranch: p.developBranch?.trim() || undefined,
+      ...(p.clone === false ? { clone: false } : {}),
     }))
     .filter((p) => p.path)
 }
@@ -46,6 +51,9 @@ export function buildSettingsPatch(
       const profiles = cleanRepoProfiles(values.repoProfiles)
       patch.repoProfiles = profiles
       patch.repoRoots = profiles.map((p) => p.path)
+    } else if (f === "gitPrinciples") {
+      // 不 trim 内部换行；写成默认文案时主进程会把它当「没改过」存（见 config-store 的 saveConfig）
+      patch.gitPrinciples = values.gitPrinciples
     } else {
       patch[f] = values[f].trim()
     }

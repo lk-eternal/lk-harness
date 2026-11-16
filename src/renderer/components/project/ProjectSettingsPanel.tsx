@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { CheckCircle2, Copy, Eye, EyeOff, FolderOpen, Plus, X } from "lucide-react"
 import useInlineModal from "../useInlineModal"
-import { repoIdentityKey } from "../../../shared/project-app-types"
+import { isRemoteRepoUrl, repoIdentityKey } from "../../../shared/project-app-types"
+import { DEFAULT_GIT_PRINCIPLES, GIT_PRINCIPLES_MAX, resolveGitPrinciples } from "../../../shared/project-git-principles"
 import {
   buildSettingsPatch,
   type ProjectSettingsField, type ProjectSettingsValues, type RepoProfileRow,
@@ -14,15 +15,15 @@ const smallBtn = "shrink-0 rounded-md border border-line px-3 py-1.5 text-xs tex
 
 /**
  * 仓库表格，按所在卡片的宽度（容器查询，不是窗口宽度）切换两种排法：
- * - 够宽（≥ 38rem）：一个仓库一行，列是 地址 | 基线分支 | 测试分支 | 开发分支 | 移除，表头和每一行共用同一套列宽，上下对得齐；
- * - 放不下（应用默认窗口就是）：一个仓库一张小卡片，第一行地址和移除，第二行三个分支（各带小标签）。
+ * - 够宽（≥ 42rem）：一个仓库一行，列是 地址 | 基线分支 | 测试分支 | 开发分支 | 克隆副本 | 移除，表头和每一行共用同一套列宽，上下对得齐；
+ * - 放不下（应用默认窗口就是）：一个仓库一张小卡片，第一行地址和移除，第二行三个分支（各带小标签），第三行克隆副本的勾选。
  * 不做横向滚动：滚动条一藏起来，右边的列用户就不知道还有。
  */
-const REPO_WIDE_COLS = "@[38rem]:grid-cols-[minmax(11rem,1fr)_7.5rem_7.5rem_7.5rem_1.75rem]"
+const REPO_WIDE_COLS = "@[42rem]:grid-cols-[minmax(11rem,1fr)_7rem_7rem_7rem_4.5rem_1.75rem]"
 const REPO_ROW = `grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1.5 ${REPO_WIDE_COLS}`
 
 const EMPTY: ProjectSettingsValues = {
-  worktreeRoot: "", gitlabToken: "", gitlabHost: "", repoProfiles: [], flowHubUrl: "", flowHubToken: "", flowHubAuthor: "",
+  worktreeRoot: "", gitlabToken: "", gitlabHost: "", repoProfiles: [], gitPrinciples: "", flowHubUrl: "", flowHubToken: "", flowHubAuthor: "",
 }
 
 /** 一块设置：标题（可带一个灰色小标签）+ 一句说明 + 内容。全部直接展开，不折叠 */
@@ -58,7 +59,7 @@ function Row({ label, htmlFor, note, children }: { label: string; htmlFor: strin
 function BranchCell({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-0.5 block text-[10.5px] text-fg-muted @[38rem]:hidden">{label}</span>
+      <span className="mb-0.5 block text-[10.5px] text-fg-muted @[42rem]:hidden">{label}</span>
       {children}
     </label>
   )
@@ -142,6 +143,7 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
         gitlabToken: config.gitlabToken ?? "",
         gitlabHost: config.gitlabHost ?? "",
         repoProfiles: profiles,
+        gitPrinciples: resolveGitPrinciples(config.gitPrinciples),
         flowHubUrl: config.flowHubUrl ?? "",
         flowHubToken: config.flowHubToken ?? "",
         flowHubAuthor: config.flowHubAuthor ?? "",
@@ -200,7 +202,7 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
 
         <Card
           title="项目存放位置"
-          hint="新建项目时，应用会在这里给每个项目建一个文件夹：成果都放在里面，开发项目的代码副本也放这里。只影响之后新建的项目，已经建好的不会搬家。"
+          hint="新建项目时，应用会在这里给每个项目建一个文件夹：成果都放在里面，勾了「克隆副本」的代码仓库也会克隆到这里。只影响之后新建的项目，已经建好的不会搬家。"
         >
           <Row label="存放文件夹" htmlFor="ps-worktree-root" note={effectiveRoot ? <span className="break-all">{values.worktreeRoot.trim() ? "当前位置：" : "当前使用默认位置："}{effectiveRoot}</span> : undefined}>
             <div className="flex gap-2">
@@ -212,27 +214,32 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
 
         <Card
           title="常用代码仓库"
-          tag="新建「开发」类项目时用"
-          hint="新建开发项目时可以直接勾选；建过项目的仓库会自动记在这里，不用提前配。基线分支是新分支从哪里切出去（一般是主干或生产分支），测试、开发分支可以不填。"
+          tag="新建接代码仓库的项目时用"
+          hint={<>
+            新建项目时可以直接勾选；建过项目的仓库会自动记在这里，不用提前配。基线分支是新分支从哪里切出去（一般是主干或生产分支），测试、开发分支可以不填。
+            <br />
+            「克隆副本」：勾上，建项目时会克隆一份到项目目录，AI 在副本里改，不动你自己的仓库；不勾就不克隆，只把仓库信息记进项目，AI 直接用你本机这份（应用不会去动它）。远程地址本机没有副本，一律克隆。
+          </>}
         >
           {values.repoProfiles.length > 0 ? (
             <div className="@container">
-              <div className={`hidden items-center gap-2 pb-1.5 text-[11px] text-fg-muted @[38rem]:grid ${REPO_WIDE_COLS}`}>
+              <div className={`hidden items-center gap-2 pb-1.5 text-[11px] text-fg-muted @[42rem]:grid ${REPO_WIDE_COLS}`}>
                 <span>仓库地址或本地路径</span>
                 <span title="新分支从哪里切出去（一般是主干或生产分支）">基线分支</span>
                 <span>测试分支</span>
                 <span>开发分支</span>
+                <span title="勾上：建项目时克隆一份副本到项目目录，AI 在副本里改，不动你自己的仓库。不勾：不克隆，AI 直接用你本机这份">克隆副本</span>
                 <span />
               </div>
-              <div className="space-y-2 @[38rem]:space-y-1.5">
+              <div className="space-y-2 @[42rem]:space-y-1.5">
                 {values.repoProfiles.map((p, i) => (
-                  <div key={i} className={`${REPO_ROW} rounded-lg border border-line-subtle p-2 @[38rem]:rounded-none @[38rem]:border-0 @[38rem]:p-0`}>
+                  <div key={i} className={`${REPO_ROW} rounded-lg border border-line-subtle p-2 @[42rem]:rounded-none @[42rem]:border-0 @[42rem]:p-0`}>
                     <input type="text" aria-label="仓库地址或本地路径" title={p.path} spellCheck={false} autoFocus={focusRow.current === i}
                       value={p.path} placeholder="D:\repos\foo 或 https://…/foo.git"
                       onChange={(e) => setProfile(i, { path: e.target.value })}
-                      className={`${cellCls} col-start-1 row-start-1 @[38rem]:col-auto @[38rem]:row-auto`} />
+                      className={`${cellCls} col-start-1 row-start-1 @[42rem]:col-auto @[42rem]:row-auto`} />
                     {/* 宽排法里这层不存在（contents），三个分支框直接排进上面那一行的列里 */}
-                    <div className="col-span-2 row-start-2 grid grid-cols-3 gap-2 @[38rem]:contents">
+                    <div className="col-span-2 row-start-2 grid grid-cols-3 gap-2 @[42rem]:contents">
                       <BranchCell label="基线分支">
                         <input type="text" aria-label="基线分支" spellCheck={false}
                           value={p.baseBranch} placeholder="如 master"
@@ -248,15 +255,26 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
                           value={p.developBranch ?? ""} placeholder="可不填"
                           onChange={(e) => setProfile(i, { developBranch: e.target.value || undefined })} className={cellCls} />
                       </BranchCell>
+                      {/* 窄排法里单独占一行；宽排法里是「克隆副本」那一列 */}
+                      <label
+                        className="col-span-3 flex items-center gap-1.5 text-[11.5px] text-fg-muted @[42rem]:col-auto @[42rem]:justify-center"
+                        title={isRemoteRepoUrl(p.path) ? "远程地址本机没有副本可用，一定会克隆" : "勾上：建项目时克隆一份副本到项目目录，AI 在副本里改，不动你自己的仓库。不勾：不克隆，只把仓库信息记进项目，AI 直接用你本机这份"}
+                      >
+                        <input type="checkbox" aria-label="克隆副本" className="h-3.5 w-3.5 accent-blue-500"
+                          checked={isRemoteRepoUrl(p.path) || p.clone !== false}
+                          disabled={isRemoteRepoUrl(p.path)}
+                          onChange={(e) => setProfile(i, { clone: e.target.checked ? undefined : false })} />
+                        <span className="@[42rem]:hidden">克隆副本{isRemoteRepoUrl(p.path) ? "（远程地址一定会克隆）" : ""}</span>
+                      </label>
                     </div>
                     <button type="button" title="移除这个仓库" aria-label="移除这个仓库" onClick={() => removeProfile(i)}
-                      className="col-start-2 row-start-1 flex h-7 w-7 items-center justify-center rounded-md text-fg-muted transition hover:bg-raised hover:text-danger @[38rem]:col-auto @[38rem]:row-auto"><X size={14} /></button>
+                      className="col-start-2 row-start-1 flex h-7 w-7 items-center justify-center rounded-md text-fg-muted transition hover:bg-raised hover:text-danger @[42rem]:col-auto @[42rem]:row-auto"><X size={14} /></button>
                   </div>
                 ))}
               </div>
             </div>
           ) : (
-            <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-fg-muted">还没有常用仓库。建过开发项目的仓库会自动记在这里，也可以在下面手动添加。</p>
+            <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-fg-muted">还没有常用仓库。建项目时用过的仓库会自动记在这里，也可以在下面手动添加。</p>
           )}
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" onClick={() => void addLocalRepo()} className={`${smallBtn} inline-flex items-center gap-1`}><FolderOpen size={13} />添加本地仓库</button>
@@ -265,9 +283,35 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
         </Card>
 
         <Card
+          title="Git 基本原则"
+          tag="项目里有代码仓库时带给 AI"
+          hint="项目里记了代码仓库的话，每个项目会话开头都会带上这段话，防 AI 在 Git 上犯傻（合错分支、乱解冲突、force push 之类）。可以按团队习惯改；清空就不带。分支怎么用、什么时候提交推送，仍然由项目模板里每个步骤的提示词决定。"
+        >
+          <textarea
+            id="ps-git-principles"
+            aria-label="Git 基本原则"
+            value={values.gitPrinciples}
+            maxLength={GIT_PRINCIPLES_MAX}
+            rows={10}
+            spellCheck={false}
+            onChange={(e) => update("gitPrinciples", e.target.value)}
+            className={`${inputCls} resize-y font-mono text-[12.5px] leading-relaxed`}
+          />
+          <div className="mt-2 flex items-center gap-3 text-[11.5px] text-fg-muted">
+            <button
+              type="button"
+              disabled={values.gitPrinciples.replace(/\r\n/g, "\n").trim() === DEFAULT_GIT_PRINCIPLES}
+              onClick={() => update("gitPrinciples", DEFAULT_GIT_PRINCIPLES)}
+              className={smallBtn}
+            >恢复默认</button>
+            {!values.gitPrinciples.trim() && <span>现在是空的：项目会话里不会带这段话。</span>}
+          </div>
+        </Card>
+
+        <Card
           title="GitLab"
           tag="可选"
-          hint="只用来让 AI 查找、查看 MR（合并请求）。不需要这个功能就不用填，不影响建项目、改代码和推分支。"
+          hint="用来访问团队共享（共享空间）所在的 GitLab：共享空间那边没单独配 Token / 地址时，用这里的。不用共享空间就不用填，不影响建项目、改代码和推分支。"
         >
           <div className="space-y-3">
             <Row label="GitLab Token" htmlFor="ps-gitlab-token">

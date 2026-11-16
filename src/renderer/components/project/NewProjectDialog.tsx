@@ -9,6 +9,7 @@ import {
   parseRemoteRepoInput, picksOf, repoItemsFromOptions, upsertPickedRepo,
   type RepoPickItem,
 } from "../../../shared/project-repo-picker"
+import { WORK_BRANCH_MODES, type WorkBranchMode } from "../../../shared/work-branch-mode"
 
 interface Props {
   /** 项目建在哪个应用内对话通道下（项目归它） */
@@ -41,6 +42,8 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
   const [reposLoaded, setReposLoaded] = useState(false)
   const [repoNote, setRepoNote] = useState("")
   const [remoteInput, setRemoteInput] = useState("")
+  /** 克隆副本停在哪个分支：选了模板就带入模板的默认值，这里可以临时改（只管这一次） */
+  const [workBranch, setWorkBranch] = useState<WorkBranchMode>("new")
   const [featureBranch, setFeatureBranch] = useState("")
   const [storyUrl, setStoryUrl] = useState("")
   const [relatedDocs, setRelatedDocs] = useState("")
@@ -54,7 +57,10 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
       if (!aliveRef.current) return
       const sorted = sortTemplatesForPicker(list)
       setTemplates(sorted)
-      if (sorted[0]) setTemplateId(sorted[0].id)
+      if (sorted[0]) {
+        setTemplateId(sorted[0].id)
+        setWorkBranch(sorted[0].workBranchMode)
+      }
     }).catch((e: unknown) => {
       if (aliveRef.current) setLoadError(e instanceof Error ? e.message : String(e))
     })
@@ -82,10 +88,14 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
   const needsRepo = !!current?.needsRepo
   const picks = useMemo(() => picksOf(repos), [repos])
   const repoProblem = needsRepo ? repoPicksProblem(picks) : ""
+  /** 勾上的仓库里要克隆的有几个：工作分支只对它们有意义，不克隆的仓库应用不碰 */
+  const cloneCount = repos.filter((i) => i.checked && i.clone).length
+  const pickedCount = picks.length
 
   const pickTemplate = (t: ProjectTemplateInfo) => {
     if (busy) return
     setTemplateId(t.id)
+    setWorkBranch(t.workBranchMode)
     setValues({})
     setError("")
   }
@@ -145,7 +155,8 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
         ? {
             name, goal, templateId: current.id, fields: values,
             repos: picks,
-            ...(featureBranch.trim() ? { featureBranch: featureBranch.trim() } : {}),
+            workBranch,
+            ...(workBranch === "new" && featureBranch.trim() ? { featureBranch: featureBranch.trim() } : {}),
             ...(storyUrl.trim() ? { storyUrl: storyUrl.trim() } : {}),
             ...(relatedDocs.trim() ? { relatedDocs: relatedDocs.trim() } : {}),
           }
@@ -172,7 +183,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
           <button type="button" className={modalBtnGhost} onClick={onClose} disabled={busy}>取消</button>
           <button type="button" className={modalBtnPrimary} onClick={() => void submit()} disabled={!canSubmit}>
             {busy
-              ? <span className="inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" />{needsRepo ? "正在准备仓库…" : "创建中…"}</span>
+              ? <span className="inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" />{cloneCount > 0 ? "正在克隆仓库…" : "创建中…"}</span>
               : "创建"}
           </button>
         </div>
@@ -274,9 +285,9 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
         {needsRepo ? (
           <>
             <section>
-              <p className="mb-1.5 text-[12px] font-medium text-fg-3">代码仓库 <span className="font-normal text-fg-faint">（最多 {PROJECT_REPOS_MAX} 个）</span></p>
+              <p className="mb-1.5 text-[12px] font-medium text-fg-3">代码仓库 <span className="font-normal text-fg-faint">（可选，最多 {PROJECT_REPOS_MAX} 个）</span></p>
               {repos.length === 0 && (
-                <p className="mb-1.5 text-[12px] text-fg-muted">{reposLoaded ? "还没有常用仓库，添加一个本地仓库或远程地址吧。" : "加载中…"}</p>
+                <p className="mb-1.5 text-[12px] text-fg-muted">{reposLoaded ? "还没有常用仓库，添加一个本地仓库或远程地址吧；这个项目用不到代码仓库也可以不选。" : "加载中…"}</p>
               )}
               <ul className="space-y-1.5">
                 {repos.map((r, idx) => (
@@ -291,7 +302,13 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                         className="h-3.5 w-3.5 shrink-0 accent-blue-500"
                       />
                       <button type="button" disabled={busy} onClick={() => toggleRepo(r.path)} className="min-w-0 flex-1 text-left">
-                        <span className="block truncate text-[13px] font-medium text-fg">{r.name}</span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="truncate text-[13px] font-medium text-fg">{r.name}</span>
+                          <span
+                            title={r.clone ? "建项目时克隆一份副本到项目目录，AI 在副本里改，不动你自己的仓库" : "不克隆：只把仓库信息记进项目，AI 直接用你本机这份；应用不会去动它"}
+                            className={`shrink-0 rounded px-1 py-px text-[10.5px] font-normal ${r.clone ? "bg-raised/80 text-fg-muted" : "bg-amber-500/15 text-amber-500"}`}
+                          >{r.clone ? "克隆副本" : "不克隆"}</span>
+                        </span>
                         <span className="block truncate text-[11px] text-fg-faint" title={r.path}>{r.path}</span>
                       </button>
                       {r.checked && (
@@ -330,21 +347,45 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
               </div>
               {repoNote && <p role="alert" className="mt-1.5 text-[12px] text-danger">{repoNote}</p>}
               <p className="mt-1.5 text-[11.5px] leading-snug text-fg-muted">
-                AI 会在每个仓库的独立副本里改代码，你自己的仓库不会被动。勾过的仓库下次会自动记在这里。
+                标「克隆副本」的仓库，建项目时会克隆一份到项目目录，AI 在副本里改，不动你自己的仓库；标「不克隆」的只把仓库信息记进项目，AI 直接用你本机那份。克隆与否在设置的「常用代码仓库」里改。
               </p>
+              {cloneCount > 0 ? (
+                <div className="mt-3 space-y-2">
+                  <label className="flex items-center gap-2">
+                    <span className="shrink-0 text-[12px] font-medium text-fg-3">工作分支</span>
+                    <select
+                      value={workBranch}
+                      disabled={busy}
+                      onChange={(e) => setWorkBranch(e.target.value as WorkBranchMode)}
+                      className={`${smallInputCls} min-w-0 flex-1`}
+                    >
+                      {WORK_BRANCH_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                  </label>
+                  <p className="text-[11.5px] leading-snug text-fg-muted">
+                    克隆好的副本停在这个分支上：{WORK_BRANCH_MODES.find((m) => m.value === workBranch)?.hint}。默认值来自项目模板，这里改只对这次有效。
+                    {(workBranch === "test" || workBranch === "develop") && "没配这个分支的仓库会退到它的基线分支。"}
+                  </p>
+                  {workBranch === "new" && (
+                    <label className="block">
+                      <span className="mb-1 block text-[12px] font-medium text-fg-3">新分支名 <span className="font-normal text-fg-faint">（可选）</span></span>
+                      <input
+                        value={featureBranch}
+                        maxLength={PROJECT_NAME_MAX * 2}
+                        disabled={busy}
+                        placeholder="不填会自动生成：feature/日期-项目名"
+                        onChange={(e) => setFeatureBranch(e.target.value)}
+                        className={inputCls}
+                      />
+                    </label>
+                  )}
+                </div>
+              ) : pickedCount > 0 ? (
+                <p className="mt-3 text-[11.5px] leading-snug text-fg-muted">所选的仓库都不克隆：应用不会切换分支，也不会去动它们。</p>
+              ) : null}
             </section>
 
             <section className="space-y-3">
-              <label className="block">
-                <span className="mb-1 block text-[12px] font-medium text-fg-3">feature 分支 <span className="font-normal text-fg-faint">（可选）</span></span>
-                <input
-                  value={featureBranch}
-                  maxLength={PROJECT_NAME_MAX * 2}
-                  placeholder="不填会自动生成：feature/日期-项目名"
-                  onChange={(e) => setFeatureBranch(e.target.value)}
-                  className={inputCls}
-                />
-              </label>
               <label className="block">
                 <span className="mb-1 block text-[12px] font-medium text-fg-3">项目链接 <span className="font-normal text-fg-faint">（可选：需求、任务单、设计稿…）</span></span>
                 <input

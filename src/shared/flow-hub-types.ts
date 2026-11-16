@@ -1,4 +1,4 @@
-import type { ProjectWorkspaceType } from "./project-types.js"
+import type { ProjectWorkspaceType, WorkBranchMode } from "./project-types.js"
 
 export interface FlowHubSettings {
   flowHubUrl?: string
@@ -50,6 +50,8 @@ export interface FlowHubGroupBody {
   id: string
   name: string
   workspace?: ProjectWorkspaceType
+  /** 默认工作分支（新建/基线/测试/开发）；缺省=新建分支，只在非默认时才写，这样存量模板的同步内容不变 */
+  branchMode?: WorkBranchMode
   nodes: FlowHubNodePayload[]
 }
 

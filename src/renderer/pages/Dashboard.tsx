@@ -410,7 +410,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
       }
       if (!(await showConfirm(
         "删除项目",
-        `确定删除项目「${short}」？\n将移除 AI 工作目录（含未提交改动），主仓与远程分支不受影响。`,
+        `确定删除项目「${short}」？\n将移除项目目录（含克隆副本里没提交的改动），你自己的代码仓库与远程分支不受影响。`,
         "删除项目",
         "取消",
       ))) return

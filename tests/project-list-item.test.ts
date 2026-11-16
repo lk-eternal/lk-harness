@@ -9,8 +9,8 @@ const pick = (...ids: string[]) => globals().filter((g) => ids.includes(g.id))
 const base = path.resolve(path.sep, "work", "p1")
 
 const project = (extra: Partial<Project> = {}): Project => ({
-  id: "abc123def456", name: "周报", goal: "每周五出报告", repoPath: "", baseBranch: "", featureBranch: "",
-  worktreePath: path.join(base, "workspace"), workspaceType: "plain",
+  id: "abc123def456", name: "周报", goal: "每周五出报告",
+  worktreePath: path.join(base, "workspace"),
   groupIds: ["general"], groupId: "general", createdAt: 1, updatedAt: 2, ...extra,
 })
 
@@ -50,12 +50,13 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
     expect(filled).not.toHaveProperty("productDocUrl")
   })
 
-  it("普通项目 isCode 为 false，带代码仓库的为 true；目录是项目根目录", () => {
+  it("项目信息里没记代码仓库 isCode 为 false，记了为 true；不再有分支、仓库路径这类专门的字段；目录是项目根目录", () => {
     expect(buildProjectListItem(project(), { groups: pick("general"), globals: globals() }).isCode).toBe(false)
-    const dev = buildProjectListItem(project({ workspaceType: undefined, repoPath: "/r", featureBranch: "feature/x" }), { groups: pick("develop"), globals: globals() })
+    expect(buildProjectListItem(project({ metadata: { 客户: "A" } }), { groups: pick("general"), globals: globals() }).isCode).toBe(false)
+    const dev = buildProjectListItem(project({ metadata: { 代码仓库: "/r（工作分支 feature/x）" } }), { groups: pick("develop"), globals: globals() })
     expect(dev.isCode).toBe(true)
-    expect(dev.featureBranch).toBe("feature/x")
-    expect(dev.repoPaths).toEqual(["/r"])
+    expect(dev).not.toHaveProperty("featureBranch")
+    expect(dev).not.toHaveProperty("repoPaths")
     expect(buildProjectListItem(project(), { groups: pick("general"), globals: globals() }).dir).toBe(base)
   })
 

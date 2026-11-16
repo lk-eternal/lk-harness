@@ -59,7 +59,7 @@ export default function TemplateWorkspace({ group, leaf, groups, go, ops, hubUrl
         <div className="pb-2">
           <p className="truncate text-sm font-medium text-fg-2" title={group.name}>{group.name}</p>
           <p className="flex items-center gap-1 text-[11px] text-fg-muted">
-            {isCodeGroup(group) ? <><GitBranch size={11} />研发 · 接代码仓库</> : "通用"}
+            {isCodeGroup(group) ? <><GitBranch size={11} />接代码仓库</> : "通用"}
           </p>
         </div>
 

@@ -5,7 +5,7 @@ import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
-  addProjectClone, ensureCheckouts, syncCheckout, isGitRepoRoot, isRemoteRepoRef, removeProjectWorktree,
+  addProjectClone, ensureArtifactDir, isGitRepoRoot, isRemoteRepoRef,
   isValidBranchName, inspectLocalRepo, removeDirRobust,
 } from "../electron/project-worktree.js"
 
@@ -61,8 +61,8 @@ describe("project-worktree (independent checkout)", () => {
     const r = await addProjectClone({
       repoPath: repo,
       worktreePath: wt,
-      featureBranch: "feature/a",
       baseBranch: "main",
+      checkout: { create: "feature/a" },
     })
     expect(r.ok).toBe(true)
     expect(fs.existsSync(path.join(wt, "README.md"))).toBe(true)
@@ -70,15 +70,20 @@ describe("project-worktree (independent checkout)", () => {
     // 独立 .git，非 worktree 挂接
     expect(fs.statSync(path.join(wt, ".git")).isDirectory()).toBe(true)
 
+    // 目标目录已经在了：不覆盖、不动它
     const r2 = await addProjectClone({
       repoPath: repo,
       worktreePath: wt,
-      featureBranch: "feature/b",
       baseBranch: "main",
+      checkout: { create: "feature/b" },
     })
     expect(r2.ok).toBe(false)
-    await removeProjectWorktree(repo, wt)
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/a")
+    await removeDirRobust(wt)
     expect(fs.existsSync(wt)).toBe(false)
+    // 用户自己的仓库原样：还在 main，没有多出分支
+    expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+    expect(git(repo, ["branch", "--format=%(refname:short)"])).toBe("main")
   })
 
   it("远程要登录凭据：直接失败说明原因，不会卡着等输入，也不留半成品目录", async () => {
@@ -101,7 +106,7 @@ describe("project-worktree (independent checkout)", () => {
       const wt = path.join(wtRoot, "remote")
       const started = Date.now()
       const r = await addProjectClone({
-        repoPath: `http://127.0.0.1:${port}/x.git`, worktreePath: wt, featureBranch: "feature/a", baseBranch: "main",
+        repoPath: `http://127.0.0.1:${port}/x.git`, worktreePath: wt, baseBranch: "main", checkout: { create: "feature/a" },
       })
       expect(r.ok).toBe(false)
       expect(r.error).toContain("git clone 失败")
@@ -125,8 +130,8 @@ describe("project-worktree (independent checkout)", () => {
     const r = await addProjectClone({
       repoPath: repo,
       worktreePath: wt,
-      featureBranch: "feature/busy",
       baseBranch: "main",
+      checkout: { create: "feature/busy" },
     })
     expect(r.ok).toBe(true)
     expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/busy")
@@ -134,53 +139,69 @@ describe("project-worktree (independent checkout)", () => {
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/busy")
   })
 
-  it("ensureCheckouts rebuilds a missing directory", async () => {
-    const wt = path.join(wtRoot, "rebuild")
-    const refs = [{ repoPath: repo, worktreePath: wt, baseBranch: "main" }]
-    expect((await ensureCheckouts(refs, "feature/r")).ok).toBe(true)
-    fs.rmSync(wt, { recursive: true, force: true })
-    const again = await ensureCheckouts(refs, "feature/r")
-    expect(again.ok).toBe(true)
-    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/r")
-  })
-
-  it("ensureCheckouts creates missing feature branch when clone dir already exists", async () => {
-    const wt = path.join(wtRoot, "existing")
-    expect((await addProjectClone({
-      repoPath: repo,
-      worktreePath: wt,
-      featureBranch: "feature/old",
-      baseBranch: "main",
-    })).ok).toBe(true)
-    git(wt, ["checkout", "main"])
-    git(wt, ["branch", "-D", "feature/old"])
-    const refs = [{ repoPath: repo, worktreePath: wt, baseBranch: "main" }]
-    const r = await ensureCheckouts(refs, "feature/new")
+  it("新建分支：仓库里（远程）已经有同名分支就切过去并跟踪它，不从基线重建", async () => {
+    git(repo, ["checkout", "-b", "feature/old"])
+    fs.writeFileSync(path.join(repo, "old.txt"), "old\n")
+    git(repo, ["add", "."])
+    git(repo, ["commit", "-m", "old"])
+    git(repo, ["checkout", "main"])
+    const wt = path.join(wtRoot, "reuse")
+    const r = await addProjectClone({ repoPath: repo, worktreePath: wt, baseBranch: "main", checkout: { create: "feature/old" } })
     expect(r.ok).toBe(true)
-    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/new")
-    expect(fs.existsSync(path.join(wt, "README.md"))).toBe(true)
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/old")
+    expect(fs.existsSync(path.join(wt, "old.txt"))).toBe(true)
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "feature/old@{upstream}"])).toBe("origin/feature/old")
   })
 
-  it("syncCheckout fast-forwards when remote feature advances", async () => {
-    git(repo, ["checkout", "-b", "feature/sync"])
-    fs.writeFileSync(path.join(repo, "a.txt"), "1\n")
-    git(repo, ["add", "."])
-    git(repo, ["commit", "-m", "sync1"])
-    const wt = path.join(wtRoot, "sync")
-    expect((await addProjectClone({
-      repoPath: repo,
-      worktreePath: wt,
-      featureBranch: "feature/sync",
-      baseBranch: "main",
-    })).ok).toBe(true)
-    fs.writeFileSync(path.join(repo, "a.txt"), "2\n")
-    git(repo, ["add", "."])
-    git(repo, ["commit", "-m", "sync2"])
-    const before = git(wt, ["rev-parse", "HEAD"])
-    const note = await syncCheckout(wt, "feature/sync")
-    expect(note.note).toMatch(/已同步远程 1 个新提交/)
-    expect(git(wt, ["rev-parse", "HEAD"])).not.toBe(before)
-    expect(fs.readFileSync(path.join(wt, "a.txt"), "utf-8").replace(/\r\n/g, "\n")).toBe("2\n")
+  it("新建分支：基线分支找不到时报错，不留下半成品目录", async () => {
+    const wt = path.join(wtRoot, "nobase")
+    const r = await addProjectClone({ repoPath: repo, worktreePath: wt, baseBranch: "no-such-base", checkout: { create: "feature/x" } })
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("no-such-base")
+    expect(fs.existsSync(wt)).toBe(false)
+    const empty = await addProjectClone({ repoPath: repo, worktreePath: path.join(wtRoot, "e"), baseBranch: "main", checkout: { create: "  " } })
+    expect(empty.ok).toBe(false)
+  })
+
+  it("停在已有分支上（测试 / 开发 / 基线）：只有远程有的分支建一个跟踪它的本地分支，不新建别的分支", async () => {
+    git(repo, ["branch", "test"])
+    const wt = path.join(wtRoot, "on-test")
+    const r = await addProjectClone({ repoPath: repo, worktreePath: wt, baseBranch: "main", checkout: { existing: "test" } })
+    expect(r.ok).toBe(true)
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("test")
+    expect(git(wt, ["rev-parse", "--abbrev-ref", "test@{upstream}"])).toBe("origin/test")
+    // 没有 feature/* 之类应用自己起的分支
+    expect(git(wt, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["main", "test"])
+    // 用户自己的仓库原样
+    expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+  })
+
+  it("停在已有分支上：本地就有的分支（比如克隆下来的默认分支）直接用；空串=不切，停在默认分支", async () => {
+    const onMain = path.join(wtRoot, "on-main")
+    expect((await addProjectClone({ repoPath: repo, worktreePath: onMain, baseBranch: "main", checkout: { existing: "main" } })).ok).toBe(true)
+    expect(git(onMain, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+    git(repo, ["branch", "develop"])
+    const stay = path.join(wtRoot, "stay")
+    expect((await addProjectClone({ repoPath: repo, worktreePath: stay, baseBranch: "main", checkout: { existing: "" } })).ok).toBe(true)
+    expect(git(stay, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+  })
+
+  it("停在已有分支上：分支两边都没有是配置写错了，直接报错说清楚，不悄悄换分支，也不留半成品目录", async () => {
+    const wt = path.join(wtRoot, "typo")
+    const r = await addProjectClone({ repoPath: repo, worktreePath: wt, baseBranch: "main", checkout: { existing: "tset" } })
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("tset")
+    expect(r.error).toContain("找不到分支")
+    expect(fs.existsSync(wt)).toBe(false)
+  })
+
+  it("克隆出来的目录里 .lk-harness/ 被本地 exclude，成果目录建好", async () => {
+    const wt = path.join(wtRoot, "excl")
+    expect((await addProjectClone({ repoPath: repo, worktreePath: wt, baseBranch: "main", checkout: { existing: "main" } })).ok).toBe(true)
+    const dir = await ensureArtifactDir(wt)
+    expect(dir).toBe(path.join(wt, ".lk-harness", "artifacts"))
+    fs.writeFileSync(path.join(dir, "plan.md"), "x")
+    expect(git(wt, ["status", "--porcelain"])).toBe("")
   })
 
   it("isValidBranchName: 合法名通过，空、以 - 开头、含空格/.. 的不通过", async () => {

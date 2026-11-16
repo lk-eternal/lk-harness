@@ -32,6 +32,7 @@ import {
   projectNodeOf,
   projectNodeLabelOf,
   mergeProjectMetadata,
+  LEGACY_BACKUP_DIR,
 } from "../src/shared/project-store.js"
 import {
   canEnterProjectFromChat,
@@ -57,12 +58,14 @@ describe("project-store", () => {
     const p = createProject({
       name: "login",
       goal: "add login",
-      repoPath: "D:/repos/foo",
-      baseBranch: "main",
-      featureBranch: "feature/login",
       worktreePath: "D:/claw/login",
+      metadata: { 代码仓库: "D:/repos/foo（工作分支 feature/login；基线分支 main）" },
     })
     expect(p.id).toBeTruthy()
+    // 仓库、分支不再有专门的字段：只在项目信息里
+    expect(p).not.toHaveProperty("repoPath")
+    expect(p).not.toHaveProperty("featureBranch")
+    expect(getProject(p.id)?.metadata?.代码仓库).toContain("feature/login")
     expect(getCurrentProject()?.id).toBe(p.id)
     expect(listProjects()).toHaveLength(1)
   })
@@ -71,9 +74,6 @@ describe("project-store", () => {
     const p = createProject({
       name: "a",
       goal: "g",
-      repoPath: "/r",
-      baseBranch: "main",
-      featureBranch: "f",
       worktreePath: "/w",
     })
     const r = registerArtifact(p.id, {
@@ -117,7 +117,7 @@ describe("project-store", () => {
 
   describe("归档（没有「进行中 / 已暂停 / 已完成」状态，做完了就归档或删除）", () => {
     const make = (name: string, groupChatId?: string) => createProject({
-      name, goal: "g", repoPath: "/r", baseBranch: "main", featureBranch: "f", worktreePath: "/w",
+      name, goal: "g", worktreePath: "/w", metadata: { 代码仓库: "/r（工作分支 f；基线分支 main）" },
       ...(groupChatId ? { groupChatId } : {}),
     })
     const fileOf = (id: string) => path.join(dir, "projects", `${id}.json`)
@@ -148,7 +148,7 @@ describe("project-store", () => {
       expect(setProjectArchived("nope", true)).toBeUndefined()
     })
 
-    it("改名：只改名称这一个字段，别的（目标、归档、分支）原样，更新时间往前走", async () => {
+    it("改名：只改名称这一个字段，别的（目标、归档、项目信息）原样，更新时间往前走", async () => {
       const p = make("旧名字")
       setProjectArchived(p.id, true)
       const before = getProject(p.id)!
@@ -158,7 +158,7 @@ describe("project-store", () => {
       expect(renamed.name).toBe("新名字")
       expect(getProject(p.id)?.name).toBe("新名字")
       expect(rawOf(p.id).name).toBe("新名字")
-      expect(renamed).toMatchObject({ goal: before.goal, featureBranch: before.featureBranch, archivedAt: before.archivedAt })
+      expect(renamed).toMatchObject({ goal: before.goal, metadata: before.metadata, archivedAt: before.archivedAt })
       expect(renamed.updatedAt).toBeGreaterThan(before.updatedAt)
     })
 
@@ -210,7 +210,7 @@ describe("project-store", () => {
       const got = getProject(p.id)!
       expect(got).not.toHaveProperty("watchBugs")
       expect(listProjects().find((x) => x.id === p.id)).not.toHaveProperty("watchBugs")
-      expect(got).toMatchObject({ name: "watching", goal: "g", featureBranch: "f" })
+      expect(got).toMatchObject({ name: "watching", goal: "g", metadata: { 代码仓库: "/r（工作分支 f；基线分支 main）" } })
 
       renameProject(p.id, "改过名")
       expect(rawOf(p.id)).not.toHaveProperty("watchBugs")
@@ -345,12 +345,10 @@ describe("project-store", () => {
 
   it("switches current project", () => {
     const a = createProject({
-      name: "a", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "fa", worktreePath: "/wa",
+      name: "a", goal: "g", worktreePath: "/wa",
     })
     const b = createProject({
-      name: "b", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "fb", worktreePath: "/wb",
+      name: "b", goal: "g", worktreePath: "/wb",
     })
     expect(getCurrentProject()?.id).toBe(b.id)
     setCurrentProjectId(a.id)
@@ -364,7 +362,10 @@ describe("project-store", () => {
     expect(develop.nodes.map((n) => n.id)).toEqual(["plan", "build", "review", "deploy", "mr", "submit-test", "analyze-bug", "fix-bug", "fill-release-doc"])
     expect(develop.workspace).toBe("worktree")
     expect(resolveNodeGroup("test").nodes).toHaveLength(7)
-    expect(resolveNodeGroup("test").workspace).toBe("plain")
+    // 全新安装的默认「测试」模板接代码仓库，克隆副本直接停在测试分支上；开发模板是默认的新建分支（不写 branchMode）
+    expect(resolveNodeGroup("test").workspace).toBe("worktree")
+    expect(resolveNodeGroup("test").branchMode).toBe("test")
+    expect(develop.branchMode).toBeUndefined()
     expect(develop.nodes.some((n) => n.id === "ship")).toBe(false)
   })
 
@@ -463,8 +464,7 @@ describe("project-store", () => {
 
   it("stores groupId on created project", () => {
     const p = createProject({
-      name: "g", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "fg", worktreePath: "/wg", groupId: "test",
+      name: "g", goal: "g", worktreePath: "/wg", groupId: "test",
     })
     expect(getProject(p.id)?.groupId).toBe("test")
     expect(getProject(p.id)?.groupIds).toEqual(["test"])
@@ -479,8 +479,7 @@ describe("project-store", () => {
 
   it("createProject writes groupIds from multi input", () => {
     const p = createProject({
-      name: "multi", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "f", worktreePath: "/w", groupIds: ["develop", "test"],
+      name: "multi", goal: "g", worktreePath: "/w", groupIds: ["develop", "test"],
     })
     expect(p.groupIds).toEqual(["develop", "test"])
     expect(p.groupId).toBe("develop")
@@ -489,8 +488,7 @@ describe("project-store", () => {
   it("findProjectByGroupChat resolves by chatKey or bare chatId", () => {
     const groupKey = "ch_feishu|oc_group123"
     const p = createProject({
-      name: "grp-proj", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "f1", worktreePath: "/w1", groupChatId: groupKey,
+      name: "grp-proj", goal: "g", worktreePath: "/w1", groupChatId: groupKey,
     })
     expect(findProjectByGroupChat(groupKey)?.id).toBe(p.id)
     expect(findProjectByGroupChat("oc_group123")?.id).toBe(p.id)
@@ -518,8 +516,7 @@ describe("project-store", () => {
 
   it("resolveProjectRef matches hex id when id starts with digits, not list index", () => {
     const first = createProject({
-      name: "first", goal: "g", repoPath: "/r", baseBranch: "main",
-      featureBranch: "f1", worktreePath: "/w1",
+      name: "first", goal: "g", worktreePath: "/w1",
     })
     expect(resolveProjectRef("1")?.id).toBe(first.id)
     const hexId = "1abc000000000001"
@@ -528,7 +525,6 @@ describe("project-store", () => {
       ...first,
       id: hexId,
       name: "digit-prefix-id",
-      featureBranch: "f2",
       worktreePath: "/w2",
       updatedAt: first.updatedAt - 60_000,
     }
@@ -543,9 +539,6 @@ describe("project-store", () => {
     const p = createProject({
       name: "meta",
       goal: "g",
-      repoPath: "D:/r",
-      baseBranch: "main",
-      featureBranch: "f",
       worktreePath: "D:/w",
     })
     mergeProjectMetadata(p, { deploy_url: "https://x", env: "test" })
@@ -558,8 +551,8 @@ describe("project-store", () => {
 
   describe("通用模板与项目自己的流程副本", () => {
     const plainInput = {
-      name: "调研", goal: "g", repoPath: "", baseBranch: "", featureBranch: "",
-      worktreePath: "/w/ws", workspaceType: "plain" as const,
+      name: "调研", goal: "g",
+      worktreePath: "/w/ws",
     }
 
     it("新建项目默认选通用模板，存量项目回落仍是开发流程", () => {
@@ -655,4 +648,98 @@ describe("project-store", () => {
     })
   })
 
+})
+
+describe("旧版仓库、分支字段 → 项目信息（读时转换 + 一次性文件迁移）", () => {
+  let dir: string
+  const legacy = (over: Record<string, unknown> = {}) => ({
+    id: "aaaabbbbcccc", name: "老项目", goal: "g", worktreePath: "D:/claw/old/shop",
+    repoPath: "D:/repos/shop", baseBranch: "main", featureBranch: "feature/old", workspaceType: "worktree",
+    groupIds: ["develop"], groupId: "develop", createdAt: 1, updatedAt: 2, ...over,
+  })
+  const projectsDir = () => path.join(dir, "projects")
+  const writeLegacy = (obj: Record<string, unknown>) => {
+    fs.mkdirSync(projectsDir(), { recursive: true })
+    fs.writeFileSync(path.join(projectsDir(), `${obj.id}.json`), JSON.stringify(obj), "utf-8")
+  }
+  const rawOf = (id: string) => JSON.parse(fs.readFileSync(path.join(projectsDir(), `${id}.json`), "utf-8")) as Record<string, unknown>
+
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-legacy-")) })
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }) })
+
+  it("启动时一次性迁移：旧字段折进「代码仓库」信息、文件里旧字段消失，迁之前先备份原文件，并写下标记", () => {
+    writeLegacy(legacy())
+    initProjectStore(dir)
+    const raw = rawOf("aaaabbbbcccc")
+    for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(raw).not.toHaveProperty(k)
+    expect((raw.metadata as Record<string, string>).代码仓库).toBe("D:/claw/old/shop（工作分支 feature/old；基线分支 main）")
+    expect(raw.worktreePath).toBe("D:/claw/old/shop")
+    // 备份是迁之前的原样
+    const backup = JSON.parse(fs.readFileSync(path.join(projectsDir(), LEGACY_BACKUP_DIR, "aaaabbbbcccc.json"), "utf-8"))
+    expect(backup).toMatchObject({ repoPath: "D:/repos/shop", baseBranch: "main", featureBranch: "feature/old" })
+    expect(fs.existsSync(path.join(projectsDir(), ".repo-info-migrated"))).toBe(true)
+  })
+
+  it("多个仓库：每个仓库一行「代码仓库 · 名字」；已有的同名项目信息不覆盖；仓库路径是空的不写", () => {
+    writeLegacy(legacy({
+      id: "bbbbccccdddd", repoPath: "", baseBranch: "", featureBranch: "feature/m",
+      repos: [
+        { repoPath: "D:/repos/shop", baseBranch: "main", testBranch: "test", worktreePath: "D:/claw/m/shop" },
+        { repoPath: "D:/repos/api", baseBranch: "release", developBranch: "dev", worktreePath: "D:/claw/m/api" },
+      ],
+      metadata: { "代码仓库 · api": "用户自己写的", 客户: "A" },
+    }))
+    writeLegacy(legacy({ id: "ccccddddeeee", repoPath: "", baseBranch: "", featureBranch: "" }))
+    initProjectStore(dir)
+    const meta = rawOf("bbbbccccdddd").metadata as Record<string, string>
+    expect(meta["代码仓库 · shop"]).toBe("D:/claw/m/shop（工作分支 feature/m；基线分支 main；测试分支 test）")
+    expect(meta["代码仓库 · api"]).toBe("用户自己写的")
+    expect(meta.客户).toBe("A")
+    // 没有仓库的老项目：只去掉旧字段，不凭空多出「代码仓库」
+    const none = rawOf("ccccddddeeee")
+    expect(none).not.toHaveProperty("repoPath")
+    expect(none.metadata).toBeUndefined()
+  })
+
+  it("新版文件原样不动、不进备份；标记写下后不再扫描（之后放进来的旧文件只在读的时候转换）", async () => {
+    writeLegacy({ id: "ddddeeeeffff", name: "新项目", goal: "g", worktreePath: "/w", metadata: { 代码仓库: "/r" }, createdAt: 1, updatedAt: 2 })
+    initProjectStore(dir)
+    expect(fs.existsSync(path.join(projectsDir(), LEGACY_BACKUP_DIR))).toBe(false)
+    expect(fs.existsSync(path.join(projectsDir(), ".repo-info-migrated"))).toBe(true)
+
+    // 标记在：重新加载模块（等于应用重启）后，此后出现的旧文件不会被迁移脚本改写，但读出来仍是新形状
+    writeLegacy(legacy({ id: "eeeeffff0000" }))
+    vi.resetModules()
+    const fresh = await import("../src/shared/project-store.js")
+    fresh.initProjectStore(dir)
+    expect(rawOf("eeeeffff0000")).toHaveProperty("repoPath")
+    expect(fs.existsSync(path.join(projectsDir(), LEGACY_BACKUP_DIR))).toBe(false)
+    const got = fresh.getProject("eeeeffff0000")!
+    expect(got).not.toHaveProperty("repoPath")
+    expect(got.metadata?.代码仓库).toContain("feature/old")
+  })
+
+  it("读出来的旧项目是新形状，保存一次后旧字段从文件里消失；重复转换结果不变", () => {
+    initProjectStore(dir)
+    writeLegacy(legacy())
+    const got = getProject("aaaabbbbcccc")!
+    for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(got).not.toHaveProperty(k)
+    saveProject(got)
+    expect(rawOf("aaaabbbbcccc")).not.toHaveProperty("featureBranch")
+    expect(getProject("aaaabbbbcccc")?.metadata).toEqual(got.metadata)
+  })
+
+  it("模板的工作分支：只存非默认值；脏值当新建分支；导入导出带着", () => {
+    initProjectStore(dir)
+    saveNodeGroups([
+      { id: "a", name: "A", workspace: "worktree", branchMode: "develop", nodes: [{ id: "n", label: "N" }] },
+      { id: "b", name: "B", workspace: "worktree", branchMode: "new", nodes: [{ id: "n", label: "N" }] },
+      { id: "c", name: "C", workspace: "worktree", branchMode: "bogus" as never, nodes: [{ id: "n", label: "N" }] },
+    ])
+    expect(resolveNodeGroup("a").branchMode).toBe("develop")
+    expect(resolveNodeGroup("b").branchMode).toBeUndefined()
+    expect(resolveNodeGroup("c").branchMode).toBeUndefined()
+    const parsed = parseNodeGroupExport({ kind: "lk-harness-node-group", version: 1, group: resolveNodeGroup("a") })
+    expect(parsed?.branchMode).toBe("develop")
+  })
 })

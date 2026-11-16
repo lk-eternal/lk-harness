@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { ArrowDown, ArrowUp, Download, Plus, Trash2, Upload, X } from "lucide-react"
 import type { ProjectFieldDef } from "../../../shared/project-types"
+import { WORK_BRANCH_MODES, normalizeWorkBranchMode, type WorkBranchMode } from "../../../shared/work-branch-mode"
 import {
   TEMPLATE_DESC_MAX, TEMPLATE_FIELDS_MAX, TEMPLATE_NAME_MAX, templateDraftProblem, type TemplateDraft,
 } from "../../../shared/project-template-edit"
@@ -11,17 +12,13 @@ import {
   type RegisterGuard,
 } from "./project-ui"
 
-const KINDS: { value: TemplateDraft["workspace"]; title: string; desc: string }[] = [
-  { value: "plain", title: "通用", desc: "项目有自己的文件夹，AI 在里面写文档、整理资料、做调研等。" },
-  { value: "worktree", title: "研发（接代码仓库）", desc: "建项目时选代码仓库，AI 在仓库的独立副本里改代码，不动你自己的仓库。" },
-]
-
 function draftOf(group: Group | undefined): TemplateDraft {
   return {
     name: group?.name ?? "",
     description: group?.description ?? "",
-    // 老数据没写类型的当研发类（和建项目时的判断一致）；新建默认通用
+    // 老数据没写类型的当接代码仓库（和建项目时的判断一致）；新建默认不接
     workspace: group ? (group.workspace === "plain" ? "plain" : "worktree") : "plain",
+    branchMode: normalizeWorkBranchMode(group?.branchMode),
     fields: group?.fields?.map((f) => ({ ...f })) ?? [],
   }
 }
@@ -44,7 +41,7 @@ interface Props {
   registerGuard: RegisterGuard
 }
 
-/** 模板信息：名称、说明、类型（只能新建时选）、建项目时要填的信息。新建和编辑共用 */
+/** 模板信息：名称、说明、接不接代码仓库（随时可改）、建项目时要填的信息。新建和编辑共用 */
 export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, onCancel, onDelete, canDelete = true, onExport, onUpload, registerGuard }: Props) {
   const editing = mode === "edit"
   const { justSaved, markSaved } = usePanelSave()
@@ -53,7 +50,7 @@ export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
 
-  const groupKey = JSON.stringify(group ? { n: group.name, d: group.description, w: group.workspace, f: group.fields } : null)
+  const groupKey = JSON.stringify(group ? { n: group.name, d: group.description, w: group.workspace, b: group.branchMode, f: group.fields } : null)
   const lastKey = useRef(groupKey)
   useEffect(() => {
     if (lastKey.current === groupKey) return
@@ -142,27 +139,41 @@ export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, 
         <textarea rows={2} value={draft.description} maxLength={TEMPLATE_DESC_MAX} placeholder="一句话说明这类项目是做什么的" onChange={(e) => setDraft({ ...draft, description: e.target.value })} className={`${inputCls} resize-none`} />
       </label>
 
-      <Section title="项目类型">
-        {editing ? (
-          <p className="text-xs text-fg-2">
-            {KINDS.find((k) => k.value === draft.workspace)?.title}
-            <span className="ml-2 text-fg-faint">模板建好后不能改类型；要换类型请新建一个模板。</span>
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {KINDS.map((k) => (
-              <button
-                key={k.value}
-                type="button"
-                aria-pressed={draft.workspace === k.value}
-                onClick={() => setDraft({ ...draft, workspace: k.value })}
-                className={`rounded-lg border px-3 py-2 text-left transition ${draft.workspace === k.value ? "border-blue-500/70 bg-blue-600/10" : "border-line hover:bg-raised/50"}`}
-              >
-                <span className="block text-xs font-medium text-fg">{k.title}</span>
-                <span className="mt-0.5 block text-[11px] leading-snug text-fg-muted">{k.desc}</span>
-              </button>
-            ))}
+      <Section
+        title="代码仓库"
+        hint="打开后，新建项目时可以选代码仓库（选不选都行，不选就是普通项目）。仓库要不要克隆一份副本，在「设置 → 项目 → 常用代码仓库」里按仓库设置。"
+      >
+        <div className="flex items-center justify-between rounded-lg border border-line px-3 py-2.5">
+          <div className="min-w-0 pr-3">
+            <p className="text-xs font-medium text-fg-2">接入代码仓库</p>
+            <p className="mt-0.5 text-[11px] leading-snug text-fg-muted">建项目时出现「代码仓库」选择；选了的仓库信息会记进项目，AI 按项目里记的目录去用。</p>
           </div>
+          <button
+            type="button"
+            role="switch"
+            aria-label="接入代码仓库"
+            aria-checked={draft.workspace === "worktree"}
+            onClick={() => setDraft((d) => ({ ...d, workspace: d.workspace === "worktree" ? "plain" : "worktree" }))}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${draft.workspace === "worktree" ? "bg-green-500" : "bg-stronger"}`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${draft.workspace === "worktree" ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+          </button>
+        </div>
+        {draft.workspace === "worktree" && (
+          <label className="block">
+            <FieldLabel>默认工作分支</FieldLabel>
+            <select
+              aria-label="默认工作分支"
+              value={normalizeWorkBranchMode(draft.branchMode)}
+              onChange={(e) => setDraft((d) => ({ ...d, branchMode: normalizeWorkBranchMode(e.target.value) as WorkBranchMode }))}
+              className={inputCls}
+            >
+              {WORK_BRANCH_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+            <span className="mt-1 block text-[11px] leading-snug text-fg-muted">
+              {WORK_BRANCH_MODES.find((m) => m.value === normalizeWorkBranchMode(draft.branchMode))?.hint}。这里只是默认值，建项目时可以临时改。只对会克隆副本的仓库有效。
+            </span>
+          </label>
         )}
       </Section>
 

@@ -110,7 +110,7 @@ describe("应用内建项目", () => {
     expect(r).toMatchObject({ ok: true })
     expect(r.warning).toBeUndefined()
     const p = store.getProject(r.projectId!)!
-    expect(p.workspaceType).toBe("plain")
+    for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
     expect(p.externalWorkspace).toBeUndefined()
     expect(p.groupId).toBe("research")
     expect(p.groupSnapshot?.map((g) => g.id)).toEqual(["research"])
@@ -138,7 +138,7 @@ describe("应用内建项目", () => {
   it("不动飞书私聊用的全局「当前项目」指针", async () => {
     const { store, create } = await boot()
     const first = store.createProject({
-      name: "飞书那边的项目", goal: "", repoPath: "", baseBranch: "", featureBranch: "",
+      name: "飞书那边的项目", goal: "",
       worktreePath: path.join(userData, "fs-proj", "workspace"), groupIds: ["develop"], groupId: "develop",
     })
     store.setCurrentProjectId(first.id)
@@ -151,9 +151,11 @@ describe("应用内建项目", () => {
     const { store, create } = await boot()
     expect(await create.createProjectFromApp(FEISHU, { name: "x", templateId: "general" })).toEqual({ ok: false, error: "不是应用内对话的通道" })
     expect((await create.createProjectFromApp(APP, { name: "", templateId: "general" })).ok).toBe(false)
-    // 开发模板没选仓库：同样不留项目
-    const dev = await create.createProjectFromApp(APP, { name: "x", templateId: "develop" })
-    expect(dev).toEqual({ ok: false, error: "请至少选一个代码仓库" })
+    // 选了仓库但路径不是完整路径 / 没填基线分支：拦下，同样不留项目（仓库本身是可选的，不选不算错）
+    const rel = await create.createProjectFromApp(APP, { name: "x", templateId: "develop", repos: [{ repoPath: "relative/shop", baseBranch: "main" }] })
+    expect(rel.ok).toBe(false)
+    const noBase = await create.createProjectFromApp(APP, { name: "x", templateId: "develop", repos: [{ repoPath: path.join(folder, "shop"), baseBranch: " " }] })
+    expect(noBase.ok).toBe(false)
     expect(store.listProjects()).toHaveLength(0)
     expect(hit("/api/active-session")).toHaveLength(0)
   })
@@ -342,7 +344,7 @@ describe("同步步骤和项目信息", () => {
   it("没有步骤副本的老项目：不用同步；项目不存在：报错", async () => {
     const { store, create } = await boot()
     const old = store.createProject({
-      name: "老项目", goal: "", repoPath: "", baseBranch: "", featureBranch: "",
+      name: "老项目", goal: "",
       worktreePath: path.join(userData, "old", "workspace"), groupIds: ["develop"], groupId: "develop",
     })
     expect(create.syncProjectSteps(old.id).ok).toBe(false)
@@ -350,11 +352,12 @@ describe("同步步骤和项目信息", () => {
     expect(create.getProjectView("000000000000", APP)).toBeNull()
   })
 
-  it("模板列表：开发模板标明要接代码仓库，通用类不用", async () => {
+  it("模板列表：开发、测试模板接代码仓库，通用类不用；带出各自默认的工作分支", async () => {
     const { create } = await boot()
     const list = create.listProjectTemplates()
     expect(list.find((t) => t.id === "general")?.needsRepo).toBe(false)
-    expect(list.find((t) => t.id === "develop")?.needsRepo).toBe(true)
+    expect(list.find((t) => t.id === "develop")).toMatchObject({ needsRepo: true, workBranchMode: "new" })
+    expect(list.find((t) => t.id === "test")).toMatchObject({ needsRepo: true, workBranchMode: "test" })
   })
 })
 
@@ -386,7 +389,11 @@ describe("应用内建开发项目（接代码仓库）", () => {
   beforeEach(() => { repoParent = fs.mkdtempSync(path.join(os.tmpdir(), "proj-repos-")) })
   afterEach(() => { fs.rmSync(repoParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as fs.RmOptions) })
 
-  it("克隆出独立的工作目录并检出 feature，用户自己的仓库原样不动", async () => {
+  /** 项目信息里「代码仓库」那几行 */
+  const repoRows = (p: { metadata?: Record<string, string> }) =>
+    Object.fromEntries(Object.entries(p.metadata ?? {}).filter(([k]) => k === "代码仓库" || k.startsWith("代码仓库 · ")))
+
+  it("克隆出独立的副本并检出新分支，副本就是项目目录；仓库、分支记在项目信息里；用户自己的仓库原样不动", async () => {
     const { store, create } = await boot()
     const repo = makeRepo(repoParent, "shop")
     const r = await create.createProjectFromApp(APP, {
@@ -398,22 +405,22 @@ describe("应用内建开发项目（接代码仓库）", () => {
     expect(r.warning).toBeUndefined()
     const p = store.getProject(r.projectId!)!
     expect(p).toMatchObject({
-      workspaceType: "worktree", repoPath: repo, baseBranch: "main", featureBranch: "feature/redesign",
       groupId: "develop", storyUrl: "https://t.example.com/1", relatedDocs: "见 wiki",
       notifyChatId: APP_CHAT, sessionKey: `${APP_CHAT}::project_${p.id}`,
     })
+    // 仓库、分支不再有专门的字段
+    for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
     expect(p.externalWorkspace).toBeUndefined()
     expect(p.groupSnapshot?.map((g) => g.id)).toEqual(["develop"])
-    expect(p.repos).toHaveLength(1)
-    const wt = p.repos![0].worktreePath
-    expect(p.worktreePath).toBe(wt)
-    // 工作目录在应用数据目录下的项目目录里，是独立克隆，停在 feature 分支
+    const wt = p.worktreePath
+    // 项目目录在应用数据目录下，只克隆了一个仓库：副本就是项目目录，停在新分支上
     expect(path.resolve(wt).startsWith(path.resolve(userData))).toBe(true)
     expect(path.basename(wt)).toBe("shop")
     expect(git(wt, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/redesign")
     expect(fs.existsSync(path.join(wt, "README.md"))).toBe(true)
     expect(fs.existsSync(path.join(wt, ".lk-harness", "artifacts"))).toBe(true)
     expect(fs.readFileSync(path.join(wt, ".git", "info", "exclude"), "utf8")).toContain(".lk-harness/")
+    expect(repoRows(p)).toEqual({ 代码仓库: `${wt}（工作分支 feature/redesign；基线分支 main）` })
     // 用户的仓库：还在 main、没多分支、没脏文件
     expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
     expect(git(repo, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])
@@ -424,18 +431,29 @@ describe("应用内建开发项目（接代码仓库）", () => {
     ])
   })
 
-  it("不填 feature 分支：按「feature/日期-项目名」生成；基线可以是别的分支", async () => {
+  it("新建分支不填名字：按「feature/日期-项目名」生成；基线可以是别的分支", async () => {
     const { store, create } = await boot()
     const repo = makeRepo(repoParent, "api")
     const r = await create.createProjectFromApp(APP, { name: "login", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "develop" }] })
     expect(r.ok).toBe(true)
     const p = store.getProject(r.projectId!)!
-    expect(p.featureBranch).toMatch(/^feature\/\d{6}-login$/)
-    expect(p.baseBranch).toBe("develop")
-    expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(p.featureBranch)
+    const head = git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])
+    expect(head).toMatch(/^feature\/\d{6}-login$/)
+    expect(repoRows(p).代码仓库).toBe(`${p.worktreePath}（工作分支 ${head}；基线分支 develop）`)
   })
 
-  it("用到的仓库自动记进常用仓库；记过的原样不动（测试/开发分支保留、基线不被这次顶掉），并带进项目", async () => {
+  it("仓库是可选的：接代码仓库的模板一个仓库也不选，照样建成普通项目（没有代码仓库信息）", async () => {
+    const { store, create } = await boot()
+    const r = await create.createProjectFromApp(APP, { name: "先聊聊", templateId: "develop" })
+    expect(r.ok).toBe(true)
+    const p = store.getProject(r.projectId!)!
+    expect(repoRows(p)).toEqual({})
+    expect(path.basename(p.worktreePath)).toBe("workspace")
+    expect(fs.existsSync(path.join(p.worktreePath, ".lk-harness", "artifacts"))).toBe(true)
+    expect(fs.existsSync(path.join(p.worktreePath, ".git"))).toBe(false)
+  })
+
+  it("用到的仓库自动记进常用仓库；记过的原样不动（测试/开发分支保留、基线不被这次顶掉），并带进项目信息", async () => {
     const { store, create } = await boot()
     const config = await import("../electron/config-store")
     const fresh = makeRepo(repoParent, "fresh")
@@ -445,20 +463,26 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const r = await create.createProjectFromApp(APP, {
       name: "两仓", templateId: "develop",
       repos: [{ repoPath: fresh, baseBranch: "main" }, { repoPath: known, baseBranch: "develop" }],
+      featureBranch: "feature/two",
     })
     expect(r.ok).toBe(true)
     const profiles = config.getRepoProfiles()
     expect(profiles.find((x) => x.path === fresh)).toMatchObject({ baseBranch: "main" })
     expect(profiles.find((x) => x.path === known)).toEqual({ path: known, baseBranch: "main", testBranch: "test", developBranch: "dev" })
     const p = store.getProject(r.projectId!)!
-    expect(p.repos!.map((x) => path.basename(x.worktreePath))).toEqual(["fresh", "known"])
-    expect(p.repos![1]).toMatchObject({ baseBranch: "develop", testBranch: "test", developBranch: "dev" })
-    expect(p.repos![0].testBranch).toBeUndefined()
+    // 两个仓库都克隆了：项目目录是放它们的上一层的 workspace，两个副本各一个子目录
+    const slugDir = path.dirname(p.worktreePath)
+    expect(path.basename(p.worktreePath)).toBe("workspace")
+    expect(fs.readdirSync(slugDir).sort()).toEqual(["fresh", "known", "workspace"])
+    expect(repoRows(p)).toEqual({
+      "代码仓库 · fresh": `${path.join(slugDir, "fresh")}（工作分支 feature/two；基线分支 main）`,
+      "代码仓库 · known": `${path.join(slugDir, "known")}（工作分支 feature/two；基线分支 develop；测试分支 test；开发分支 dev）`,
+    })
     // 常用仓库列表给建项界面用
     expect(create.listProjectRepoOptions().map((o) => o.name).sort()).toEqual(["fresh", "known"])
   })
 
-  it("两个同名仓库（不同位置）：工作目录名自动加序号，互不覆盖", async () => {
+  it("两个同名仓库（不同位置）：副本目录名自动加序号，互不覆盖，项目信息里也是同样的名字", async () => {
     const { store, create } = await boot()
     const a = makeRepo(path.join(repoParent, "a"), "foo")
     const b = makeRepo(path.join(repoParent, "b"), "foo")
@@ -467,8 +491,10 @@ describe("应用内建开发项目（接代码仓库）", () => {
       repos: [{ repoPath: a, baseBranch: "main" }, { repoPath: b, baseBranch: "main" }],
     })
     expect(r.ok).toBe(true)
-    const names = store.getProject(r.projectId!)!.repos!.map((x) => path.basename(x.worktreePath))
-    expect(names).toEqual(["foo", "foo-2"])
+    const p = store.getProject(r.projectId!)!
+    const slugDir = path.dirname(p.worktreePath)
+    expect(fs.readdirSync(slugDir).sort()).toEqual(["foo", "foo-2", "workspace"])
+    expect(Object.keys(repoRows(p)).sort()).toEqual(["代码仓库 · foo", "代码仓库 · foo-2"])
   })
 
   it("设置里配了项目存放位置：克隆到那里", async () => {
@@ -480,6 +506,171 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const r = await create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }] })
     expect(r.ok).toBe(true)
     expect(path.resolve(store.getProject(r.projectId!)!.worktreePath).startsWith(path.resolve(root))).toBe(true)
+  })
+
+  describe("克隆副本 / 不克隆", () => {
+    /** 把仓库 .git 里所有文件的路径、大小、修改时间拍个照：应用要是对这个仓库做过任何 git 操作，照片就会变 */
+    function snapshotGitDir(repo: string): string[] {
+      const out: string[] = []
+      const walk = (dir: string) => {
+        for (const name of fs.readdirSync(dir).sort()) {
+          const full = path.join(dir, name)
+          const st = fs.statSync(full)
+          if (st.isDirectory()) walk(full)
+          else out.push(`${path.relative(repo, full)}|${st.size}|${st.mtimeMs}`)
+        }
+      }
+      walk(path.join(repo, ".git"))
+      return out
+    }
+
+    it("设置里取消了「克隆副本」：不克隆、不碰这个仓库，项目目录是空的工作目录，项目信息里记的是用户本机那个目录", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const repo = makeRepo(repoParent, "mine")
+      config.saveConfig({ repoProfiles: [{ path: repo, baseBranch: "main", testBranch: "develop", clone: false }], repoRoots: [repo] })
+      const before = snapshotGitDir(repo)
+      const head = fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8")
+
+      const r = await create.createProjectFromApp(APP, {
+        name: "直接用我的", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }], featureBranch: "feature/never",
+      })
+      expect(r.ok).toBe(true)
+      const p = store.getProject(r.projectId!)!
+      expect(path.basename(p.worktreePath)).toBe("workspace")
+      expect(fs.readdirSync(path.dirname(p.worktreePath)).sort()).toEqual(["workspace"])
+      expect(fs.existsSync(path.join(p.worktreePath, ".git"))).toBe(false)
+      expect(fs.existsSync(path.join(p.worktreePath, ".lk-harness", "artifacts"))).toBe(true)
+      // 项目信息里是用户本机的目录和配好的分支；没有「工作分支」（应用没有切任何分支）
+      expect(repoRows(p)).toEqual({ 代码仓库: `${repo}（基线分支 main；测试分支 develop）` })
+      // 一个 git 操作都没有：.git 里的文件和修改时间原样，没建分支，HEAD 没动
+      expect(snapshotGitDir(repo)).toEqual(before)
+      expect(fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8")).toBe(head)
+      expect(git(repo, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])
+      // 常用仓库里它的「不克隆」设置没被这次建项冲掉
+      expect(config.getRepoProfiles().find((x) => x.path === repo)).toMatchObject({ clone: false, testBranch: "develop" })
+    })
+
+    it("不克隆的仓库应用不检查：不是 git 仓库、甚至不存在的目录也照样记进项目，分支名也不校验", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const plain = path.join(repoParent, "just-a-folder")
+      fs.mkdirSync(plain)
+      const gone = path.join(repoParent, "moved-away")
+      config.saveConfig({
+        repoProfiles: [{ path: plain, baseBranch: "main", clone: false }, { path: gone, baseBranch: "main", clone: false }],
+        repoRoots: [plain, gone],
+      })
+      const r = await create.createProjectFromApp(APP, {
+        name: "随便", templateId: "develop",
+        repos: [{ repoPath: plain, baseBranch: "any branch" }, { repoPath: gone, baseBranch: "main" }], featureBranch: "bad name",
+      })
+      expect(r.ok).toBe(true)
+      const p = store.getProject(r.projectId!)!
+      expect(Object.values(repoRows(p))).toEqual([`${plain}（基线分支 any branch）`, `${gone}（基线分支 main）`])
+      expect(fs.readdirSync(plain)).toEqual([])
+    })
+
+    it("一个克隆、一个不克隆：克隆的那份副本是项目目录，不克隆的只是项目信息里的一行", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const cloned = makeRepo(repoParent, "cloned")
+      const mine = makeRepo(repoParent, "mine")
+      config.saveConfig({ repoProfiles: [{ path: mine, baseBranch: "main", clone: false }], repoRoots: [mine] })
+      const r = await create.createProjectFromApp(APP, {
+        name: "混合", templateId: "develop",
+        repos: [{ repoPath: cloned, baseBranch: "main" }, { repoPath: mine, baseBranch: "main" }], featureBranch: "feature/mix",
+      })
+      expect(r.ok).toBe(true)
+      const p = store.getProject(r.projectId!)!
+      expect(path.basename(p.worktreePath)).toBe("cloned")
+      expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/mix")
+      expect(repoRows(p)).toEqual({
+        "代码仓库 · cloned": `${p.worktreePath}（工作分支 feature/mix；基线分支 main）`,
+        "代码仓库 · mine": `${mine}（基线分支 main）`,
+      })
+      expect(git(mine, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])
+    })
+
+    it("常用仓库列表带着每个仓库的克隆设置：没设过=克隆，取消了=不克隆", async () => {
+      const { create } = await boot()
+      const config = await import("../electron/config-store")
+      const a = makeRepo(repoParent, "a")
+      const b = makeRepo(repoParent, "b")
+      config.saveConfig({ repoProfiles: [{ path: a, baseBranch: "main" }, { path: b, baseBranch: "main", clone: false }], repoRoots: [a, b] })
+      const opts = create.listProjectRepoOptions()
+      expect(opts.find((o) => o.path === a)?.clone).toBe(true)
+      expect(opts.find((o) => o.path === b)?.clone).toBe(false)
+    })
+  })
+
+  describe("工作分支", () => {
+    function setup(repoParent: string) {
+      const repo = makeRepo(repoParent, "shop")
+      git(repo, ["branch", "test"])
+      return repo
+    }
+
+    it("测试分支：克隆的副本直接停在测试分支上，不新建任何分支，用户的仓库不动", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const repo = setup(repoParent)
+      config.saveConfig({ repoProfiles: [{ path: repo, baseBranch: "main", testBranch: "test" }], repoRoots: [repo] })
+      const r = await create.createProjectFromApp(APP, {
+        name: "测试看代码", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }], workBranch: "test", featureBranch: "feature/ignored",
+      })
+      expect(r.ok).toBe(true)
+      const p = store.getProject(r.projectId!)!
+      expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("test")
+      expect(git(p.worktreePath, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["main", "test"])
+      expect(repoRows(p).代码仓库).toBe(`${p.worktreePath}（工作分支 test；基线分支 main；测试分支 test）`)
+      expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+    })
+
+    it("默认的「测试」模板：不用选就是停在测试分支上；建项时可以临时改成新建分支", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const repo = setup(repoParent)
+      config.saveConfig({ repoProfiles: [{ path: repo, baseBranch: "main", testBranch: "test" }], repoRoots: [repo] })
+      const byTemplate = await create.createProjectFromApp(APP, { name: "测试A", templateId: "test", repos: [{ repoPath: repo, baseBranch: "main" }] })
+      expect(byTemplate.ok).toBe(true)
+      expect(git(store.getProject(byTemplate.projectId!)!.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("test")
+
+      const overridden = await create.createProjectFromApp(APP, {
+        name: "测试B", templateId: "test", repos: [{ repoPath: repo, baseBranch: "main" }], workBranch: "new", featureBranch: "feature/own",
+      })
+      expect(overridden.ok).toBe(true)
+      expect(git(store.getProject(overridden.projectId!)!.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/own")
+    })
+
+    it("没配测试分支的仓库：退到基线分支；基线分支 / 开发分支同理", async () => {
+      const { store, create } = await boot()
+      const repo = makeRepo(repoParent, "plainrepo")
+      const mk = async (workBranch: "test" | "develop" | "base", baseBranch: string) => {
+        const r = await create.createProjectFromApp(APP, { name: `p-${workBranch}-${baseBranch}`, templateId: "develop", repos: [{ repoPath: repo, baseBranch }], workBranch })
+        expect(r.ok, `${workBranch}/${baseBranch}`).toBe(true)
+        return store.getProject(r.projectId!)!
+      }
+      expect(git((await mk("test", "develop")).worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("develop")
+      expect(git((await mk("base", "main")).worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+      const dev = await mk("develop", "develop")
+      expect(git(dev.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("develop")
+      expect(repoRows(dev).代码仓库).toContain("工作分支 develop")
+    })
+
+    it("配的分支在仓库里不存在：报错说清是哪个分支，不悄悄换成别的，不留项目和半成品目录", async () => {
+      const { store, create } = await boot()
+      const config = await import("../electron/config-store")
+      const repo = makeRepo(repoParent, "shop")
+      config.saveConfig({ repoProfiles: [{ path: repo, baseBranch: "main", testBranch: "tset" }], repoRoots: [repo] })
+      const r = await create.createProjectFromApp(APP, { name: "写错了", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }], workBranch: "test" })
+      expect(r.ok).toBe(false)
+      expect(r.error).toContain("shop")
+      expect(r.error).toContain("tset")
+      expect(store.listProjects()).toHaveLength(0)
+      const root = path.join(userData, "claw-projects")
+      expect(fs.existsSync(root) ? fs.readdirSync(root) : []).toEqual([])
+    })
   })
 
   it("基线分支不存在：报错、不留项目、不留半成品目录，用户的仓库不动", async () => {
@@ -510,7 +701,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     expect(fs.existsSync(root) ? fs.readdirSync(root) : []).toEqual([])
   })
 
-  it("不是 git 仓库根目录、不存在、分支名不合法：都拒绝，且都不克隆", async () => {
+  it("要克隆的仓库：不是 git 仓库根目录、不存在、分支名不合法，都拒绝，且都不克隆", async () => {
     const { store, create } = await boot()
     const repo = makeRepo(repoParent, "shop")
     const plain = path.join(repoParent, "plain")
@@ -526,7 +717,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     for (const feature of ["bad name", "-x", "a..b", "x~1"]) {
       const r = await create.createProjectFromApp(APP, { ...base, repos: [{ repoPath: repo, baseBranch: "main" }], featureBranch: feature })
       expect(r.ok, feature).toBe(false)
-      expect(r.error, feature).toContain("feature 分支名不合法")
+      expect(r.error, feature).toContain("新建的分支名不合法")
     }
     const badBase = await create.createProjectFromApp(APP, { ...base, repos: [{ repoPath: repo, baseBranch: "--upload-pack=x" }] })
     expect(badBase.ok).toBe(false)
@@ -554,7 +745,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const repo = makeRepo(repoParent, "shop")
     const [good, bad] = await Promise.all([
       create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }] }),
-      // 基线分支不存在：克隆完、检出 feature 时才失败，失败后清理的只能是它自己占的目录
+      // 基线分支不存在：克隆完、检出新分支时才失败，失败后清理的只能是它自己占的目录
       create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "no-such-branch" }] }),
     ])
     expect(good.ok).toBe(true)
@@ -573,10 +764,10 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const r = await create.createProjectFromApp(APP, { name: "离线", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }] })
     expect(r.ok).toBe(true)
     expect(r.warning).toContain("服务未运行")
-    expect(store.getProject(r.projectId!)!.workspaceType).toBe("worktree")
+    expect(Object.keys(repoRows(store.getProject(r.projectId!)!))).toEqual(["代码仓库"])
   })
 
-  it("点快捷操作：提示词带研发的分支规则（通用项目没有），投进项目会话", async () => {
+  it("点快捷操作：提示词里只多一句遵守 Git 基本原则（项目里没记仓库的没有），投进项目会话", async () => {
     const { create } = await boot()
     const repo = makeRepo(repoParent, "shop")
     const r = await create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }], featureBranch: "feature/x" })
@@ -585,21 +776,45 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const enq = hit("/enqueue")
     expect(enq).toHaveLength(1)
     expect(enq[0].body.sessionKey).toBe(r.sessionKey)
-    expect(String(enq[0].body.content)).toContain("[PROJECT_ACTION]")
-    expect(String(enq[0].body.content)).toContain("分支与红线")
+    const content = String(enq[0].body.content)
+    expect(content).toContain("[PROJECT_ACTION]")
+    expect(content).toContain("Git 基本原则")
+    for (const old of ["分支与红线", "AI 工作目录", "本机仓库", "主仓"]) expect(content).not.toContain(old)
+
+    // 同一个模板、没选仓库的项目：没有这句话
+    const bare = await create.createProjectFromApp(APP, { name: "没仓库", templateId: "develop" })
+    hits.length = 0
+    expect(await create.runProjectStepFromApp(APP, bare.projectId!, "plan")).toEqual({ ok: true })
+    expect(String(hit("/enqueue")[0].body.content)).not.toContain("Git 基本原则")
   })
 
-  it("项目信息：标成研发项目，带分支；删除时整个项目目录进回收站，用户自己的仓库不动", async () => {
+  it("项目信息：标成接了代码仓库；删除时整个项目目录进回收站，用户自己的仓库不动", async () => {
     const { store, create } = await boot()
     const repo = makeRepo(repoParent, "shop")
     const r = await create.createProjectFromApp(APP, { name: "改版", templateId: "develop", repos: [{ repoPath: repo, baseBranch: "main" }], featureBranch: "feature/x" })
     const view = create.getProjectView(r.projectId!, APP)!
-    expect(view).toMatchObject({ isCode: true, featureBranch: "feature/x", ownedHere: true })
+    expect(view).toMatchObject({ isCode: true, ownedHere: true })
+    expect(view).not.toHaveProperty("featureBranch")
     const p = store.getProject(r.projectId!)!
     expect((await create.deleteProjectByUser(p.id, { channelId: APP })).ok).toBe(true)
     expect(trashed).toEqual([path.dirname(p.worktreePath)])
     expect(git(repo, ["status", "--porcelain"])).toBe("")
     expect(fs.existsSync(path.join(repo, "README.md"))).toBe(true)
+  })
+
+  it("删项目只动项目目录：不克隆的仓库（用户自己的目录）原样保留，连里面的文件都不碰", async () => {
+    const { store, create } = await boot()
+    const config = await import("../electron/config-store")
+    const mine = makeRepo(repoParent, "mine")
+    fs.writeFileSync(path.join(mine, "wip.txt"), "没提交的东西")
+    config.saveConfig({ repoProfiles: [{ path: mine, baseBranch: "main", clone: false }], repoRoots: [mine] })
+    const r = await create.createProjectFromApp(APP, { name: "直接用", templateId: "develop", repos: [{ repoPath: mine, baseBranch: "main" }] })
+    expect(r.ok).toBe(true)
+    const p = store.getProject(r.projectId!)!
+    expect((await create.deleteProjectByUser(p.id)).ok).toBe(true)
+    expect(trashed).toEqual([path.dirname(p.worktreePath)])
+    expect(trashed).not.toContain(mine)
+    expect(fs.readFileSync(path.join(mine, "wip.txt"), "utf8")).toBe("没提交的东西")
   })
 })
 
@@ -661,8 +876,8 @@ describe("飞书里建的项目在应用内只读", () => {
     const dir = path.join(userData, "fs-proj", "workspace")
     fs.mkdirSync(dir, { recursive: true })
     const p = booted.store.createProject({
-      name: "飞书项目", goal: "", repoPath: "", baseBranch: "", featureBranch: "",
-      worktreePath: dir, groupIds: ["writing"], groupId: "writing", workspaceType: "plain",
+      name: "飞书项目", goal: "",
+      worktreePath: dir, groupIds: ["writing"], groupId: "writing",
       notifyChatId: FS_CHAT,
     })
     p.sessionKey = `${FS_CHAT}::project_${p.id}`
@@ -729,5 +944,125 @@ describe("飞书里建的项目在应用内只读", () => {
     const mine = await create.createProjectFromApp(APP, { name: "我的", templateId: "general" })
     expect((await create.deleteProjectByUser(mine.projectId!, { channelId: APP })).ok).toBe(true)
     expect(store.getProject(mine.projectId!)).toBeUndefined()
+  })
+})
+
+describe("飞书里建项目（/p new 表单提交）：和应用内共用同一套项目目录准备", () => {
+  const FS_CHAT = makeChatKey(FEISHU, "ou_main")
+  let repoParent = ""
+  beforeEach(() => { repoParent = fs.mkdtempSync(path.join(os.tmpdir(), "proj-fs-repos-")) })
+  afterEach(() => { fs.rmSync(repoParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as fs.RmOptions) })
+
+  type Submit = Parameters<Awaited<ReturnType<typeof boot>>["commands"]["handleProjectNewSubmit"]>[3]
+  async function submit(commands: Awaited<ReturnType<typeof boot>>["commands"], fields: Partial<Submit> & { name: string }) {
+    const lock = JSON.parse(fs.readFileSync(path.join(userData, LOCK_FILE_NAME), "utf8")) as { port: number }
+    hits.length = 0
+    await commands.handleProjectNewSubmit(lock.port, "om_1", FS_CHAT, { goal: "", worktreeRoot: "", chatMode: "inline", ...fields })
+    const results = hit("/cmd/result")
+    return results[results.length - 1]?.body as { ok?: boolean; message?: string } | undefined
+  }
+  const repoRows = (p: { metadata?: Record<string, string> }) =>
+    Object.fromEntries(Object.entries(p.metadata ?? {}).filter(([k]) => k === "代码仓库" || k.startsWith("代码仓库 · ")))
+
+  it("不接代码仓库的模板：只建项目目录；表单里多传的仓库一概不理（不克隆、不记进常用仓库）", async () => {
+    const { store, commands } = await boot()
+    const config = await import("../electron/config-store")
+    const repo = makeRepo(repoParent, "shop")
+    const res = await submit(commands, {
+      name: "周报", groupId: "general", groupIds: ["general"], workspaceType: "plain", repos: [{ repoPath: repo, baseBranch: "main" }],
+    })
+    expect(res?.ok).toBe(true)
+    const p = store.listProjects()[0]
+    expect(p.name).toBe("周报")
+    expect(path.basename(p.worktreePath)).toBe("workspace")
+    expect(p.metadata).toBeUndefined()
+    expect(p.sessionKey).toBe(`${FS_CHAT}::project_${p.id}`)
+    expect(fs.readdirSync(path.dirname(p.worktreePath))).toEqual(["workspace"])
+    expect(config.getRepoProfiles()).toEqual([])
+    expect(git(repo, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])
+  })
+
+  it("开发模板：克隆副本并检出新分支，副本就是项目目录；仓库、分支记在项目信息里；仓库记进常用仓库", async () => {
+    const { store, commands } = await boot()
+    const config = await import("../electron/config-store")
+    const repo = makeRepo(repoParent, "shop")
+    const res = await submit(commands, {
+      name: "改版", groupId: "develop", groupIds: ["develop"], featureBranch: "feature/fs-redesign",
+      repos: [{ repoPath: repo, baseBranch: "main", testBranch: "develop" }],
+    })
+    expect(res?.ok).toBe(true)
+    const p = store.listProjects()[0]
+    for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
+    expect(path.basename(p.worktreePath)).toBe("shop")
+    expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/fs-redesign")
+    expect(repoRows(p)).toEqual({ 代码仓库: `${p.worktreePath}（工作分支 feature/fs-redesign；基线分支 main；测试分支 develop）` })
+    expect(config.getRepoProfiles().find((x) => x.path === repo)).toMatchObject({ baseBranch: "main", testBranch: "develop" })
+    expect(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main")
+  })
+
+  it("工作分支由模板定：默认的「测试」模板直接停在测试分支上，不新建分支", async () => {
+    const { store, commands } = await boot()
+    const repo = makeRepo(repoParent, "shop")
+    git(repo, ["branch", "test"])
+    const res = await submit(commands, {
+      name: "测试看代码", groupId: "test", groupIds: ["test"], featureBranch: "feature/ignored",
+      repos: [{ repoPath: repo, baseBranch: "main", testBranch: "test" }],
+    })
+    expect(res?.ok).toBe(true)
+    const p = store.listProjects()[0]
+    expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("test")
+    expect(git(p.worktreePath, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["main", "test"])
+    expect(repoRows(p).代码仓库).toContain("工作分支 test")
+  })
+
+  it("设置里取消了「克隆副本」的仓库：不克隆、不碰，项目信息里记的是用户本机的目录", async () => {
+    const { store, commands } = await boot()
+    const config = await import("../electron/config-store")
+    const repo = makeRepo(repoParent, "mine")
+    config.saveConfig({ repoProfiles: [{ path: repo, baseBranch: "main", clone: false }], repoRoots: [repo] })
+    const head = fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8")
+    const res = await submit(commands, {
+      name: "直接用", groupId: "develop", groupIds: ["develop"], repos: [{ repoPath: repo, baseBranch: "main" }],
+    })
+    expect(res?.ok).toBe(true)
+    const p = store.listProjects()[0]
+    expect(path.basename(p.worktreePath)).toBe("workspace")
+    expect(fs.readdirSync(path.dirname(p.worktreePath))).toEqual(["workspace"])
+    expect(repoRows(p)).toEqual({ 代码仓库: `${repo}（基线分支 main）` })
+    expect(fs.readFileSync(path.join(repo, ".git", "HEAD"), "utf8")).toBe(head)
+    expect(git(repo, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])
+    // 表单提交又走了一遍「记进常用仓库」：别把它的「不克隆」改回默认
+    expect(config.getRepoProfiles().find((x) => x.path === repo)?.clone).toBe(false)
+  })
+
+  it("一个仓库都不选：照样建，成普通项目目录", async () => {
+    const { store, commands } = await boot()
+    const res = await submit(commands, { name: "先聊聊", groupId: "develop", groupIds: ["develop"] })
+    expect(res?.ok).toBe(true)
+    const p = store.listProjects()[0]
+    expect(path.basename(p.worktreePath)).toBe("workspace")
+    expect(repoRows(p)).toEqual({})
+  })
+
+  it("克隆失败：报「创建失败」，不留项目、不留半成品目录，用户的仓库不动", async () => {
+    const { store, commands } = await boot()
+    const repo = makeRepo(repoParent, "shop")
+    const res = await submit(commands, {
+      name: "失败", groupId: "develop", groupIds: ["develop"], repos: [{ repoPath: repo, baseBranch: "no-such" }],
+    })
+    expect(res?.ok).toBe(false)
+    expect(res?.message).toContain("创建失败")
+    expect(res?.message).toContain("no-such")
+    expect(store.listProjects()).toHaveLength(0)
+    const root = path.join(userData, "claw-projects")
+    expect(fs.existsSync(root) ? fs.readdirSync(root) : []).toEqual([])
+    expect(git(repo, ["status", "--porcelain"])).toBe("")
+  })
+
+  it("没写名称：拒绝", async () => {
+    const { store, commands } = await boot()
+    const res = await submit(commands, { name: "", groupId: "general", groupIds: ["general"], workspaceType: "plain" })
+    expect(res?.ok).toBe(false)
+    expect(store.listProjects()).toHaveLength(0)
   })
 })

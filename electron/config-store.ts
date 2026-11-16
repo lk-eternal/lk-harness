@@ -8,6 +8,7 @@ import { APP_CHANNEL_CHAT_ID, channelIdFromSessionKey } from "../src/shared/chan
 import { accessDefaultsFor } from "../src/shared/channel-access"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { preserveChannelBindings } from "../src/shared/channel-binding.js"
+import { DEFAULT_GIT_PRINCIPLES, GIT_PRINCIPLES_MAX } from "../src/shared/project-git-principles.js"
 import { resolveChannelDefaultModel, type ModelScenario } from "../src/shared/launch-model.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SavedWindowBounds } from "./window-bounds"
@@ -61,12 +62,17 @@ export interface AppConfig {
   gitlabToken: string
   /** GitLab Host，如 https://gitlab.com 或自建 */
   gitlabHost: string
-  /** 已 clone 的主仓本地路径列表 */
+  /** 已 clone 的代码仓库本地路径列表 */
   repoRoots: string[]
-  /** 主仓+固定基线（/p new 多选记忆） */
-  repoProfiles: { path: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
-  /** 新建 worktree 的父目录 */
+  /** 常用代码仓库（建项时勾选）：基线 / 测试 / 开发分支，以及建项时要不要克隆一份副本（clone=false 才存，缺省=克隆） */
+  repoProfiles: { path: string; baseBranch: string; testBranch?: string; developBranch?: string; clone?: boolean }[]
+  /** 项目文件夹的存放目录 */
   worktreeRoot: string
+  /**
+   * 项目会话开头的「Git 基本原则」（项目里记了代码仓库才带）。没设过=用默认文案，设成空=不带。
+   * 缺省不写：这样以后默认文案升级了，没改过的人自动用上新的。
+   */
+  gitPrinciples?: string
 
   /** Flow Hub 共享仓库地址 */
   flowHubUrl: string
@@ -427,6 +433,17 @@ export function saveConfig(partial: Partial<AppConfig>): void {
     cleaned.repoProfiles = cleaned.repoProfiles
       .filter((p) => p?.path?.trim())
       .map((p) => ({ ...p, path: normalizeRepoPath(p.path) }))
+  }
+  if (typeof cleaned.gitPrinciples === "string") {
+    const text = cleaned.gitPrinciples.replace(/\r\n/g, "\n").trim()
+    if (text === DEFAULT_GIT_PRINCIPLES) {
+      // 存成默认文案 = 没改过：把键删掉，以后默认文案升级了自动跟上
+      getStore().delete("gitPrinciples")
+      configCache = null
+      delete cleaned.gitPrinciples
+    } else {
+      cleaned.gitPrinciples = text.slice(0, GIT_PRINCIPLES_MAX)
+    }
   }
   if (Object.keys(cleaned).length > 0) {
     writeStore(sealPartialSecrets(cleaned))
@@ -843,6 +860,8 @@ export type RepoProfileCfg = {
   baseBranch: string
   testBranch?: string
   developBranch?: string
+  /** 建项时克隆一份副本到项目目录；缺省=克隆。false=不克隆，只把仓库信息记进项目 */
+  clone?: boolean
 }
 
 function isRemoteRepoPath(p: string): boolean {
@@ -888,6 +907,7 @@ export function getRepoProfiles(cfg: AppConfig = getConfig()): RepoProfileCfg[] 
         baseBranch: (p.baseBranch || "main").trim() || "main",
         testBranch: p.testBranch?.trim() || undefined,
         developBranch: p.developBranch?.trim() || undefined,
+        ...(p.clone === false ? { clone: false } : {}),
       })
     }
     return [...byKey.values()]
@@ -902,11 +922,15 @@ export function upsertRepoProfiles(pairs: RepoProfileCfg[]): void {
   const byKey = new Map<string, RepoProfileCfg>()
   for (const p of [...getRepoProfiles(), ...pairs]) {
     if (!p?.path?.trim()) continue
-    byKey.set(repoProfileKey(p.path), {
+    const key = repoProfileKey(p.path)
+    // 调用方没说克隆不克隆（比如飞书里重新添加同一个仓库）就沿用原来的设置，别悄悄改回默认
+    const clone = p.clone ?? byKey.get(key)?.clone
+    byKey.set(key, {
       path: normalizeRepoPath(p.path),
       baseBranch: (p.baseBranch || "main").trim() || "main",
       testBranch: p.testBranch?.trim() || undefined,
       developBranch: p.developBranch?.trim() || undefined,
+      ...(clone === false ? { clone: false } : {}),
     })
   }
   const next = [...byKey.values()]

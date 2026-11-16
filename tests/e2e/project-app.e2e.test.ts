@@ -216,7 +216,7 @@ describe("应用内项目：真实 daemon", () => {
     expect((await tabs()).some((t) => t.sessionKey === r.sessionKey)).toBe(false)
   })
 
-  it("研发类项目：克隆仓库、会话切过去、点快捷操作带研发红线；删项目只移工作目录，用户自己的仓库原样", async () => {
+  it("接代码仓库的项目：克隆仓库、会话切过去、点快捷操作带 Git 基本原则；删项目只移项目目录，用户自己的仓库原样", async () => {
     const { store, create, tabs } = await boot()
     const git = (cwd: string, args: string[]) => {
       const r = spawnSync("git", args, { cwd, encoding: "utf-8", windowsHide: true })
@@ -236,7 +236,8 @@ describe("应用内项目：真实 daemon", () => {
     expect(r.ok, r.error).toBe(true)
     expect(r.sessionKey).toBe(`${APP_CHAT}::project_${r.projectId}`)
     const p = store.getProject(r.projectId!)!
-    expect(p.workspaceType).toBe("worktree")
+    expect(p).not.toHaveProperty("workspaceType")
+    expect(p.metadata?.代码仓库).toBe(`${p.worktreePath}（工作分支 feature/order；基线分支 main）`)
     expect(git(p.worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("feature/order")
     expect((await d.get("/api/active-sessions")).sessions[APP_CHAT]).toBe(r.sessionKey)
     expect((await tabs()).find((t) => t.sessionKey === r.sessionKey)).toMatchObject({ kind: "project", label: "订单页改版", current: true })
@@ -245,7 +246,8 @@ describe("应用内项目：真实 daemon", () => {
     const texts = await pollKey(r.sessionKey!)
     expect(texts).toHaveLength(1)
     expect(texts[0]).toContain("[PROJECT_ACTION]")
-    expect(texts[0]).toContain("分支与红线")
+    expect(texts[0]).toContain("Git 基本原则")
+    expect(texts[0]).not.toContain("分支与红线")
 
     expect((await create.deleteProjectByUser(r.projectId!, { channelId: CH })).ok).toBe(true)
     expect(trashed).toEqual([path.dirname(p.worktreePath)])

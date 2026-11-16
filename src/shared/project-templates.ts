@@ -117,6 +117,7 @@ export function cloneGroupPlain(g: ProjectNodeGroupDef): ProjectNodeGroupDef {
     name: g.name,
     ...(g.description ? { description: g.description } : {}),
     ...(g.workspace ? { workspace: g.workspace } : {}),
+    ...(g.branchMode && g.branchMode !== "new" ? { branchMode: g.branchMode } : {}),
     ...(g.fields?.length ? { fields: g.fields.map((f) => ({ ...f })) } : {}),
     nodes: g.nodes.map((n) => ({
       id: n.id,

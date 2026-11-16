@@ -18,6 +18,22 @@ describe("repoItemsFromOptions", () => {
     ])
   })
 
+  it("克隆副本标记：设置里没写过=克隆；明确不克隆的本地仓库=不克隆；远程仓库一律克隆", () => {
+    const items = repoItemsFromOptions([
+      { path: "D:\\code\\a", name: "a", baseBranch: "main" },
+      { path: "D:\\code\\b", name: "b", baseBranch: "main", clone: true },
+      { path: "D:\\code\\c", name: "c", baseBranch: "main", clone: false },
+      { path: "https://g.com/x/d.git", name: "d", baseBranch: "main", clone: false },
+    ])
+    expect(items.map((i) => [i.name, i.clone])).toEqual([["a", true], ["b", true], ["c", false], ["d", true]])
+  })
+
+  it("建项时新加的仓库：算克隆（设置里还没有它，按默认来）；已有的仓库勾上时保持原来的克隆标记", () => {
+    const items = repoItemsFromOptions([{ path: "D:\\code\\c", name: "c", baseBranch: "main", clone: false }])
+    expect(upsertPickedRepo(items, { path: "D:\\code\\c" })[0].clone).toBe(false)
+    expect(upsertPickedRepo(items, { path: "D:\\code\\new" })[1].clone).toBe(true)
+  })
+
   it("同一个仓库写了两遍（大小写、末尾斜杠、.git 不同）只留第一个；没有基线分支的补默认值", () => {
     const items = repoItemsFromOptions([
       { path: "D:\\code\\shop", name: "shop", baseBranch: "" },
@@ -80,9 +96,9 @@ describe("picksOf + 校验", () => {
     expect(picksOf(items.map((i) => ({ ...i, checked: false })))).toEqual([])
   })
 
-  it("没勾、基线分支被清空、选重了，都能被 repoPicksProblem 拦下", () => {
+  it("一个都不勾也行（仓库是可选的）；基线分支被清空、选重了，会被 repoPicksProblem 拦下", () => {
     const items = repoItemsFromOptions(opts)
-    expect(repoPicksProblem(picksOf(items))).toContain("至少选一个")
+    expect(repoPicksProblem(picksOf(items))).toBe("")
     const one = upsertPickedRepo(items, { path: "D:\\code\\shop" }).map((i) => i.checked ? { ...i, baseBranch: "" } : i)
     expect(repoPicksProblem(picksOf(one))).toContain("基线分支")
     expect(repoPicksProblem([{ repoPath: "D:\\a\\x", baseBranch: "m" }, { repoPath: "d:\\a\\X\\", baseBranch: "m" }])).toContain("选重了")

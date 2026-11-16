@@ -137,7 +137,7 @@ export function registerAdminTools(mcpServer: McpServer): void {
   // ── manage_project ──
   mcpServer.tool(
     "manage_project",
-    "管理项目。list=列出所有项目；delete=删除项目（宿主连带移除全部 worktree；不动主仓与远程分支，删除前必须先向用户确认）。",
+    "管理项目。list=列出所有项目；delete=删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
     {
       action: z.enum(["list", "delete"]).describe("操作：list=列出所有项目, delete=删除项目"),
       project_id: z.string().optional().describe("项目 ID（delete 时必填）"),
@@ -146,7 +146,7 @@ export function registerAdminTools(mcpServer: McpServer): void {
       if (action === "list") {
         const list = listProjects()
         if (list.length === 0) return txt("📭 暂无项目")
-        const lines = list.map((p, i) => `#${i + 1} ${p.name}${p.archivedAt ? "（已归档）" : ""} id=${p.id} branch=${p.featureBranch}`)
+        const lines = list.map((p, i) => `#${i + 1} ${p.name}${p.archivedAt ? "（已归档）" : ""} id=${p.id}`)
         return txt(lines.join("\n"))
       }
       const p = getProject(project_id ?? "")

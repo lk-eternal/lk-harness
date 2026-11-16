@@ -128,7 +128,7 @@ export default function ProjectRail({ sel, go, projects, groups, hubUrlReady, on
               <button key={g.id} type="button" data-rail="template" aria-current={on ? "true" : undefined} onClick={() => go({ kind: "template", id: g.id, leaf: { kind: "info" } })} className={itemCls(on)}>
                 <span className={`truncate text-xs ${on ? "font-medium" : ""}`}>{g.name}</span>
                 <span className="flex items-center gap-1 truncate text-[10px] text-fg-faint">
-                  {isCodeGroup(g) ? <><GitBranch size={9} />研发</> : "通用"} · {g.nodes.length} 个快捷操作
+                  {isCodeGroup(g) ? <><GitBranch size={9} />接代码仓库</> : "通用"} · {g.nodes.length} 个快捷操作
                 </span>
               </button>
             )

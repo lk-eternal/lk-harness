@@ -172,6 +172,8 @@ export interface ConfigExportManifest {
     gitlabHost: string
     repoProfiles: AppConfig["repoProfiles"]
     worktreeRoot: string
+    /** 项目会话的 Git 基本原则；没设过（用默认）就不导出，导入时也就不会盖掉对方自己的设置 */
+    gitPrinciples?: string
     flowHubUrl: string
     flowHubToken: string
     flowHubAuthor: string
@@ -470,6 +472,7 @@ function buildManifest(sections?: ConfigSection[]): Partial<ConfigExportManifest
         gitlabHost: cfg.gitlabHost ?? "",
         repoProfiles: cfg.repoProfiles ?? [],
         worktreeRoot: cfg.worktreeRoot ?? "",
+        ...(cfg.gitPrinciples !== undefined ? { gitPrinciples: cfg.gitPrinciples } : {}),
         flowHubUrl: cfg.flowHubUrl ?? "",
         flowHubToken: cfg.flowHubToken ?? "",
         flowHubAuthor: cfg.flowHubAuthor ?? "",
@@ -596,6 +599,7 @@ export function importConfigBundle(zipPath: string, sections?: ConfigSection[]):
         repoProfiles,
         repoRoots: repoProfiles.map((p) => p.path),
         worktreeRoot: manifest.projects.worktreeRoot || getConfig().worktreeRoot,
+        ...(typeof manifest.projects.gitPrinciples === "string" ? { gitPrinciples: manifest.projects.gitPrinciples } : {}),
         flowHubUrl: manifest.projects.flowHubUrl || getConfig().flowHubUrl,
         flowHubToken: flowHubToken || getConfig().flowHubToken,
         flowHubAuthor: manifest.projects.flowHubAuthor || getConfig().flowHubAuthor,

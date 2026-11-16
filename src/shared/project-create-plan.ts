@@ -22,11 +22,13 @@ import {
 } from "./project-templates.js"
 import {
   DEFAULT_NODE_GROUP_ID,
-  isPlainProject,
+  normalizeWorkBranchMode,
   projectRootDir,
   type Project,
   type ProjectNodeGroupDef,
+  type WorkBranchMode,
 } from "./project-types.js"
+import { projectHasRepoInfo } from "./project-repo-info.js"
 
 /** 全部流程组 → 建项模板列表 */
 export function templateInfos(groups: ProjectNodeGroupDef[]): ProjectTemplateInfo[] {
@@ -37,6 +39,7 @@ export function templateInfos(groups: ProjectNodeGroupDef[]): ProjectTemplateInf
     fields: (g.fields ?? []).map((f) => ({ ...f })),
     steps: g.nodes.map((n) => ({ id: n.id, label: n.label })),
     needsRepo: g.workspace !== "plain",
+    workBranchMode: normalizeWorkBranchMode(g.branchMode),
   }))
 }
 
@@ -65,6 +68,7 @@ export function parseGatewayCreateInput(raw: unknown): ProjectCreateInput {
     templateId: str(o.templateId) ?? "",
     fields,
     repos,
+    ...(typeof o.workBranch === "string" ? { workBranch: normalizeWorkBranchMode(o.workBranch) } : {}),
     featureBranch: str(o.featureBranch),
     storyUrl: str(o.storyUrl),
     relatedDocs: str(o.relatedDocs),
@@ -78,9 +82,11 @@ export type ProjectCreatePlan =
     goal: string
     group: ProjectNodeGroupDef
     metadata: Record<string, string>
-    /** 要接的代码仓库（已去掉两端空白）；不接代码仓库的模板为空 */
+    /** 要接的代码仓库（已去掉两端空白）；不接代码仓库的模板、或一个都没选时为空 */
     repos: ProjectRepoInput[]
-    /** 用户指定的 feature 分支；空串表示按默认规则生成 */
+    /** 克隆副本停在哪个分支（建项时的选择优先，其次模板默认，再其次新建分支） */
+    workBranch: WorkBranchMode
+    /** 工作分支是「新建分支」时用户指定的分支名；空串表示按默认规则生成。其它工作分支下恒为空串 */
     featureBranch: string
     storyUrl?: string
     relatedDocs?: string
@@ -123,7 +129,7 @@ export function planProjectCreate(input: ProjectCreateInput, groups: ProjectNode
 
   // 不接代码仓库的模板：仓库和分支的输入一概不理，免得手滑多传的东西悄悄生效
   if (group.workspace === "plain") {
-    return { ok: true, name, goal, group, metadata, repos: [], featureBranch: "", ...links }
+    return { ok: true, name, goal, group, metadata, repos: [], workBranch: "new", featureBranch: "", ...links }
   }
 
   const repos: ProjectRepoInput[] = []
@@ -141,9 +147,11 @@ export function planProjectCreate(input: ProjectCreateInput, groups: ProjectNode
   }
   const problem = repoPicksProblem(repos)
   if (problem) return { ok: false, error: problem }
-  const featureBranch = (input.featureBranch ?? "").trim()
-  if (featureBranch.length > PROJECT_NAME_MAX * 2) return { ok: false, error: "feature 分支名太长了" }
-  return { ok: true, name, goal, group, metadata, repos, featureBranch, ...links }
+  const workBranch = input.workBranch !== undefined ? normalizeWorkBranchMode(input.workBranch) : normalizeWorkBranchMode(group.branchMode)
+  // 分支名只在「新建分支」时有意义；停在已有分支上的项目不理它，免得多传的名字悄悄生效
+  const featureBranch = workBranch === "new" ? (input.featureBranch ?? "").trim() : ""
+  if (featureBranch.length > PROJECT_NAME_MAX * 2) return { ok: false, error: "分支名太长了" }
+  return { ok: true, name, goal, group, metadata, repos, workBranch, featureBranch, ...links }
 }
 
 function pathKey(p: string): string {
@@ -287,7 +295,6 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
       .filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)))
       .map((n) => ({ id: n.id, label: n.label })),
   )
-  const refs = p.repos?.length ? p.repos.map((r) => r.repoPath) : [p.repoPath]
   return {
     id: p.id,
     name: p.name,
@@ -296,7 +303,6 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     ...(p.relatedDocs ? { relatedDocs: p.relatedDocs } : {}),
     ...(p.productDocUrl ? { productDocUrl: p.productDocUrl } : {}),
     ...(p.techDocUrl ? { techDocUrl: p.techDocUrl } : {}),
-    featureBranch: p.featureBranch || "",
     archived: !!p.archivedAt,
     // 实际在用的模板（没记模板的老项目已经回落到默认模板），详情页据此勾选，不用再猜
     groupId: deps.groups[0]?.id,
@@ -307,12 +313,9 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     hasGroupSnapshot: !!p.groupSnapshot?.length,
     canSyncSteps: !!p.groupSnapshot?.length && snapshotDiffers(p.groupSnapshot, deps.globals),
     externalWorkspace: p.externalWorkspace === true,
-    isCode: !isPlainProject(p),
+    isCode: projectHasRepoInfo(p),
     dir: projectRootDir(p) || p.worktreePath || "",
     ...(p.worktreePath ? { worktreePath: p.worktreePath } : {}),
-    ...(p.repoPath ? { repoPath: p.repoPath } : {}),
-    repoPaths: refs.filter(Boolean),
-    ...(p.workspaceType ? { workspaceType: p.workspaceType } : {}),
     metadata: { ...(p.metadata ?? {}) },
     ...(p.groupChatId ? { groupChatId: p.groupChatId } : {}),
   }
@@ -349,7 +352,7 @@ export function buildProjectView(p: Project, deps: ProjectViewDeps): ProjectView
       .filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)))
       .map((n) => ({ id: n.id, label: n.label, group: g.name })),
   )
-  const isCode = !isPlainProject(p)
+  const isCode = projectHasRepoInfo(p)
   const dir = projectRootDir(p) || p.worktreePath || ""
   let artifact: ProjectView["artifact"]
   if (p.lastArtifactPath) {
@@ -380,6 +383,5 @@ export function buildProjectView(p: Project, deps: ProjectViewDeps): ProjectView
     ...(artifact ? { artifact } : {}),
     ownedHere: isProjectOwnedBy(p, deps.channelId),
     canSyncSteps: !!p.groupSnapshot?.length && snapshotDiffers(p.groupSnapshot, deps.globals),
-    ...(isCode && p.featureBranch ? { featureBranch: p.featureBranch } : {}),
   }
 }
