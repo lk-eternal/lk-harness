@@ -91,8 +91,10 @@ describe("flowHubMissingMessage：缺什么说什么", () => {
  * 界面行为要真 DOM 才测得出（仓库里没有 DOM 测试环境），这里守住几处接线，别被改回去。
  */
 describe("项目页的接线（守住不被改回去）", () => {
-  const tab = readFileSync("src/renderer/components/project/ProjectsTab.tsx", "utf8")
-  const panel = readFileSync("src/renderer/components/project/ProjectSettingsPanel.tsx", "utf8")
+  // Windows 上 git 检出是 CRLF，下面的正则按 \n 写，统一成 \n 再匹配
+  const readSource = (file: string) => readFileSync(file, "utf8").replace(/\r\n/g, "\n")
+  const tab = readSource("src/renderer/components/project/ProjectsTab.tsx")
+  const panel = readSource("src/renderer/components/project/ProjectSettingsPanel.tsx")
 
   it("点「共享空间」时现读配置，不只看页面里存的那份", () => {
     const body = /const openHub = async[\s\S]*?\n {2}\}\n/.exec(tab)?.[0] ?? ""
