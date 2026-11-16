@@ -17,6 +17,7 @@ import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-pa
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
+import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS } from "./shared/command-catalog.js";
 import {
@@ -1277,8 +1278,15 @@ function trackMessageSession(messageId: string, sessionKey: string): void {
 /** 已打过 Get 表情的消息——与路由映射解耦：映射在入队时即建立，表情只在首次投递时打 */
 const reactedMessageIds = new Set<string>();
 
+/**
+ * 每个会话「这一轮在回应哪条用户消息」。流式卡片（Agent 的主回复）建卡时靠它以回复的方式发出，
+ * 和发文件、发图片、问题卡一样遵守 shouldReplyToMessage（群聊回复，单聊直发）。
+ */
+const replyTargets = createReplyTargetTracker();
+
 /** 记录消息归属会话，并返回首次投递（未打过表情）的 messageId，避免重投时重复打表情 */
 function collectFreshAndTrack(messages: QueueMessage[], sessionKey: string): string[] {
+  replyTargets.observeDelivery(normalizeSessionKey(sessionKey) || sessionKey, messages);
   const fresh: string[] = [];
   for (const m of messages) {
     if (!m.messageId) continue;
@@ -2446,7 +2454,15 @@ async function ensureAgentStreamCard(
     sessionTemplate: chrome.sessionTemplate,
   });
   if (!cardId) return { ok: false, error: "创建流式卡片失败（检查 cardkit:card:write 权限）" };
-  const sentMsgId = await sender.sendCardEntity(cardId, undefined, ch.chatId);
+  // 和发文件、发图片、问题卡同一条规则：群聊以回复的方式发出（引用这一轮在回应的那条用户消息），单聊直发。
+  // 回复会因为目标消息被撤回等原因失败，这时退回直发，卡片不能丢
+  const inboundId = replyTargets.get(normalizeSessionKey(sessionKey) || sessionKey);
+  const replyTo = shouldReplyToMessage(ch, inboundId) ? inboundId : undefined;
+  const sentMsgId = await sendReplyWithBackoff(
+    (rid) => sender.sendCardEntity(cardId, rid, ch.chatId),
+    replyTo,
+    (rid) => log("INFO", `[StreamCard] 回复退避: reply=${rid} → chat_id=${ch.chatId}`),
+  );
   if (sentMsgId === undefined) {
     return { ok: false, error: "发送流式卡片失败" };
   }
