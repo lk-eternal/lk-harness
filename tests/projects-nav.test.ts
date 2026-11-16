@@ -184,7 +184,7 @@ describe("设置页「项目」标签：一栏式，没有顶上的子标签", (
   /** 左栏里被标成「当前」的按钮文字：分区标题（带数量）和「项目设置」 */
   const current = (html: string): string[] => {
     const out = [...html.matchAll(/aria-current="true" class="[^"]*"><span>([^<]*)<\/span>/g)].map((m) => m[1])
-    if (/aria-current="true" class="[^"]*"><svg[^>]*>.*?<\/svg>项目设置</.test(html)) out.push("项目设置")
+    if (/<button[^>]*data-rail="settings"[^>]*aria-current="true"/.test(html)) out.push("项目设置")
     return out
   }
 
@@ -202,7 +202,7 @@ describe("设置页「项目」标签：一栏式，没有顶上的子标签", (
     expect(html).toContain("新建模板")
   })
 
-  it("带着「设置」请求挂载：落在左栏底部的「项目设置」", () => {
+  it("带着「设置」请求挂载：落在左栏顶部的「项目设置」", () => {
     const html = renderToStaticMarkup(createElement(ProjectsTab, { jump: { sub: "settings" }, onJumpConsumed: vi.fn() }))
     expect(current(html)).toEqual(["项目设置"])
   })
@@ -250,6 +250,49 @@ describe("项目左栏", () => {
     expect(render({ kind: "projects-home" })).not.toContain("共享空间")
     expect(render({ kind: "projects-home" })).toContain("导入文件")
     expect(render({ kind: "projects-home" }, true)).toContain("共享空间")
+  })
+
+  describe("「项目设置」入口", () => {
+    const settingsBtn = (html: string) => html.match(/<button([^>]*data-rail="settings"[^>]*)>/)?.[1]
+
+    it("在最顶部：排在「项目」「项目模板」两个分区之前，不用滚到底才找得到", () => {
+      const html = render({ kind: "projects-home" })
+      const at = html.indexOf('data-rail="settings"')
+      expect(at).toBeGreaterThan(-1)
+      expect(at).toBeLessThan(html.indexOf("项目模板"))
+      expect(at).toBeLessThan(html.indexOf("<span>项目</span>"))
+      // 左栏里只有这一个，不会又在底部再放一个
+      expect(html.match(/data-rail="settings"/g)).toHaveLength(1)
+      expect(html.lastIndexOf("项目设置")).toBeLessThan(html.indexOf("项目模板"))
+    })
+
+    it("是一个普通按钮，写明了里面有什么", () => {
+      const html = render({ kind: "projects-home" })
+      expect(settingsBtn(html)).toContain('type="button"')
+      expect(settingsBtn(html)).not.toMatch(/\sdisabled(=|\s|$)/)
+      expect(html).toContain("存放位置、仓库、团队共享")
+    })
+
+    it("没有项目、没有模板时也在", () => {
+      const html = renderToStaticMarkup(createElement(ProjectRail, {
+        sel: { kind: "projects-home" }, go: vi.fn(), hubUrlReady: false, onImport: vi.fn(), onOpenHub: vi.fn(), projects: [], groups: [],
+      }))
+      expect(html).toContain('data-rail="settings"')
+    })
+
+    it("选中时才亮，选别的时不亮", () => {
+      expect(settingsBtn(render({ kind: "settings" }))).toContain('aria-current="true"')
+      expect(settingsBtn(render({ kind: "projects-home" }))).not.toContain("aria-current")
+      expect(settingsBtn(render({ kind: "template", id: "g1", leaf: { kind: "info" } }))).not.toContain("aria-current")
+    })
+
+    it("折叠起来（窄窗口）时整栏一起藏，不单独露出来", () => {
+      const html = renderToStaticMarkup(createElement(ProjectRail, {
+        sel: { kind: "template", id: "g1", leaf: { kind: "info" } }, go: vi.fn(), hubUrlReady: false, onImport: vi.fn(), onOpenHub: vi.fn(),
+        projects: [], groups: [group("g1", "通用任务", 2)] as never, folded: true,
+      }))
+      expect(html).toMatch(/<aside class="hidden /)
+    })
   })
 
   it("正在新建模板时，列表里先有一行占位", () => {

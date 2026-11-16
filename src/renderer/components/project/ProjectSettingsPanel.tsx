@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { CheckCircle2, ChevronDown, ChevronRight, Copy, Eye, EyeOff, FolderOpen, Plus, X } from "lucide-react"
+import { CheckCircle2, Copy, Eye, EyeOff, FolderOpen, Plus, X } from "lucide-react"
 import useInlineModal from "../useInlineModal"
 import { repoIdentityKey } from "../../../shared/project-app-types"
 import {
@@ -8,38 +8,68 @@ import {
 } from "../../../shared/project-settings-patch"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+/** 表格里的输入框：比表单里的矮一点，一行放得下一个仓库的全部信息 */
+const cellCls = "w-full min-w-0 rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm outline-none transition placeholder:text-fg-faint focus:border-blue-500"
 const smallBtn = "shrink-0 rounded-md border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:bg-raised disabled:opacity-50"
+
+/**
+ * 仓库表格，按所在卡片的宽度（容器查询，不是窗口宽度）切换两种排法：
+ * - 够宽（≥ 38rem）：一个仓库一行，列是 地址 | 基线分支 | 测试分支 | 开发分支 | 移除，表头和每一行共用同一套列宽，上下对得齐；
+ * - 放不下（应用默认窗口就是）：一个仓库一张小卡片，第一行地址和移除，第二行三个分支（各带小标签）。
+ * 不做横向滚动：滚动条一藏起来，右边的列用户就不知道还有。
+ */
+const REPO_WIDE_COLS = "@[38rem]:grid-cols-[minmax(11rem,1fr)_7.5rem_7.5rem_7.5rem_1.75rem]"
+const REPO_ROW = `grid grid-cols-[minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1.5 ${REPO_WIDE_COLS}`
 
 const EMPTY: ProjectSettingsValues = {
   worktreeRoot: "", gitlabToken: "", gitlabHost: "", repoProfiles: [], flowHubUrl: "", flowHubToken: "", flowHubAuthor: "",
 }
 
-/** 可折叠的设置块：不常用的放在里面，默认收起 */
-function Fold({ title, hint, open, onToggle, children }: {
-  title: string
-  hint: string
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}) {
+/** 一块设置：标题（可带一个灰色小标签）+ 一句说明 + 内容。全部直接展开，不折叠 */
+function Card({ title, tag, hint, children }: { title: string; tag?: string; hint: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-lg border border-line-subtle">
-      <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
-        {open ? <ChevronDown size={14} className="text-fg-muted" /> : <ChevronRight size={14} className="text-fg-muted" />}
-        <span className="text-sm font-medium text-fg-2">{title}</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-fg-faint">{hint}</span>
-      </button>
-      {open && <div className="space-y-4 border-t border-line-subtle px-3 py-3">{children}</div>}
+      <div className="px-4 pt-3">
+        <div className="flex items-baseline gap-2">
+          <h4 className="text-sm font-medium text-fg-2">{title}</h4>
+          {tag && <span className="text-[11px] text-fg-faint">{tag}</span>}
+        </div>
+        <p className="mt-1 text-[11.5px] leading-relaxed text-fg-muted">{hint}</p>
+      </div>
+      <div className="px-4 pb-4 pt-3">{children}</div>
     </section>
   )
 }
 
+/** 表单行：左边是名字，右边是输入框；各行的输入框左边对齐。note 是输入框下面的小提示 */
+function Row({ label, htmlFor, note, children }: { label: string; htmlFor: string; note?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[8.5rem_minmax(0,1fr)] items-start gap-x-4">
+      <label htmlFor={htmlFor} className="pt-2 text-xs text-fg-3">{label}</label>
+      <div className="min-w-0">
+        {children}
+        {note && <p className="mt-1 text-[11px] leading-snug text-fg-faint">{note}</p>}
+      </div>
+    </div>
+  )
+}
+
+/** 仓库行里的一个分支框：窄排法里上面有小标签，宽排法里标签藏起来（表头已经写了） */
+function BranchCell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block min-w-0">
+      <span className="mb-0.5 block text-[10.5px] text-fg-muted @[38rem]:hidden">{label}</span>
+      {children}
+    </label>
+  )
+}
+
 /** 密钥输入框：默认遮住，可显示、可复制 */
-function SecretInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+function SecretInput({ id, value, onChange, placeholder }: { id: string; value: string; onChange: (v: string) => void; placeholder: string }) {
   const [shown, setShown] = useState(false)
   return (
     <div className="relative">
-      <input type={shown ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={`${inputCls} pr-16`} />
+      <input id={id} type={shown ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} autoComplete="off" className={`${inputCls} pr-16`} />
       <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
         <button type="button" title="复制" disabled={!value.trim()} onClick={() => void navigator.clipboard.writeText(value)} className="text-fg-muted hover:text-fg-2 disabled:opacity-40"><Copy size={13} /></button>
         <button type="button" title={shown ? "隐藏" : "显示"} onClick={() => setShown(!shown)} className="text-fg-muted hover:text-fg-2">{shown ? <EyeOff size={13} /> : <Eye size={13} />}</button>
@@ -49,18 +79,14 @@ function SecretInput({ value, onChange, placeholder }: { value: string; onChange
 }
 
 /**
- * 项目设置：项目存放位置。
- * 代码仓库、GitLab 只有做研发类项目才用得到，放在「研发（可选）」里；
- * 团队共享（共享空间）个人用不到，放在「团队共享（高级）」里。两块默认收起，配置过的自动展开。
+ * 项目设置：项目存放位置、常用代码仓库、GitLab、团队共享（共享空间）四块，全部直接展开。
+ * 后三块只有做开发类项目、或想和同事共用模板时才用得到，标题旁的小标签说明了这一点；不用的留空就行。
  */
 export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void } = {}) {
   const { showAlert, ModalPortal } = useInlineModal()
   const [values, setValues] = useState<ProjectSettingsValues>(EMPTY)
   const [loaded, setLoaded] = useState(false)
   const [defaultRoot, setDefaultRoot] = useState("")
-  const [devOpen, setDevOpen] = useState(false)
-  const [hubOpen, setHubOpen] = useState(false)
-  const [moreRows, setMoreRows] = useState<Record<number, boolean>>({})
   const [saved, setSaved] = useState(false)
 
   const valuesRef = useRef<ProjectSettingsValues>(EMPTY)
@@ -70,6 +96,9 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
   // 用 ref 拿最新的回调：flush 要保持引用不变（卸载时靠它把没存的改动写出去）
   const onSavedRef = useRef(onSaved)
   onSavedRef.current = onSaved
+  // 刚手动加的那一行：新行出现时把光标放进它的地址框。渲染后清掉，之后重新渲染不会再抢焦点
+  const focusRow = useRef<number | null>(null)
+  useEffect(() => { focusRow.current = null })
 
   /** 立刻把改过的项写回配置（只写改过的项） */
   const flush = useCallback(async () => {
@@ -120,19 +149,21 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
       valuesRef.current = next
       setValues(next)
       setDefaultRoot(root)
-      setDevOpen(profiles.length > 0 || !!next.gitlabToken.trim() || !!next.gitlabHost.trim())
-      setHubOpen(!!next.flowHubUrl.trim() || !!next.flowHubToken.trim())
-      setMoreRows(Object.fromEntries(profiles.map((p, i) => [i, !!(p.testBranch || p.developBranch)])))
       setLoaded(true)
     })
     return () => { alive = false }
   }, [])
 
+  // 改哪一行都以最新的列表为准（连着快速输入时，渲染时的快照可能还是上一次的）
   const setProfile = (i: number, patch: Partial<RepoProfileRow>) =>
-    update("repoProfiles", values.repoProfiles.map((x, j) => (j === i ? { ...x, ...patch } : x)))
-  const removeProfile = (i: number) => {
-    update("repoProfiles", values.repoProfiles.filter((_, j) => j !== i))
-    setMoreRows({})
+    update("repoProfiles", valuesRef.current.repoProfiles.map((x, j) => (j === i ? { ...x, ...patch } : x)))
+  const removeProfile = (i: number) =>
+    update("repoProfiles", valuesRef.current.repoProfiles.filter((_, j) => j !== i))
+
+  const addBlankRepo = () => {
+    const cur = valuesRef.current.repoProfiles
+    focusRow.current = cur.length
+    update("repoProfiles", [...cur, { path: "", baseBranch: "" }])
   }
 
   const addLocalRepo = async () => {
@@ -161,100 +192,110 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
   return (
     // 输入框一失焦就存：刚敲完 Token 立刻去点别处（比如左栏的「共享空间」）时，不用等防抖，别处读到的就是新值
     <div className="flex-1 overflow-y-auto pb-6 pr-4" onBlur={() => void flush()}>
-      <div className="max-w-xl space-y-5">
+      <div className="max-w-4xl space-y-4">
         <div className="flex h-6 items-center justify-between">
           <h3 className="text-sm font-medium text-fg-2">项目设置</h3>
           {saved && <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={14} />已保存</span>}
         </div>
 
-        <section className="space-y-2">
-          <h4 className="text-xs font-medium text-fg-3">项目存放位置</h4>
-          <p className="text-xs leading-relaxed text-fg-muted">
-            新建项目时，应用会在这里给每个项目建一个文件夹：成果都放在里面，研发项目的代码副本也放这里。只影响之后新建的项目，已经建好的不会搬家。
-          </p>
-          <div className="flex gap-2">
-            <input type="text" value={values.worktreeRoot} onChange={(e) => update("worktreeRoot", e.target.value)} placeholder={defaultRoot || "默认：应用数据目录下的 claw-projects"} className={inputCls} />
-            <button type="button" onClick={() => void pickRoot()} className={smallBtn}>浏览</button>
-          </div>
-          {effectiveRoot && (
-            <p className="break-all text-[11px] text-fg-faint">
-              {values.worktreeRoot.trim() ? "当前位置：" : "当前使用默认位置："}{effectiveRoot}
-            </p>
-          )}
-        </section>
+        <Card
+          title="项目存放位置"
+          hint="新建项目时，应用会在这里给每个项目建一个文件夹：成果都放在里面，开发项目的代码副本也放这里。只影响之后新建的项目，已经建好的不会搬家。"
+        >
+          <Row label="存放文件夹" htmlFor="ps-worktree-root" note={effectiveRoot ? <span className="break-all">{values.worktreeRoot.trim() ? "当前位置：" : "当前使用默认位置："}{effectiveRoot}</span> : undefined}>
+            <div className="flex gap-2">
+              <input id="ps-worktree-root" type="text" value={values.worktreeRoot} onChange={(e) => update("worktreeRoot", e.target.value)} placeholder={defaultRoot || "默认：应用数据目录下的 claw-projects"} className={inputCls} />
+              <button type="button" onClick={() => void pickRoot()} className={smallBtn}>浏览</button>
+            </div>
+          </Row>
+        </Card>
 
-        <Fold title="研发（可选）" hint="只有用「开发」类项目才需要" open={devOpen} onToggle={() => setDevOpen(!devOpen)}>
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium text-fg-3">常用代码仓库</h4>
-            <p className="text-xs leading-relaxed text-fg-muted">
-              新建「开发」类项目时可以直接勾选。建过项目的仓库会自动记在这里，不用提前配。基线分支是新分支从哪里切出去（一般是主干或生产分支）。
-            </p>
-            <div className="space-y-2">
-              {values.repoProfiles.map((p, i) => (
-                <div key={i} className="rounded-lg border border-line-subtle p-2">
-                  <div className="flex items-center gap-2">
-                    <input type="text" value={p.path} placeholder="D:\repos\foo 或 https://…/foo.git"
-                      onChange={(e) => setProfile(i, { path: e.target.value })} className={`${inputCls} flex-[3]`} />
-                    <input type="text" value={p.baseBranch} placeholder="基线分支"
-                      onChange={(e) => setProfile(i, { baseBranch: e.target.value })} className={`${inputCls} flex-1`} />
-                    <button type="button" title="移除" onClick={() => removeProfile(i)}
-                      className="shrink-0 rounded-md border border-line p-1.5 text-fg-3 hover:bg-raised hover:text-danger"><X size={13} /></button>
-                  </div>
-                  <button type="button" onClick={() => setMoreRows((m) => ({ ...m, [i]: !m[i] }))}
-                    className="mt-1.5 text-[11px] text-fg-muted hover:text-fg-2">{moreRows[i] ? "收起" : "更多分支设置（测试 / 开发分支，可不填）"}</button>
-                  {moreRows[i] && (
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <input type="text" value={p.testBranch ?? ""} placeholder="测试分支"
-                        onChange={(e) => setProfile(i, { testBranch: e.target.value || undefined })} className={`${inputCls} flex-1`} />
-                      <input type="text" value={p.developBranch ?? ""} placeholder="开发分支"
-                        onChange={(e) => setProfile(i, { developBranch: e.target.value || undefined })} className={`${inputCls} flex-1`} />
+        <Card
+          title="常用代码仓库"
+          tag="新建「开发」类项目时用"
+          hint="新建开发项目时可以直接勾选；建过项目的仓库会自动记在这里，不用提前配。基线分支是新分支从哪里切出去（一般是主干或生产分支），测试、开发分支可以不填。"
+        >
+          {values.repoProfiles.length > 0 ? (
+            <div className="@container">
+              <div className={`hidden items-center gap-2 pb-1.5 text-[11px] text-fg-muted @[38rem]:grid ${REPO_WIDE_COLS}`}>
+                <span>仓库地址或本地路径</span>
+                <span title="新分支从哪里切出去（一般是主干或生产分支）">基线分支</span>
+                <span>测试分支</span>
+                <span>开发分支</span>
+                <span />
+              </div>
+              <div className="space-y-2 @[38rem]:space-y-1.5">
+                {values.repoProfiles.map((p, i) => (
+                  <div key={i} className={`${REPO_ROW} rounded-lg border border-line-subtle p-2 @[38rem]:rounded-none @[38rem]:border-0 @[38rem]:p-0`}>
+                    <input type="text" aria-label="仓库地址或本地路径" title={p.path} spellCheck={false} autoFocus={focusRow.current === i}
+                      value={p.path} placeholder="D:\repos\foo 或 https://…/foo.git"
+                      onChange={(e) => setProfile(i, { path: e.target.value })}
+                      className={`${cellCls} col-start-1 row-start-1 @[38rem]:col-auto @[38rem]:row-auto`} />
+                    {/* 宽排法里这层不存在（contents），三个分支框直接排进上面那一行的列里 */}
+                    <div className="col-span-2 row-start-2 grid grid-cols-3 gap-2 @[38rem]:contents">
+                      <BranchCell label="基线分支">
+                        <input type="text" aria-label="基线分支" spellCheck={false}
+                          value={p.baseBranch} placeholder="如 master"
+                          onChange={(e) => setProfile(i, { baseBranch: e.target.value })} className={cellCls} />
+                      </BranchCell>
+                      <BranchCell label="测试分支">
+                        <input type="text" aria-label="测试分支" spellCheck={false}
+                          value={p.testBranch ?? ""} placeholder="可不填"
+                          onChange={(e) => setProfile(i, { testBranch: e.target.value || undefined })} className={cellCls} />
+                      </BranchCell>
+                      <BranchCell label="开发分支">
+                        <input type="text" aria-label="开发分支" spellCheck={false}
+                          value={p.developBranch ?? ""} placeholder="可不填"
+                          onChange={(e) => setProfile(i, { developBranch: e.target.value || undefined })} className={cellCls} />
+                      </BranchCell>
                     </div>
-                  )}
-                </div>
-              ))}
-              <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => void addLocalRepo()} className={`${smallBtn} inline-flex items-center gap-1`}><FolderOpen size={13} />添加本地仓库</button>
-                <button type="button" onClick={() => update("repoProfiles", [...values.repoProfiles, { path: "", baseBranch: "" }])}
-                  className={`${smallBtn} inline-flex items-center gap-1 border-dashed`}><Plus size={13} />手动输入路径或地址</button>
+                    <button type="button" title="移除这个仓库" aria-label="移除这个仓库" onClick={() => removeProfile(i)}
+                      className="col-start-2 row-start-1 flex h-7 w-7 items-center justify-center rounded-md text-fg-muted transition hover:bg-raised hover:text-danger @[38rem]:col-auto @[38rem]:row-auto"><X size={14} /></button>
+                  </div>
+                ))}
               </div>
             </div>
+          ) : (
+            <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-fg-muted">还没有常用仓库。建过开发项目的仓库会自动记在这里，也可以在下面手动添加。</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" onClick={() => void addLocalRepo()} className={`${smallBtn} inline-flex items-center gap-1`}><FolderOpen size={13} />添加本地仓库</button>
+            <button type="button" onClick={addBlankRepo} className={`${smallBtn} inline-flex items-center gap-1 border-dashed`}><Plus size={13} />手动添加一行</button>
           </div>
+        </Card>
 
-          <div className="space-y-2">
-            <h4 className="text-xs font-medium text-fg-3">GitLab</h4>
-            <p className="text-xs leading-relaxed text-fg-muted">
-              只用来让 AI 查找、查看 MR（合并请求）。不需要这个功能就不用填，不影响建项目、改代码和推分支。
-            </p>
-            <div>
-              <label className="mb-1 block text-xs text-fg-muted">GitLab Token</label>
-              <SecretInput value={values.gitlabToken} onChange={(v) => update("gitlabToken", v)} placeholder="glpat-..." />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-fg-muted">GitLab 地址（可不填，默认从仓库的 origin 推断）</label>
-              <input type="text" value={values.gitlabHost} onChange={(e) => update("gitlabHost", e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
-            </div>
+        <Card
+          title="GitLab"
+          tag="可选"
+          hint="只用来让 AI 查找、查看 MR（合并请求）。不需要这个功能就不用填，不影响建项目、改代码和推分支。"
+        >
+          <div className="space-y-3">
+            <Row label="GitLab Token" htmlFor="ps-gitlab-token">
+              <SecretInput id="ps-gitlab-token" value={values.gitlabToken} onChange={(v) => update("gitlabToken", v)} placeholder="glpat-..." />
+            </Row>
+            <Row label="GitLab 地址" htmlFor="ps-gitlab-host" note="可不填，默认从仓库的 origin 推断">
+              <input id="ps-gitlab-host" type="text" value={values.gitlabHost} onChange={(e) => update("gitlabHost", e.target.value)} placeholder="https://gitlab.com" className={inputCls} />
+            </Row>
           </div>
-        </Fold>
+        </Card>
 
-        <Fold title="团队共享（高级）" hint="个人使用不需要" open={hubOpen} onToggle={() => setHubOpen(!hubOpen)}>
-          <p className="text-xs leading-relaxed text-fg-muted">
-            把项目模板上传到团队共用的一个 GitLab 仓库（共享空间），同事就能直接获取。只有想和同事共用模板时才需要配；
-            不配也完全可以：在「项目模板」里导出文件发给对方，对方导入就行。
-          </p>
-          <div>
-            <label className="mb-1 block text-xs text-fg-muted">共享空间地址</label>
-            <input type="text" value={values.flowHubUrl} onChange={(e) => update("flowHubUrl", e.target.value)} placeholder="https://gitlab.example.com/group/your-flow-hub" className={inputCls} />
+        <Card
+          title="团队共享"
+          tag="共享空间 · 可选"
+          hint="把项目模板上传到团队共用的一个 GitLab 仓库（共享空间），同事就能直接获取。不配也完全可以：在「项目模板」里导出文件发给对方，对方导入就行。"
+        >
+          <div className="space-y-3">
+            <Row label="共享空间地址" htmlFor="ps-hub-url">
+              <input id="ps-hub-url" type="text" value={values.flowHubUrl} onChange={(e) => update("flowHubUrl", e.target.value)} placeholder="https://gitlab.example.com/group/your-flow-hub" className={inputCls} />
+            </Row>
+            <Row label="共享空间 Token" htmlFor="ps-hub-token" note="需要 Maintainer 及以上权限。不填的话，会改用上面「GitLab」里的 Token。">
+              <SecretInput id="ps-hub-token" value={values.flowHubToken} onChange={(v) => update("flowHubToken", v)} placeholder="glpat-..." />
+            </Row>
+            <Row label="你的名字" htmlFor="ps-hub-author" note="上传时显示给同事">
+              <input id="ps-hub-author" type="text" value={values.flowHubAuthor} onChange={(e) => update("flowHubAuthor", e.target.value)} placeholder="你的名字" className={inputCls} />
+            </Row>
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-fg-muted">共享空间 Token（需要 Maintainer 及以上权限）</label>
-            <SecretInput value={values.flowHubToken} onChange={(v) => update("flowHubToken", v)} placeholder="glpat-..." />
-            <p className="mt-1 text-[11px] text-fg-faint">不填的话，会改用「研发」里的 GitLab Token。</p>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-fg-muted">你的名字（上传时显示给同事）</label>
-            <input type="text" value={values.flowHubAuthor} onChange={(e) => update("flowHubAuthor", e.target.value)} placeholder="你的名字" className={inputCls} />
-          </div>
-        </Fold>
+        </Card>
       </div>
       {ModalPortal}
     </div>

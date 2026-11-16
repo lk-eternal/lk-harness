@@ -38,13 +38,31 @@ function SectionHeader({ label, count, active, onClick, right }: { label: string
 }
 
 /**
- * 「项目」页左边这一栏：上面是项目，中间是项目模板，底部是项目设置。
+ * 「项目」页左边这一栏：最上面是项目设置（固定在顶部，不随列表滚走，一进来就看得见），
+ * 下面是项目，再下面是项目模板。
  * 点哪个，右边就出现哪个的内容；模板的下一级（快捷操作）在右边再展开一栏。
  */
 export default function ProjectRail({ sel, go, projects, groups, hubUrlReady, onImport, onOpenHub, folded }: Props) {
   const section = sectionOfSel(sel)
+  const settingsOn = section === "settings"
   return (
     <aside className={`${folded ? "hidden" : "flex"} w-48 shrink-0 flex-col border-r border-line-subtle`} aria-label="项目导航">
+      <div className="border-b border-line-subtle p-2">
+        <button
+          type="button"
+          data-rail="settings"
+          aria-current={settingsOn ? "true" : undefined}
+          title="项目存放位置、常用代码仓库、GitLab、团队共享"
+          onClick={() => go({ kind: "settings" })}
+          className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition ${settingsOn ? "bg-raised/70 text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
+        >
+          <Settings2 size={15} className="shrink-0" />
+          <span className="flex min-w-0 flex-col">
+            <span className={`text-xs ${settingsOn ? "font-medium" : ""}`}>项目设置</span>
+            <span className="truncate text-[10px] text-fg-faint">存放位置、仓库、团队共享</span>
+          </span>
+        </button>
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         <SectionHeader label="项目" count={projects.length} active={sel.kind === "projects-home"} onClick={() => go({ kind: "projects-home" })} />
         <div className="space-y-0.5">
@@ -97,15 +115,6 @@ export default function ProjectRail({ sel, go, projects, groups, hubUrlReady, on
             <button type="button" onClick={onOpenHub} className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-fg-muted transition hover:bg-raised hover:text-fg-2"><Download size={11} />共享空间</button>
           )}
         </div>
-      </div>
-
-      <div className="border-t border-line-subtle p-2">
-        <button
-          type="button"
-          aria-current={section === "settings" ? "true" : undefined}
-          onClick={() => go({ kind: "settings" })}
-          className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition ${section === "settings" ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}
-        ><Settings2 size={13} />项目设置</button>
       </div>
     </aside>
   )
