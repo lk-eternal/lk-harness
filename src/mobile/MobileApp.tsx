@@ -24,6 +24,7 @@ import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessi
 import { HISTORY_PAGE_LIMIT, historyCursorOf, isBeyondLoadedWindow, keepsLoadedHistory, replaceHistoryTail, type HistoryCursor } from "../shared/app-chat-history-page"
 import { slashMenuItems } from "../shared/command-catalog"
 import { createDraftStore } from "../shared/composer-drafts"
+import { createUploadGate, waitForUploadsBeforeSend, type UploadBatchResult } from "../shared/upload-gate"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { pickDefaultTab } from "../shared/session-archive"
 import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
@@ -170,6 +171,10 @@ export default function MobileApp() {
   /** 正在放大查看的待发送图片 */
   const [previewImage, setPreviewImage] = useState<string | null>(null)
   const [uploadingImage, setUploadingImage] = useState(false)
+  // 图片上传在途时点了发送：等传完再发（见 upload-gate.ts）。waiting 是给界面看的，ref 防止等待期间重复点发送
+  const [uploadGate] = useState(() => createUploadGate())
+  const [waitingUpload, setWaitingUpload] = useState(false)
+  const waitingUploadRef = useRef(false)
   const [modelBusy, setModelBusy] = useState(false)
 
   // 抽屉与弹窗状态
@@ -656,13 +661,33 @@ export default function MobileApp() {
   const handleSend = async (overrideText?: string) => {
     if (!selected || !route.activeUrl || !pairCfg.token) return
     const msgText = (overrideText ?? text).trim()
-    const imgs = pendingImages.map((i) => i.path)
-    if (!msgText && imgs.length === 0) return
-
-    const draftText = text
-    const draftImages = pendingImages
     // 发送是异步的，期间用户可能已经切到别的会话：失败要放回发出消息的那个会话，不是当前会话
     const sendKey = draftKey
+
+    // 点发送时图片还在上传：等传完再发。否则发出去的消息不带图，图片随后才冒到输入框上面。
+    // 输入框在等待期间是只读的，文字不会再变；图片要等传完后从草稿里取，不能用点发送那一刻的快照
+    if (overrideText === undefined && uploadGate.pending) {
+      if (waitingUploadRef.current) return
+      waitingUploadRef.current = true
+      setWaitingUpload(true)
+      let waited: Awaited<ReturnType<typeof waitForUploadsBeforeSend>>
+      try {
+        waited = await waitForUploadsBeforeSend(uploadGate)
+      } finally {
+        waitingUploadRef.current = false
+        setWaitingUpload(false)
+      }
+      if (!waited.ok) {
+        setActionError(waited.message)
+        return
+      }
+    }
+
+    const draftText = text
+    const draftImages = draftStore.get(sendKey).images
+    const imgs = draftImages.map((i) => i.path)
+    if (!msgText && imgs.length === 0) return
+
     if (overrideText === undefined) draftStore.discard(sendKey)
     setActionError("")
     const r = await sendMobileMessage(route.activeUrl, pairCfg.token, {
@@ -926,38 +951,57 @@ export default function MobileApp() {
   }
 
   // 选择并上传图片
-  const handlePickImages = async (files: FileList | null) => {
-    if (!files || files.length === 0 || !route.activeUrl || !pairCfg.token) return
+  const handlePickImages = (picked: FileList | null): void => {
+    if (!picked || picked.length === 0 || !route.activeUrl || !pairCfg.token) return
+    const baseUrl = route.activeUrl
+    const token = pairCfg.token
+    // FileList 是活的：下面重置 input 后它会被清空，所以先拷出来
+    const files = Array.from(picked)
     // 上传是异步的：期间切了会话，图片也要落到选图时的那个会话的草稿里
     const key = draftKey
-    setUploadingImage(true)
-    setActionError("")
-    for (const file of Array.from(files)) {
-      const ext = imageExtOf(file)
-      if (!ext) {
-        setActionError(`不支持的图片格式（${file.type || file.name}），请选 PNG、JPG、GIF、WebP 或 BMP`)
-        continue
+    const upload = async (): Promise<UploadBatchResult> => {
+      setUploadingImage(true)
+      setActionError("")
+      let failed = 0
+      let firstError: string | undefined
+      const fail = (message: string) => {
+        failed += 1
+        if (firstError === undefined) firstError = message
+        setActionError(message)
       }
       try {
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(String(reader.result ?? ""))
-          reader.onerror = () => reject(new Error("读取图片失败"))
-          reader.readAsDataURL(file)
-        })
-        const r = await uploadMobileImage(route.activeUrl, pairCfg.token, dataUrl, ext)
-        if (r.ok && r.path) {
-          const image = { path: r.path, previewUrl: dataUrl }
-          draftStore.update(key, (d) => ({ ...d, images: [...d.images, image] }))
-        } else {
-          setActionError(r.error ?? "图片上传失败")
+        for (const file of files) {
+          const ext = imageExtOf(file)
+          if (!ext) {
+            fail(`不支持的图片格式（${file.type || file.name}），请选 PNG、JPG、GIF、WebP 或 BMP`)
+            continue
+          }
+          try {
+            const dataUrl = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader()
+              reader.onload = () => resolve(String(reader.result ?? ""))
+              reader.onerror = () => reject(new Error("读取图片失败"))
+              reader.readAsDataURL(file)
+            })
+            const r = await uploadMobileImage(baseUrl, token, dataUrl, ext)
+            if (r.ok && r.path) {
+              const image = { path: r.path, previewUrl: dataUrl }
+              draftStore.update(key, (d) => ({ ...d, images: [...d.images, image] }))
+            } else {
+              fail(r.error ?? "图片上传失败")
+            }
+          } catch (err) {
+            fail(err instanceof Error ? err.message : "图片处理失败")
+          }
         }
-      } catch (err) {
-        setActionError(err instanceof Error ? err.message : "图片处理失败")
+      } finally {
+        setUploadingImage(false)
+        if (fileInputRef.current) fileInputRef.current.value = ""
       }
+      return firstError === undefined ? { failed } : { failed, error: firstError }
     }
-    setUploadingImage(false)
-    if (fileInputRef.current) fileInputRef.current.value = ""
+    // 登记到闸门：上传途中点发送，会等这一批传完再发（见 handleSend）
+    void uploadGate.track(upload())
   }
 
   useBackToClose(moreMenuOpen, () => setMoreMenuOpen(false))
@@ -1331,7 +1375,7 @@ export default function MobileApp() {
             accept="image/*"
             multiple
             className="hidden"
-            onChange={(e) => void handlePickImages(e.target.files)}
+            onChange={(e) => handlePickImages(e.target.files)}
           />
         </div>
 
@@ -1342,6 +1386,8 @@ export default function MobileApp() {
             rows={1}
             value={text}
             disabled={!selected || !route.connected}
+            // 等图片传完再发的这段时间文字不能再改（用 readOnly 而不是 disabled：键盘不会因为失焦而收起）
+            readOnly={waitingUpload}
             onChange={(e) => { setText(e.target.value); setSlashDismissed(false) }}
             onFocus={() => { clearTimeout(slashBlurTimer.current); setSlashDismissed(false) }}
             onBlur={() => { slashBlurTimer.current = setTimeout(() => setSlashDismissed(true), 200) }}
@@ -1362,9 +1408,11 @@ export default function MobileApp() {
             placeholder={
               !route.connected
                 ? "请先配对连接电脑端…"
-                : busy
-                  ? "Agent 运行中，发送的消息会排队…"
-                  : "发消息给电脑端 Agent，输入 / 查看指令…"
+                : waitingUpload
+                  ? "等图片上传完就发送…"
+                  : busy
+                    ? "Agent 运行中，发送的消息会排队…"
+                    : "发消息给电脑端 Agent，输入 / 查看指令…"
             }
             className="max-h-[120px] min-h-[38px] flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 text-[14px] leading-snug text-fg focus:border-blue-500 focus:outline-none disabled:opacity-50"
           />
@@ -1381,12 +1429,12 @@ export default function MobileApp() {
           ) : (
             <button
               type="button"
-              disabled={!selected || !route.connected || !hasContent}
+              disabled={!selected || !route.connected || !hasContent || waitingUpload}
               onClick={() => void handleSend()}
-              title={busy ? "发送（排队）" : "发送"}
+              title={waitingUpload ? "等图片上传完再发送" : busy ? "发送（排队）" : "发送"}
               className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm transition active:scale-90 disabled:opacity-40"
             >
-              <Send size={16} />
+              {waitingUpload ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             </button>
           )}
         </div>
