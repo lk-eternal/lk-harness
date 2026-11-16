@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react"
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react"
 import {
   ArrowLeft, ArrowRight, Check, ChevronsRight, Copy, ExternalLink, FileArchive, FileCode, FileText, Film, FolderOpen,
   Globe, Image as ImageIcon, Loader2, MoreHorizontal, Music, Plus, RotateCw, Table, X,
@@ -6,29 +6,13 @@ import {
 import { canOpenWithDefaultApp, previewTypeOf, type PreviewKind } from "../../../shared/preview-kinds"
 import { acquireOverlay } from "../overlay-presence"
 import useOutsideClose from "../../hooks/useOutsideClose"
+import useWindowWidth from "../../hooks/useWindowWidth"
+import { clampPreviewWidth, shownSidebarWidth, type SidebarWidthStore } from "../chat/sidebar-width"
 import FileViewer from "./FileViewer"
 import WebViewer from "./WebViewer"
 import { BarButton } from "./preview-ui"
 import { tabTitle, type FileTab, type PreviewTab, type WebTab } from "./preview-tabs"
 import type { PreviewController } from "./PreviewContext"
-
-export const MIN_PANEL_WIDTH = 320
-/** 对话页左侧会话列表的宽度，加上对话区至少要留的宽度：面板不能把它们挤没 */
-const RESERVED_WIDTH = 240 + 300
-
-function clampWidth(width: number, windowWidth: number): number {
-  return Math.min(Math.max(width, MIN_PANEL_WIDTH), Math.max(MIN_PANEL_WIDTH, windowWidth - RESERVED_WIDTH))
-}
-
-function useWindowWidth(): number {
-  const [width, setWidth] = useState(() => window.innerWidth)
-  useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth)
-    window.addEventListener("resize", onResize)
-    return () => window.removeEventListener("resize", onResize)
-  }, [])
-  return width
-}
 
 const KIND_ICON: Record<PreviewKind, typeof FileText> = {
   text: FileText, code: FileCode, markdown: FileText, html: FileCode, csv: Table,
@@ -196,16 +180,30 @@ function FileToolbar({ tab, controller }: { tab: FileTab; controller: PreviewCon
 }
 
 /** 对话页右侧的预览面板：多标签页，文件和网页可以混开 */
-export default function PreviewPanel({ controller, visible }: { controller: PreviewController; visible: boolean }) {
+export default function PreviewPanel({ controller, visible, sidebarStore, sidebarCollapsed }: {
+  controller: PreviewController
+  visible: boolean
+  /** 左边会话栏的宽度：它占多少，面板最宽就让出多少 */
+  sidebarStore: SidebarWidthStore
+  sidebarCollapsed: boolean
+}) {
   const { state } = controller
   const windowWidth = useWindowWidth()
   const [dragWidth, setDragWidth] = useState<number | null>(null)
   // 拖动的起点和最新宽度放 ref：pointer 事件连发时处理函数里读 state 会读到旧值
   const drag = useRef<{ x: number; width: number; latest: number } | null>(null)
+  const clampToLayout = (width: number, winWidth: number) =>
+    clampPreviewWidth(width, winWidth, shownSidebarWidth(sidebarStore.get(), winWidth, true, sidebarCollapsed))
+  // 订阅的是面板自己最终显示的宽度，不是会话栏的宽度：会话栏被拖宽、还没挤到面板之前，数值不变，面板（和里面的文件、网页）不跟着重绘
+  const shownWidth = useSyncExternalStore(
+    sidebarStore.subscribe,
+    () => clampToLayout(controller.width, windowWidth),
+    () => clampToLayout(controller.width, windowWidth),
+  )
   const tab = state.tabs.find((t) => t.id === state.activeId)
   if (!state.open || !tab) return null
 
-  const width = dragWidth ?? clampWidth(controller.width, windowWidth)
+  const width = dragWidth ?? shownWidth
   const dragging = dragWidth !== null
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -217,7 +215,7 @@ export default function PreviewPanel({ controller, visible }: { controller: Prev
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const d = drag.current
     if (!d) return
-    d.latest = clampWidth(d.width + (d.x - e.clientX), window.innerWidth)
+    d.latest = clampToLayout(d.width + (d.x - e.clientX), window.innerWidth)
     setDragWidth(d.latest)
   }
   /** 松手、取消、指针捕获被丢掉都走这里：拖动状态不能卡住（卡住了网页视图会一直让位） */

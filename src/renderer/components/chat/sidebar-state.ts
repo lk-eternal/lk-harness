@@ -8,7 +8,7 @@ export interface StorageLike {
   setItem(key: string, value: string): void
 }
 
-function defaultStorage(): StorageLike | undefined {
+export function defaultStorage(): StorageLike | undefined {
   try {
     return window.localStorage
   } catch {

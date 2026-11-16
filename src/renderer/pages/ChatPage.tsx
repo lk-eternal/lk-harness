@@ -25,6 +25,8 @@ import { sameChatSession, useAppChatItems } from "../components/chat/useAppChatI
 import { useSessionActivity } from "../components/chat/useSessionActivity"
 import { useReplyNotify } from "../components/chat/useReplyNotify"
 import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarCollapsed } from "../components/chat/sidebar-state"
+import { useSidebarWidthStore } from "../components/chat/sidebar-width"
+import SidebarShell from "../components/chat/SidebarShell"
 import { useScrollActiveIntoView } from "../components/panel-scroll"
 import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
@@ -290,6 +292,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     else setPendingSelect(sessionKey)
   })
   const [sidebarCollapsed, toggleSidebar] = useSidebarCollapsed()
+  // 会话栏宽度可以拖动调整：放在外部 store 里，拖动时只有会话栏外壳和预览面板重绘，这个页面不跟着每帧重绘
+  const sidebarWidth = useSidebarWidthStore()
   /** 置顶的会话：存在电脑端，和手机端同一份 */
   const pins = usePinnedSessions(setActionError)
 
@@ -578,6 +582,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
 
   // 收起会话栏后看不到别的会话的绿点（有新回复），在开关按钮上补一个
   const unreadElsewhere = countUnreadElsewhere(views.flatMap((v) => v.tabs), (key) => sameChatSession(key, selected), sessionStatus)
+  // 预览面板此刻是否真的显示在右边（和 PreviewPanel 自己决定渲不渲染的条件一致）：会话栏要给它留位置
+  const previewShown = preview.state.open && preview.state.tabs.some((t) => t.id === preview.state.activeId)
   const sidebarToggle = (
     <button
       type="button"
@@ -677,7 +683,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       ) : (
         <div className="flex min-h-0 flex-1">
           {/* 左：会话列表（可收起；用 hidden 而不是卸载，展开后列表滚动位置还在） */}
-          <aside className={`${sidebarCollapsed ? "hidden" : "flex"} w-60 shrink-0 flex-col border-r border-line-subtle bg-surface`}>
+          <SidebarShell store={sidebarWidth} collapsed={sidebarCollapsed} previewShown={previewShown}>
             <div ref={sidebarListRef} className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
               {views.map((v) => (
                 <div key={v.channelId}>
@@ -735,7 +741,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
               </div>
               <button type="button" onClick={() => void clearAll()} className="transition hover:text-danger">清空全部</button>
             </div>
-          </aside>
+          </SidebarShell>
 
           {/* 右：对话区 */}
           <section className="flex min-w-0 flex-1 flex-col">
@@ -866,7 +872,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
               </>
             )}
           </section>
-          <PreviewPanel controller={preview} visible={active} />
+          <PreviewPanel controller={preview} visible={active} sidebarStore={sidebarWidth} sidebarCollapsed={sidebarCollapsed} />
         </div>
       )}
       {newProjectFor && (
