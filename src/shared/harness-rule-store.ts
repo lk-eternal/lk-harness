@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { writeJsonAtomic, writeTextAtomic } from "./atomic-json.js"
+import { normalizeRuleAudiences, normalizeRuleScope, ruleScopeAppliesTo, type RuleAudience, type RuleScope, type RuleTarget } from "./rule-scope.js"
 
 export interface HarnessRule {
   id: string
@@ -11,17 +12,9 @@ export interface HarnessRule {
   scope?: RuleScope
 }
 
-export type RuleAudience = "main" | "others"
-
-export interface RuleTarget {
-  channelId: string
-  audiences: RuleAudience[]
-}
-
-export interface RuleScope {
-  mode: "main" | "custom"
-  targets?: RuleTarget[]
-}
+// 范围的类型和归一化 / 匹配是纯逻辑，放在 rule-scope.ts（设置页也要用）；这里原样转出，老的引用路径不变
+export { normalizeRuleAudiences, normalizeRuleScope }
+export type { RuleAudience, RuleTarget, RuleScope }
 
 interface Manifest {
   order: string[]
@@ -88,35 +81,23 @@ function writeManifest(m: Manifest): void {
   writeJsonAtomic(manifestPath(), m)
 }
 
-/** scope 归一化：缺省/非法视为仅主用户（存量与老备份的默认值）；
- * 显式 custom 即使 targets 为空也保留，表示"哪儿都不生效，仅存放" */
-export function normalizeRuleScope(scope: RuleScope | undefined | null): RuleScope {
-  if (!scope || scope.mode !== "custom") return { mode: "main" }
-  const targets: RuleTarget[] = []
-  for (const t of scope.targets ?? []) {
-    const channelId = t?.channelId?.trim()
-    if (!channelId) continue
-    const audiences = [...new Set((t.audiences ?? []).filter((a) => a === "main" || a === "others"))]
-    if (!audiences.length) continue
-    if (!targets.some((x) => x.channelId === channelId)) targets.push({ channelId, audiences })
-  }
-  return { mode: "custom", targets }
-}
-
 function scopeOf(m: Manifest, id: string): RuleScope {
   return normalizeRuleScope(m.scopes?.[id])
 }
 
-/** 规则是否对指定通道×人群生效；channelId 缺失时仅 main 模式生效 */
+/**
+ * 规则是否对指定通道×人群生效；channelId 缺失时仅 main 模式生效。
+ * 其他人的会话可以再给 scene（私聊 / 群聊）：规则里只选了其中一个就只在那个场景生效。
+ * 不给 scene（拿不到聊天类型）时，规则选了任意一个「其他人」场景都算生效——宁可多带一条规则，
+ * 也不能让访客的会话漏掉规定对外身份、限制行为的规则。
+ */
 export function ruleAppliesTo(
   rule: Pick<HarnessRule, "scope">,
   channelId: string | undefined,
-  audience: RuleAudience,
+  audience: "main" | "others",
+  scene?: "dm" | "group",
 ): boolean {
-  const scope = normalizeRuleScope(rule.scope)
-  if (scope.mode !== "custom") return audience === "main"
-  if (!channelId) return false
-  return (scope.targets ?? []).some((t) => t.channelId === channelId && t.audiences.includes(audience))
+  return ruleScopeAppliesTo(rule.scope, channelId, audience, scene)
 }
 
 function slugId(name: string): string {

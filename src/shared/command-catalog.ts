@@ -18,6 +18,7 @@ export const COMMANDS: Record<string, string> = {
   "/mc": "同 /mcp",
   "/chat": "会话管理（/c ls | /c w 切换目录 | /c <序号> | /c new <描述>）",
   "/c": "同 /chat",
+  "/group": "群聊开通（在群里 /group allow 开通本群 | deny 关闭本群 | ls 查看已开通的群）",
   "/clean": "清空消息队列",
   "/cl": "同 /clean",
   "/reset": "下次拉起 Agent 时不 resume 旧会话（新 SDK 会话），不删除本地文件",
@@ -43,8 +44,11 @@ export function slashQueryOf(text: string): string | null {
   return /^\/[^\s]*$/.test(text) ? text.toLowerCase() : null;
 }
 
-/** 输入框的指令菜单候选：单个 `/` 给全部主指令，继续输入按前缀过滤；不是指令输入时为空 */
+/** 只在飞书里有意义的指令（应用内对话没有群）：Daemon 照常认，但不进输入框的 `/` 菜单 */
+export const FEISHU_ONLY_COMMANDS: ReadonlySet<string> = new Set(["/group"]);
+
+/** 输入框的指令菜单候选：单个 `/` 给全部主指令（去掉只属于飞书的），继续输入按前缀过滤；不是指令输入时为空 */
 export function slashMenuItems(text: string): { cmd: string; desc: string }[] {
   const q = slashQueryOf(text);
-  return q === null ? [] : primaryCommands().filter((c) => c.cmd.startsWith(q));
+  return q === null ? [] : primaryCommands().filter((c) => !FEISHU_ONLY_COMMANDS.has(c.cmd) && c.cmd.startsWith(q));
 }

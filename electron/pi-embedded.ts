@@ -23,6 +23,7 @@ import { getSkillCatalog } from "./skill-catalog"
 import { countPiPhysicalTurns, turnsFromPiMessages } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { buildPiHostMcpConfig } from "./pi-mcp-config"
+import type { HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 
 function harnessAgentDir(): string {
   return getAgentDir()
@@ -116,13 +117,14 @@ export function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
     includeAdmin: opts.includeAdmin,
+    visitor: opts.visitor,
     digitalIdentityOverride: opts.digitalIdentityOverride,
     notifySessionKey: opts.notifySessionKey,
     taskMessage: opts.taskMessage,
   })
   // 本机 Skill 名单：和 SDK 引擎同一份文本。Pi 自带的清单已关（见 noSkills），免得两份名单对不上；
   // system prompt 每个请求都在，不用像 SDK 那样考虑「只给一次」
-  const skills = getSkillCatalog()
+  const skills = getSkillCatalog(Date.now(), opts.visitor?.skillAllow)
   if (skills.text) blocks.push("---", skills.text)
   return [blocks.join("\n")]
 }
@@ -184,8 +186,9 @@ export async function createHarnessPiSession(
   // 项目会话另挂 lk-harness-project（与 agent-sdk 一致；宿主无 chatType，按 sessionKey 启发式，同 shouldIncludeAdminMcp 惯例）
   const includeProject = opts.sessionKey?.includes("::project_") === true
   // 独立定时任务没有流式卡片，结果只能靠 send_result 交付：走 task 端点（与 agent-sdk 一致）
-  const mcpEndpoint = opts.chatType === "task" ? "task" : "interactive"
-  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject, opts.sessionKey, mcpEndpoint)
+  // 访客（其他人的受限会话）：内置端点只有 send_question，用户 MCP 只挂点名开放的
+  const mcpEndpoint: HarnessMcpEndpoint = opts.chatType === "task" ? "task" : opts.visitor ? "visitor" : "interactive"
+  const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject, opts.sessionKey, mcpEndpoint, opts.visitor?.mcpAllow)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)
 
   // Always inject Harness protocol into appendSystemPrompt so resumed sessions
@@ -219,6 +222,8 @@ export async function createHarnessPiSession(
     resourceLoader,
     model,
     thinkingLevel,
+    // 访客：关掉读写文件 / 执行命令 / 搜索这些本机工具（MCP 工具走扩展，不受影响，挂哪些由上面的 MCP 配置决定）
+    ...(opts.visitor ? { excludeTools: opts.visitor.piExcludeTools } : {}),
   })
   wrapAgentStreamWithProxy(session)
 

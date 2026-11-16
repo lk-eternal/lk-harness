@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { COMMANDS, primaryCommands, slashMenuItems, slashQueryOf } from "../src/shared/command-catalog"
+import { COMMANDS, FEISHU_ONLY_COMMANDS, primaryCommands, slashMenuItems, slashQueryOf } from "../src/shared/command-catalog"
 
 describe("slashQueryOf：只有输入的是「/指令」本身才有查询词", () => {
   it.each([
@@ -25,9 +25,11 @@ describe("slashQueryOf：只有输入的是「/指令」本身才有查询词", 
 })
 
 describe("slashMenuItems：输入框指令菜单的候选", () => {
-  it("单个 / 给全部主指令，不含「同 /xxx」的别名", () => {
+  it("单个 / 给全部主指令，不含「同 /xxx」的别名，也不含只属于飞书的指令", () => {
     const items = slashMenuItems("/")
-    expect(items).toEqual(primaryCommands())
+    expect(items).toEqual(primaryCommands().filter((c) => !FEISHU_ONLY_COMMANDS.has(c.cmd)))
+    expect(items.map((i) => i.cmd)).not.toContain("/group")
+    expect(Object.keys(COMMANDS)).toContain("/group") // Daemon 仍然认它
     expect(items.length).toBeGreaterThan(5)
     expect(items.every((i) => !i.desc.startsWith("同 "))).toBe(true)
     expect(items.map((i) => i.cmd)).toEqual(expect.arrayContaining(["/stop", "/status", "/chat", "/help"]))

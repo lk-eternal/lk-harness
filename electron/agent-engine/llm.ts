@@ -50,6 +50,7 @@ export const llmEngine: AgentEngine = {
       pendingMessageIds: p.pendingMessageIds,
       channelId: p.channelId,
       includeAdmin: p.includeAdmin,
+      visitor: p.visitor,
       newSession: p.newSession,
     })
   },

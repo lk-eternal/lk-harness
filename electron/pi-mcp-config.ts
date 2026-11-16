@@ -33,8 +33,10 @@ export function buildPiHostMcpConfig(
   includeProject = false,
   invokerSessionKey?: string,
   endpoint: HarnessMcpEndpoint = "interactive",
+  /** 只挂这些用户 MCP（访客档的「额外开放」）；缺省 = 全挂 */
+  userMcpAllow?: readonly string[],
 ): PiMcpConfig {
-  const raw = { ...buildSdkMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey) }
+  const raw = { ...buildSdkMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey, userMcpAllow) }
   const mcpServers: Record<string, PiMcpServerEntry> = {}
   for (const [name, cfg] of Object.entries(raw)) {
     mcpServers[name] = normalizeServerEntry(cfg)

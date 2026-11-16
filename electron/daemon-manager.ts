@@ -105,6 +105,8 @@ import {
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache, rememberP2pNames,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
   formatCurrentSessionBlock, currentResourceIdForSession, scheduleContextForSession,
+  enforceChannelAccess,
+  applyChannelPolicyChanges,
 } from "./session-dispatcher"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import {
@@ -113,7 +115,8 @@ import {
   previewChannelModelImpact, clearOthersModelOverrides, stopOthersFollowingDefault,
 } from "./session-manager"
 import { sendQueuedNowFlow, type SendQueuedNowResult } from "./send-queued-now"
-
+import { runGroupCommand } from "./group-command"
+import { lookupChatName } from "./session-chat-name"
 export { applyProxyEnv, syncMainProcessProxyEnv, bootstrapProxyEnv } from "./agent-env"
 export { getLogBuffer } from "./ui-logger"
 export { checkSdkApiKey, listSdkModels, noteGlobalSdkError, clearSdkFailStreak } from "./agent-sdk"
@@ -1452,6 +1455,26 @@ async function checkAndExecutePendingCommands(): Promise<void> {
           break
         }
 
+        case "/group": {
+          // 开通 / 关闭群：主用户私聊，或在群里验过身份的主用户本人（未开通的群里只有这条指令能通过 daemon 的准入）
+          const r = await runGroupCommand(
+            { tokens: cmdTokens, chatId: claimed.chatId, chatType: claimed.chatType, allowed: isAdmin || isMainUserSender },
+            {
+              getChannel,
+              updateChannel,
+              lookupChatName,
+              isProjectGroup: (chatKey) => !!findProjectByGroupChat(chatKey),
+              onChanged: async (channelId) => {
+                await pushChannelRuntimeToDaemon()
+                const res = await enforceChannelAccess(channelId)
+                if (res.stopped > 0 || res.dropped > 0) broadcastLog(`[指令 /group] 已停止 ${res.stopped} 个会话，丢弃 ${res.dropped} 条积压消息`, "INFO")
+              },
+            },
+          )
+          await reply(r.ok, r.text)
+          break
+        }
+
         case "/rr":
         case "/restart": {
           if (!isAdmin) { await denyNonAdmin(); break }
@@ -1687,6 +1710,8 @@ async function pushChannelFlagsToDaemon(channels: MessageChannel[]): Promise<voi
 
 export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Promise<ConfigSaveResult> {
   const current = getConfig()
+  // 保存前的通道快照（已套默认值，旧配置里没有的新字段也推算好了），保存后据此判断准入有没有变
+  const prevNormalized = partial.channels !== undefined ? getChannels() : []
   const oldW = (current.workspaceDir || "").trim()
   const nextW = partial.workspaceDir !== undefined ? partial.workspaceDir.trim() : oldW
   const workspaceChanging = partial.workspaceDir !== undefined && nextW !== oldW && oldW !== ""
@@ -1741,6 +1766,8 @@ export async function saveAppConfigFromRenderer(partial: Partial<AppConfig>): Pr
     await applyChannelLifecycleChanges(prevChannels, partial.channels)
     await applyChannelConnectionRestarts(prevChannels, partial.channels)
     await pushChannelFlagsToDaemon(partial.channels)
+    // 准入 / 访客限制变了：别人不再被允许的会话停掉、积压丢掉；访客限制变了的会话停掉等下一条消息按新限制重启
+    await applyChannelPolicyChanges(prevNormalized, getChannels())
   }
 
   return { ok: true, ...(workspaceDirChanged ? { workspaceDirChanged: true } : {}) }

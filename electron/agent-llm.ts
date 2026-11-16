@@ -6,6 +6,7 @@ import { readLockFile, httpPost, notifySessionLaunched as notifyDaemonSessionLau
 import { broadcastLog, pushUiLog, broadcastSessionStatus } from "./ui-logger"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { AgentResource } from "../src/shared/channel-types"
+import type { VisitorLimits } from "../src/shared/visitor-limits"
 import { workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { resolveLlmModel, llmApiKey, llmProviderId } from "./llm-config"
 import { getChannel, resolveChannelModel, getConfig } from "./config-store"
@@ -78,6 +79,8 @@ export interface LlmLaunchOptions {
   useMainWorkspace?: boolean
   /** 主用户私聊：协议内嵌 admin 段 */
   includeAdmin?: boolean
+  /** 其他人的受限会话（访客档）：关掉本机工具、只挂点名的用户 MCP、只列点名的 Skill；缺省 = 不受限 */
+  visitor?: VisitorLimits
   digitalIdentityOverride?: string
   senderOpenId?: string
   chatName?: string
@@ -287,13 +290,14 @@ function classifyLlmFailure(errorDetail: string): { networkFail: boolean; perman
   return { networkFail, permanentFail }
 }
 
-function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">): string {
+function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
   return computePromptHash({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
     includeAdmin: opts.includeAdmin,
     digitalIdentityOverride: opts.digitalIdentityOverride,
+    visitor: opts.visitor,
   }, resolveDaemonPortForPrompt())
 }
 

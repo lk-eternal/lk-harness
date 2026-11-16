@@ -54,6 +54,8 @@ export interface AgentLaunchParams {
   channelId?: string
   /** 主用户私聊：协议内嵌 admin 段 */
   includeAdmin?: boolean
+  /** 其他人的受限会话（访客档）：工具白名单 / 点名的用户 MCP / 点名的 Skill；缺省 = 不受限 */
+  visitor?: import("../../src/shared/visitor-limits").VisitorLimits
 }
 
 export interface AgentSessionDiagnostics {

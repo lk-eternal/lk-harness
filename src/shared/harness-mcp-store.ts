@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { writeJsonAtomic, readJsonFile } from "./atomic-json.js"
+import { filterUserMcp } from "./visitor-limits.js"
 
 export interface HarnessMcpServer {
   name: string
@@ -180,7 +181,11 @@ export function shouldIncludeAdminMcp(
   return mainUserSession === true
 }
 
-export type HarnessMcpEndpoint = "task" | "interactive";
+/**
+ * task：独立定时任务（有 send_result）；interactive：交互会话（提问 / 媒体 / Diff）；
+ * visitor：受限的访客会话，只有 send_question（send_image / send_file 能把本机任意文件发出去，访客碰不得）。
+ */
+export type HarnessMcpEndpoint = "task" | "interactive" | "visitor";
 
 /**
  * AI 自排程工具是否挂载：主用户会话 / 项目会话才有，无卡片的独立任务不挂；
@@ -208,7 +213,8 @@ export function buildBuiltinMcpServers(
     const base = `http://127.0.0.1:${port}`
     const sk = invokerSessionKey?.trim()
     const invokerHeaders = sk ? { headers: { "X-Harness-Session-Key": sk } } : {}
-    servers[CLAW_MCP_KEY] = { url: `${base}${endpoint === "task" ? "/mcp-task" : "/mcp-interactive"}`, ...invokerHeaders }
+    const builtinPath = endpoint === "task" ? "/mcp-task" : endpoint === "visitor" ? "/mcp-visitor" : "/mcp-interactive"
+    servers[CLAW_MCP_KEY] = { url: `${base}${builtinPath}`, ...invokerHeaders }
     if (includeAdmin) {
       servers[ADMIN_MCP_KEY] = {
         url: `${base}/mcp-admin`,
@@ -223,12 +229,19 @@ export function buildBuiltinMcpServers(
   return servers
 }
 
+/**
+ * userMcpAllow：只挂这些用户 MCP（访客档的「额外开放」）；缺省 = 用户装的全挂。
+ * 内置 MCP 不受它影响（由 endpoint 决定里面有哪些工具）。
+ */
 export function buildSdkMcpServers(
   port: number | null,
   includeAdmin: boolean,
   endpoint: HarnessMcpEndpoint = "interactive",
   includeProject = false,
   invokerSessionKey?: string,
+  userMcpAllow?: readonly string[],
 ): Record<string, Record<string, unknown>> {
-  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey), ...listEnabledHarnessMcpConfigs() }
+  const user = listEnabledHarnessMcpConfigs()
+  const picked = userMcpAllow ? filterUserMcp(user, { mcpAllow: [...userMcpAllow] }) : user
+  return { ...buildBuiltinMcpServers(port, includeAdmin, endpoint, includeProject, invokerSessionKey), ...picked }
 }

@@ -44,6 +44,7 @@ import {
   deleteSkillEntry,
   revealSkillPath,
 } from "./skill-store"
+import { listSkillOptions } from "./skill-catalog"
 import { linkTargetOf } from "../src/shared/safe-remove.js"
 import {
   listHarnessRules,
@@ -342,6 +343,8 @@ function registerIpcHandlers(): void {
   }))
 
   ipcMain.handle("skills:roots", () => listSkillRoots())
+  // 通道「其他人」的额外开放：可点名的 Skill（和名单一样只含模型会自动用的，按名字去重）
+  ipcMain.handle("skills:options", () => listSkillOptions())
 
   ipcMain.handle("skills:list", (_, rootId = "cursor") => {
     return listSkills(String(rootId)).map((s) => ({

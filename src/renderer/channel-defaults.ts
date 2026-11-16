@@ -20,7 +20,14 @@ export function emptyChannel(type: ChannelType, defaultName: string): ChannelCon
     // 应用内对话固定绑定本机主用户，无需扫码/绑定流程
     mainUserEnabled: type === "app",
     mainUserChatId: type === "app" ? APP_CHANNEL_CHAT_ID : "",
+    // 其他人默认全关（微信 / 应用内永远没有「其他人」）；新开放的其他人默认是「访客」
     allowOthers: false,
+    othersDm: false,
+    groupPolicy: "off",
+    allowedGroups: [],
+    visitorTier: "visitor",
+    visitorMcp: [],
+    visitorSkills: [],
     digitalIdentity: "",
     workspaceDir: "",
     keepSessionMain: true,

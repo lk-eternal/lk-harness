@@ -7,7 +7,9 @@ import {
   getChannelFavoriteWorkspaces, setChannelFavoriteWorkspaces, removeWorkspaceFromChannelFavorites,
   type MessageChannel,
 } from "./config-store"
-import { parseChatKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, resolveChannelAudience, type ChannelAudience } from "../src/shared/channel-types"
+import { parseChatKey, channelIdFromSessionKey, workspaceDirFromSessionKey, normalizeSessionKey, makeChatKey, resolveChannelResourceId, resolveChannelAudience, resolveChannelScene, type ChannelAudience } from "../src/shared/channel-types"
+import { resolveVisitorLimits, sameVisitorLimits } from "../src/shared/visitor-limits"
+import { admitChat, denyReasonText, sameChannelAccess, type AdmitDenyReason } from "../src/shared/channel-access"
 import { createTempChatSession } from "../src/shared/temp-chat-session.js"
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, resolveMainChatId, enqueueToSession, purgeSessionRouting, triggerScheduledTaskViaDaemon } from "./daemon-client"
@@ -477,6 +479,125 @@ export async function deleteQueueMessage(fileId: string): Promise<boolean> {
   }
 }
 
+// ── 准入：别人的会话还能不能进来 ─────────────────────────────
+// 第一道闸在 daemon 入口（被拒的消息根本不入队）；这里是第二道：
+// 升级前就在队列里的、设置后来才关掉的，到调度这一步再拦一次，积压直接丢弃、不通知对方。
+
+export type SessionAdmission = { ok: true } | { ok: false; reason: AdmitDenyReason }
+
+/**
+ * 这个会话按通道的准入配置放不放行。只管飞书里「别人」的私聊和群：
+ * 主用户、定时任务、临时会话、项目会话（含项目专属群）、应用内通道一律放行；
+ * 找不到通道的不拦（启动时会按「通道不存在」报错，不在这里悄悄吞消息）。
+ */
+export function checkSessionAdmission(sessionKey: string, chatType: string | undefined): SessionAdmission {
+  const other = resolveOthersSession(sessionKey, chatType)
+  if (!other) return { ok: true }
+  return admitChat(other.channel, other.scene, parseChatKey(other.chatKey).chatId, { ownedGroup: other.ownedGroup })
+}
+
+/**
+ * 这个会话是不是「别人」的（其他人私聊 / 群聊）。主用户、定时任务、临时会话、项目会话（含项目专属群）、
+ * 应用内通道、找不到通道的都不算，返回 undefined。准入和访客限制都认这一个判断。
+ */
+function resolveOthersSession(
+  sessionKey: string,
+  chatType: string | undefined,
+): { channel: MessageChannel; scene: "dm" | "group"; chatKey: string; ownedGroup: boolean } | undefined {
+  if (chatType !== "p2p" && chatType !== "group") return undefined
+  if (projectIdFromSessionKey(sessionKey)) return undefined
+  const channel = resolveChannelForSession(sessionKey)
+  if (!channel || channel.type === "app") return undefined
+  const scene = resolveChannelScene({
+    mainUserEnabled: channel.mainUserEnabled,
+    mainUserChatId: channel.mainUserChatId,
+    sessionKey,
+    chatType,
+  })
+  if (!scene || scene === "main") return undefined
+  const chatKey = extractChatId(sessionKey)
+  return { channel, scene, chatKey, ownedGroup: chatType === "group" && !!findProjectByGroupChat(chatKey) }
+}
+
+/**
+ * 通道的访客限制变了（档位 / 额外开放的 MCP、Skill）：正在跑的别人的会话还带着旧的工具和 MCP，停掉。
+ * 新消息进来时按新限制重新拉起（Resume 续上下文）。项目专属群、主用户、任务不动。
+ */
+export async function restartVisitorSessions(channelId: string): Promise<number> {
+  let stopped = 0
+  for (const s of getSessionAgentList()) {
+    if (channelIdFromSessionKey(s.sessionKey) !== channelId || !isSessionAgentRunning(s.sessionKey)) continue
+    const other = resolveOthersSession(s.sessionKey, s.chatType)
+    if (!other || other.ownedGroup) continue
+    broadcastLog(`[准入] 访客限制已变更，停止正在运行的会话以便按新限制重启: ${s.sessionKey}`, "WARN")
+    await stopSessionAgent(s.sessionKey)
+    stopped++
+  }
+  return stopped
+}
+
+/** 丢掉一个被拒会话在队列里的全部消息（不通知）。返回丢了几条 */
+async function dropDeniedBacklog(sessionKey: string, queued: QueueMessageItem[], reason: AdmitDenyReason): Promise<number> {
+  let n = 0
+  for (const m of queued) {
+    if (m.sessionKey !== sessionKey) continue
+    if (await deleteQueueMessage(m.fileId)) n++
+  }
+  if (n > 0) broadcastLog(`[准入] 已丢弃 ${n} 条被拒会话的积压消息: ${sessionKey}（${denyReasonText(reason)}）`, "WARN")
+  return n
+}
+
+/**
+ * 通道的准入配置变了（设置页保存、/group deny）：把已经不被允许的别人的会话停掉，积压消息清掉。
+ * 只动这个通道里的私聊 / 群会话，不碰主用户、任务和项目。
+ */
+export async function enforceChannelAccess(channelId: string): Promise<{ stopped: number; dropped: number }> {
+  let stopped = 0
+  let dropped = 0
+  for (const s of getSessionAgentList()) {
+    if (channelIdFromSessionKey(s.sessionKey) !== channelId) continue
+    const adm = checkSessionAdmission(s.sessionKey, s.chatType)
+    if (adm.ok || !isSessionAgentRunning(s.sessionKey)) continue
+    broadcastLog(`[准入] 停止不再放行的会话: ${s.sessionKey}（${denyReasonText(adm.reason)}）`, "WARN")
+    await stopSessionAgent(s.sessionKey)
+    stopped++
+  }
+  const queued = await getQueueMessages()
+  const bySession = new Map<string, AdmitDenyReason>()
+  for (const m of queued) {
+    if (!m.sessionKey || bySession.has(m.sessionKey) || channelIdFromSessionKey(m.sessionKey) !== channelId) continue
+    const adm = checkSessionAdmission(m.sessionKey, m.chatType)
+    if (!adm.ok) bySession.set(m.sessionKey, adm.reason)
+  }
+  for (const [sessionKey, reason] of bySession) dropped += await dropDeniedBacklog(sessionKey, queued, reason)
+  return { stopped, dropped }
+}
+
+/**
+ * 设置保存后，对比保存前后的通道配置（都要是套过默认值的）：
+ * - 准入变了：别人不再被允许的会话停掉、积压消息丢掉；
+ * - 访客限制变了（档位 / 额外开放的 MCP、Skill）：别人正在跑的会话停掉，下一条消息按新限制重启。
+ * 新增的通道没有「变」可言，跳过。
+ */
+export async function applyChannelPolicyChanges(
+  prev: readonly MessageChannel[],
+  next: readonly MessageChannel[],
+): Promise<void> {
+  for (const n of next) {
+    const p = prev.find((c) => c.id === n.id)
+    if (!p) continue
+    const label = n.name || n.id
+    if (!sameChannelAccess(p, n)) {
+      const r = await enforceChannelAccess(n.id)
+      if (r.stopped > 0 || r.dropped > 0) broadcastLog(`[Channels] 「${label}」准入变更：已停止 ${r.stopped} 个会话，丢弃 ${r.dropped} 条积压消息`)
+    }
+    if (!sameVisitorLimits(p, n)) {
+      const stopped = await restartVisitorSessions(n.id)
+      if (stopped > 0) broadcastLog(`[Channels] 「${label}」访客限制变更：已停止 ${stopped} 个会话，下一条消息按新限制重启`)
+    }
+  }
+}
+
 // ── Agent 启动 ─────────────────────────────────────────────
 
 interface LaunchAgentParams {
@@ -554,8 +675,12 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   }
 
   const isOwnTask = chatType === "task" || chatType === "temp" || chatType === "project" || projectOwned
-  if (!useMain && !isOwnTask && !channel?.allowOthers) {
-    return { ok: false, error: `通道「${channel?.name ?? "未知"}」未启用其他人使用` }
+  if (!useMain && !isOwnTask) {
+    // 其他人私聊 / 群聊：按通道的准入配置放行（daemon 入口已拦过一道，这里是第二道，防配置刚改完的竞态与旧积压）
+    const adm = admitChat(channel, chatType === "group" ? "group" : "dm", parseChatKey(chatRef).chatId)
+    if (!adm.ok) {
+      return { ok: false, error: `通道「${channel?.name ?? "未知"}」未向其他人开放（${denyReasonText(adm.reason)}）` }
+    }
   }
 
   const skipIdentity = useMain || projectOwned || chatType === "task" || chatType === "temp"
@@ -669,6 +794,8 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     resource,
     channelId: channel?.id,
     includeAdmin,
+    // 其他人的会话按通道的「访客 / 同我」档位限制能力；主人自己的会话不受限
+    visitor: resolveVisitorLimits(channel, audience),
   })
   if (launched.ok && newSession) {
     try {
@@ -1806,6 +1933,15 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
         broadcastLog(`[Agent] 项目「${proj.name}」有新消息，正在启动Agent（${resumableP ? "Resume 恢复上下文" : "全新会话"}）`)
       }
       continue
+    }
+
+    // 准入第二道闸：升级前入队的、或设置后来关掉的，积压消息直接丢弃，不起 Agent、不通知对方
+    if (!mainUser) {
+      const adm = checkSessionAdmission(sessionKey, chatType)
+      if (!adm.ok) {
+        await dropDeniedBacklog(sessionKey, queueMsgs, adm.reason)
+        continue
+      }
     }
 
     if (feishuOn && chatType === "p2p" && senderOpenId?.startsWith("ou_") && !chatNameCache.has(senderOpenId)) {

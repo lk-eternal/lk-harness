@@ -2,13 +2,14 @@ import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
-import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
+import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience, resolveChannelScene } from "../src/shared/channel-types.js"
 import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
 import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
 import { shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
+import { buildVisitorPromptSection, visitorLimitsKey, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
@@ -24,6 +25,8 @@ export interface PromptAssemblyContext {
   taskMessage?: string
   historyTurns?: HistoryTurn[]
   digitalIdentityOverride?: string
+  /** 访客档（其他人的受限会话）：提示词里告诉 AI 它能做什么、不能做什么；变了就算规则变了 */
+  visitor?: VisitorLimits
 }
 
 function stripFrontmatter(raw: string): string {
@@ -122,7 +125,7 @@ function resolveDigitalIdentity(skipIdentity: boolean, override?: string): strin
   return (override ?? getConfig().digitalIdentity ?? "").trim()
 }
 
-function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; audience: "main" | "others" } {
+function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; audience: "main" | "others"; scene?: "dm" | "group" } {
   const sessionKey = ctx.sessionKey ?? ""
   const chatType = ctx.meta?.chatType
   const chatKey = sessionKey ? chatIdFromSessionKey(sessionKey) : (ctx.meta?.chatId ?? "")
@@ -135,19 +138,20 @@ function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessi
       channelId = parsed.channelId
     }
   }
-  const audience = resolveChannelAudience({
+  const scene = resolveChannelScene({
     mainUserEnabled: channel?.mainUserEnabled,
     mainUserChatId: channel?.mainUserChatId,
     chatKey,
     chatType,
     sessionKey,
   })
-  return { channelId: channel?.id ?? channelId, audience }
+  const audience = scene === "main" ? "main" : "others"
+  return { channelId: channel?.id ?? channelId, audience, ...(scene === "dm" || scene === "group" ? { scene } : {}) }
 }
 
 function appendUserHarnessRules(parts: string[], ctx?: Pick<PromptAssemblyContext, "meta" | "sessionKey">): void {
   const scope = resolvePromptRuleScope(ctx ?? {})
-  const rules = listEnabledHarnessRules().filter((r) => ruleAppliesTo(r, scope.channelId, scope.audience))
+  const rules = listEnabledHarnessRules().filter((r) => ruleAppliesTo(r, scope.channelId, scope.audience, scope.scene))
   if (!rules.length) return
   parts.push("---")
   parts.push("## 用户 Harness 规则")
@@ -190,7 +194,7 @@ function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey
   }
 }
 
-export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">, daemonPort?: number | null): string {
+export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">, daemonPort?: number | null): string {
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const includeAdmin = ctxIncludeAdmin(ctx)
   const h = createHash("md5")
@@ -198,14 +202,17 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
   const scope = resolvePromptRuleScope(ctx)
-  for (const r of listEnabledHarnessRules().filter((x) => ruleAppliesTo(x, scope.channelId, scope.audience))) {
+  for (const r of listEnabledHarnessRules().filter((x) => ruleAppliesTo(x, scope.channelId, scope.audience, scope.scene))) {
     h.update(r.id)
     h.update(r.content)
     h.update(JSON.stringify(r.scope ?? { mode: "main" }))
   }
   h.update(scope.audience)
+  if (scope.scene) h.update(scope.scene)
   h.update(scope.channelId ?? "")
   h.update(resolveTaskProtocolSection(ctx))
+  // 档位 / 额外开放变了，提示词里的「你能做什么」就变了：算规则变更
+  if (ctx.visitor) h.update(visitorLimitsKey(ctx.visitor))
   return h.digest("hex").slice(0, 16)
 }
 
@@ -225,6 +232,10 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: 
   if (taskSection) {
     parts.push("---")
     parts.push(taskSection)
+  }
+  if (ctx.visitor) {
+    parts.push("---")
+    parts.push(buildVisitorPromptSection(ctx.visitor))
   }
   return parts
 }

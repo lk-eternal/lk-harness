@@ -57,8 +57,15 @@ export interface SkillCatalog {
 
 const EMPTY: SkillCatalog = { text: "", hash: "", count: 0 }
 
-export function computeSkillCatalog(home: string = os.homedir()): SkillCatalog {
-  const built = buildSkillCatalog(collectSkillCatalogRoots(home))
+/** 只留名字在 allow 里的 Skill（访客档的「额外开放」）；allow 缺省 = 全部 */
+export function filterCatalogRoots(roots: CatalogRoot[], allow: readonly string[] | undefined): CatalogRoot[] {
+  if (!allow) return roots
+  const names = new Set(allow)
+  return roots.map((r) => ({ ...r, skills: r.skills.filter((s) => names.has(s.name)) }))
+}
+
+function catalogFromRoots(roots: CatalogRoot[]): SkillCatalog {
+  const built = buildSkillCatalog(roots)
   if (!built.text) return EMPTY
   return {
     text: built.text,
@@ -67,19 +74,53 @@ export function computeSkillCatalog(home: string = os.homedir()): SkillCatalog {
   }
 }
 
+export function computeSkillCatalog(home: string = os.homedir(), allow?: readonly string[]): SkillCatalog {
+  return catalogFromRoots(filterCatalogRoots(collectSkillCatalogRoots(home), allow))
+}
+
+/**
+ * 设置页「额外开放」里让用户挑的 Skill：和名单一样只含模型会自动用的，按名字去重（同名先出现的目录赢）。
+ * rootDir 是 Skill 所在根目录的绝对路径，设置页按它分组。
+ */
+export interface SkillOption { name: string; description: string; rootDir: string }
+
+export function listSkillOptions(home: string = os.homedir()): SkillOption[] {
+  const seen = new Set<string>()
+  const out: SkillOption[] = []
+  for (const root of collectSkillCatalogRoots(home)) {
+    for (const s of root.skills) {
+      if (!s.name || seen.has(s.name)) continue
+      seen.add(s.name)
+      out.push({ name: s.name, description: s.description, rootDir: root.dir })
+    }
+  }
+  return out
+}
+
 /** 每次拉起会话都要看一眼名单；扫一遍目录要读上百个文件头，短时间内复用上一次的结果 */
 const CACHE_TTL_MS = 10_000
-let cached: { at: number; value: SkillCatalog } | null = null
+/** 全部 Skill 的扫描结果缓存；访客的名单是它按名字过滤出来的，不用再扫一遍磁盘 */
+let cached: { at: number; roots: CatalogRoot[]; value: SkillCatalog } | null = null
 
 export function resetSkillCatalogCache(): void {
   cached = null
 }
 
-/** 拉起会话用：扫描失败不能挡住会话，按「没有 Skill」处理 */
-export function getSkillCatalog(now: number = Date.now()): SkillCatalog {
-  if (cached && now - cached.at < CACHE_TTL_MS) return cached.value
-  let value = EMPTY
-  try { value = computeSkillCatalog() } catch { /* 名单是锦上添花 */ }
-  cached = { at: now, value }
-  return value
+/**
+ * 拉起会话用：扫描失败不能挡住会话，按「没有 Skill」处理。
+ * allow：只列这些名字的 Skill（访客档）；缺省 = 全部。
+ */
+export function getSkillCatalog(now: number = Date.now(), allow?: readonly string[]): SkillCatalog {
+  if (!cached || now - cached.at >= CACHE_TTL_MS) {
+    let roots: CatalogRoot[] = []
+    let value = EMPTY
+    try {
+      roots = collectSkillCatalogRoots()
+      value = catalogFromRoots(roots)
+    } catch { /* 名单是锦上添花 */ }
+    cached = { at: now, roots, value }
+  }
+  if (!allow) return cached.value
+  if (allow.length === 0) return EMPTY
+  try { return catalogFromRoots(filterCatalogRoots(cached.roots, allow)) } catch { return EMPTY }
 }

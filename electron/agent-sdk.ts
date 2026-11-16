@@ -12,7 +12,8 @@ import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
 import { boundedCall, createTimeoutMessage, hedgedCall, resumeTimeoutMessage } from "./bounded-call"
 import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
-import { buildSdkMcpServers } from "../src/shared/harness-mcp-store.js"
+import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
+import type { VisitorLimits } from "../src/shared/visitor-limits.js"
 import { getAgentResource } from "./config-store"
 import { notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
 import {
@@ -115,6 +116,8 @@ export interface SdkSessionAgent extends StreamCardHost {
   ledgerRollover?: boolean
   /** 这个账本里 AI 已经拿到的 Skill 名单的指纹；没有 = 还没给过（新账本，或上次没送达） */
   skillsHash?: string
+  /** 访客档（其他人的受限会话）：拉起时的限制，提示词指纹据此计算；undefined = 不受限 */
+  visitor?: VisitorLimits
 }
 
 const sdkSessions = new Map<string, SdkSessionAgent>()
@@ -139,13 +142,14 @@ interface ResumeEntry {
   streamCardId?: string
 }
 
-function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin">): string {
+function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
   return computePromptHash({
     meta: { chatType: session.chatType },
     sessionKey: session.sessionKey,
     useMainWorkspace: session.useMainWorkspace,
     includeAdmin: session.includeAdmin,
     digitalIdentityOverride: session.digitalIdentityOverride,
+    visitor: session.visitor,
   }, undefined)
 }
 
@@ -888,6 +892,8 @@ export interface SdkLaunchOptions {
   digitalIdentityOverride?: string
   /** 主用户私聊：挂载 lk-harness-admin 并在协议内嵌 admin 段 */
   includeAdmin?: boolean
+  /** 其他人的受限会话（访客档）：工具白名单 / 只挂点名的用户 MCP / 只列点名的 Skill。缺省 = 不受限 */
+  visitor?: VisitorLimits
 }
 
 export interface SdkTurnResult {
@@ -1156,11 +1162,15 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     const sdkPort = resolveDaemonPortForPrompt()
     const includeAdmin = opts.includeAdmin === true
     // 有卡片承载输出的一律走 interactive（无 send_result）；只有无卡片的独立定时任务走 task（有 send_result）
-    const mcpEndpoint = chatType === "task" ? "task" : "interactive"
+    // 访客（其他人的受限会话）用只有 send_question 的内置端点
+    const visitor = opts.visitor
+    const mcpEndpoint: HarnessMcpEndpoint = chatType === "task" ? "task" : visitor ? "visitor" : "interactive"
     // 项目工具硬切：仅项目会话额外挂载 lk-harness-project，其余会话无 project_*
     const includeProject = chatType === "project" || !!projectIdFromSessionKey(sessionKey)
-    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint, includeProject, sessionKey) as Record<string, McpServerConfig>
-    const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers }
+    const mcpServers = buildSdkMcpServers(sdkPort, includeAdmin, mcpEndpoint, includeProject, sessionKey, visitor?.mcpAllow) as Record<string, McpServerConfig>
+    // tools 不随 Agent 持久化：Create 和 Resume 都用同一份选项，限制才不会在续聊时丢掉
+    const agentBaseOpts = { apiKey, model: modelSelection, local: localOptions, mcpServers, ...(visitor ? { tools: visitor.sdkTools } : {}) }
+    if (visitor) pushUiLog("SDK", "INFO", `[${sessionKey}] 访客档：工具=${visitor.sdkTools.join("/")}，用户 MCP=${visitor.mcpAllow.join("/") || "无"}，Skill=${visitor.skillAllow.join("/") || "无"}`)
 
     // Resume 语义：
     // - project 永远 Resume（带 taskMessage 时任务附在唤醒 prompt 里）
@@ -1248,6 +1258,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       notifySessionKey: opts.notifySessionKey?.trim() || undefined,
       useMainWorkspace: opts.useMainWorkspace,
       includeAdmin,
+      visitor,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       abortController,
       keepSession,
@@ -1279,6 +1290,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
         useMainWorkspace: opts.useMainWorkspace,
         includeAdmin,
         digitalIdentityOverride: opts.digitalIdentityOverride,
+        visitor,
       })
     const portChanged = resumed && !!resumable?.daemonPort && !!currentDaemonPort
       && resumable.daemonPort !== currentDaemonPort
@@ -1308,6 +1320,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       sessionKey,
       useMainWorkspace: opts.useMainWorkspace,
       includeAdmin,
+      visitor,
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: resumed ? taskMessage : effectiveTask,
@@ -1332,7 +1345,8 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
 
     // Skill 名单：账本是新的、或名单和 AI 手里那份不一样时，随第一轮给一次。之后的轮次不再带——
     // 账本最多 15 次 run 就会滚动重开，名单不会被后面的内容挤到太远；名单变了会按指纹补发
-    const skills = getSkillCatalog()
+    // 访客只列被点名开放的 Skill（没点名 = 不给名单）；名单指纹随之不同，档位切换后会按「名单有变化」补发
+    const skills = getSkillCatalog(Date.now(), visitor?.skillAllow)
     const skillCatalog = planSkillInjection(skills, session.skillsHash)
     if (skillCatalog) {
       pushUiLog("SDK", "INFO", `[${sessionKey}] 本轮带上 Skill 名单（${skills.count} 个，${skillCatalog.reason === "changed" ? "名单有变化" : "账本新开"}，hash=${skills.hash}）`)

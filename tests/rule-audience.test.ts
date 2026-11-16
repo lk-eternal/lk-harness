@@ -6,6 +6,7 @@ import {
   resolveChannelResourceId,
 } from "../src/shared/channel-types.js"
 import {
+  normalizeRuleAudiences,
   normalizeRuleScope,
   ruleAppliesTo,
 } from "../src/shared/harness-rule-store.js"
@@ -78,5 +79,58 @@ describe("ruleAppliesTo", () => {
     expect(scope).toEqual({ mode: "custom", targets: [] })
     expect(ruleAppliesTo({ scope }, "ch_a", "main")).toBe(false)
     expect(ruleAppliesTo({ scope }, "ch_a", "others")).toBe(false)
+  })
+})
+
+describe("规则的「其他人私聊 / 群聊」场景", () => {
+  const scopeOf = (...audiences: ("main" | "others" | "dm" | "group")[]) =>
+    normalizeRuleScope({ mode: "custom", targets: [{ channelId: "ch_a", audiences }] })
+
+  it("normalizeRuleAudiences：others 已含私聊和群聊；私聊 + 群聊合起来就是 others（老版本也认得）", () => {
+    expect(normalizeRuleAudiences(["dm", "group"])).toEqual(["others"])
+    expect(normalizeRuleAudiences(["others", "dm"])).toEqual(["others"])
+    expect(normalizeRuleAudiences(["main", "group", "dm"])).toEqual(["main", "others"])
+    expect(normalizeRuleAudiences(["group"])).toEqual(["group"])
+    expect(normalizeRuleAudiences(["dm", "dm", "main"])).toEqual(["main", "dm"])
+    expect(normalizeRuleAudiences(["bogus", 3, null] as unknown[])).toEqual([])
+    expect(normalizeRuleAudiences(undefined)).toEqual([])
+  })
+
+  it("只选「群聊」：群里生效，其他人私聊不生效", () => {
+    const scope = scopeOf("group")
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "group")).toBe(true)
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "dm")).toBe(false)
+    expect(ruleAppliesTo({ scope }, "ch_a", "main")).toBe(false)
+  })
+
+  it("只选「其他人私聊」：私聊生效，群里不生效", () => {
+    const scope = scopeOf("dm")
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "dm")).toBe(true)
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "group")).toBe(false)
+  })
+
+  it("老的「其他人」(others)：私聊群聊都生效，行为和升级前一样", () => {
+    const scope = scopeOf("others")
+    expect(ruleAppliesTo({ scope }, "ch_a", "others")).toBe(true)
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "dm")).toBe(true)
+    expect(ruleAppliesTo({ scope }, "ch_a", "others", "group")).toBe(true)
+  })
+
+  it("拿不到聊天类型（scene 未知）：规则只要覆盖任一「其他人」场景就带上，宁多勿漏", () => {
+    expect(ruleAppliesTo({ scope: scopeOf("group") }, "ch_a", "others")).toBe(true)
+    expect(ruleAppliesTo({ scope: scopeOf("dm") }, "ch_a", "others")).toBe(true)
+    expect(ruleAppliesTo({ scope: scopeOf("main") }, "ch_a", "others")).toBe(false)
+  })
+
+  it("「我」不受场景影响：只选 dm/group 的规则不会漏到主用户身上，选了 main 的照常生效", () => {
+    expect(ruleAppliesTo({ scope: scopeOf("group", "dm") }, "ch_a", "main")).toBe(false)
+    expect(ruleAppliesTo({ scope: scopeOf("main", "group") }, "ch_a", "main")).toBe(true)
+    expect(ruleAppliesTo({ scope: scopeOf("main", "group") }, "ch_a", "others", "group")).toBe(true)
+    expect(ruleAppliesTo({ scope: scopeOf("main", "group") }, "ch_a", "others", "dm")).toBe(false)
+  })
+
+  it("scope 里的 dm / group 经过归一化保存后不丢", () => {
+    expect(normalizeRuleScope({ mode: "custom", targets: [{ channelId: "ch_a", audiences: ["group", "main"] }] }).targets)
+      .toEqual([{ channelId: "ch_a", audiences: ["main", "group"] }])
   })
 })

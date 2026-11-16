@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   collectSkillCatalogRoots,
   computeSkillCatalog,
+  filterCatalogRoots,
   getSkillCatalog,
+  listSkillOptions,
   resetSkillCatalogCache,
 } from "../electron/skill-catalog"
 import { SKILL_DESC_MAX } from "../src/shared/skill-catalog"
@@ -219,5 +221,68 @@ describe("getSkillCatalog：拉起会话时用，短时间内复用上一次的�
   it("没有任何 Skill：缓存的也是「空」，调用方据此不注入", () => {
     pointHomeAt(home)
     expect(getSkillCatalog(1)).toEqual({ text: "", hash: "", count: 0 })
+  })
+})
+
+describe("访客档：Skill 名单只列开放的", () => {
+  function seed(): void {
+    put(dirOf.cursor(), "alpha", md({ name: "alpha", description: "甲" }))
+    put(dirOf.cursor(), "beta", md({ name: "beta", description: "乙" }))
+    put(dirOf.agents(), "gamma", md({ name: "gamma", description: "丙" }))
+  }
+
+  it("filterCatalogRoots：不给名单 = 原样；给了就只留点名的，目录结构不变", () => {
+    seed()
+    const roots = collectSkillCatalogRoots(home)
+    expect(filterCatalogRoots(roots, undefined)).toBe(roots)
+    const f = filterCatalogRoots(roots, ["beta", "gamma", "不存在的"])
+    expect(f.map((r) => r.dir)).toEqual(roots.map((r) => r.dir))
+    expect(f.flatMap((r) => r.skills.map((s) => s.name)).sort()).toEqual(["beta", "gamma"])
+  })
+
+  it("computeSkillCatalog(allow)：名单里只有开放的；一个都没开放 = 空（不注入）", () => {
+    seed()
+    const only = computeSkillCatalog(home, ["alpha"])
+    expect(only.count).toBe(1)
+    expect(only.text).toContain("alpha")
+    expect(only.text).not.toContain("beta")
+    expect(only.text).not.toContain("gamma")
+    expect(computeSkillCatalog(home, [])).toEqual({ text: "", hash: "", count: 0 })
+    expect(computeSkillCatalog(home).count).toBe(3)
+  })
+
+  it("getSkillCatalog(now, allow)：按开放的过滤；空名单 = 空；不影响不过滤的调用拿到的全量结果", () => {
+    process.env.HOME = home
+    process.env.USERPROFILE = home
+    seed()
+    expect(getSkillCatalog(1, ["gamma"]).count).toBe(1)
+    expect(getSkillCatalog(1, ["gamma"]).text).not.toContain("alpha")
+    expect(getSkillCatalog(1, [])).toEqual({ text: "", hash: "", count: 0 })
+    expect(getSkillCatalog(1).count).toBe(3)
+    // 过滤出来的名单 hash 和全量的不同（提示词指纹据此区分）
+    expect(getSkillCatalog(1, ["gamma"]).hash).not.toBe(getSkillCatalog(1).hash)
+  })
+
+  it("声明了不让模型自动用的 Skill：就算被点名也不列（隐藏优先）", () => {
+    put(dirOf.cursor(), "manual", md({ name: "manual", description: "手动", "disable-model-invocation": "true" }))
+    put(dirOf.cursor(), "auto", md({ name: "auto", description: "自动" }))
+    expect(computeSkillCatalog(home, ["manual", "auto"]).count).toBe(1)
+  })
+})
+
+describe("listSkillOptions：设置页「额外开放」里挑的候选", () => {
+  it("名字去重（同名先出现的目录赢），带说明和所在根目录；不含模型不会自动用的", () => {
+    put(dirOf.cursor(), "dup", md({ name: "dup", description: "cursor 的" }))
+    put(dirOf.agents(), "dup", md({ name: "dup", description: "agents 的" }))
+    put(dirOf.agents(), "only-agents", md({ name: "only-agents", description: "仅 agents" }))
+    put(dirOf.pi(), "hidden", md({ name: "hidden", description: "x", "disable-model-invocation": "true" }))
+    const opts = listSkillOptions(home)
+    expect(opts.map((o) => o.name).sort()).toEqual(["dup", "only-agents"])
+    expect(opts.find((o) => o.name === "dup")).toMatchObject({ description: "cursor 的", rootDir: path.resolve(dirOf.cursor()) })
+    expect(opts.find((o) => o.name === "only-agents")!.rootDir).toBe(path.resolve(dirOf.agents()))
+  })
+
+  it("没有任何 Skill：空数组", () => {
+    expect(listSkillOptions(home)).toEqual([])
   })
 })

@@ -6,22 +6,26 @@ import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 import { useScrollActiveIntoView } from "./panel-scroll"
 import { useOpenFirstOnce } from "./panel-default"
+import { channelScenes } from "../../shared/channel-access"
+import type { ChannelType } from "../../shared/channel-types"
+import {
+  RULE_SCENES,
+  RULE_SCENE_LABELS,
+  audiencesToScenes,
+  describeRuleScope,
+  normalizeRuleScope as normalizeScope,
+  scenesToScope,
+  scopeToUniformScenes,
+  scopeUnionScenes,
+  type RuleScene,
+  type RuleScope,
+  type RuleTarget,
+} from "../../shared/rule-scope"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
-function normalizeScope(scope?: RuleScope): RuleScope {
-  if (!scope || scope.mode !== "custom") return { mode: "main" }
-  const targets = (scope.targets ?? [])
-    .filter((t) => t?.channelId)
-    .map((t) => ({ channelId: t.channelId, audiences: [...new Set(t.audiences.filter((a) => a === "main" || a === "others"))] as ("main" | "others")[] }))
-    .filter((t) => t.audiences.length > 0)
-  return { mode: "custom", targets }
-}
-
 interface HarnessRule { id: string; name: string; content: string; enabled: boolean; scope?: RuleScope }
-interface RuleTarget { channelId: string; audiences: ("main" | "others")[] }
-interface RuleScope { mode: "main" | "custom"; targets?: RuleTarget[] }
-interface ChannelLite { id: string; name: string }
+interface ChannelLite { id: string; name: string; type?: ChannelType }
 interface Draft { id: string | null; name: string; content: string; enabled: boolean; scope: RuleScope }
 
 export default function RulePanel() {
@@ -38,7 +42,7 @@ export default function RulePanel() {
   const reload = useCallback(() => {
     void window.electronAPI.getHarnessRules().then((list) => { setRules(list); setRulesReady(true) })
     void window.electronAPI.getConfig().then((cfg) =>
-      setChannels((cfg.channels ?? []).map((c) => ({ id: c.id, name: c.name || c.id })))
+      setChannels((cfg.channels ?? []).map((c) => ({ id: c.id, name: c.name || c.id, type: c.type })))
     )
   }, [])
 
@@ -99,16 +103,11 @@ export default function RulePanel() {
 
   const openAdd = async () => {
     if (!(await guardUnsaved("保存并继续"))) return
-    openDraft({ id: null, name: "", content: "", enabled: true, scope: { mode: "custom", targets: [] } }, true)
+    // 新规则默认只对「我」生效（含以后新建的通道）；要给别人用，自己勾「其他人私聊 / 群聊」
+    openDraft({ id: null, name: "", content: "", enabled: true, scope: { mode: "main" } }, true)
   }
 
-  const scopeHint = (r: HarnessRule) => {
-    const s = normalizeScope(r.scope)
-    if (s.mode !== "custom") return "仅主用户"
-    const n = (s.targets ?? []).reduce((k, t) => k + t.audiences.length, 0)
-    if (!n) return "不生效"
-    return `${n} 项`
-  }
+  const scopeHint = (r: HarnessRule) => (channels.length ? describeRuleScope(r.scope, channels) : "")
 
   const listRef = useRef<HTMLDivElement>(null)
   useScrollActiveIntoView(listRef, selectedId, rules.length)
@@ -175,17 +174,18 @@ export default function RulePanel() {
   )
 }
 
-// ── 生效范围编辑器：仅主用户（默认） / 自定义（按通道×主·其他多选）───
+// ── 生效范围编辑器：勾场景（我 / 其他人私聊 / 群聊），对所有有这个场景的通道生效；
+//    需要按通道区别对待时，展开「只限某些通道」逐个选 ───
 
 function ScopeEditor({ scope, channels, onChange }: {
   scope: RuleScope
-  channels: { id: string; name: string }[]
+  channels: ChannelLite[]
   onChange: (s: RuleScope) => void
 }) {
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const s = normalizeScope(scope)
-  // 无单选：框即范围。遗留 main 模式展开为当前各通道主用户 chip，一经改动即落为显式 custom；
-  // 通道未加载完时不展开为空框，避免误存（空 custom = 不生效）
-  if (s.mode !== "custom" && channels.length === 0) {
+  // 通道未加载完时不渲染选项，避免误存（空 custom = 不生效）
+  if (channels.length === 0) {
     return (
       <div className="mb-3 space-y-2 rounded-lg border border-line-subtle p-3">
         <p className="text-xs font-medium text-fg-3">生效范围</p>
@@ -193,24 +193,77 @@ function ScopeEditor({ scope, channels, onChange }: {
       </div>
     )
   }
+
+  const uniform = scopeToUniformScenes(s, channels)
+  const customized = uniform === null
+  // 只显示至少有一个通道存在的场景（没有飞书通道时没有「其他人私聊 / 群聊」可选）
+  const available = RULE_SCENES.filter((sc) => channels.some((c) => channelScenes(c.type).includes(sc)))
+  const channelsWith = (sc: RuleScene) => channels.filter((c) => channelScenes(c.type).includes(sc)).map((c) => c.name)
+
+  const toggleScene = (sc: RuleScene) => {
+    const cur = uniform ?? []
+    const next = cur.includes(sc) ? cur.filter((x) => x !== sc) : [...cur, sc]
+    onChange(scenesToScope(next, channels))
+  }
+
+  // 展开前（或已经按通道区别对待过）：targets 来自当前范围；仅主用户模式展开为各通道的「我」
   const targets: RuleTarget[] = s.mode === "custom"
     ? (s.targets ?? [])
     : channels.map((c) => ({ channelId: c.id, audiences: ["main" as const] }))
+  const advancedShown = advancedOpen || customized
+
   return (
     <div className="mb-3 space-y-2 rounded-lg border border-line-subtle p-3">
       <p className="text-xs font-medium text-fg-3">生效范围</p>
-      <AudienceMultiSelect channels={channels} value={targets} onChange={(t) => onChange({ mode: "custom", targets: t })} />
+      {!customized && (
+        <div className="space-y-1.5">
+          {available.map((sc) => {
+            const where = sc === "main" ? "所有通道" : channelsWith(sc).join("、")
+            return (
+              <label key={sc} className="flex cursor-pointer items-center gap-2 text-sm text-fg-2">
+                <input type="checkbox" checked={uniform.includes(sc)} onChange={() => toggleScene(sc)}
+                  className="rounded border-line-strong bg-surface" />
+                <span>{RULE_SCENE_LABELS[sc]}</span>
+                <span className="truncate text-xs text-fg-faint" title={where}>{where}</span>
+              </label>
+            )
+          })}
+          {uniform.length === 0 && <p className="text-xs text-yellow-500">一个都没勾：这条规则不会对任何人生效（只存放）。</p>}
+        </div>
+      )}
+      {customized && (
+        <p className="text-xs text-fg-faint">
+          这条规则按通道单独设置了生效范围。
+          <button type="button" className="ml-1 text-accent hover:underline"
+            onClick={() => onChange(scenesToScope(scopeUnionScenes(s, channels), channels))}>
+            改回统一设置
+          </button>
+          （按当前各通道选过的场景合并）
+        </p>
+      )}
+      <div>
+        {!customized && (
+          <button type="button" onClick={() => setAdvancedOpen(!advancedOpen)}
+            className="flex items-center gap-1 text-xs text-fg-muted transition hover:text-fg-2">
+            <ChevronDown size={12} className={`transition ${advancedShown ? "" : "-rotate-90"}`} />只限某些通道
+          </button>
+        )}
+        {advancedShown && (
+          <div className="mt-1.5">
+            <AudienceMultiSelect channels={channels} value={targets} onChange={(t) => onChange({ mode: "custom", targets: t })} />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
-// ── 生效范围多选下拉：选项=通道×人群，选中逐个填充为 chip───
+// ── 通道×场景多选下拉：选项=通道里有的场景，选中逐个填充为 chip───
 
-const AUDIENCE_LABEL: Record<"main" | "others", string> = { main: "主用户", others: "其他人" }
 const DROP_MAX_H = 280
 
 function AudienceMultiSelect({ channels, value, onChange }: {
-  channels: { id: string; name: string }[]
+  channels: ChannelLite[]
   value: RuleTarget[]
   onChange: (targets: RuleTarget[]) => void
 }) {
@@ -222,22 +275,25 @@ function AudienceMultiSelect({ channels, value, onChange }: {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const nameOf = (id: string) => channels.find((c) => c.id === id)?.name ?? id
-  const picked = new Set(value.flatMap((t) => t.audiences.map((a) => `${t.channelId}|${a}`)))
-  const options = channels.flatMap((c) => (["main", "others"] as const).map((a) => ({
+  // 老数据里的「其他人」（others）展开成私聊 + 群聊两个场景显示；微信 / 应用内没有这两个场景，不出现在选项里
+  const sceneEntries = (t: RuleTarget) => audiencesToScenes(t.audiences).map((a) => `${t.channelId}|${a}`)
+  const picked = new Set(value.flatMap(sceneEntries))
+  const options = channels.flatMap((c) => channelScenes(c.type).map((a) => ({
     id: `${c.id}|${a}`,
-    label: `${c.name} · ${AUDIENCE_LABEL[a]}`,
+    label: `${c.name} · ${RULE_SCENE_LABELS[a]}`,
   })))
-  const chips = value.flatMap((t) => t.audiences.map((a) => ({
+  const chips = value.flatMap((t) => audiencesToScenes(t.audiences).map((a) => ({
     id: `${t.channelId}|${a}`,
-    label: `${nameOf(t.channelId)} · ${AUDIENCE_LABEL[a]}`,
+    label: `${nameOf(t.channelId)} · ${RULE_SCENE_LABELS[a]}`,
   })))
   const filtered = query
     ? options.filter((o) => o.label.toLowerCase().includes(query.toLowerCase()))
     : options
 
   const toggle = (id: string) => {
-    const [channelId, audience] = id.split("|") as [string, "main" | "others"]
-    const targets = value.map((t) => ({ channelId: t.channelId, audiences: [...t.audiences] }))
+    const [channelId, audience] = id.split("|") as [string, RuleScene]
+    // 先展开成场景再增删（老的 others 变成 dm + group），保存时再由 normalizeRuleScope 归并回 others
+    const targets: RuleTarget[] = value.map((t) => ({ channelId: t.channelId, audiences: audiencesToScenes(t.audiences) }))
     const hit = targets.find((t) => t.channelId === channelId)
     if (!hit) targets.push({ channelId, audiences: [audience] })
     else if (hit.audiences.includes(audience)) {

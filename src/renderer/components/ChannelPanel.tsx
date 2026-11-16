@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import {
   Plus, Loader2, CheckCircle2, ShieldAlert, Eye, EyeOff, Trash2,
-  LogIn, MessageSquare, Bird, FolderOpen, ExternalLink, MonitorSmartphone,
+  LogIn, MessageSquare, Bird, FolderOpen, ExternalLink, MonitorSmartphone, X,
 } from "lucide-react"
-import { CHANNEL_TYPE_LABELS, type ChannelType } from "../../shared/channel-types"
+import { CHANNEL_TYPE_LABELS, type ChannelType, type GroupPolicy, type VisitorTier } from "../../shared/channel-types"
+import { GROUP_POLICIES, GROUP_POLICY_LABELS, accessDefaultsFor, anyOthersEnabled, hasOthersScenes } from "../../shared/channel-access"
+import { ruleScopeAppliesTo, type RuleScope } from "../../shared/rule-scope"
 import { holdBackModelEdits, type ChannelModelImpact } from "../../shared/channel-model-impact"
 import { saveChannelWithImpact, type ImpactChoice } from "../../shared/channel-save-flow"
 import { emptyChannel } from "../channel-defaults"
@@ -15,6 +17,7 @@ import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANE
 import { useScrollActiveIntoView } from "./panel-scroll"
 import { useOpenFirstOnce } from "./panel-default"
 import PanelAddMenu from "./PanelAddMenu"
+import ChipMultiSelect, { type ChipOption } from "./ChipMultiSelect"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 
@@ -44,7 +47,8 @@ export default function ChannelPanel() {
     // 旧迁移通道可能缺少通道级字段，展示时兜底
     setChannels((cfg.channels ?? []).map((c) => ({
       ...c,
-      allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
+      // 其他人准入相关字段：旧配置里没有的按旧总开关推出来，和主进程读到的一致（微信 / 应用内一律全关）
+      ...accessDefaultsFor(c, cfg.allowOthers),
       digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     })))
     setResources(cfg.agentResources ?? [])
@@ -67,7 +71,9 @@ export default function ChannelPanel() {
     return () => unsub()
   }, [])
 
-  const persistChannels = async (next: ChannelConfig[]) => {
+  const persistChannels = async (list: ChannelConfig[]) => {
+    // allowOthers 是派生值（私聊或群聊任一开着）：随新字段一起存，降级回旧版本时大致可用
+    const next = list.map((c) => ({ ...c, allowOthers: anyOthersEnabled(c) }))
     setChannels(next)
     await window.electronAPI.saveConfig({ channels: next })
   }
@@ -129,7 +135,7 @@ export default function ChannelPanel() {
   }
 
   const handleSave = async (next: ChannelConfig) => {
-    if (next.allowOthers) {
+    if (anyOthersEnabled(next)) {
       const effOthers = next.othersAgentResourceId?.trim() || next.agentResourceId
       if (effOthers !== next.agentResourceId && !next.othersModel?.trim()) {
         void showAlert("提示", "其他人资源与主用户不同，请先为其他人选择模型（不可跟随）")
@@ -336,11 +342,39 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   const [wechatQrMsg, setWechatQrMsg] = useState("")
   const wechatQrBusy = useRef(false)
 
-  const [activeTab, setActiveTab] = useState<"main" | "others">("main")
+  const [tabState, setActiveTab] = useState<"main" | "others">("main")
+  // 只有飞书有「其他人」（私聊 / 群聊）：微信（ClawBot）只能自己用，应用内对话是本机，都没有「其他用户」这一页
+  const hasOthers = hasOthersScenes(draft.type)
+  const activeTab = hasOthers ? tabState : "main"
+  const othersOpen = hasOthers && anyOthersEnabled(draft)
   const othersResourceId = draft.othersAgentResourceId?.trim() || draft.agentResourceId
   /** 其他人模型"跟随"仅同源时成立 */
   const sameResource = othersResourceId === draft.agentResourceId
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
+
+  // 其他人的能力档位：访客（默认）只能对话 / 联网 / 点选提问；同我 = 和主人一样
+  const visitorTier = draft.visitorTier ?? "visitor"
+  const [visitorChoices, setVisitorChoices] = useState<{ mcp: ChipOption[]; skills: ChipOption[] } | null>(null)
+  useEffect(() => {
+    if (!othersOpen || visitorTier !== "visitor" || visitorChoices) return
+    let cancelled = false
+    void Promise.all([
+      window.electronAPI.getMcpServers().catch(() => []),
+      window.electronAPI.getSkillOptions().catch(() => []),
+      window.electronAPI.getSkillRoots().catch(() => []),
+    ]).then(([mcpList, skillList, roots]) => {
+      if (cancelled) return
+      const rootLabel = (dir: string) => {
+        const norm = (p: string) => p.replace(/[\\/]+$/, "").toLowerCase()
+        return roots.find((r) => norm(r.path) === norm(dir))?.label ?? dir
+      }
+      setVisitorChoices({
+        mcp: mcpList.map((s) => ({ id: s.name, label: s.name, hint: s.enabled === false ? "已停用（开放后也不会生效，先在 MCP 页启用）" : (s.url ?? s.command) })),
+        skills: skillList.map((s) => ({ id: s.name, label: s.name, group: rootLabel(s.rootDir), hint: s.description })),
+      })
+    })
+    return () => { cancelled = true }
+  }, [othersOpen, visitorTier, visitorChoices])
 
   // 飞书一键创建应用
   useEffect(() => {
@@ -450,7 +484,10 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
   }
 
   const handleUnbind = async () => {
-    if (!await showConfirm("解绑确认", "确定解除该通道的主用户绑定吗？解绑后该通道私聊将按\"其他人\"模式处理。")) return
+    const afterUnbind = draft.type === "feishu"
+      ? "解绑后你的私聊将按\"其他人私聊\"处理（受「其他用户」页的开关约束）。"
+      : "解绑后这个通道不会再响应任何消息（微信只能自己使用）。"
+    if (!await showConfirm("解绑确认", `确定解除该通道的主用户绑定吗？${afterUnbind}`)) return
     // 真解绑走主进程（清开关+推 daemon），只清草稿 chatId 等于没解（门只看开关）
     await window.electronAPI.unbindChannel(channel.id)
     const next = { ...draft, mainUserEnabled: false, mainUserChatId: "" }
@@ -606,6 +643,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                   )}
                 </div>
               )}
+              <p className="text-xs leading-relaxed text-fg-faint">微信（ClawBot）只能自己使用：没有群聊，也不会回复别人的消息。</p>
             </section>
           ) : (
             <section className={sectionCls}>
@@ -617,8 +655,8 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             </section>
           )}
 
-          {/* ── 人群 Tab：主用户 | 其他用户（同草稿，切换不丢未保存；应用内对话只有主用户） ── */}
-          {draft.type !== "app" && (
+          {/* ── 人群 Tab：主用户 | 其他用户（同草稿，切换不丢未保存；只有飞书有「其他用户」） ── */}
+          {hasOthers && (
           <div className="mt-5 flex gap-1 border-b border-line-subtle">
             {(["main", "others"] as const).map((t) => (
               <button
@@ -641,7 +679,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
 
           {/* ── 主用户：绑定与工作目录（依赖前置） ── */}
           {activeTab === "main" && draft.type !== "app" && (
-          <section className={sectionFirstCls}>
+          <section className={hasOthers ? sectionFirstCls : sectionCls}>
             <h4 className="text-xs font-medium text-fg-3">绑定主用户</h4>
             <div className="flex items-center gap-3 rounded-lg border border-line px-3 py-2.5">
                   {binding
@@ -748,23 +786,112 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
           </section>
           )}
 
-          {/* ── 其他用户：总开关前置 ── */}
+          {/* ── 其他用户：谁能找到机器人（私聊 / 群聊分开管） ── */}
           {activeTab === "others" && (
           <section className={sectionFirstCls}>
+            <h4 className="text-xs font-medium text-fg-3">谁能使用</h4>
             <div className="flex items-center justify-between">
-              <h4 className="text-xs font-medium text-fg-3">允许其他人使用</h4>
-              <button onClick={() => set({ allowOthers: !draft.allowOthers })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${draft.allowOthers ? "bg-blue-600" : "bg-stronger"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${draft.allowOthers ? "left-[18px]" : "left-0.5"}`} />
+              <div>
+                <p className="text-xs text-fg-2">其他人私聊</p>
+                <p className="text-[11px] text-fg-faint">别人私聊机器人，机器人会回复</p>
+              </div>
+              <button onClick={() => set({ othersDm: !(draft.othersDm ?? false) })}
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.othersDm ?? false) ? "bg-blue-600" : "bg-stronger"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.othersDm ?? false) ? "left-[18px]" : "left-0.5"}`} />
               </button>
             </div>
-            {!draft.allowOthers && (
-              <p className="text-xs text-fg-faint">开启后可配置其他人的资源、模型与会话。</p>
+            <div className="flex items-center justify-between border-t border-line-subtle pt-3">
+              <div>
+                <p className="text-xs text-fg-2">群聊</p>
+                <p className="text-[11px] text-fg-faint">在群里 @ 机器人才会回复</p>
+              </div>
+              <select
+                value={draft.groupPolicy ?? "off"}
+                onChange={(e) => set({ groupPolicy: e.target.value as GroupPolicy })}
+                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+              >
+                {GROUP_POLICIES.map((p) => <option key={p} value={p}>{GROUP_POLICY_LABELS[p]}</option>)}
+              </select>
+            </div>
+            {(draft.groupPolicy ?? "off") === "allowlist" && (
+              <div className="space-y-1.5 rounded-lg border border-line-subtle p-2.5">
+                {(draft.allowedGroups ?? []).length === 0
+                  ? <p className="text-xs text-fg-faint">还没有开通任何群。</p>
+                  : (draft.allowedGroups ?? []).map((g) => (
+                    <div key={g.chatId} className="flex items-center gap-2 text-xs text-fg-2">
+                      <span className="min-w-0 flex-1 truncate" title={g.chatId}>{g.name?.trim() || g.chatId}</span>
+                      <button type="button" title="移除这个群"
+                        onClick={() => set({ allowedGroups: (draft.allowedGroups ?? []).filter((x) => x.chatId !== g.chatId) })}
+                        className="shrink-0 rounded text-fg-muted hover:text-danger"><X size={13} /></button>
+                    </div>
+                  ))}
+                <p className="text-[11px] leading-relaxed text-fg-faint">
+                  在要开通的群里发 <span className="font-mono">/group allow</span>（只有你本人发才有效）；关闭用 <span className="font-mono">/group deny</span>。
+                </p>
+              </div>
+            )}
+            {!othersOpen && (
+              <p className="text-xs text-fg-faint">私聊和群聊都没开放：别人找不到机器人（私聊会收到一句「暂未开放」，群里不会有反应）。开放后可配置其他人的资源、模型与会话。</p>
             )}
           </section>
           )}
 
-          {activeTab === "others" && draft.allowOthers && (
+          {/* ── 其他人能做什么：访客（默认）/ 同我；访客可以点名多开放几样 ── */}
+          {activeTab === "others" && othersOpen && (
+          <section className={sectionCls}>
+            <div className="flex items-center justify-between gap-3">
+              <h4 className="text-xs font-medium text-fg-3">其他人能做什么</h4>
+              <select
+                value={visitorTier}
+                onChange={(e) => set({ visitorTier: e.target.value as VisitorTier })}
+                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+              >
+                <option value="visitor">访客</option>
+                <option value="full">同我</option>
+              </select>
+            </div>
+            {visitorTier === "visitor" ? (
+              <>
+                <p className="text-xs leading-relaxed text-fg-faint">
+                  只能对话、联网搜索、读网页、给对方点选项。读写本机文件、执行命令、发送本机文件都不行，也用不了你装的 MCP 和 Skill——除非在下面点名开放。
+                </p>
+                <div className="space-y-1">
+                  <p className="text-xs text-fg-3">额外开放的 MCP</p>
+                  <ChipMultiSelect
+                    options={visitorChoices?.mcp ?? []}
+                    value={draft.visitorMcp ?? []}
+                    onChange={(ids) => set({ visitorMcp: ids })}
+                    placeholder={visitorChoices ? "不开放（点击选择）" : "加载中…"}
+                    searchPlaceholder="搜索 MCP..."
+                    emptyText="还没有 MCP，先去「MCP」页添加。"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-fg-3">额外开放的 Skill</p>
+                  <ChipMultiSelect
+                    options={visitorChoices?.skills ?? []}
+                    value={draft.visitorSkills ?? []}
+                    onChange={(ids) => set({ visitorSkills: ids })}
+                    placeholder={visitorChoices ? "不开放（点击选择）" : "加载中…"}
+                    searchPlaceholder="搜索 Skill 名称或说明..."
+                    emptyText="本机没有可开放的 Skill。"
+                  />
+                  {(draft.visitorSkills ?? []).length > 0 && (
+                    <p className="text-xs leading-relaxed text-yellow-500">
+                      开放 Skill 需要让 AI 读取它的说明文件，所以访客也能读取本机文件；需要执行脚本的 Skill 在访客档仍然用不了。
+                    </p>
+                  )}
+                </div>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-yellow-500">
+                和你一样：能读写本机文件、执行命令，用你装的全部 MCP 和 Skill。只给完全信任的人开放。
+              </p>
+            )}
+          </section>
+          )}
+
+          {activeTab === "others" && othersOpen && (
           <section className={sectionCls}>
             <h4 className="text-xs font-medium text-fg-3">Agent 资源与模型</h4>
             <ModelPicker
@@ -792,7 +919,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
           </section>
           )}
 
-          {activeTab === "others" && draft.allowOthers && (
+          {activeTab === "others" && othersOpen && (
           <section className={sectionCls}>
             <div className="flex items-center justify-between">
               <p className="text-xs text-fg-3">保留会话</p>
@@ -849,7 +976,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
 
           {activeTab === "main" && <ChannelRulesView channelId={draft.id} audience="main" title="适用规则" />}
 
-          {activeTab === "others" && draft.allowOthers && <ChannelRulesView channelId={draft.id} audience="others" title="适用规则" />}
+          {activeTab === "others" && othersOpen && <ChannelRulesView channelId={draft.id} audience="others" title="适用规则" />}
         </div>
     </div>
   )
@@ -857,28 +984,29 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
 
 // ── 通道适用规则（只读）：mode 主用户默认全量；custom 按本通道×人群匹配───
 
-function ruleAppliesLocal(
-  scope: { mode?: string; targets?: { channelId: string; audiences?: string[] }[] } | undefined,
-  channelId: string,
-  audience: "main" | "others",
-): boolean {
-  if (!scope || scope.mode !== "custom") return audience === "main"
-  return (scope.targets ?? []).some((t) => t.channelId === channelId && (t.audiences ?? []).includes(audience))
-}
-
 function ChannelRulesView({ channelId, audience, title }: { channelId: string; audience: "main" | "others"; title: string }) {
-  const [rules, setRules] = useState<{ id: string; enabled: boolean; content: string; scope?: { mode?: string; targets?: { channelId: string; audiences?: string[] }[] } }[]>([])
+  const [rules, setRules] = useState<{ id: string; enabled: boolean; content: string; scope?: RuleScope }[]>([])
   useEffect(() => {
     void window.electronAPI.getHarnessRules().then((rs) => setRules(rs ?? []))
   }, [channelId])
-  const list = rules.filter((r) => r.enabled && ruleAppliesLocal(r.scope, channelId, audience))
+  // 其他人页：私聊 / 群聊分别判断，只对其中一个生效的规则标出来
+  const list = rules.flatMap((r) => {
+    if (!r.enabled) return []
+    if (audience === "main") return ruleScopeAppliesTo(r.scope, channelId, "main") ? [{ ...r, tag: "" }] : []
+    const dm = ruleScopeAppliesTo(r.scope, channelId, "others", "dm")
+    const group = ruleScopeAppliesTo(r.scope, channelId, "others", "group")
+    if (!dm && !group) return []
+    return [{ ...r, tag: dm && group ? "" : dm ? "仅私聊" : "仅群聊" }]
+  })
   return (
     <section className={sectionCls}>
       <h4 className="text-xs font-medium text-fg-3">{title}（{list.length}）</h4>
       {list.length === 0
         ? <p className="text-xs text-fg-faint">无</p>
         : <div className="flex flex-wrap gap-1.5">{list.map((r) => (
-          <span key={r.id} title={r.content || r.id} className="max-w-full cursor-default truncate rounded-md bg-raised/70 px-2 py-1 text-xs text-fg-2">{r.id}</span>
+          <span key={r.id} title={r.content || r.id} className="max-w-full cursor-default truncate rounded-md bg-raised/70 px-2 py-1 text-xs text-fg-2">
+            {r.id}{r.tag && <span className="ml-1 text-fg-faint">· {r.tag}</span>}
+          </span>
         ))}</div>}
     </section>
   )

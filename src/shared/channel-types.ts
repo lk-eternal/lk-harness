@@ -22,6 +22,27 @@ export interface AgentResource {
 /** 会话人群：主用户私聊（+ task/project/temp 系统会话归主） vs 其他人/群聊 */
 export type ChannelAudience = "main" | "others";
 
+/**
+ * 会话场景：人群里「其他人」再细分成私聊和群聊。
+ * main = 我（主用户私聊、定时任务、项目会话、项目专属群）；dm = 其他人私聊；group = 群聊。
+ * 哪些场景存在由通道类型决定（见 channel-access.ts 的 channelScenes）：飞书三个都有，微信和应用内只有 main。
+ */
+export type ChannelScene = "main" | "dm" | "group";
+
+/** 群聊准入：off 不允许 / allowlist 仅主用户开通过的群 / all 所有群 */
+export type GroupPolicy = "off" | "allowlist" | "all";
+
+/** 其他人（私聊 + 群聊）的能力档位：visitor 访客（只能对话，工具受限）/ full 和主用户一样 */
+export type VisitorTier = "visitor" | "full";
+
+/** 主用户开通过的群（原始 chat_id，不含通道前缀） */
+export interface AllowedGroup {
+  chatId: string;
+  /** 开通时记下的群名，仅展示用 */
+  name?: string;
+  addedAt?: number;
+}
+
 /** 通道类型：飞书 / 微信 / 应用内对话（不经外部服务，永远是主用户私聊） */
 export type ChannelType = "feishu" | "wechat" | "app";
 
@@ -62,7 +83,23 @@ export interface MessageChannel {
   mainUserChatId: string;         // 原始 chatId（不含通道前缀）
   mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
   // 其他人使用（通道级）
+  /**
+   * 旧的总开关，现在只是 `othersDm || groupPolicy !== "off"` 的派生值（保存时同步，降级回旧版本仍大致可用）。
+   * 新代码读 othersDm / groupPolicy（resolveChannelAccess），不要直接读它。
+   */
   allowOthers: boolean;
+  /** 其他人私聊（仅飞书有效）。缺省：按旧 allowOthers 推 */
+  othersDm?: boolean;
+  /** 群聊准入（仅飞书有效）。缺省：旧 allowOthers=true 为 all，否则 off */
+  groupPolicy?: GroupPolicy;
+  /** 已开通的群（groupPolicy = allowlist 时生效；在群里 @机器人 发 /group allow 写入） */
+  allowedGroups?: AllowedGroup[];
+  /** 其他人的能力档位。缺省：旧 allowOthers=true 的存量通道为 full（行为不变），其余为 visitor */
+  visitorTier?: VisitorTier;
+  /** 访客档额外开放的用户 MCP 服务器名（默认一个都不开） */
+  visitorMcp?: string[];
+  /** 访客档额外开放的 Skill 名（默认一个都不开；开放任何 Skill 会同时开放读文件工具） */
+  visitorSkills?: string[];
   /** 对外身份规则，注入到其他人会话的临时工作目录 */
   digitalIdentity: string;
   // 工作目录（主用户私聊时使用；空 = 回退全局兜底）
@@ -110,6 +147,13 @@ export interface DaemonChannelConfig {
   mainUserEnabled: boolean;
   mainUserChatId: string;
   mainUserOpenId?: string;       // 绑定时刻记录的发送人 id（群/私聊同值，直比）
+  /** 入口准入（Daemon 在消息入队前判断；见 channel-access.ts）。缺省按旧 allowOthers 推 */
+  othersDm?: boolean;
+  groupPolicy?: GroupPolicy;
+  /** 已开通的群（原始 chat_id） */
+  allowedGroups?: string[];
+  /** 旧总开关，仅在上面两项都缺省时回退 */
+  allowOthers?: boolean;
   /** 通道默认 Agent 资源 id（主用户；Daemon 写 session override 时用） */
   agentResourceId?: string;
   /** 通道级工作目录，空 = 跟随全局 WORKSPACE_DIR */
@@ -247,6 +291,17 @@ export function resolveChannelAudience(opts: {
   if (raw !== bound) return "others";
   if (opts.chatType !== undefined && opts.chatType !== "p2p") return "others";
   return "main";
+}
+
+/**
+ * 解析会话场景：先按 resolveChannelAudience 判人群，归主就是 main；其余再按聊天类型分私聊 / 群聊。
+ * 聊天类型未知（只有会话键、拿不到 chat_type）时返回 undefined，调用方按「其他人（私聊或群聊都可能）」处理。
+ */
+export function resolveChannelScene(opts: Parameters<typeof resolveChannelAudience>[0]): ChannelScene | undefined {
+  if (resolveChannelAudience(opts) === "main") return "main";
+  if (opts.chatType === "group") return "group";
+  if (opts.chatType === "p2p") return "dm";
+  return undefined;
 }
 
 /** 按人群解析 Agent 资源 id；其他人空值=跟随主用户 */

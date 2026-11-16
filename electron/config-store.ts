@@ -5,6 +5,7 @@ import * as path from "node:path"
 import * as os from "node:os"
 import type { AgentResource, MessageChannel } from "../src/shared/channel-types"
 import { APP_CHANNEL_CHAT_ID, channelIdFromSessionKey } from "../src/shared/channel-types"
+import { accessDefaultsFor } from "../src/shared/channel-access"
 import { getSessionRecord } from "../src/shared/session-overrides-store.js"
 import { preserveChannelBindings } from "../src/shared/channel-binding.js"
 import { resolveChannelDefaultModel, type ModelScenario } from "../src/shared/launch-model.js"
@@ -485,7 +486,8 @@ function withChannelDefaults(c: MessageChannel, cfg: Pick<AppConfig, "allowOther
     ...c,
     // 应用内对话没有外部身份：通道本身就是主用户私聊，绑定恒成立
     ...(c.type === "app" ? { mainUserEnabled: true, mainUserChatId: APP_CHANNEL_CHAT_ID } : {}),
-    allowOthers: c.allowOthers ?? cfg.allowOthers ?? false,
+    // 其他人准入：新字段优先，缺省时按旧 allowOthers 推（升级后行为不变）；微信、应用内一律关
+    ...accessDefaultsFor(c, cfg.allowOthers),
     digitalIdentity: c.digitalIdentity ?? cfg.digitalIdentity ?? "",
     othersAgentResourceId: c.othersAgentResourceId ?? "",
     keepSessionMain: c.keepSessionMain ?? c.keepSession ?? true,

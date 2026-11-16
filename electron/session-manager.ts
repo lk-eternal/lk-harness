@@ -1,5 +1,6 @@
 import { app } from "electron"
-import { normalizeSessionKey, type MessageChannel } from "../src/shared/channel-types"
+import { normalizeSessionKey, type AllowedGroup, type MessageChannel } from "../src/shared/channel-types"
+import { anyOthersEnabled, normalizeGroupPolicy } from "../src/shared/channel-access"
 import {
   CHANNEL_MODEL_FIELDS,
   bucketOthers,
@@ -273,14 +274,17 @@ export async function runSessionCleanup(opts: {
 // 保存时先让用户看到这些，再由用户决定要不要停掉运行中的、要不要把单独改过的清掉。
 // 只动其他人的会话；主用户自己的会话、项目 / 任务 / 临时会话不在 collect 出的「可管理的其他人会话」里，碰不到。
 
-/** 界面传来的未保存的草稿里，只认会影响其他人默认模型的字段和 allowOthers，其余一律忽略 */
+/** 界面传来的未保存的草稿里，只认会影响其他人默认模型的字段和其他人准入（私聊 / 群聊），其余一律忽略 */
 function applyModelDraft(saved: MessageChannel, draft: unknown): MessageChannel {
   const d = (draft && typeof draft === "object" ? draft : {}) as Record<string, unknown>
   const next: MessageChannel = { ...saved }
   for (const f of CHANNEL_MODEL_FIELDS) {
     if (f in d) next[f] = typeof d[f] === "string" ? (d[f] as string) : ""
   }
-  if (typeof d.allowOthers === "boolean") next.allowOthers = d.allowOthers
+  if (typeof d.othersDm === "boolean") next.othersDm = d.othersDm
+  const policy = normalizeGroupPolicy(d.groupPolicy)
+  if (policy) next.groupPolicy = policy
+  if (Array.isArray(d.allowedGroups)) next.allowedGroups = d.allowedGroups as AllowedGroup[]
   return next
 }
 
@@ -300,8 +304,8 @@ export async function previewChannelModelImpact(channelId: string, draft: unknow
     const oldDefault = describeDefault(saved)
     const newDefault = describeDefault(after)
     const base = { oldDefault, newDefault, providerChanged: oldDefault.resourceId !== newDefault.resourceId }
-    // 保存后不允许其他人使用：别人的会话拉不起来，默认怎么变都不影响谁，不用问
-    if (!after.allowOthers || !othersDefaultChanged(saved, after)) {
+    // 保存后不对任何其他人开放（私聊、群聊都关）：别人的会话拉不起来，默认怎么变都不影响谁，不用问
+    if (!anyOthersEnabled(after) || !othersDefaultChanged(saved, after)) {
       return { ok: true, impact: { ...base, changed: false, total: 0, following: NO_BUCKET, modelPinned: NO_BUCKET, providerPinned: NO_BUCKET } }
     }
     const { sessions } = await collect()

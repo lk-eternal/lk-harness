@@ -48,6 +48,7 @@ export const cursorSdkEngine: AgentEngine = {
       newSession: p.newSession,
       pendingMessageIds: p.pendingMessageIds,
       includeAdmin: p.includeAdmin,
+      visitor: p.visitor,
     })
   },
 

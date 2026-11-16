@@ -8,7 +8,7 @@ import { getBuiltinMcpManifest } from "../src/shared/builtin-mcp-manifest.js"
 
 type Register = (s: McpServer, opts?: unknown) => void
 
-function namesOf(register: Register, opts?: { taskResult?: boolean }): string[] {
+function namesOf(register: Register, opts?: { taskResult?: boolean; visitor?: boolean }): string[] {
   const s = new McpServer({ name: "t", version: "0" })
   register(s, opts)
   return Object.keys((s as any)._registeredTools ?? {}).sort()
@@ -29,6 +29,12 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
     expect(namesOf(registerAgentOutboundTools as Register, { taskResult: false })).toEqual(
       ["render_branch_diff", "send_file", "send_image", "send_question"],
     )
+  })
+
+  it("visitor 端点（其他人的受限会话）：只有 send_question，没有任何能读写本机路径的工具", () => {
+    const names = namesOf(registerAgentOutboundTools as Register, { visitor: true })
+    expect(names).toEqual(["send_question"])
+    for (const n of ["send_image", "send_file", "render_branch_diff", "send_result"]) expect(names).not.toContain(n)
   })
 
   it("task 端点：interactive 全集＋send_result，且不再有 send_text", () => {

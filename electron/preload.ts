@@ -418,6 +418,7 @@ const api = {
   saveClawRule: (id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }> => ipcRenderer.invoke("claw-rules:save", id, name, content, enabled),
   deleteClawRule: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("claw-rules:delete", id),
   getSkillRoots: (): Promise<{ id: string; label: string; path: string; skillCount: number }[]> => ipcRenderer.invoke("skills:roots"),
+  getSkillOptions: (): Promise<{ name: string; description: string; rootDir: string }[]> => ipcRenderer.invoke("skills:options"),
   getSkills: (rootId: string): Promise<{ rootId: string; skillPath: string; name: string; content: string }[]> => ipcRenderer.invoke("skills:list", rootId),
   getSkillTree: (rootId: string): Promise<SkillTreeNode[]> => ipcRenderer.invoke("skills:tree", rootId),
   readSkillFile: (rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; content?: string; error?: string }> => ipcRenderer.invoke("skills:read-file", rootId, skillPath, relativePath),

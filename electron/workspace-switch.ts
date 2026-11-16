@@ -13,6 +13,7 @@ function channelReady(c: MessageChannel): boolean {
 }
 import { readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { CHANNEL_TYPE_LABELS, resolveChannelSessionFlags } from "../src/shared/channel-types.js"
+import { resolveChannelAccess } from "../src/shared/channel-access.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
 import { cleanupChannelWorkspaces, clearInjectionCache } from "./workspace-injector"
 import { broadcastLog } from "./ui-logger"
@@ -34,8 +35,12 @@ function channelRuntimePayload(channels: MessageChannel[]) {
   return channels.filter(channelReady).map((c) => {
     const main = resolveChannelSessionFlags(c, "main")
     const others = resolveChannelSessionFlags(c, "others")
+    const access = resolveChannelAccess(c)
     return {
       id: c.id,
+      othersDm: access.dm,
+      groupPolicy: access.groupPolicy,
+      allowedGroups: access.groups,
       keepAlive: main.keepSession && main.persistentPoll,
       showThinking: main.showThinking,
       streamKeepPerKind: main.streamKeepPerKind,
@@ -111,10 +116,14 @@ export function buildDaemonChannelConfig(c: MessageChannel): DaemonChannelConfig
   if (!channelReady(c)) return null
   const main = resolveChannelSessionFlags(c, "main")
   const others = resolveChannelSessionFlags(c, "others")
+  const access = resolveChannelAccess(c)
   return {
     id: c.id,
     name: c.name || CHANNEL_TYPE_LABELS[c.type],
     type: c.type,
+    othersDm: access.dm,
+    groupPolicy: access.groupPolicy,
+    allowedGroups: access.groups,
     appId: c.larkAppId?.trim(),
     appSecret: c.larkAppSecret?.trim(),
     wechatToken: c.wechatToken?.trim(),

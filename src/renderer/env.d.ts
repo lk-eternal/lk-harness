@@ -1,4 +1,5 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
+import type { RuleScope as RuleScopeType } from "../shared/rule-scope"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
 import type { SessionScheduleItem as SessionScheduleItemType } from "../shared/session-schedule"
 import type {
@@ -369,13 +370,14 @@ declare global {
     getMcpStatusMap(force?: boolean): Promise<Record<string, string>>
     getMcpTools(name: string, force?: boolean): Promise<{ ok: boolean; tools: { name: string; description?: string; params?: { name: string; type?: string; description?: string; required?: boolean }[] }[]; error?: string }>
     getBuiltinMcpManifest(): Promise<{ key: string; title: string; scope: string; tools: { name: string; description: string }[] }[]>
-    getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } }[]>
-    saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean, scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] }): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean; scope?: { mode: "main" | "custom"; targets?: { channelId: string; audiences: ("main" | "others")[] }[] } } }>
+    getHarnessRules(): Promise<{ id: string; name: string; content: string; enabled: boolean; scope?: RuleScopeType }[]>
+    saveHarnessRule(id: string | null, name: string, content: string, enabled?: boolean, scope?: RuleScopeType): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean; scope?: RuleScopeType } }>
     deleteHarnessRule(id: string): Promise<{ ok: boolean }>
     getClawRules(): Promise<{ id: string; name: string; content: string; enabled: boolean }[]>
     saveClawRule(id: string | null, name: string, content: string, enabled?: boolean): Promise<{ ok: boolean; rule?: { id: string; name: string; content: string; enabled: boolean } }>
     deleteClawRule(id: string): Promise<{ ok: boolean }>
     getSkillRoots(): Promise<{ id: string; label: string; path: string; skillCount: number }[]>
+    getSkillOptions(): Promise<{ name: string; description: string; rootDir: string }[]>
     getSkills(rootId: string): Promise<{ rootId: string; skillPath: string; name: string; content: string }[]>
     getSkillTree(rootId: string): Promise<SkillTreeNode[]>
     readSkillFile(rootId: string, skillPath: string, relativePath: string): Promise<{ ok: boolean; content?: string; error?: string }>

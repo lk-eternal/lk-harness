@@ -59,6 +59,7 @@ import {
   type DaemonChannelConfig,
   type ChannelStatusInfo,
 } from "./shared/channel-types.js";
+import { admitChat, denyReasonText, shouldSendDenyNotice, type AdmitResult } from "./shared/channel-access.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
 import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
@@ -223,6 +224,10 @@ interface ChannelRuntimeFlags {
   mainUserOpenId?: string;
   workspaceDir?: string;
   favoriteWorkspaces?: string[];
+  /** 入口准入（热更新：设置页改了、/group allow 之后立刻生效） */
+  othersDm?: boolean;
+  groupPolicy?: "off" | "allowlist" | "all";
+  allowedGroups?: string[];
 }
 
 const channelRuntimeFlags = new Map<string, ChannelRuntimeFlags>(
@@ -258,7 +263,7 @@ function daemonFlagsForSession(sessionKey: string, cfg?: DaemonChannelConfig) {
   return resolveDaemonSessionFlags(merged, audience);
 }
 
-function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
+export function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
   for (const f of flags) {
     const prev = channelRuntimeFlags.get(f.id) ?? { id: f.id };
     channelRuntimeFlags.set(f.id, { ...prev, ...f });
@@ -288,6 +293,9 @@ function updateChannelFlags(flags: ChannelRuntimeFlags[]): void {
     if (typeof f.mainUserOpenId === "string" && f.mainUserOpenId.trim()) rt.cfg.mainUserOpenId = f.mainUserOpenId.trim();
     if (typeof f.workspaceDir === "string") rt.cfg.workspaceDir = f.workspaceDir;
     if (Array.isArray(f.favoriteWorkspaces)) rt.cfg.favoriteWorkspaces = f.favoriteWorkspaces;
+    if (typeof f.othersDm === "boolean") rt.cfg.othersDm = f.othersDm;
+    if (f.groupPolicy === "off" || f.groupPolicy === "allowlist" || f.groupPolicy === "all") rt.cfg.groupPolicy = f.groupPolicy;
+    if (Array.isArray(f.allowedGroups)) rt.cfg.allowedGroups = f.allowedGroups.filter((g): g is string => typeof g === "string");
   }
 }
 
@@ -541,7 +549,7 @@ function saveWechatState(rt: ChannelRuntime): void {
   } catch { /* ignore */ }
 }
 
-function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
+export function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
   const channelId = rt.cfg.id;
   return new WeChatManager({
     dataDir: wechatDataDir(channelId),
@@ -559,6 +567,12 @@ function initWeChatChannel(rt: ChannelRuntime): WeChatManager {
       }
       if (firstMessage) {
         log("INFO", `[WeChat:${rt.cfg.name}] 首条消息已收到，context_token 已绑定（chatId=${msg.chatId}），不入队`);
+        return;
+      }
+      // 微信（ClawBot）只能自己用：不是主用户的消息一律丢掉，不入队
+      const admission = inboundAccessGate(rt, msg.chatType, msg.chatId);
+      if (!admission.ok) {
+        handleInboundDenied(rt, admission.reason, msg.chatType, msg.chatId, { senderOpenId: msg.senderOpenId });
         return;
       }
       rememberChatType(chatKey, msg.chatType);
@@ -726,6 +740,75 @@ function isMainUserSender(chatKey: string | undefined, senderOpenId: string | un
   const bound = rt?.cfg.mainUserOpenId?.trim();
   if (!rt?.cfg.mainUserEnabled || !bound) return false;
   return senderOpenId === bound;
+}
+
+// ── 入口准入：别人能不能找到机器人 ───────────────────────────
+// 被拒的消息在这里就丢掉：不入队、不起 Agent、不占会话。主用户、定时任务、项目会话不经这里（走不到「其他人」场景）。
+
+/**
+ * 一条入站消息属于哪个场景、放不放行。
+ * p2p：主用户绑定的私聊 = 我（放行），其余私聊 = 其他人私聊；非 p2p 一律按群聊（含话题群）；
+ * 项目专属群算「我」的（ownedGroup）。纯函数，便于测试。
+ */
+export function admitInboundMessage(
+  cfg: DaemonChannelConfig,
+  chatType: string | undefined,
+  rawChatId: string,
+  ownedGroup: boolean,
+): AdmitResult {
+  if (chatType === "p2p") {
+    const main = !!cfg.mainUserEnabled && !!cfg.mainUserChatId?.trim() && cfg.mainUserChatId.trim() === rawChatId;
+    return admitChat(cfg, main ? "main" : "dm", rawChatId);
+  }
+  return admitChat(cfg, "group", rawChatId, { ownedGroup });
+}
+
+/** /group 指令（开通 / 关闭 / 列出群）：主用户在还没开通的群里发它是唯一的开通入口，所以要放过准入 */
+export function isGroupAdminCommand(text: string): boolean {
+  return /^\/group(\s|$)/i.test(text.trim());
+}
+
+/** 「未开放」固定回复的发送记录：同一个人 24 小时内只回一次，别人不会被刷屏 */
+const denyNoticeSent = new Map<string, number>();
+/** 拒绝日志限频：同一个聊天同一个原因 10 分钟只记一次，被群里反复 @ 也不刷日志 */
+const denyLogSent = new Map<string, number>();
+const DENY_LOG_WINDOW_MS = 10 * 60 * 1000;
+const DENY_DM_NOTICE = "🔒 这个机器人暂时没有向你开放。如需使用，请联系管理员。";
+
+function inboundAccessGate(
+  rt: ChannelRuntime,
+  chatType: string | undefined,
+  rawChatId: string,
+): AdmitResult {
+  const ownedGroup = chatType !== "p2p" && !!findProjectByGroupChat(makeChatKey(rt.cfg.id, rawChatId));
+  return admitInboundMessage(rt.cfg, chatType, rawChatId, ownedGroup);
+}
+
+/**
+ * 被准入拒掉的消息的善后：
+ * - 其他人私聊（飞书）：回一句固定的话，24 小时一次，对方才知道不是机器人坏了；机器人发的消息不回（防两个机器人对话循环）；
+ * - 群聊、微信：静默，只记日志。群里 @ 机器人却没反应也不会刷屏。
+ */
+function handleInboundDenied(
+  rt: ChannelRuntime,
+  reason: Extract<AdmitResult, { ok: false }>["reason"],
+  chatType: string | undefined,
+  rawChatId: string,
+  opts: { senderOpenId?: string; senderType?: string },
+): void {
+  const now = Date.now();
+  const logKey = `${rt.cfg.id}|${rawChatId}|${reason}`;
+  if (shouldSendDenyNotice(denyLogSent, logKey, now, DENY_LOG_WINDOW_MS)) {
+    const who = opts.senderOpenId ? `***${opts.senderOpenId.slice(-4)}` : "-";
+    log("INFO", `[${rt.cfg.name || rt.cfg.id}] 拒绝入站（${denyReasonText(reason)}）: chat=${chatType ?? "?"}:${rawChatId} sender=${who}`);
+  }
+  if (reason !== "dm-off" || rt.cfg.type !== "feishu" || chatType !== "p2p") return;
+  if (opts.senderType && opts.senderType !== "user") return;
+  if (!rt.sender || !shouldSendDenyNotice(denyNoticeSent, `${rt.cfg.id}|${rawChatId}`, now)) return;
+  // 直接发到对方的私聊：不走 replyToMessage（它会登记路由、记聊天类型，被拒的陌生人不该在 Daemon 里留下状态）
+  void rt.sender.sendMessage(DENY_DM_NOTICE, undefined, rawChatId).catch((e: unknown) => {
+    log("WARN", `未开放提示发送失败: ${e instanceof Error ? e.message : String(e)}`);
+  });
 }
 
 
@@ -1641,7 +1724,7 @@ async function startChannelRuntime(cfg: DaemonChannelConfig): Promise<void> {
   log("INFO", `[${cfg.name}] 通道已启用`);
 }
 
-async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
+export async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
   const { appId, appSecret } = rt.cfg;
   if (!appId || !appSecret) { log("ERROR", `[${rt.cfg.name}] 飞书凭据未配置`); return; }
 
@@ -1687,6 +1770,22 @@ async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
 
     // p2p 带 @ 占位符（如 @_user_1 /p）也需剥除，否则 isCommand 无法识别
     const cleanText = resolveMentionTags(text, ev.mentions, rt.botOpenId);
+
+    // 入口准入：其他人私聊 / 群聊没开放的，这里直接丢掉（不入队、不起 Agent）。
+    // 例外：主用户在还没开通的群里发 /group，那是开通这个群的唯一入口。
+    const admission = inboundAccessGate(rt, chatType, chatId);
+    if (!admission.ok) {
+      const isGroupAdmin = chatType !== "p2p" && messageType === "text"
+        && isGroupAdminCommand(cleanText) && isMainUserSender(chatKey, senderOpenId);
+      if (!isGroupAdmin) {
+        handleInboundDenied(rt, admission.reason, chatType, chatId, {
+          senderOpenId,
+          senderType: ev.senderType === "bot" || ev.senderType === "app" ? "bot" : "user",
+        });
+        return;
+      }
+    }
+
     log("INFO", `[${rt.cfg.name}] 收到消息 [${chatType}] chat=${chatId} sender=${senderOpenId ?? "?"}${ev.senderType === "bot" || ev.senderType === "app" ? "(bot)" : ""}${parentId ? ` reply=${parentId}` : ""}: ${cleanText.slice(0, 100)}`);
     rememberChatType(chatKey, chatType);
 
@@ -3761,7 +3860,8 @@ function resolveSendSessionKeyForMcp(): string | undefined {
   );
 }
 
-export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: boolean }): void {
+/** visitor：受限访客会话只给 send_question（媒体 / Diff 工具能读写本机任意路径） */
+export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: boolean; visitor?: boolean }): void {
   if (opts?.taskResult === true) {
     s.tool(
       TASK_RESULT_TOOL,
@@ -3786,6 +3886,12 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: b
     );
   }
 
+  if (opts?.visitor !== true) registerMediaOutboundTools(s);
+  registerQuestionOutboundTool(s);
+  if (opts?.visitor !== true) registerDiffTools(s);
+}
+
+function registerMediaOutboundTools(s: McpServer): void {
   s.tool(
     "send_image",
     "发送本地图片到飞书/微信。image_path 为本地文件绝对路径。",
@@ -3827,7 +3933,9 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: b
       }
     },
   );
+}
 
+function registerQuestionOutboundTool(s: McpServer): void {
   s.tool(
     "send_question",
     "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。",
@@ -3850,7 +3958,6 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: b
       }
     },
   );
-  registerDiffTools(s);
 }
 
 function createTaskMcpServer(): McpServer {
@@ -3863,6 +3970,16 @@ function createTaskMcpServer(): McpServer {
 function createInteractiveMcpServer(): McpServer {
   const s = new McpServer({ name: "lk-harness-interactive", version: PKG_VERSION, description: `交互会话 – 提问/媒体/Diff（无 ${TASK_RESULT_TOOL}）` });
   registerAgentOutboundTools(s, { taskResult: false });
+  return s;
+}
+
+/**
+ * 访客会话（其他人，受限档）：只有 send_question。
+ * send_image / send_file 接收本机任意绝对路径，访客一句话就能让 AI 把本机文件发给自己；render_branch_diff 会读本机仓库。
+ */
+function createVisitorMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-visitor", version: PKG_VERSION, description: "访客会话 – 仅点选提问" });
+  registerAgentOutboundTools(s, { visitor: true });
   return s;
 }
 
@@ -3894,12 +4011,15 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-project" || pathname === "/mcp-schedule") {
+        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-visitor" || pathname === "/mcp-project" || pathname === "/mcp-schedule") {
           const isTask = pathname === "/mcp-task";
-          const isInteractive = pathname === "/mcp-interactive";
+          // 访客会话的内置端点只有 send_question：和交互端点一样算「会话在用 MCP」
+          const isVisitor = pathname === "/mcp-visitor";
+          const isInteractive = pathname === "/mcp-interactive" || isVisitor;
           const isProject = pathname === "/mcp-project";
           const isSchedule = pathname === "/mcp-schedule";
-          const srv = isInteractive ? createInteractiveMcpServer()
+          const srv = isVisitor ? createVisitorMcpServer()
+            : isInteractive ? createInteractiveMcpServer()
             : isTask ? createTaskMcpServer()
             : isProject ? createProjectMcpServer()
             : isSchedule ? createScheduleMcpServer()
@@ -3911,7 +4031,7 @@ function startHttpServer(): Promise<number> {
             if (isTask || isInteractive) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
-          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-task" || isSchedule)
+          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || isVisitor || pathname === "/mcp-task" || isSchedule)
             ? (req.headers["x-harness-session-key"] as string | undefined)
             : undefined;
           await runWithMcpInvokerSessionKey(invokerSk, async () => { await transport.handleRequest(req, res); });
