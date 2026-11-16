@@ -183,7 +183,8 @@ describe("新建项目对话框里的「去项目模板」入口", () => {
 describe("设置页「项目」标签：一栏式，没有顶上的子标签", () => {
   /** 左栏里被标成「当前」的按钮文字：分区标题（带数量）和「项目设置」 */
   const current = (html: string): string[] => {
-    const out = [...html.matchAll(/aria-current="true" class="[^"]*"><span>([^<]*)<\/span>/g)].map((m) => m[1])
+    const heads = { projects: "项目", templates: "项目模板" } as const
+    const out: string[] = [...html.matchAll(/data-rail-head="(projects|templates)"[^>]*aria-current="true"/g)].map((m) => heads[m[1] as keyof typeof heads])
     if (/<button[^>]*data-rail="settings"[^>]*aria-current="true"/.test(html)) out.push("项目设置")
     return out
   }
@@ -295,8 +296,143 @@ describe("项目左栏", () => {
     })
   })
 
+  describe("项目和模板分成上下两块", () => {
+    /** 取一个标签从开头到与它配对的结尾（只数 div，里面的 button / span 不影响） */
+    const divAt = (html: string, from: number): string => {
+      let depth = 0
+      const re = /<div\b|<\/div>/g
+      re.lastIndex = from
+      for (let m = re.exec(html); m; m = re.exec(html)) {
+        depth += m[0] === "</div>" ? -1 : 1
+        if (depth === 0) return html.slice(from, m.index + m[0].length)
+      }
+      throw new Error("div 没有闭合")
+    }
+    /** 一块（section）的整段 HTML，以及它的开标签 */
+    const sectionOf = (html: string, id: "projects" | "templates") => {
+      const open = html.match(new RegExp(`<section[^>]*data-rail-section="${id}"[^>]*>`))
+      expect(open).not.toBeNull()
+      const start = html.indexOf(open![0])
+      const end = html.indexOf("</section>", start) + "</section>".length
+      return { tag: open![0], html: html.slice(start, end) }
+    }
+    /** 这一块里的滚动区：class 里带 overflow-y-auto 的那个 div */
+    const scrollerOf = (section: string): string => {
+      const at = section.search(/<div class="[^"]*overflow-y-auto[^"]*">/)
+      expect(at).toBeGreaterThan(-1)
+      return divAt(section, at)
+    }
+    const many = (n: number, groups = 2) => renderToStaticMarkup(createElement(ProjectRail, {
+      sel: { kind: "projects-home" }, go: vi.fn(), hubUrlReady: true, onImport: vi.fn(), onOpenHub: vi.fn(),
+      projects: Array.from({ length: n }, (_, i) => project(`p${i}`, `项目${i}`, [])),
+      groups: Array.from({ length: groups }, (_, i) => group(`g${i}`, `模板${i}`, 2)) as never,
+    }))
+
+    it("项目一块、模板一块，项目在上、模板在下，各有自己的标题条，列表不串", () => {
+      const html = many(5, 3)
+      const p = sectionOf(html, "projects")
+      const t = sectionOf(html, "templates")
+      expect(html.indexOf(p.html)).toBeLessThan(html.indexOf(t.html))
+      // 标题条各归各
+      expect(p.html).toContain('data-rail-head="projects"')
+      expect(p.html).not.toContain('data-rail-head="templates"')
+      expect(t.html).toContain('data-rail-head="templates"')
+      expect(t.html).not.toContain('data-rail-head="projects"')
+      // 行各归各：项目行只在项目块里，模板行只在模板块里
+      expect(p.html.match(/data-rail="project"/g)).toHaveLength(5)
+      expect(p.html).not.toContain('data-rail="template"')
+      expect(t.html.match(/data-rail="template"/g)).toHaveLength(3)
+      expect(t.html).not.toContain('data-rail="project"')
+      // 标题上的数量是各自这一类的
+      expect(p.html).toMatch(/<span>项目<\/span><span[^>]*>5<\/span>/)
+      expect(t.html).toMatch(/<span>项目模板<\/span><span[^>]*>3<\/span>/)
+    })
+
+    it("各管各的滚动：每块只有一个滚动区，标题条在滚动区外面，不随列表滚走", () => {
+      const html = many(30, 6)
+      for (const id of ["projects", "templates"] as const) {
+        const s = sectionOf(html, id)
+        expect(s.html.match(/overflow-y-auto/g)).toHaveLength(1)
+        const scroller = scrollerOf(s.html)
+        expect(scroller).not.toContain("data-rail-head")
+        expect(s.html.indexOf(`data-rail-head="${id}"`)).toBeLessThan(s.html.indexOf(scroller))
+      }
+      // 整栏自己不滚：不然项目多了会把模板整块顶出去
+      expect(html.match(/<aside class="[^"]*"/)![0]).not.toContain("overflow")
+      // 项目的行在项目的滚动区里、模板的行在模板的滚动区里
+      expect(scrollerOf(sectionOf(html, "projects").html).match(/data-rail="project"/g)).toHaveLength(30)
+      expect(scrollerOf(sectionOf(html, "templates").html).match(/data-rail="template"/g)).toHaveLength(6)
+    })
+
+    it("模板块钉在最底下、限高；项目块吃掉剩下的高度——项目再多，模板也不会被顶出视野", () => {
+      const html = many(30, 6)
+      const p = sectionOf(html, "projects").tag
+      const t = sectionOf(html, "templates").tag
+      expect(p).toMatch(/class="[^"]*\bflex-1\b/)
+      expect(p).not.toMatch(/\bshrink-0\b/)
+      expect(t).toMatch(/class="[^"]*\bshrink-0\b/)
+      expect(t).toMatch(/\bmax-h-\[40%\]/)
+    })
+
+    it("模板块的「新建」在标题条上，「导入文件」「共享空间」在列表下面的固定条里，模板再多也看得见", () => {
+      const html = many(30, 6)
+      const t = sectionOf(html, "templates")
+      const scroller = scrollerOf(t.html)
+      // 新建在标题条里（滚动区外面）
+      expect(t.html).toContain('aria-label="新建项目模板"')
+      expect(scroller).not.toContain("新建项目模板")
+      // 导入和共享空间不在滚动区里，且排在列表后面
+      expect(scroller).not.toContain("导入文件")
+      expect(scroller).not.toContain("共享空间")
+      expect(t.html.indexOf("导入文件")).toBeGreaterThan(t.html.indexOf(scroller) + scroller.length - 1)
+      expect(t.html.indexOf("共享空间")).toBeGreaterThan(t.html.indexOf("导入文件"))
+      // 项目那块里没有这些入口
+      expect(sectionOf(html, "projects").html).not.toMatch(/导入文件|共享空间|新建项目模板/)
+    })
+
+    it("项目没有时给出提示，模板块照常在", () => {
+      const html = many(0, 2)
+      expect(sectionOf(html, "projects").html).toContain("还没有项目")
+      expect(sectionOf(html, "templates").html.match(/data-rail="template"/g)).toHaveLength(2)
+    })
+
+    it("分得出来：模板块上沿一条加粗的分隔线，两块各有一条带底色的标题条", () => {
+      const html = many(5, 3)
+      expect(sectionOf(html, "templates").tag).toMatch(/\bborder-t-2\b/)
+      for (const id of ["projects", "templates"] as const) {
+        const s = sectionOf(html, id).html
+        const head = s.match(new RegExp(`<div class="([^"]*)"><button[^>]*data-rail-head="${id}"`))
+        expect(head).not.toBeNull()
+        expect(head![1]).toMatch(/\bbg-surface\b/)
+        expect(head![1]).toMatch(/\bborder-b\b/)
+      }
+    })
+
+    it("选中的位置对应哪个标题条亮：项目首页亮「项目」，模板首页亮「项目模板」，进到某个项目或模板时标题条不亮、那一行亮", () => {
+      const lit = (sel: ProjectsSel) => [...renderToStaticMarkup(createElement(ProjectRail, {
+        sel, go: vi.fn(), hubUrlReady: false, onImport: vi.fn(), onOpenHub: vi.fn(),
+        projects: [project("p1", "官网改版", [])], groups: [group("g1", "通用任务", 2)] as never,
+      })).matchAll(/data-rail-head="(\w+)"[^>]*aria-current="true"/g)].map((m) => m[1])
+      expect(lit({ kind: "projects-home" })).toEqual(["projects"])
+      expect(lit({ kind: "templates-home" })).toEqual(["templates"])
+      expect(lit({ kind: "project", id: "p1" })).toEqual([])
+      expect(lit({ kind: "template", id: "g1", leaf: { kind: "info" } })).toEqual([])
+      expect(lit({ kind: "settings" })).toEqual([])
+    })
+  })
+
   it("正在新建模板时，列表里先有一行占位", () => {
     expect(render({ kind: "new-template" })).toContain("正在创建")
     expect(render({ kind: "projects-home" })).not.toContain("正在创建")
+  })
+
+  it("占位行带着「选中行」的标记，并且在模板那一块里：新建时才会被滚进视野", () => {
+    const html = render({ kind: "new-template" })
+    const row = html.match(/<div data-rail="new-template"[^>]*aria-current="true"[^>]*>/)
+    expect(row).not.toBeNull()
+    const templates = html.slice(html.indexOf('data-rail-section="templates"'))
+    expect(templates).toContain(row![0])
+    expect(html.slice(0, html.indexOf('data-rail-section="templates"'))).not.toContain('data-rail="new-template"')
+    expect(html.match(/data-rail="new-template"/g)).toHaveLength(1)
   })
 })
