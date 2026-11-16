@@ -1,4 +1,4 @@
-import { Agent, JsonlLocalAgentStore, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
+import { Agent, type SDKAgent, type Run, type SDKMessage, type McpServerConfig } from "@cursor/sdk"
 import { app } from "electron"
 import { resolve, join, dirname } from "node:path"
 import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
@@ -11,6 +11,7 @@ import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
 import { boundedCall, createTimeoutMessage, hedgedCall, resumeTimeoutMessage } from "./bounded-call"
+import { SdkAppendStore } from "./sdk-append-store"
 import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 import type { VisitorLimits } from "../src/shared/visitor-limits.js"
@@ -316,10 +317,12 @@ async function tryReattachActiveRun(
   sessionKey: string,
 ): Promise<Run | null> {
   try {
-    const { items } = await Agent.listRuns(agent.agentId, { runtime: "local", cwd: workspaceDir, limit: 10 })
+    // 必须带上会话自己的 store：不带会落到 SDK 默认的 cwd 存储，那里没有这个 agent，报 "Agent ... not found"
+    const store = resolveJsonlAgentStore(workspaceDir, sessionKey)
+    const { items } = await Agent.listRuns(agent.agentId, { runtime: "local", cwd: workspaceDir, limit: 10, store })
     const active = items.find((r) => r.status === "running")
     if (!active) return null
-    const run = await Agent.getRun(active.id, { runtime: "local", cwd: workspaceDir })
+    const run = await Agent.getRun(active.id, { runtime: "local", cwd: workspaceDir, store })
     if (run.status !== "running") return null
     pushUiLog("SDK", "INFO", `[${sessionKey}] 挂接残留 active run ${active.id}`)
     return run
@@ -351,11 +354,12 @@ async function cancelActiveRun(
   sessionKey: string,
 ): Promise<boolean> {
   try {
-    const { items } = await Agent.listRuns(agent.agentId, { runtime: "local", cwd: workspaceDir, limit: 10 })
+    const store = resolveJsonlAgentStore(workspaceDir, sessionKey)
+    const { items } = await Agent.listRuns(agent.agentId, { runtime: "local", cwd: workspaceDir, limit: 10, store })
     const active = items.find((r) => r.status === "running")
     if (!active) return false
     pushUiLog("SDK", "WARN", `[${sessionKey}] cancel 残留 active run ${active.id}`)
-    await Agent.cancelRun(active.id, { runtime: "local", cwd: workspaceDir })
+    await Agent.cancelRun(active.id, { runtime: "local", cwd: workspaceDir, store })
     return true
   } catch (e: unknown) {
     pushUiLog("SDK", "DEBUG", `[${sessionKey}] cancel 残留 run 失败: ${e instanceof Error ? e.message : String(e)}`)
@@ -514,8 +518,12 @@ function ensureSdkBinaryPaths(): void {
   pushUiLog("SDK", "WARN", `未找到 ${binaryName}，SDK 可能报错 (searched: ${candidates.join(", ")})`)
 }
 
-/** 按 cwd+sessionKey 缓存；避免 Windows SQLite WAL mid-run commit 失败（Cursor SDK 已知问题） */
-const jsonlAgentStores = new Map<string, JsonlLocalAgentStore>()
+/**
+ * 按 cwd+sessionKey 缓存；避免 Windows SQLite WAL mid-run commit 失败（Cursor SDK 已知问题）。
+ * 不用 SDK 自带的 JsonlLocalAgentStore：它每次读写都整文件解析/重写（账本到百 MB 后单次操作数百毫秒，
+ * 全进程共用一把锁，Resume 还要把全部检查点读一遍，主进程直接被拖死），换成「只追加 + 按键分文件」的 SdkAppendStore。
+ */
+const jsonlAgentStores = new Map<string, SdkAppendStore>()
 
 function workspaceStoreDirKey(workspaceDir: string): string {
   const sanitized = resolve(workspaceDir).replace(/[^a-zA-Z0-9_-]/g, "_")
@@ -550,25 +558,45 @@ export function clearSdkJsonlStore(workspaceDir: string, sessionKey?: string): v
   if (!sessionKey?.trim()) {
     const cwd = resolve(workspaceDir)
     for (const k of [...jsonlAgentStores.keys()]) {
-      if (k === cwd || k.startsWith(cwd + "\0")) jsonlAgentStores.delete(k)
+      if (k === cwd || k.startsWith(cwd + "\0")) {
+        // 先关再删：旧实例上还在途的写入不能把刚清掉的目录又补建回来
+        jsonlAgentStores.get(k)?.close()
+        jsonlAgentStores.delete(k)
+      }
     }
     try { rmSync(sdkJsonlStoreDir(workspaceDir), { recursive: true, force: true }) } catch { /* ignore */ }
     return
   }
-  jsonlAgentStores.delete(jsonlStoreCacheKey(workspaceDir, sessionKey))
+  const cacheKey = jsonlStoreCacheKey(workspaceDir, sessionKey)
+  jsonlAgentStores.get(cacheKey)?.close()
+  jsonlAgentStores.delete(cacheKey)
   try { rmSync(sdkJsonlStoreDir(workspaceDir, sessionKey), { recursive: true, force: true }) } catch { /* ignore */ }
 }
 
-function resolveJsonlAgentStore(workspaceDir: string, sessionKey: string): JsonlLocalAgentStore {
+function resolveJsonlAgentStore(workspaceDir: string, sessionKey: string): SdkAppendStore {
   const cacheKey = jsonlStoreCacheKey(workspaceDir, sessionKey)
   let store = jsonlAgentStores.get(cacheKey)
   if (!store) {
     const rootDir = sdkJsonlStoreDir(workspaceDir, sessionKey)
     if (!existsSync(rootDir)) mkdirSync(rootDir, { recursive: true })
-    store = new JsonlLocalAgentStore(rootDir)
+    store = new SdkAppendStore(rootDir, {
+      log: (level, message) => pushUiLog("SDK", level, `[${sessionKey}] ${message}`),
+    })
     jsonlAgentStores.set(cacheKey, store)
   }
   return store
+}
+
+/** 冷启动用的镜像历史：最近几轮；没有镜像或读失败返回 undefined */
+async function mirrorHistoryForColdStart(sessionKey: string): Promise<TranscriptTurn[] | undefined> {
+  try {
+    const { initCarryoverStore, readMirrorTurns, takeLastTurns } = await import("./carryover.js")
+    initCarryoverStore(app.getPath("userData"))
+    const history = takeLastTurns(readMirrorTurns(sessionKey))
+    return history.length > 0 ? history : undefined
+  } catch {
+    return undefined
+  }
 }
 
 function broadcastSdkSessionStatus(): void {
@@ -1152,11 +1180,24 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       pushUiLog("SDK", "INFO", `[${sessionKey}] 新家首次拉起（已清 sdk-jsonl）`)
     }
 
+    const sdkStore = resolveJsonlAgentStore(workspaceDir, sessionKey)
     const localOptions = {
       cwd: workspaceDir,
       settingSources: [] as ("project" | "user")[],
       sandboxOptions: { enabled: false },
-      store: resolveJsonlAgentStore(workspaceDir, sessionKey),
+      store: sdkStore,
+    }
+    // 先把存储就绪（旧版 ndjson 迁到新布局，超大的直接丢弃）再查 resume：
+    // 丢弃后旧 agent 不在了，下面的 Resume 会得到 not found，走「全新会话 + 镜像历史」，不会卡在读百 MB 文件上
+    try {
+      const prepared = await sdkStore.prepare()
+      if (prepared.discardedLegacyBytes > 0) {
+        pushUiLog("SDK", "WARN", `[${sessionKey}] 旧 SDK 存储 ${(prepared.discardedLegacyBytes / 1048576).toFixed(0)}MB 过大已丢弃，本次以最近对话冷启动`)
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e)
+      pushUiLog("SDK", "ERROR", `[${sessionKey}] SDK 存储初始化失败: ${msg}`)
+      return { ok: false, error: `SDK 存储初始化失败: ${msg}` }
     }
 
     const sdkPort = resolveDaemonPortForPrompt()
@@ -1187,6 +1228,8 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       try { late.close() } catch { /* best-effort */ }
     }
     let agent: SDKAgent | undefined
+    // Resume 因「上下文已不存在」回退全新会话时，用镜像里最近几轮续上（调度器只在切供应商搬运时才带历史）
+    let coldStartHistory: TranscriptTurn[] | undefined
     if (resumable && resumable.workspaceDir === workspaceDir) {
       try {
         pushUiLog("SDK", "INFO", `[${sessionKey}] Resume 恢复会话 (agentId=${resumable.agentId}, model=${JSON.stringify(modelSelection)}, 新连接/上下文保留)`)
@@ -1213,12 +1256,14 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
           return { ok: false, error: `Resume 暂不可用: ${msg}` }
         }
         pushUiLog("SDK", "WARN", `[${sessionKey}] Resume 上下文已不存在，回退全新会话: ${msg}`)
+        coldStartHistory = await mirrorHistoryForColdStart(sessionKey)
+        if (coldStartHistory) pushUiLog("SDK", "INFO", `[${sessionKey}] 冷启动带上镜像最近 ${coldStartHistory.length} 轮历史`)
       }
     }
     const resumed = agent !== undefined
 
     if (!agent) {
-      pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, store=jsonl, model=${JSON.stringify(modelSelection)})`)
+      pushUiLog("SDK", "INFO", `[${sessionKey}] 正在创建 SDK Agent (cwd=${workspaceDir}, store=append, model=${JSON.stringify(modelSelection)})`)
       agent = await boundedCall(
         Agent.create(agentBaseOpts),
         SDK_LAUNCH_TIMEOUT_MS,
@@ -1324,7 +1369,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       notifySessionKey: opts.notifySessionKey,
       digitalIdentityOverride: opts.digitalIdentityOverride,
       taskMessage: resumed ? taskMessage : effectiveTask,
-      historyTurns: resumed ? undefined : opts.historyTurns,
+      historyTurns: resumed ? undefined : (opts.historyTurns ?? coldStartHistory),
     }
     // pack/进程重启后 daemon 内存无卡，飞书旧流式卡仍在：Resume 前先按持久化 cardId 收口，避免再建一张重复卡
     if (resumed && resumable?.streamCardId && session.streamAgg) {
@@ -1574,7 +1619,7 @@ export async function completeSdkText(apiKey: string, prompt: string): Promise<{
       apiKey: key,
       model: { id: SDK_COMPLETE_MODEL },
       tools: [],
-      local: { cwd: dir, settingSources: [], sandboxOptions: { enabled: false }, store: new JsonlLocalAgentStore(dir) },
+      local: { cwd: dir, settingSources: [], sandboxOptions: { enabled: false }, store: new SdkAppendStore(dir) },
     })
     const run = await agent.send(prompt)
     const res = await withTimeout(run.wait(), SDK_COMPLETE_TIMEOUT_MS, "SDK 文本补全")

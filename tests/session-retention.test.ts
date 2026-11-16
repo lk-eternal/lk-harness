@@ -76,6 +76,54 @@ describe("session-retention", () => {
     expect(countSdkRuns(path.join(dataDir, "none"))).toBe(0)
   })
 
+  it("dirByteSize 含子目录（SDK 新存储按 agents/runs/events/blobs 分目录）", () => {
+    const dir = path.join(dataDir, "store")
+    fs.mkdirSync(path.join(dir, "store2", "blobs", "ag1"), { recursive: true })
+    fs.writeFileSync(path.join(dir, "top.bin"), "x".repeat(10))
+    fs.writeFileSync(path.join(dir, "store2", "blobs", "ag1", "b1"), "y".repeat(200))
+    fs.writeFileSync(path.join(dir, "store2", "blobs", "ag1", "b2"), "z".repeat(300))
+    expect(dirByteSize(dir)).toBe(510)
+  })
+
+  it("countSdkRuns 数新布局的 run 文件（跳过临时文件），并与旧 runs.ndjson 的行数相加", () => {
+    const dir = path.join(dataDir, "sdkstore-new")
+    const runsDir = path.join(dir, "store2", "runs")
+    fs.mkdirSync(path.join(runsDir, "ag1"), { recursive: true })
+    fs.mkdirSync(path.join(runsDir, "ag2"), { recursive: true })
+    for (const f of ["run-1.json", "run-2.json", "run-3.json.ab12.tmp"]) fs.writeFileSync(path.join(runsDir, "ag1", f), "{}")
+    fs.writeFileSync(path.join(runsDir, "ag2", "run-9.json"), "{}")
+    expect(countSdkRuns(dir)).toBe(3)
+    fs.writeFileSync(path.join(dir, "runs.ndjson"), JSON.stringify({ runId: "legacy-1" }) + "\n")
+    expect(countSdkRuns(dir)).toBe(4)
+  })
+
+  it("SDK 新存储里累积 15 个 run 同样触发 rollover，并清掉整个会话存储目录", async () => {
+    const sk = "sdk-sk-new-layout"
+    const workspace = "D:\\workspace\\lk-harness"
+    const { sdkJsonlStoreDir } = await import("../electron/agent-sdk.js")
+    const { SdkAppendStore } = await import("../electron/sdk-append-store.js")
+    const dir = sdkJsonlStoreDir(workspace, sk)
+    fs.mkdirSync(dir, { recursive: true })
+    const store = new SdkAppendStore(dir)
+    for (let i = 0; i < LEDGER_MAX_SDK_RUNS; i++) {
+      await store.runs.create({
+        run: { runId: `run-${i}`, agentId: "ag1", turnNumber: i + 1, status: "finished", createdAt: 1, updatedAt: 1 },
+      })
+    }
+    appendMirrorTurns(sk, [{ role: "user", text: "hello" }, { role: "assistant", text: "hi" }])
+    expect(countSdkRuns(dir)).toBe(LEDGER_MAX_SDK_RUNS)
+
+    const rolled = await rolloverSessionLedgerIfNeeded({
+      runtime: "sdk",
+      sessionKey: sk,
+      workspaceDir: workspace,
+      userDataDir: dataDir,
+    })
+    expect(rolled).toBe(true)
+    expect(peekCarryover(sk)?.fromLabel).toBe("ledger-limit")
+    expect(fs.existsSync(dir)).toBe(false)
+  })
+
   it("sdkRunsLimitExceeded 15 runs 或 10MB 任一达标", () => {
     expect(sdkRunsLimitExceeded(LEDGER_MAX_SDK_RUNS, 0)).toBe(true)
     expect(sdkRunsLimitExceeded(LEDGER_MAX_SDK_RUNS - 1, LEDGER_MAX_BYTES)).toBe(true)
