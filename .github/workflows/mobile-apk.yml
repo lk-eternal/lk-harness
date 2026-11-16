@@ -116,6 +116,14 @@ jobs:
           # 只给图标源图、不给启动图源图：不会改动默认启动画面
           npx capacitor-assets generate --android --assetPath .icon-assets --iconBackgroundColor '#ffffff'
 
+      # 输入法弹出时把底部输入框顶上来。
+      # 安卓 15 起应用强制边到边（模板 targetSdk=35），系统不再在键盘弹出时缩小 WebView，键盘会直接盖住输入框，
+      # 而 Capacitor 的壳什么都不做。这里给壳的 MainActivity 加上按输入法高度让位的逻辑，并声明 adjustResize（细节见脚本注释）。
+      # 没用 @capacitor/keyboard 的 resizeOnFullScreen：它靠键盘动画开始那一刻量可用高度，换了输入法时序不稳。
+      # 脚本在 Capacitor 模板对不上时会让构建失败，不会悄悄发出一个没有这个补丁的包。
+      - name: Patch Android keyboard (IME) handling
+        run: node scripts/patch-android-ime.cjs android
+
       # 版本号 + 固定签名。
       # Android 只允许「同一把签名密钥」的包覆盖安装；之前每次构建都现生成一把调试密钥，所以每个包都互相装不上。
       # 现在用存在 GitHub Secrets 里的固定密钥（ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS，

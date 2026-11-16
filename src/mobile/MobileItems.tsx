@@ -241,6 +241,19 @@ function MobileItemListBody({
     }
   }, [items])
 
+  // 输入法弹出/收起会让列表变矮/变高，但不会触发滚动：贴着底部的时候要保持贴底，
+  // 不然列表底部最新的几条会被挤到看不见的地方（输入框被顶上来之后，键盘有多高就丢多高）
+  const listMounted = !(loading && items.length === 0)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!listMounted || !el || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTo({ top: el.scrollHeight })
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [listMounted])
+
   if (loading && items.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center gap-2 text-xs text-fg-muted">
