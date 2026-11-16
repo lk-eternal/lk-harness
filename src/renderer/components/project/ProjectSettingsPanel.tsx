@@ -53,7 +53,7 @@ function SecretInput({ value, onChange, placeholder }: { value: string; onChange
  * 代码仓库、GitLab 只有做研发类项目才用得到，放在「研发（可选）」里；
  * 团队共享（共享空间）个人用不到，放在「团队共享（高级）」里。两块默认收起，配置过的自动展开。
  */
-export default function ProjectSettingsPanel() {
+export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void } = {}) {
   const { showAlert, ModalPortal } = useInlineModal()
   const [values, setValues] = useState<ProjectSettingsValues>(EMPTY)
   const [loaded, setLoaded] = useState(false)
@@ -67,6 +67,9 @@ export default function ProjectSettingsPanel() {
   const touched = useRef(new Set<ProjectSettingsField>())
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mounted = useRef(true)
+  // 用 ref 拿最新的回调：flush 要保持引用不变（卸载时靠它把没存的改动写出去）
+  const onSavedRef = useRef(onSaved)
+  onSavedRef.current = onSaved
 
   /** 立刻把改过的项写回配置（只写改过的项） */
   const flush = useCallback(async () => {
@@ -75,6 +78,8 @@ export default function ProjectSettingsPanel() {
     if (!fields.length) return
     touched.current.clear()
     await window.electronAPI.saveConfig(buildSettingsPatch(fields, valuesRef.current))
+    // 页面已经切走时也要通知：上层（项目页）自己存着一份「共享空间配没配好」，不通知就一直是旧的
+    onSavedRef.current?.()
     if (!mounted.current) return
     setSaved(true)
     setTimeout(() => { if (mounted.current) setSaved(false) }, 1500)
@@ -154,7 +159,8 @@ export default function ProjectSettingsPanel() {
   const effectiveRoot = values.worktreeRoot.trim() || defaultRoot
 
   return (
-    <div className="flex-1 overflow-y-auto pb-6 pr-4">
+    // 输入框一失焦就存：刚敲完 Token 立刻去点别处（比如左栏的「共享空间」）时，不用等防抖，别处读到的就是新值
+    <div className="flex-1 overflow-y-auto pb-6 pr-4" onBlur={() => void flush()}>
       <div className="max-w-xl space-y-5">
         <div className="flex h-6 items-center justify-between">
           <h3 className="text-sm font-medium text-fg-2">项目设置</h3>

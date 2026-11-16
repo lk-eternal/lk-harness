@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { FlowHubBrowser } from "../FlowHubBrowser"
 import useInlineModal from "../useInlineModal"
+import { flowHubMissingMessage, flowHubStatusOf, NO_FLOW_HUB, sameFlowHubStatus, type FlowHubStatus } from "../../../shared/flow-hub-status"
 import type { ProjectListItem } from "../../../shared/project-app-types"
 import { applyTemplateEdit, buildNewTemplate, type TemplateDraft } from "../../../shared/project-template-edit"
 import type { ActionItem } from "./ActionEditor"
@@ -21,6 +22,9 @@ interface Props {
   onJumpConsumed?: () => void
 }
 
+/** 状态没变就沿用旧对象：别的地方存配置很频繁，没变化不要触发整页重绘 */
+const keepIfSame = (prev: FlowHubStatus, next: FlowHubStatus): FlowHubStatus => (sameFlowHubStatus(prev, next) ? prev : next)
+
 /**
  * 设置页「项目」标签：左边一栏放项目、项目模板和项目设置，点哪个右边出现哪个；
  * 模板再往下一级是它的快捷操作，在右边再展开一栏。各处的编辑区有没保存的修改时，切走前统一在这里问。
@@ -30,7 +34,7 @@ export default function ProjectsTab({ jump, onJumpConsumed }: Props) {
   const [sel, setSel] = useState<ProjectsSel>(() => (jump ? selForJump(jump.sub) : { kind: "projects-home" }))
   const [projects, setProjects] = useState<ProjectListItem[] | null>(null)
   const [groups, setGroups] = useState<Group[] | null>(null)
-  const [hub, setHub] = useState({ urlReady: false, configured: false })
+  const [hub, setHub] = useState<FlowHubStatus>(NO_FLOW_HUB)
   const [hubBrowser, setHubBrowser] = useState<{ kind: "group" | "node"; groupId?: string } | null>(null)
 
   const selRef = useRef(sel)
@@ -49,10 +53,7 @@ export default function ProjectsTab({ jump, onJumpConsumed }: Props) {
     if (!alive.current) return
     setProjects(list)
     setGroups(gs)
-    if (cfg) {
-      const urlReady = (cfg.flowHubUrl ?? "").trim().length > 0
-      setHub({ urlReady, configured: urlReady && ((cfg.flowHubToken ?? "").trim().length > 0 || (cfg.gitlabToken ?? "").trim().length > 0) })
-    }
+    if (cfg) setHub((prev) => keepIfSame(prev, flowHubStatusOf(cfg)))
     const ctx = { projectIds: list.map((p) => p.id), templates: gs.map((g) => ({ id: g.id, actionIds: g.nodes.map((n) => n.id) })) }
     const first = firstLoad.current
     firstLoad.current = false
@@ -123,9 +124,20 @@ export default function ProjectsTab({ jump, onJumpConsumed }: Props) {
     await load()
   }
 
-  const openHub = (kind: "group" | "node", groupId?: string) => {
-    if (!hub.configured) {
-      void showAlert("还不能用共享空间", "请先在「项目设置 → 团队共享（高级）」里填好共享空间地址，再填共享空间 Token（或「研发」里的 GitLab Token）。")
+  /** 重新读一次配置，更新「共享空间配没配好」；读不到就当没变 */
+  const readHub = useCallback(async (): Promise<FlowHubStatus | null> => {
+    const cfg = await window.electronAPI.getConfig().catch(() => null)
+    if (!cfg) return null
+    const next = flowHubStatusOf(cfg)
+    if (alive.current) setHub((prev) => keepIfSame(prev, next))
+    return next
+  }, [])
+
+  // 点的时候现读配置，不信页面里存的那份：用户刚在设置页填完、或者别处改过配置，存的那份都可能是旧的
+  const openHub = async (kind: "group" | "node", groupId?: string) => {
+    const status = (await readHub()) ?? hub
+    if (!status.configured) {
+      void showAlert("还不能用共享空间", flowHubMissingMessage(status))
       return
     }
     setHubBrowser({ kind, groupId })
@@ -270,7 +282,7 @@ export default function ProjectsTab({ jump, onJumpConsumed }: Props) {
             onBack={foldRail ? () => void go({ kind: "templates-home" }) : undefined}
           />
         )}
-        {sel.kind === "settings" && <ProjectSettingsPanel />}
+        {sel.kind === "settings" && <ProjectSettingsPanel onSaved={() => void readHub()} />}
         {loading && (sel.kind === "project" || sel.kind === "template") && !project && !template && (
           <div className="flex-1 p-6 text-sm text-fg-muted">加载中…</div>
         )}
