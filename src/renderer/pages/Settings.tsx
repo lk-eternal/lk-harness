@@ -135,6 +135,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
         setUpdateDownloading(true)
         setUpdateMsg(s.message)
       }
+      if (s.kind === "preparing") {
+        // 下载完了，正在挂载安装包、拷出新版本、核对版本号（macOS dmg）。没有进度可报，进度条拉满表示下载已完成
+        setUpdateDownloading(true)
+        setUpdateDownloadPct(100)
+        setUpdateMsg("下载完成，正在准备安装包（校验、解包，需要几十秒）…")
+      }
       if (s.kind === "downloaded") {
         setUpdateDownloading(false)
         setUpdateDownloadPct(null)

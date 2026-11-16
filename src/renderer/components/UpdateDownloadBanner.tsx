@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react"
 export default function UpdateDownloadBanner() {
   const [downloading, setDownloading] = useState(false)
   const [pct, setPct] = useState<number | null>(null)
+  /** 下载完了，正在准备安装包（macOS dmg 的挂载和拷贝），没有进度可报 */
+  const [preparing, setPreparing] = useState(false)
   /** 下载中断后自动重试/续传时的提示；数据重新流动后清掉 */
   const [retryNote, setRetryNote] = useState<string | null>(null)
   const active = useRef(false)
@@ -12,18 +14,28 @@ export default function UpdateDownloadBanner() {
       if (s.kind === "downloading") {
         active.current = true
         setDownloading(true)
+        setPreparing(false)
         setPct(null)
+        setRetryNote(null)
+      }
+      if (s.kind === "preparing") {
+        active.current = true
+        setDownloading(true)
+        setPreparing(true)
+        setPct(100)
         setRetryNote(null)
       }
       if (s.kind === "retrying") {
         active.current = true
         setDownloading(true)
+        setPreparing(false)
         // 只取第一行（「连接中断，正在重试…」），具体的网络错误留给设置页看
         setRetryNote(s.message.split("\n")[0] ?? null)
       }
       if (s.kind === "downloaded" || s.kind === "available") {
         active.current = false
         setDownloading(false)
+        setPreparing(false)
         setPct(null)
         setRetryNote(null)
       }
@@ -36,6 +48,7 @@ export default function UpdateDownloadBanner() {
     const offE = window.electronAPI.onUpdaterError(() => {
       active.current = false
       setDownloading(false)
+      setPreparing(false)
       setPct(null)
       setRetryNote(null)
     })
@@ -57,7 +70,7 @@ export default function UpdateDownloadBanner() {
       aria-live="polite"
     >
       <p className="text-center text-xs font-medium text-fg-soft">
-        {pct === null ? "正在下载更新…" : `正在下载更新 ${pct}%`}
+        {preparing ? "下载完成，正在准备安装包…" : pct === null ? "正在下载更新…" : `正在下载更新 ${pct}%`}
       </p>
       {retryNote && <p className="mt-1 text-center text-[11px] text-amber-500">{retryNote}</p>}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised">

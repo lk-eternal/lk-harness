@@ -198,7 +198,7 @@ declare global {
     applyAppUpdate(): Promise<{ ok: boolean; error?: string; message?: string; downloadUrl?: string }>
     onUpdaterProgress(cb: (percent: number) => void): () => void
     onUpdaterError(cb: (message: string) => void): () => void
-    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string; silent?: boolean; idleRestart?: boolean } | { kind: "downloading" } | { kind: "retrying"; message: string }) => void): () => void
+    onUpdaterStatus(cb: (payload: { kind: "available" } | { kind: "downloaded"; version: string; silent?: boolean; idleRestart?: boolean } | { kind: "downloading" } | { kind: "preparing" } | { kind: "retrying"; message: string }) => void): () => void
     getConfig(): Promise<AppConfig>
     getProjectNodeGroups(): Promise<(Omit<ProjectNodeGroupDefType, "nodes"> & { nodes: (ProjectNodeGroupDefType["nodes"][number] & { defaultPrompt?: string })[] })[]>
     saveProjectNodeGroups(groups: ProjectNodeGroupDefType[]): Promise<{ ok: boolean }>

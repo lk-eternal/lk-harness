@@ -11,7 +11,30 @@ import { getConfig } from "./config-store"
 import { syncMainProcessProxyEnv } from "./agent-env"
 import { DownloadRetryExhausted, errorMessage as downloadErrorMessage } from "./resumable-download"
 import { createRotatingFetch, formatRetryNotice, pickWindowsInstaller, prefetchInstaller } from "./update-prefetch"
-import { macInstallerUrl, summarizeBrewFailure } from "./brew-update"
+import {
+  classifyBrewListFailure,
+  detectMacInstallMethod,
+  macInstallerUrl,
+  summarizeBrewFailure,
+  type MacInstallMethod,
+} from "./brew-update"
+import {
+  MAC_WORK_DIRNAME,
+  checkMacInstallTarget,
+  cleanupMacUpdateLeftovers,
+  consumeSwapResult,
+  downloadMacDmg,
+  execRun,
+  launchMacSwap,
+  locateAppBundle,
+  macYmlUrl,
+  nodeInstallIo,
+  pickMacDmg,
+  prepareMacApp,
+  readMacYmlVersion,
+  type MacDmgEntry,
+  type MacSourceOptions,
+} from "./mac-update"
 import { broadcastLog } from "./ui-logger"
 import {
   IDLE_RESTART_CHECK_INTERVAL_MS,
@@ -108,6 +131,12 @@ let lastKnownRemote: LatestRelease | null = null
 let autoUpdaterWired = false
 let updaterIpcRegistered = false
 let downloadedUpdateVersion: string | null = null
+
+// ── macOS dmg 安装的应用内更新：流程在 mac-update.ts，这里只管接线和状态 ──
+/** 正在下载或准备的那一路；有它就别再起第二路 */
+let macUpdateJob: Promise<void> | null = null
+/** 新版本已经下载、拷到旧应用旁边的暂存目录、核对过版本，只等用户确认安装。只在内存里，不跨重启 */
+let macPrepared: { version: string; stagedApp: string; stageDir: string; targetBundle: string } | null = null
 
 // ── 静默更新（仅 Windows，设置里的开关）：决策在 shared/silent-update.ts，这里只管接线 ──
 /** 这一路下载是静默发起的：失败只写日志，不弹「自动更新失败」；下载开始或失败时清掉 */
@@ -264,6 +293,10 @@ function promptInstallDownloaded(version: string): void {
   }).then((resp) => {
     if (resp === 1) {
       setImmediate(() => {
+        if (process.platform === "darwin") {
+          void installPreparedMacUpdate().then(showMacApplyFailure)
+          return
+        }
         autoUpdater.quitAndInstall(false, true)
       })
     }
@@ -538,6 +571,8 @@ async function fetchViaJsdelivrPackageJson(): Promise<LatestRelease | null> {
  * api.github.com 被墙时，package.json 兜底须通过安装包 HEAD 探测。
  */
 export async function fetchLatestRelease(): Promise<LatestRelease | null> {
+  const feed = process.platform === "darwin" ? macUpdateFeed() : null
+  if (feed) return fetchFeedRelease(feed)
   const releaseResults = await Promise.all([fetchViaGithubApi(), fetchViaGithubReleasesList()])
   const fromReleases = releaseResults.filter((r): r is LatestRelease => r !== null)
   if (fromReleases.length > 0) {
@@ -719,17 +754,9 @@ async function runBrewUpgrade(version: string): Promise<UpdaterApplyResult> {
   try {
     await run(["tap", HOMEBREW_TAP], 120_000)
     await run(["update"], 300_000)
-    // dmg 直装用户 brew 未登记 cask：先查在册才 upgrade，否则 install
-    let installed = false
-    try {
-      await run(["list", "--cask", HOMEBREW_CASK], 60_000)
-      installed = true
-    } catch { /* 未安装，走 install */ }
-    if (installed) {
-      await run(["upgrade", "--cask", HOMEBREW_CASK], 600_000)
-    } else {
-      await run(["install", "--cask", HOMEBREW_CASK], 600_000)
-    }
+    // 能走到这里，说明 detectMacInstall 已经确认是 brew 装的。dmg 装的不会来：
+    // 对它 `brew install --cask` 会撞上「应用程序」里已有的同名应用，它们走应用内更新（startMacDmgUpdate）
+    await run(["upgrade", "--cask", HOMEBREW_CASK], 600_000)
     return {
       ok: true,
       message: "更新已完成，请重启应用。",
@@ -744,6 +771,285 @@ async function runBrewUpgrade(version: string): Promise<UpdaterApplyResult> {
 
 function manualUpdateUrl(version: string): string {
   return `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/download/v${version}/lk-harness-setup-${version}.exe`
+}
+
+// ── macOS：按安装方式分流（brew 装的走 brew，dmg 装的走应用内更新） ──
+
+function macWorkDir(): string {
+  return path.join(app.getPath("userData"), MAC_WORK_DIRNAME)
+}
+
+/**
+ * 测试用的更新源：设了环境变量 LK_MAC_UPDATE_FEED（一个 http(s) 地址，下面放 latest-mac.yml 和 dmg）时，
+ * 版本查询、yml、dmg 都从这里取，不走 GitHub，用来在发版前验证应用内更新。正式使用不设。
+ */
+function macUpdateFeed(): string | null {
+  const v = (process.env.LK_MAC_UPDATE_FEED ?? "").trim()
+  return /^https?:\/\//i.test(v) ? v : null
+}
+
+function macSource(version: string): MacSourceOptions {
+  return { version, arch: process.arch, releasesBase: RELEASES_BASE, feedBase: macUpdateFeed() }
+}
+
+async function fetchFeedRelease(feed: string): Promise<LatestRelease | null> {
+  const r = await httpGetText(macYmlUrl({ version: "", releasesBase: RELEASES_BASE, feedBase: feed }))
+  const version = r?.status === 200 ? readMacYmlVersion(r.text) : null
+  if (!version) return null
+  broadcastLog(`[Updater] 使用测试更新源 ${feed}（v${version}）`, "WARN")
+  return { version, htmlUrl: feed }
+}
+
+/** 这份应用是 brew 装的，还是 dmg 拖进「应用程序」的。判断规则见 brew-update.ts 的 detectMacInstallMethod */
+async function detectMacInstall(): Promise<MacInstallMethod> {
+  const detection = await detectMacInstallMethod({
+    brewPath: getBrewExecutable(),
+    cask: HOMEBREW_CASK,
+    isDirectory: (p) => {
+      try {
+        return fs.statSync(p).isDirectory()
+      } catch {
+        return false
+      }
+    },
+    listCask: async (brew) => {
+      try {
+        await execFileAsync(brew, ["list", "--cask", HOMEBREW_CASK], {
+          timeout: 20_000,
+          env: {
+            ...process.env,
+            PATH: `/opt/homebrew/bin:/usr/local/bin:${process.env.PATH ?? ""}`,
+            HOMEBREW_NO_AUTO_UPDATE: "1",
+            HOMEBREW_NO_ANALYTICS: "1",
+          },
+        })
+        return "installed"
+      } catch (e) {
+        return classifyBrewListFailure(e)
+      }
+    },
+  })
+  broadcastLog(`[Updater] macOS 安装方式：${detection.method === "brew" ? "Homebrew" : "dmg"}（${detection.reason}）`)
+  return detection.method
+}
+
+/** 应用内更新走不通时，让用户手动更新的说明（只有 dmg 这一条，brew 装的不会来这里） */
+function macManualGuide(version: string): string {
+  return [
+    "手动更新：",
+    `  1. 下载安装包（已按本机芯片选好）：${macInstallerUrl(RELEASES_BASE, version, process.arch)}`,
+    "  2. 打开 dmg，把 LK Harness 拖进「应用程序」覆盖旧版",
+    "  3. 终端执行：xattr -cr /Applications/LK\\ Harness.app",
+  ].join("\n")
+}
+
+function macManualFailure(version: string, headline: string): UpdaterApplyResult {
+  return {
+    ok: false,
+    error: `${headline}\n\n${macManualGuide(version)}`,
+    downloadUrl: macInstallerUrl(RELEASES_BASE, version, process.arch),
+  }
+}
+
+/** 点了更新之后才发现走不通的失败（下载中断、挂载失败……）：弹窗说明原因，给手动下载入口 */
+async function showMacManualFallback(reason: unknown, version: string): Promise<void> {
+  const retryLine =
+    reason instanceof DownloadRetryExhausted
+      ? `已自动重试 ${reason.attempts} 次，连续 ${reason.maxConsecutiveFailures} 次没有拿到新数据。已下载的部分会保留，再点「更新」会从断点继续。\n\n`
+      : ""
+  const why = reason instanceof DownloadRetryExhausted ? downloadErrorMessage(reason.lastError) : downloadErrorMessage(reason)
+  const url = macInstallerUrl(RELEASES_BASE, version, process.arch)
+  const r = await showAppModal({
+    variant: "warning",
+    title: "自动更新失败",
+    message: "没能完成自动更新，当前仍是旧版本。",
+    detail: `错误: ${why}\n\n${retryLine}${macManualGuide(version)}`,
+    buttons: ["关闭", "手动下载"],
+    defaultId: 1,
+    cancelId: 0,
+  })
+  if (r === 1) await shell.openExternal(url)
+}
+
+/** 安装没能开始时（暂存的新版本不见了、脚本没启动）：弹窗说明，给手动下载入口。成功时什么也不做 */
+function showMacApplyFailure(result: UpdaterApplyResult): void {
+  if (result.ok) return
+  const url = result.downloadUrl
+  void showAppModal({
+    variant: "error",
+    title: "更新失败",
+    message: result.error ?? "未知错误",
+    buttons: url ? ["关闭", "下载安装包"] : ["确定"],
+    defaultId: url ? 1 : 0,
+    cancelId: 0,
+  }).then((choice) => {
+    if (choice === 1 && url) void shell.openExternal(url)
+  })
+}
+
+/** 下载用的 fetch：每次重连前换一个新的网络会话（原因见 update-prefetch.ts 的 createRotatingFetch） */
+function createUpdateDownloadFetch(): ReturnType<typeof createRotatingFetch> {
+  let sessionSeq = 0
+  return createRotatingFetch({
+    initial: session.defaultSession,
+    createSession: async () => {
+      const fresh = session.fromPartition(`lk-update-download-${Date.now()}-${++sessionSeq}`)
+      await applyAppNetworkProxy(fresh)
+      return fresh
+    },
+  })
+}
+
+/** 后台的一路：下载 dmg → 挂载、拷出、核对版本 → 记下「已准备好」→ 通知界面。失败不动旧应用，弹窗给手动下载 */
+async function runMacDmgJob(version: string, entry: MacDmgEntry, targetBundle: string): Promise<void> {
+  const workDir = macWorkDir()
+  const send = (channel: string, payload?: unknown) => getMainWindow()?.webContents.send(channel, payload)
+  macPrepared = null
+  send("updater:status", { kind: "downloading" as const })
+  try {
+    await applyAppNetworkProxy()
+    const downloadFetch = createUpdateDownloadFetch()
+    let lastSentPct = -1
+    const dl = await downloadMacDmg({
+      dir: workDir,
+      entry,
+      fetchImpl: downloadFetch.fetch,
+      headers: { "User-Agent": "lk-harness-desktop-updater" },
+      onProgress: ({ received, total }) => {
+        if (!total) return
+        const pct = (received / total) * 100
+        if (pct < 100 && pct - lastSentPct < 0.5) return
+        lastSentPct = pct
+        send("updater:progress", pct)
+      },
+      onRetry: (r) => {
+        downloadFetch.rotate()
+        send("updater:status", { kind: "retrying" as const, message: formatRetryNotice(r) })
+      },
+    })
+    broadcastLog(
+      dl.reusedExisting
+        ? `[Updater] v${version} 的安装包已经在缓存里（校验通过）`
+        : `[Updater] v${version} 安装包下载完成（共连接 ${dl.attempts} 次）`,
+    )
+    send("updater:status", { kind: "preparing" as const })
+    const prepared = await prepareMacApp({ dmgPath: dl.file, workDir, targetBundle, version, run: execRun })
+    macPrepared = { version, targetBundle, ...prepared }
+    broadcastLog(`[Updater] v${version} 已准备好，等待安装`)
+    send("updater:status", { kind: "downloaded" as const, version })
+    promptInstallDownloaded(version)
+  } catch (err) {
+    broadcastLog(`[Updater] 应用内更新失败：${downloadErrorMessage(err)}`, "WARN")
+    send("updater:error", downloadErrorMessage(err))
+    void showMacManualFallback(err, version)
+  }
+}
+
+/**
+ * dmg 装的：开始应用内更新。先做完所有「走不走得通」的检查（拿到发布信息、本机芯片的安装包、
+ * 能不能写应用所在的文件夹、磁盘空间），任何一条不满足就立刻退回手动下载；都满足才开始后台下载。
+ * 返回的是「开始了没有」，进度和结果走 updater:status / updater:progress / updater:error。
+ */
+async function startMacDmgUpdate(rel: LatestRelease): Promise<UpdaterApplyResult> {
+  if (macUpdateJob) return { ok: true, message: "正在下载更新…" }
+  const source = macSource(rel.version)
+  const yml = await httpGetText(macYmlUrl(source))
+  if (!yml || yml.status !== 200) {
+    return macManualFailure(rel.version, `拿不到这个版本的发布信息（${yml ? `HTTP ${yml.status}` : "网络不通"}）。`)
+  }
+  const entry = pickMacDmg(yml.text, source)
+  if (!entry) return macManualFailure(rel.version, "发布信息里没有找到本机芯片对应的安装包。")
+  const target = await checkMacInstallTarget(locateAppBundle(app.getPath("exe")), nodeInstallIo, entry.size)
+  if (!target.ok) {
+    broadcastLog(`[Updater] 不能应用内更新（${target.reason}）：${target.message}`, "WARN")
+    return macManualFailure(rel.version, target.message)
+  }
+  // 上面几步要等网络：期间可能已经有另一路开始了
+  if (macUpdateJob) return { ok: true, message: "正在下载更新…" }
+  macUpdateJob = runMacDmgJob(rel.version, entry, target.bundle).finally(() => {
+    macUpdateJob = null
+  })
+  return { ok: true, message: "正在下载更新…" }
+}
+
+/**
+ * 安装已经准备好的新版本：启动独立的替换脚本，然后退出应用。脚本等应用退出后，
+ * 把旧应用换成暂存目录里的新应用，再重新打开。退出走应用自己的 before-quit（先停 daemon 再退）。
+ */
+async function installPreparedMacUpdate(): Promise<UpdaterApplyResult> {
+  const prepared = macPrepared
+  if (!prepared) return { ok: false, error: "新版本还没有准备好，请重新检查更新。" }
+  if (!fs.existsSync(prepared.stagedApp)) {
+    macPrepared = null
+    return macManualFailure(prepared.version, "暂存的新版本不见了（可能被清理了）。")
+  }
+  try {
+    await launchMacSwap({
+      workDir: macWorkDir(),
+      pid: process.pid,
+      version: prepared.version,
+      stagedApp: prepared.stagedApp,
+      targetBundle: prepared.targetBundle,
+      stageDir: prepared.stageDir,
+    })
+  } catch (err) {
+    return macManualFailure(prepared.version, `没能启动替换脚本：${downloadErrorMessage(err)}`)
+  }
+  broadcastLog(`[Updater] 开始安装 v${prepared.version}：应用退出后由脚本替换，并重新打开`)
+  macPrepared = null
+  setImmediate(() => app.quit())
+  return { ok: true, message: "正在退出并安装新版本，完成后会自动重新打开…" }
+}
+
+/**
+ * macOS 点「更新」：已经准备好的直接安装；否则看是怎么装的——brew 装的继续 brew 升级，
+ * dmg 装的走应用内更新。method 给调用方决定要不要弹结果（brew 是同步等它跑完，dmg 是开始后台下载）。
+ */
+async function applyMacUpdate(rel: LatestRelease): Promise<{ method: MacInstallMethod; result: UpdaterApplyResult }> {
+  if (macPrepared && semver.gte(macPrepared.version, rel.version)) {
+    return { method: "dmg", result: await installPreparedMacUpdate() }
+  }
+  const method = await detectMacInstall()
+  if (method === "brew") return { method, result: await runBrewUpgrade(rel.version) }
+  return { method, result: await startMacDmgUpdate(rel) }
+}
+
+/**
+ * macOS 启动时的善后：清掉上次更新留下的暂存目录和旧 dmg；读上次替换脚本的结果，
+ * 成功只写日志，失败弹窗说明原因并给手动下载入口（那时脚本已经把旧版重新打开了）。
+ */
+async function macStartupHousekeeping(): Promise<void> {
+  const workDir = macWorkDir()
+  let bundle: string | null = null
+  try {
+    const located = locateAppBundle(app.getPath("exe"))
+    bundle = located ? await fs.promises.realpath(located) : null
+  } catch { /* 找不到就只清 workDir 里的 */ }
+  try {
+    const removed = await cleanupMacUpdateLeftovers({ workDir, currentVersion: app.getVersion(), bundle })
+    if (removed.length > 0) broadcastLog(`[Updater] 清理了上次更新留下的 ${removed.length} 项`)
+  } catch (err) {
+    broadcastLog(`[Updater] 清理上次更新的残留失败：${downloadErrorMessage(err)}`, "WARN")
+  }
+  const outcome = await consumeSwapResult(workDir)
+  if (!outcome) return
+  if (outcome.ok) {
+    broadcastLog(`[Updater] 应用内更新完成：${outcome.detail}`)
+    return
+  }
+  broadcastLog(`[Updater] 上次的应用内更新没有成功：${outcome.detail}`, "WARN")
+  const version = semver.valid(outcome.version) ? outcome.version : null
+  const url = version ? macInstallerUrl(RELEASES_BASE, version, process.arch) : `${RELEASES_BASE}/latest`
+  const r = await showAppModal({
+    variant: "warning",
+    title: "上次更新没有成功",
+    message: "新版本没能自动装上，现在运行的仍是旧版本。",
+    detail: `${outcome.detail}\n\n${version ? macManualGuide(version) : "请到 GitHub Releases 下载最新的 dmg，拖进「应用程序」覆盖旧版。"}`,
+    buttons: ["关闭", "下载安装包"],
+    defaultId: 1,
+    cancelId: 0,
+  })
+  if (r === 1) await shell.openExternal(url)
 }
 
 async function showWinDownloadFallback(reason: unknown): Promise<void> {
@@ -1208,7 +1514,11 @@ async function runStartupUpdateCheck(): Promise<void> {
       })
       return
     }
-    const result = await runBrewUpgrade(rel.version)
+    const { method, result } = await applyMacUpdate(rel)
+    // dmg 装的：下载在后台走，进度条和「更新已就绪」的确认都由事件驱动，这里只有没能开始时才需要说
+    if (method === "dmg" && result.ok) {
+      return
+    }
     const choice = await showAppModal({
       variant: result.ok ? "info" : "error",
       title: result.ok ? "完成" : "更新失败",
@@ -1322,6 +1632,9 @@ export function registerUpdaterIpc(): void {
     lastKnownRemote = rel
     if (semver.gt(rel.version, currentVersion)) {
       const res = await buildAvailableOrReadyResult(currentVersion, rel)
+      if (process.platform === "darwin" && macPrepared && semver.gte(macPrepared.version, rel.version)) {
+        return { ...res, status: "ready" }
+      }
       if (isSilentUpdateEnabled()) {
         if (installReadyVersion && semver.gte(installReadyVersion, rel.version)) {
           return { ...res, status: "ready" }
@@ -1364,7 +1677,7 @@ export function registerUpdaterIpc(): void {
     }
 
     if (process.platform === "darwin") {
-      return runBrewUpgrade(rel.version)
+      return (await applyMacUpdate(rel)).result
     }
 
     if (isSilentUpdateEnabled()) {
@@ -1419,6 +1732,12 @@ export function initAppUpdater(getMainWindow: () => BrowserWindow | null, idlePr
   registerUpdaterIpc()
   wireAutoUpdater()
   void applyAppNetworkProxy()
+  if (app.isPackaged && process.platform === "darwin") {
+    // 比启动时的更新检查早一点：上次更新失败的话，先把原因说清楚
+    setTimeout(() => {
+      void macStartupHousekeeping()
+    }, 2_500)
+  }
   if (app.isPackaged || isDevSimulateUpdate()) {
     setTimeout(() => {
       void runStartupUpdateCheck()
