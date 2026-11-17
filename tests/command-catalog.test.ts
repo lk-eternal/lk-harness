@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest"
-import { COMMANDS, FEISHU_ONLY_COMMANDS, primaryCommands, slashMenuItems, slashQueryOf } from "../src/shared/command-catalog"
+import {
+  COMMANDS, FEISHU_ONLY_COMMANDS, IMAGE_CARRYING_COMMANDS, commandTextWithImages, isImageCarryingCommand,
+  primaryCommands, slashMenuItems, slashQueryOf,
+} from "../src/shared/command-catalog"
 
 describe("slashQueryOf：只有输入的是「/指令」本身才有查询词", () => {
   it.each([
@@ -58,5 +61,60 @@ describe("slashMenuItems：输入框指令菜单的候选", () => {
       expect(i.cmd).toMatch(/^\/[a-z]+$/)
       expect(i.desc.trim().length).toBeGreaterThan(0)
     }
+  })
+})
+
+describe("isImageCarryingCommand：带图发出时仍然算指令的只有 /f", () => {
+  it.each([
+    ["/f 先停一下"],
+    ["/F 大写也认"],
+    ["/f"],
+    ["  /f 前面有空格"],
+    ["/f\n换行也算分隔"],
+  ])("%j → true", (text) => {
+    expect(isImageCarryingCommand(text)).toBe(true)
+  })
+
+  it.each([
+    ["/s 别的指令"],
+    ["/stop"],
+    ["/fx 前缀相同但不是 /f"],
+    ["/ff"],
+    ["先 /f 再说"],
+    ["你好"],
+    [""],
+    ["   "],
+  ])("%j → false", (text) => {
+    expect(isImageCarryingCommand(text)).toBe(false)
+  })
+
+  it("集合里的每一项都是 Daemon 认得的指令（不会写错）", () => {
+    for (const c of IMAGE_CARRYING_COMMANDS) expect(Object.keys(COMMANDS)).toContain(c)
+  })
+})
+
+describe("commandTextWithImages：图片标记跟在指令文本后面，交给只有一行文本的指令队列", () => {
+  it("没有图片：就是去掉首尾空白的指令文本（和以前一样）", () => {
+    expect(commandTextWithImages("/f 先停一下", [])).toBe("/f 先停一下")
+    expect(commandTextWithImages("  /f 先停一下  ", [])).toBe("/f 先停一下")
+  })
+
+  it("一张图：用一个空格接在正文后面", () => {
+    expect(commandTextWithImages("/f ci 先跑着", ["C:\\tmp\\a.png"])).toBe("/f ci 先跑着 [图片已保存: C:\\tmp\\a.png]")
+  })
+
+  it("多张图：保持顺序，标记之间也只隔一个空格", () => {
+    expect(commandTextWithImages("/f 看图", ["/t/1.png", "/t/2.png"])).toBe("/f 看图 [图片已保存: /t/1.png] [图片已保存: /t/2.png]")
+  })
+
+  it("只有 /f 加图：指令后面直接跟标记", () => {
+    expect(commandTextWithImages("/f", ["/t/1.png"])).toBe("/f [图片已保存: /t/1.png]")
+  })
+
+  it("主进程按空白切词再用单个空格拼回去：这样处理一遍结果不变（不会丢图、不会改路径）", () => {
+    const text = commandTextWithImages("/f 先停  一下", ["C:\\Users\\a b\\x.png", "/t/2.png"])
+    const rejoined = text.split(/\s+/).join(" ")
+    // 正文里本来的连续空格会被合并，图片标记（含带空格的路径）不受影响
+    expect(rejoined).toContain("[图片已保存: C:\\Users\\a b\\x.png] [图片已保存: /t/2.png]")
   })
 })

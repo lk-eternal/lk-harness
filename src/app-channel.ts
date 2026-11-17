@@ -239,6 +239,17 @@ export class AppChat {
     }
   }
 
+  /**
+   * 「立即发送」：暂存区里的消息马上进聊天流，不等 Agent 领走。返回放出来的条数。
+   * 只改界面上的位置：消息还在真实队列里，打断完成后 Agent 照常领走（那时 markDelivered 已经无事可做）。
+   * 位置不变——它们本来就排在当前回合之后、下一回合之前，和 `/f` 直接上屏的消息落点一致。
+   */
+  releaseQueued(sessionKey: string): number {
+    const ids = this.entry(sessionKey).items.filter(isQueuedUserItem).map((i) => i.id);
+    this.markDelivered(sessionKey, ids);
+    return ids.length;
+  }
+
   /** 暂存区里编辑一条排队消息的正文；已投递返回 false */
   editQueuedText(sessionKey: string, id: string, text: string): boolean {
     const hit = this.queuedItem(sessionKey, id);

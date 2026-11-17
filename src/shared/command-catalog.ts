@@ -47,6 +47,27 @@ export function slashQueryOf(text: string): string | null {
 /** 只在飞书里有意义的指令（应用内对话没有群）：Daemon 照常认，但不进输入框的 `/` 菜单 */
 export const FEISHU_ONLY_COMMANDS: ReadonlySet<string> = new Set(["/group"]);
 
+/**
+ * 带图片发出时仍然当指令处理的指令：只有 `/f`——它把后面的内容当新指示交给 Agent，图片也要跟着过去。
+ * 别的指令用不上图片，带图发出时仍按普通消息处理（图片交给 Agent），行为和以前一致。
+ */
+export const IMAGE_CARRYING_COMMANDS: ReadonlySet<string> = new Set(["/f"]);
+
+/** 输入的第一个词（小写）是不是带图也算指令的那几个 */
+export function isImageCarryingCommand(text: string): boolean {
+  return IMAGE_CARRYING_COMMANDS.has(text.trim().split(/\s+/)[0]?.toLowerCase() ?? "");
+}
+
+/**
+ * 带图片的指令交给指令队列的那一行文本。
+ * 指令队列里只有一行文本、没有图片字段；飞书里图文混排的指令也是这样——图片的
+ * `[图片已保存: …]` 标记直接跟在指令文本后面，由主进程的 `/f` 原样交给 Agent。这里沿用同一个约定。
+ * 标记之间、标记和正文之间只用一个空格：主进程会按空白切词再用单个空格拼回去。
+ */
+export function commandTextWithImages(text: string, images: readonly string[]): string {
+  return [text.trim(), ...images.map((p) => `[图片已保存: ${p}]`)].join(" ");
+}
+
 /** 输入框的指令菜单候选：单个 `/` 给全部主指令（去掉只属于飞书的），继续输入按前缀过滤；不是指令输入时为空 */
 export function slashMenuItems(text: string): { cmd: string; desc: string }[] {
   const q = slashQueryOf(text);

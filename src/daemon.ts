@@ -19,7 +19,7 @@ import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/questio
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
-import { COMMANDS } from "./shared/command-catalog.js";
+import { COMMANDS, commandTextWithImages, isImageCarryingCommand } from "./shared/command-catalog.js";
 import {
   initFileQueue,
   getQueueDir,
@@ -4950,6 +4950,13 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
     return true;
   }
 
+  // 暂存区「立即发送」：排队的消息先进聊天流，不等打断完成、Agent 领走（和 /f 直接上屏一致）。
+  // 只改界面上的位置，消息还在真实队列里，Agent 之后照常领取
+  if (pathname === "/api/app-chat/queue-release") {
+    json(res, { ok: true, released: appChat.releaseQueued(sessionKey) });
+    return true;
+  }
+
   if (pathname === "/api/app-chat/clear") {
     appChat.clearSession(sessionKey);
     json(res, { ok: true });
@@ -4985,7 +4992,8 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
 
   const messageId = `app_${randomUUID()}`;
   trackMessageSession(messageId, sessionKey);
-  const asCommand = images.length === 0 && isCommand(text);
+  // 带图发出的消息：只有 /f 仍是指令（图片标记跟在指令文本后面，一起交给 Agent）；别的指令带图照旧按普通消息处理
+  const asCommand = isCommand(text) && (images.length === 0 || isImageCarryingCommand(text));
   // Agent 正在干活时发来的普通消息要排队，界面放进暂存区；指令和项目草稿填写即时处理，不排队。
   // 「在干活」= 有未收口的回合卡，或有已领取未确认的消息：后者覆盖领取之后、第一段输出之前回合卡还没出现的空窗
   const agentBusy = appChat.hasLiveTurn(sessionKey) || hasClaimedMessage(sessionKey);
@@ -4993,7 +5001,7 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   appChat.addUser(sessionKey, messageId, text, images, queued);
 
   if (asCommand) {
-    handleCommand(text, messageId, chatKey, "p2p").catch((e: unknown) =>
+    handleCommand(commandTextWithImages(text, images), messageId, chatKey, "p2p").catch((e: unknown) =>
       log("ERROR", `[${rt.cfg.name}] 指令处理失败: ${e instanceof Error ? e.message : String(e)}`),
     );
   } else if (hasProjectNewDraft(chatKey)) {

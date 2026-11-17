@@ -224,6 +224,15 @@ export function removeQueuedAppChatMessage(sessionKey: string, messageId: string
   return callAppChatDaemon("queue-remove", { sessionKey, messageId })
 }
 
+/**
+ * 暂存区「立即发送」：排队的消息先进聊天流（和 `/f` 直接上屏一致），不等打断完成、Agent 领走。
+ * 不是应用内对话的会话（飞书等）没有暂存区，直接当没事发生。
+ */
+export function releaseQueuedAppChatMessages(sessionKey: string): Promise<AppChatResult> {
+  if (getChannel(channelIdFromSessionKey(sessionKey))?.type !== "app") return Promise.resolve({ ok: true })
+  return callAppChatDaemon("queue-release", { sessionKey })
+}
+
 const appChatEventListeners = new Set<(event: AppChatEvent) => void>()
 
 export function subscribeAppChatEvent(listener: (event: AppChatEvent) => void): () => void {

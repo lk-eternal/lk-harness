@@ -88,7 +88,7 @@ import {
   dirBaseName,
 } from "../src/shared/session-label.js"
 import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
-import { forwardAppChatEvent } from "./app-chat"
+import { forwardAppChatEvent, releaseQueuedAppChatMessages } from "./app-chat"
 import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 import {
   applyChannelWorkspaceSwitch,
@@ -1189,6 +1189,7 @@ export function sendQueuedNow(sessionKey: string): Promise<SendQueuedNowResult> 
     interruptTurn: interruptSessionTurn,
     stopAgent: stopSessionAgent,
     dispatch: dispatchSessionAgents,
+    showQueuedInChat: releaseQueuedAppChatMessages,
     later: (fn, ms) => { setTimeout(fn, ms) },
     log: (level, msg) => broadcastLog(`[Queue] ${msg}`, level),
   })

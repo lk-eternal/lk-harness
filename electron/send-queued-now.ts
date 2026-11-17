@@ -22,6 +22,12 @@ export interface SendQueuedNowDeps {
   interruptTurn(sessionKey: string): Promise<InterruptTurnResult>
   stopAgent(sessionKey: string): Promise<void>
   dispatch(): Promise<void>
+  /**
+   * 让排队的消息先出现在聊天流里（应用内对话：暂存区 → 聊天流），不等打断完成、Agent 领走。
+   * 打断要 2~3 秒起、重新拉起 Agent 更久，这段时间消息还留在暂存区转圈，和 `/f` 直接上屏不一致。
+   * 失败不影响后面的打断；没有暂存区的会话（飞书等）什么也不用做。
+   */
+  showQueuedInChat(sessionKey: string): Promise<unknown>
   /** 稍后再执行（生产里是 setTimeout） */
   later(fn: () => void, ms: number): void
   log(level: "INFO" | "WARN", msg: string): void
@@ -75,6 +81,13 @@ export async function sendQueuedNowFlow(sessionKey: string, deps: SendQueuedNowD
 
   const mine = await mineOf()
   if (!mine.some((m) => m.status !== "processing")) return { ok: false, error: "没有排队中的消息" }
+
+  // 先上屏再打断：用户点下去的这一刻消息就进聊天流，后面的打断/拉起慢也不影响
+  try {
+    await deps.showQueuedInChat(sessionKey)
+  } catch (e: unknown) {
+    deps.log("WARN", `[${sessionKey}] 立即发送：消息没能先放进聊天流（不影响打断）: ${e instanceof Error ? e.message : String(e)}`)
+  }
 
   const redispatchLater = () => deps.later(() => { void deps.dispatch().catch(() => undefined) }, REDISPATCH_AFTER_MS)
 

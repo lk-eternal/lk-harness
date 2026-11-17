@@ -17,6 +17,10 @@ function setup(opts: {
   queue?: QueuedMessageRef[]
   running?: boolean
   interrupt?: InterruptTurnResult | Error
+  /** 把「消息先放进聊天流」记进 events，用来断言它排在打断/停止/调度之前（默认不记，免得动老用例的断言） */
+  showInEvents?: boolean
+  /** 放进聊天流失败（daemon 不可达等） */
+  showError?: Error
 }) {
   const events: string[] = []
   const timers: Array<{ fn: () => void; ms: number }> = []
@@ -33,6 +37,10 @@ function setup(opts: {
     }),
     stopAgent: vi.fn(async () => { events.push("stop") }),
     dispatch: vi.fn(async () => { events.push("dispatch") }),
+    showQueuedInChat: vi.fn(async () => {
+      if (opts.showInEvents) events.push("show")
+      if (opts.showError) throw opts.showError
+    }),
     later: (fn, ms) => { timers.push({ fn, ms }) },
     log: vi.fn(),
   }
@@ -75,12 +83,64 @@ describe("没有排队中的消息", () => {
     const { deps, events } = setup({ queue: [msg("c1", "processing")] })
     expect(await sendQueuedNowFlow(KEY, deps)).toEqual({ ok: false, error: "没有排队中的消息" })
     expect(events).toEqual([])
+    expect(deps.showQueuedInChat).not.toHaveBeenCalled() // 没有排队的，不去动聊天流
   })
 
   it("队列里只有别的会话的消息：同样报错，不会误动别人", async () => {
     const { deps, events } = setup({ queue: [msg("o1", "pending", "app_x|other::D:/ws")] })
     expect((await sendQueuedNowFlow(KEY, deps)).ok).toBe(false)
     expect(events).toEqual([])
+    expect(deps.showQueuedInChat).not.toHaveBeenCalled()
+  })
+})
+
+describe("先上屏再打断：点下去那一刻，排队的消息就进聊天流（和 /f 一致）", () => {
+  it("各条路径都先放出来再动 Agent，顺序不能反（反了就要等打断/拉起完才上屏，按钮一直转圈）", async () => {
+    const run = async (opts: Parameters<typeof setup>[0]) => {
+      const { deps, events } = setup({ ...opts, showInEvents: true })
+      await sendQueuedNowFlow(KEY, deps)
+      return events
+    }
+    expect(await run({ interrupt: "interrupted" })).toEqual(["show", "interrupt"])
+    expect(await run({ interrupt: "launching" })).toEqual(["show", "interrupt"])
+    expect(await run({ running: false })).toEqual(["show", "delete:c1", "dispatch"])
+    expect(await run({ interrupt: "exited" })).toEqual(["show", "interrupt", "delete:c1", "dispatch"])
+    expect(await run({ interrupt: "timeout" })).toEqual(["show", "interrupt", "delete:c1", "stop", "dispatch"])
+  })
+
+  it("只放出一次，参数是调用方给的原始会话 key（不是规范化后的）", async () => {
+    const { deps } = setup({ interrupt: "interrupted" })
+    await sendQueuedNowFlow(KEY, deps)
+    expect(deps.showQueuedInChat).toHaveBeenCalledTimes(1)
+    expect(deps.showQueuedInChat).toHaveBeenCalledWith(KEY)
+  })
+
+  it("打断一直没结束（Agent 卡在工具里）：消息也已经放出来了，不用等打断返回", async () => {
+    const { deps } = setup({})
+    let finish!: (r: InterruptTurnResult) => void
+    ;(deps.interruptTurn as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise<InterruptTurnResult>((r) => { finish = r }))
+    const flow = sendQueuedNowFlow(KEY, deps)
+    await vi.waitFor(() => expect(deps.interruptTurn).toHaveBeenCalled()) // 打断已发出、还没返回
+    expect(deps.showQueuedInChat).toHaveBeenCalledTimes(1)
+    finish("interrupted")
+    expect(await flow).toEqual({ ok: true, via: "soft" })
+  })
+
+  it("放出来失败（daemon 不可达等）：只记一条警告，照常打断，不把错误抛给界面", async () => {
+    const { deps, events } = setup({ interrupt: "interrupted", showError: new Error("daemon 不可达") })
+    expect(await sendQueuedNowFlow(KEY, deps)).toEqual({ ok: true, via: "soft" })
+    expect(events).toEqual(["interrupt"])
+    expect(deps.log).toHaveBeenCalledWith("WARN", expect.stringContaining("daemon 不可达"))
+  })
+
+  it("放出来失败时，重新拉起/停止重启的路径同样照走", async () => {
+    const relaunch = setup({ running: false, showError: new Error("x") })
+    expect((await sendQueuedNowFlow(KEY, relaunch.deps)).via).toBe("relaunch")
+    expect(relaunch.events).toEqual(["delete:c1", "dispatch"])
+
+    const hard = setup({ interrupt: "unsupported", showError: new Error("x") })
+    expect((await sendQueuedNowFlow(KEY, hard.deps)).via).toBe("hard")
+    expect(hard.events).toEqual(["interrupt", "delete:c1", "stop", "dispatch"])
   })
 })
 
