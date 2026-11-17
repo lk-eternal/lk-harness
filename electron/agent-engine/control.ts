@@ -4,6 +4,7 @@ import { resolveSessionChatName } from "../session-chat-name"
 import type { AgentEngine, AgentSessionDiagnostics, AgentSessionInfo } from "./types"
 import { app } from "electron"
 import { getAgentEngine, getAllAgentEngines, agentEngineKind } from "./factory"
+import { clearMirror, clearSessionCarryover, initCarryoverStore } from "../carryover.js"
 // 静态导入、不要改回动态 import：打包时 Rollup 曾只按另一个「全 null 字面量」调用点
 // 把 applySessionProviderSwitch 折叠成只清空，切供应商就成了点了没反应（源码测试测不出来）
 import { applySessionProviderSwitch, initSessionModelStore } from "../../src/shared/session-model-store.js"
@@ -50,10 +51,14 @@ export function handleAgentPollPhase(
   }
 }
 
+/** 引擎各清自己的账本与 resume；镜像和待搬运块是引擎无关的会话级历史，在这里统一清 */
 export function resetAllSessionContext(sessionKey: string): void {
   for (const e of getAllAgentEngines()) {
     e.resetSessionContext(sessionKey)
   }
+  initCarryoverStore(app.getPath("userData"))
+  clearMirror(sessionKey)
+  clearSessionCarryover(sessionKey)
 }
 
 export function clearAllAgentFailStreaks(): void {

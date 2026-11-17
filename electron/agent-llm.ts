@@ -27,7 +27,7 @@ import {
   type ThinkingLevel,
 } from "../src/shared/session-thinking-store.js"
 import { lookupModelThinkingLevels } from "./llm-model-catalog"
-import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns, clearMirror } from "./carryover"
+import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import {
   hashSystemPrompt,
@@ -642,7 +642,6 @@ export function hasPersistedLlmSession(sessionKey: string): boolean {
 export function resetLlmSessionContext(sessionKey: string): void {
   clearPiSession(sessionKey)
   forgetPiResumable(sessionKey)
-  try { clearMirror(sessionKey) } catch { /* ignore */ }
 }
 
 /** 搬运用导出：镜像优先（双引擎统一源），老账本回填；取不到返回 [] */

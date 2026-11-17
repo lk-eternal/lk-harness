@@ -1547,7 +1547,6 @@ export function resetSdkSessionContext(sessionKey: string): void {
   if (live) void releaseSession(live)
   if (workspaceDir) clearSdkJsonlStore(workspaceDir, sessionKey)
   forgetResumable(sessionKey)
-  void import("./carryover.js").then(({ clearMirror }) => clearMirror(sessionKey)).catch(() => undefined)
 }
 
 /** 搬运用导出：镜像优先（双引擎统一源）；无镜像回退 transcript API / 流式卡正文 */
