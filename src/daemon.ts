@@ -1892,6 +1892,9 @@ interface StreamQuestionBlock {
   multi?: boolean;
 }
 
+/** 随未决问题登记存盘的题目快照：渲染这道题（关闭 / 已作答的样子）所需的全部信息，不含它在时间线里的位置 */
+type StreamQuestionSnapshot = Omit<StreamQuestionBlock, "insertAt">;
+
 interface StreamPanelState {
   panelSeq: number;
   knownPanelIds: Set<string>;
@@ -2641,9 +2644,27 @@ async function updateAgentStreamCard(
   return { ok: true, cardId: state.cardId, messageId: state.messageId };
 }
 
+/** 内存里没有这张卡（重启后）时，往卡上写操作用的 sequence：同一张卡上上一次用过的值 */
+const orphanCardSequence = new Map<string, number>();
+const ORPHAN_CARD_SEQUENCE_MAX = 200;
+
+/**
+ * 内存无卡时给飞书卡片写操作取 sequence：必须大于卡已用值（严格递增），秒级时间戳恒大于运行中用的计数器。
+ * 同一秒内对同一张卡连续写（关两道题、关题再收口）时秒数会重复，飞书会拒掉后一个（300317），所以每次至少比上次大 1。
+ */
+function nextOrphanCardSequence(cardId: string): number {
+  const next = Math.max(Math.floor(Date.now() / 1000), (orphanCardSequence.get(cardId) ?? 0) + 1);
+  if (orphanCardSequence.size >= ORPHAN_CARD_SEQUENCE_MAX) {
+    const oldest = orphanCardSequence.keys().next().value;
+    if (oldest) orphanCardSequence.delete(oldest);
+  }
+  orphanCardSequence.set(cardId, next);
+  return next;
+}
+
 /**
  * daemon 内存无卡时按 cardId 收口飞书孤儿流式卡（pack/进程重启后常见）。
- * sequence 必须大于卡已用值（严格递增），用秒级时间戳恒大于计数器；
+ * sequence 见 nextOrphanCardSequence；
  * 只关 streaming_mode 不全量 update——daemon 不知道卡内容，空 segments 会把正文冲掉。
  */
 async function finishOrphanStreamCardById(
@@ -2652,7 +2673,7 @@ async function finishOrphanStreamCardById(
 ): Promise<boolean> {
   const sender = ch.rt.sender!;
   try {
-    return await sender.closeStreamingCard(cardId, Math.floor(Date.now() / 1000));
+    return await sender.closeStreamingCard(cardId, nextOrphanCardSequence(cardId));
   } catch (e: any) {
     log("WARN", `[StreamCard] 孤儿卡收口失败 card=${cardId}: ${e?.message ?? e}`);
     return false;
@@ -2783,6 +2804,13 @@ interface CardQuestionEntry {
   createdAt: number; title?: CardTitle; template?: string; isStreamCard?: boolean; questionBlockId?: string;
   /** 多选题：勾选在飞书卡片表单里本地完成，提交时才带回；这里只记「这是多选题」 */
   multi?: boolean;
+  /**
+   * 流式卡里的题：CardKit 卡片 ID 和这张卡上各题的快照（同一张卡的多道题共用这一条登记，按 messageId 存）。
+   * 进程重启后内存里的流式卡没了，关题和点选都靠这两样把卡上的题就地改掉，不动卡里的思考、工具和正文。
+   * 旧版本存下的登记没有这两项，那种卡只能在点选时提示已过期。
+   */
+  cardId?: string;
+  blocks?: StreamQuestionSnapshot[];
 }
 const cardQuestionMap = new Map<string, CardQuestionEntry>();
 const CARD_QUESTION_MAX = 500;
@@ -2996,6 +3024,80 @@ function closedQuestionFooter(_questionText: string, note: string): string {
   return `⌛ _${note}_`;
 }
 
+/** 流式卡当前各题的快照（随未决问题登记存盘，重启后靠它认出卡上的题） */
+function snapshotQuestionBlocks(blocks: StreamQuestionBlock[]): StreamQuestionSnapshot[] {
+  return blocks.map((b) => ({
+    blockId: b.blockId,
+    text: b.text,
+    options: [...b.options],
+    ...(b.answered ? { answered: b.answered } : {}),
+    ...(b.closedNote ? { closedNote: b.closedNote } : {}),
+    ...(b.multi ? { multi: true } : {}),
+  }));
+}
+
+/**
+ * 流式卡发出一道题：按卡片消息号登记。同一张卡的多道题共用这一条登记（后发的覆盖先发的），
+ * 所以登记里除了最新一题的内容，还带上卡号和这张卡上各题的快照——重启后靠它们认出卡上有哪些题。
+ */
+function rememberStreamCardQuestion(
+  stream: AgentStreamCardState,
+  entry: Omit<CardQuestionEntry, "isStreamCard" | "cardId" | "blocks">,
+): void {
+  if (!stream.messageId) return;
+  rememberCardQuestion(stream.messageId, {
+    ...entry,
+    isStreamCard: true,
+    cardId: stream.cardId,
+    blocks: snapshotQuestionBlocks(stream.questionBlocks),
+  });
+}
+
+/** 活卡上的题有人作答后，把快照同步进登记：之后重启了，登记里各题的状态才和卡上显示的一致 */
+function syncQuestionEntrySnapshot(messageId: string | undefined, state: AgentStreamCardState): void {
+  const entry = messageId ? cardQuestionMap.get(messageId) : undefined;
+  if (!entry?.isStreamCard) return;
+  entry.cardId = state.cardId;
+  entry.blocks = snapshotQuestionBlocks(state.questionBlocks);
+  scheduleCardQuestionSave();
+}
+
+/**
+ * 内存里已经没有这张流式卡（进程重启后常见）：把卡上的一道题就地换成「已选择 / 已关闭」的样子，
+ * 只替换这一道题的组件，卡上的思考、工具、正文原样不动。靠登记里存的 cardId 和题目快照定位。
+ */
+async function replaceOrphanQuestionBlock(
+  sender: LarkSender,
+  cardId: string,
+  block: StreamQuestionSnapshot,
+  footer: string,
+): Promise<boolean> {
+  const elementId = streamQuestionElementId(block.blockId);
+  const element = LarkSender.buildQuestionBlockElement({
+    questionText: questionBodyText(block.text, block.options),
+    footer,
+    elementId,
+  });
+  return sender.replaceCardElement(cardId, elementId, element, nextOrphanCardSequence(cardId));
+}
+
+/** 内存里没有这张流式卡时，关掉卡上还开着的题。返回是否全部改成功（没有开着的题也算成功） */
+async function closeOrphanStreamQuestions(
+  sender: LarkSender,
+  cardId: string,
+  blocks: StreamQuestionSnapshot[],
+  note: string,
+): Promise<boolean> {
+  let allOk = true;
+  for (const b of blocks) {
+    if (b.answered || b.closedNote) continue;
+    // 先标记再发请求：期间点选或再来一次关题都按「已关闭」处理
+    b.closedNote = note;
+    if (!await replaceOrphanQuestionBlock(sender, cardId, b, closedQuestionFooter(b.text, note))) allOk = false;
+  }
+  return allOk;
+}
+
 /** 按 session 关闭未决问题（禁止按 chat 扩散，避免同私聊多会话误伤） */
 async function expireOpenCardQuestionsForSession(sessionKey: string | undefined, note: string): Promise<void> {
   if (!sessionKey) return;
@@ -3016,9 +3118,16 @@ async function expireOpenCardQuestionsForSession(sessionKey: string | undefined,
         continue;
       }
       if (entry.isStreamCard) {
+        // 流式卡不在内存里（重启后常见）。只摘登记不改卡的话，卡上的选项会一直开着，点了还会出岔子；
+        // 登记里存了卡号和各题快照就把还开着的题就地改成已关闭，没有（旧版本存下的）只能摘登记
+        const closed = entry.cardId && entry.blocks
+          ? await closeOrphanStreamQuestions(sender, entry.cardId, entry.blocks, note)
+          : undefined;
         cardQuestionMap.delete(messageId);
         scheduleCardQuestionSave();
-        log("INFO", `流式问题卡已收口或不存在，跳过 patchCard: ${messageId}`);
+        if (closed === undefined) log("INFO", `流式问题卡已收口或不存在，登记里没有卡号，没法改卡: ${messageId}`);
+        else if (closed) log("INFO", `流式问题卡不在内存里，已把卡上还开着的题改成已关闭: ${messageId}`);
+        else log("WARN", `流式问题卡不在内存里，改成已关闭时有题没改成功: ${messageId}`);
         continue;
       }
       const patched = await sender.patchCard(
@@ -3101,8 +3210,73 @@ function resolveCardActionChatType(rt: ChannelRuntime, chatKey: string, rawChatI
   return rawChatId?.startsWith("on_") ? "group" : "p2p";
 }
 
+/**
+ * 点选一张流式卡里的题，但内存里已经没有这张卡了（进程重启后常见；或卡已被关掉而飞书客户端还没刷新）。
+ * 登记里存着卡号和各题快照、这道题还开着：照常作答，只把这道题就地改成「已选择」，卡上别的内容不动；
+ * 认不出这道题、或已经作答 / 关闭：只提示已过期，不改卡，也不往队列里塞任何东西。
+ */
+async function handleOrphanStreamQuestionAction(
+  rt: ChannelRuntime,
+  evt: LarkCardActionEvent,
+  value: { kind?: string; opt?: string; blockId?: string },
+  entry: CardQuestionEntry | undefined,
+  chatKey: string,
+): Promise<unknown> {
+  const expired = { toast: { type: "warning", content: "该问题已过期，请直接发消息告知选择" } };
+  const blockId = String(value.blockId ?? "");
+  const block = entry?.blocks?.find((b) => b.blockId === blockId);
+  const sender = rt.sender;
+  if (!entry || !entry.cardId || !entry.blocks || !block || block.answered || block.closedNote || !sender) return expired;
+  const sessionKey = entry.sessionKey;
+
+  let opt: string;
+  if (value.kind === "question_submit") {
+    if (!block.multi) return expired;
+    const picked = readFormChoices(block.options, evt.formValue, multiQuestionNamePrefix(blockId));
+    if (!picked) {
+      log("WARN", `[${rt.cfg.name}] 多选提交没带勾选内容 (msg=${evt.messageId}, block=${blockId}) form_value=${JSON.stringify(evt.formValue ?? null)?.slice(0, 300)}`);
+      return { toast: { type: "warning", content: MULTI_NO_CHOICES_TOAST } };
+    }
+    opt = joinChoices(block.options, picked);
+    if (!opt) return { toast: { type: "warning", content: "请先勾选至少一项" } };
+  } else {
+    opt = String(value.opt ?? "").trim() || (evt.inputValue ?? "").trim();
+    if (!opt) return expired;
+  }
+
+  const dedupeKey = `${evt.messageId}:${blockId}`;
+  if (!markCardQuestionAnswerAttempt(dedupeKey)) {
+    log("INFO", `[${rt.cfg.name}] 问题卡片重复点击已忽略 (msg=${evt.messageId}, block=${blockId})`);
+    return { toast: { type: "info", content: "已提交，请稍候" } };
+  }
+  log("INFO", `[${rt.cfg.name}] 问题卡片选择(卡不在内存里，按登记就地更新): ${opt} (msg=${evt.messageId}, session=${sessionKey ?? "-"}, block=${blockId})`);
+  block.answered = opt;
+  const ok = await replaceOrphanQuestionBlock(sender, entry.cardId, block, answeredQuestionFooter(opt));
+  if (!ok) {
+    block.answered = undefined;
+    releaseCardQuestionAnswerAttempt(dedupeKey);
+    return { toast: { type: "warning", content: "更新失败，请重试" } };
+  }
+
+  if (entry.blocks.some((b) => !b.answered && !b.closedNote)) {
+    scheduleCardQuestionSave();
+    return { toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` } };
+  }
+  // 这张卡上的题都答完了：和活卡一样，汇总成一条消息交给 Agent
+  cardQuestionMap.delete(evt.messageId);
+  scheduleCardQuestionSave();
+  const summary = formatQuestionBatchSummary(entry.blocks.map((b) => ({ text: questionDisplayBody(b.text), answered: b.answered })));
+  if (summary) {
+    if (sessionKey) trackMessageSession(evt.messageId, sessionKey);
+    const internalId = `internal_card_${Date.now()}`;
+    trackInternalMsgChat(internalId, chatKey);
+    pushMessage(summary, internalId, chatKey, resolveCardActionChatType(rt, chatKey, evt.chatId), evt.operatorOpenId, evt.messageId, { senderType: "user" });
+  }
+  return { toast: { type: "success", content: "已全部选择，正在通知 Agent" } };
+}
+
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, closeOpenQuestionsForSession, rememberStreamCardQuestion };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
@@ -3140,6 +3314,12 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       ?? (entry?.isStreamCard && sessionKey && agentStreamCards.get(sessionKey)
         ? { sessionKey, state: agentStreamCards.get(sessionKey)! }
         : undefined);
+    // 按钮带 blockId 就是流式卡里的题。内存里没有这张卡、或者当前的活卡里没有这道题（重启后常见，
+    // 上面按会话兜底拿到的是另一张新卡）：不能走下面的老路——它会把整张卡换成一行「已选择」，
+    // 把卡上的思考、工具、正文全冲掉，还会往队列塞一条答案，让 Agent 把新卡上的题顺手关掉
+    if (blockId && !streamHit?.state.questionBlocks?.some((b) => b.blockId === blockId)) {
+      return handleOrphanStreamQuestionAction(rt, evt, value, entry, chatKey);
+    }
     const streamQuestion = !!streamHit && (streamHit.state.questionBlocks?.length ?? 0) > 0;
     // 按钮点击取 opt；输入框提交取 input_value（自由输入）；多选提交取表单里的勾选（按题目顺序拼接）
     let opt: string;
@@ -3207,6 +3387,8 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
           log("INFO", `[${rt.cfg.name}] 问题卡片已全量更新 costMs=${Date.now() - cardActionT0} (msg=${evt.messageId})`);
           const { cardJson } = buildAgentStreamCardJson(sk, state, ch, false);
           const allAnswered = !hasOpenQuestionBlock(state);
+          // 登记里各题的状态跟着走：之后重启了，靠它才知道卡上哪些题已经答过
+          syncQuestionEntrySnapshot(state.messageId ?? evt.messageId, state);
           const summary = allAnswered ? formatStreamQuestionBatchSummary(state.questionBlocks) : undefined;
           return { ok: true, cardJson, allAnswered, summary };
         }
@@ -5311,13 +5493,12 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
             return undefined;
           }
           if (stream.messageId) {
-            rememberCardQuestion(stream.messageId, {
+            rememberStreamCardQuestion(stream, {
               text, displayBody, options: opts, sessionKey: session_key,
               chatKey: session_key ? chatIdFromSessionKey(session_key) : (ch.chatId ? makeChatKey(ch.rt.cfg.id, ch.chatId) : undefined),
               createdAt: Date.now(),
               title: stream.sessionTitle,
               template: stream.sessionTemplate,
-              isStreamCard: true,
               questionBlockId: blockId,
             });
             trackMessageSession(stream.messageId, session_key);
