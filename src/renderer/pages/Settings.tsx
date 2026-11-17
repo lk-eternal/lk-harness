@@ -84,8 +84,8 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
   const [theme, setTheme] = useState<Theme>("system")
   const [autoUpgradePrompt, setAutoUpgradePrompt] = useState(true)
   /** 静默更新（仅 Windows 显示）：后台自动下载，退出应用时自动安装，不弹窗、不出安装向导 */
-  const [silentUpdate, setSilentUpdate] = useState(false)
-  const silentUpdateRef = useRef(false)
+  const [silentUpdate, setSilentUpdate] = useState(true)
+  const silentUpdateRef = useRef(true)
   /** 静默更新下的「空闲时自动重启安装」（默认开，只在静默更新开着时有意义） */
   const [idleRestart, setIdleRestart] = useState(true)
   /** 静默更新开着且没关掉空闲重启：给「已下载好」那句提示用，事件回调里读不到最新的 state */
@@ -208,7 +208,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     if (tab === "about") {
       window.electronAPI.getConfig().then((config) => {
         setAutoUpgradePrompt(config.autoUpgradePrompt !== false)
-        setSilentUpdate(config.silentUpdate === true)
+        setSilentUpdate(config.silentUpdate !== false)
         setIdleRestart(config.silentUpdateIdleRestart !== false)
       })
     }

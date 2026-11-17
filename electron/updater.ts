@@ -256,9 +256,9 @@ function isAutoUpgradePromptEnabled(): boolean {
   return getConfig().autoUpgradePrompt !== false
 }
 
-/** 静默更新是否生效：只在 Windows 的安装版里，且设置里开着；开着时优先于「启动时提示升级」 */
+/** 静默更新是否生效：只在 Windows 的安装版里，且设置里没有关掉（默认开）；开着时优先于「启动时提示升级」 */
 function isSilentUpdateEnabled(): boolean {
-  return process.platform === "win32" && app.isPackaged && getConfig().silentUpdate === true
+  return process.platform === "win32" && app.isPackaged && getConfig().silentUpdate !== false
 }
 
 /** 空闲时自动重启安装是否生效：静默更新开着，且设置里没有把它单独关掉（默认开） */

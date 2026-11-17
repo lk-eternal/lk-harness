@@ -41,7 +41,8 @@ export interface AppConfig {
   autoUpgradePrompt: boolean
   /**
    * 静默更新（只在 Windows 生效）：后台自动下载新版本、不弹任何窗口，退出应用时自动静默安装（不出现安装向导）。
-   * 开着时优先于 autoUpgradePrompt；默认关，行为和以前一样。
+   * 开着时优先于 autoUpgradePrompt。缺省（配置里没有这个键）按开处理，显式 false 才是关：
+   * 从没拨过这个开关的老用户升级后就是开着的，在设置里主动关过的保持关。
    */
   silentUpdate: boolean
   /**
@@ -125,7 +126,7 @@ const defaults: AppConfig = {
   noProxy: "localhost,127.0.0.1,feishu.cn,weixin.qq.com",
   closeWindowAction: "ask",
   autoUpgradePrompt: true,
-  silentUpdate: false,
+  silentUpdate: true,
   silentUpdateIdleRestart: true,
   theme: "system",
   mainChatIds: {},

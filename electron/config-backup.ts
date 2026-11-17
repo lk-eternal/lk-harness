@@ -451,7 +451,7 @@ function buildManifest(sections?: ConfigSection[]): Partial<ConfigExportManifest
         autoStart: cfg.autoStart ?? false,
         closeWindowAction: cfg.closeWindowAction ?? "ask",
         autoUpgradePrompt: cfg.autoUpgradePrompt ?? true,
-        silentUpdate: cfg.silentUpdate ?? false,
+        silentUpdate: cfg.silentUpdate ?? true,
         silentUpdateIdleRestart: cfg.silentUpdateIdleRestart ?? true,
         daemonPort: cfg.daemonPort ?? 19528,
         setupComplete: cfg.setupComplete ?? false,

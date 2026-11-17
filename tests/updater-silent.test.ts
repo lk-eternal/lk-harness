@@ -429,7 +429,7 @@ describe("静默更新开着（Windows 安装版）", () => {
         finishPrefetch = () => resolve({ reusedExisting: false, attempts: 1 })
       }),
     )
-    await boot({})
+    await boot({ silentUpdate: false })
     await runStartup()
     await answerModal(0, 1) // 开关还关着时，用户点了「下载并安装」
     expect(h.prefetchInstaller).toHaveBeenCalledTimes(1)
@@ -522,8 +522,37 @@ describe("静默更新开着（Windows 安装版）", () => {
   })
 })
 
-describe("静默更新关着（默认）：行为和以前一样", () => {
-  it("启动：弹「发现新版本」问用户，不自己下载，也不登记退出时安装", async () => {
+describe("静默更新缺省（配置里没有这个键）：按开处理", () => {
+  it("从没拨过开关的老用户：启动就在后台下载，不弹「发现新版本」，登记退出时安装", async () => {
+    await boot({})
+    await runStartup()
+
+    expect(modalTitles()).toEqual([])
+    expect(h.updater.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(h.prefetchInstaller).toHaveBeenCalledTimes(1)
+    expect(h.updater.autoInstallOnAppQuit).toBe(true)
+  })
+
+  it("缺省时「空闲时自动重启安装」也跟着是开的（两个键都没有）", async () => {
+    const probes = makeProbes()
+    await bootWithReadyUpdate({}, probes)
+
+    await runIdleTicks()
+
+    expect(h.updater.quitAndInstall).toHaveBeenCalledTimes(1)
+  })
+
+  it("只有显式 false 才是关：设置里主动关过的保持关着", async () => {
+    await boot({ silentUpdate: false })
+    await runStartup()
+
+    expect(modalTitles()).toEqual(["发现新版本"])
+    expect(h.prefetchInstaller).not.toHaveBeenCalled()
+    expect(h.updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it("macOS 上缺省也不生效：默认翻转只影响 Windows 安装版", async () => {
+    setPlatform("darwin")
     await boot({})
     await runStartup()
 
@@ -533,8 +562,39 @@ describe("静默更新关着（默认）：行为和以前一样", () => {
     expect(h.updater.autoInstallOnAppQuit).toBe(false)
   })
 
-  it("用户点「下载并安装」后下载；下好了弹「更新已就绪」，且 autoInstallOnAppQuit 保持关闭", async () => {
+  it("Linux 上缺省同样不生效", async () => {
+    setPlatform("linux")
     await boot({})
+    await runStartup()
+
+    expect(modalTitles()).toEqual(["发现新版本"])
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it("未打包（开发版）缺省也不生效，不会注册定时检查", async () => {
+    h.app.isPackaged = false
+    await boot({})
+    await runStartup()
+    await runPeriodic()
+
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(h.netFetch).not.toHaveBeenCalled()
+  })
+})
+
+describe("静默更新被用户关掉（silentUpdate: false）：行为和以前一样", () => {
+  it("启动：弹「发现新版本」问用户，不自己下载，也不登记退出时安装", async () => {
+    await boot({ silentUpdate: false })
+    await runStartup()
+
+    expect(modalTitles()).toEqual(["发现新版本"])
+    expect(h.updater.checkForUpdates).not.toHaveBeenCalled()
+    expect(h.prefetchInstaller).not.toHaveBeenCalled()
+    expect(h.updater.autoInstallOnAppQuit).toBe(false)
+  })
+
+  it("用户点「下载并安装」后下载；下好了弹「更新已就绪」，且 autoInstallOnAppQuit 保持关闭", async () => {
+    await boot({ silentUpdate: false })
     await runStartup()
 
     await answerModal(0, 1)
@@ -548,7 +608,7 @@ describe("静默更新关着（默认）：行为和以前一样", () => {
 
   it("用户发起的下载失败：弹「自动更新失败」（静默更新才只写日志）", async () => {
     h.prefetchInstaller.mockRejectedValue(new Error("connection reset"))
-    await boot({})
+    await boot({ silentUpdate: false })
     await runStartup()
     // 弹窗是串行队列：先把启动时的「发现新版本」点「稍后」，后面的弹窗才轮得到
     await answerModal(0, 0)
@@ -562,7 +622,7 @@ describe("静默更新关着（默认）：行为和以前一样", () => {
   })
 
   it("定时器什么都不做：没开静默更新时不会偷偷检查或下载", async () => {
-    await boot({}, "1.4.1")
+    await boot({ silentUpdate: false }, "1.4.1")
     await runStartup()
     h.netFetch.mockClear()
     await runPeriodic()
@@ -572,7 +632,7 @@ describe("静默更新关着（默认）：行为和以前一样", () => {
   })
 
   it("关掉「启动时自动提示升级」：启动只记录版本，不弹窗不下载", async () => {
-    await boot({ autoUpgradePrompt: false })
+    await boot({ silentUpdate: false, autoUpgradePrompt: false })
     await runStartup()
     expect(sent("app:modal-request")).toEqual([])
     expect(h.updater.checkForUpdates).not.toHaveBeenCalled()
@@ -812,9 +872,9 @@ describe("空闲时自动重启安装（静默更新开着、新版本已下载�
     expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
   })
 
-  it("静默更新关着（默认）：不自动重启，探针一个都不碰", async () => {
+  it("静默更新被用户关掉：不自动重启，探针一个都不碰", async () => {
     const probes = makeProbes()
-    await boot({}, "1.4.2", probes)
+    await boot({ silentUpdate: false }, "1.4.2", probes)
     await runStartup()
     await runIdleTicks(5)
     expect(h.updater.quitAndInstall).not.toHaveBeenCalled()
