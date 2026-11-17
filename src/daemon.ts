@@ -4987,7 +4987,9 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   }
 
   const text = (body.text ?? "").trim();
-  const images = (Array.isArray(body.images) ? body.images : []).filter((p) => typeof p === "string" && fs.existsSync(p));
+  // 粘贴时图片先放在临时目录（24 小时后会被清掉）。发出去的这一刻收进会话自己的目录：之后记录里、交给 Agent 的都是这份，
+  // 和会话记录同生命周期，不会过几天打开聊天变成「图片不可用」
+  const images = appChat.adoptImages(sessionKey, (Array.isArray(body.images) ? body.images : []).filter((p) => typeof p === "string" && fs.existsSync(p)));
   if (!text && images.length === 0) { json(res, { ok: false, error: "消息为空" }, 400); return true; }
 
   const messageId = `app_${randomUUID()}`;

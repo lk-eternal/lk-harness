@@ -25,18 +25,15 @@ import { isTempChatWorkspace } from "../src/shared/temp-workspace"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import { parseHistoryQuery, type HistoryQuery } from "../src/shared/app-chat-history-page"
 import { canOpenWithDefaultApp } from "../src/shared/preview-kinds"
+import { APP_CHAT_IMAGE_MIME, APP_CHAT_IMAGE_MISSING, MAX_APP_CHAT_IMAGE_BYTES } from "../src/shared/app-chat-image"
 
-/** 与飞书下载图片同目录，沿用 `[图片已保存: …]` 约定，Daemon 的媒体缓存清理一并覆盖 */
+/**
+ * 粘贴 / 选图时先放在这里（和飞书下载图片同目录，Daemon 的媒体缓存清理会在 24 小时后删掉）。
+ * 只是「还没发送」的暂存：点发送时 Daemon 会把图片收进这个会话自己的目录，之后和会话记录同生命周期。
+ */
 const IMAGE_DIR = path.join(os.tmpdir(), "lk-harness-images")
-const IMAGE_MIME: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-  ".bmp": "image/bmp",
-}
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024
+const IMAGE_MIME = APP_CHAT_IMAGE_MIME
+const MAX_IMAGE_BYTES = MAX_APP_CHAT_IMAGE_BYTES
 
 export async function callAppChatDaemon(action: string, body: object): Promise<AppChatResult> {
   const lock = readLockFile()
@@ -268,7 +265,7 @@ export async function readAppChatImage(file: string): Promise<{ ok: true; dataUr
   try {
     size = (await fs.promises.stat(file)).size
   } catch {
-    return { ok: false, error: "文件不存在" }
+    return { ok: false, error: APP_CHAT_IMAGE_MISSING }
   }
   if (size > MAX_IMAGE_BYTES) return { ok: false, error: "图片超过 20MB" }
   try {

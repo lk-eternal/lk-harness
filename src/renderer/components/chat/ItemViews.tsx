@@ -4,6 +4,7 @@ import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUs
 import { joinChoices, splitChoices, toggleChoice } from "../../../shared/question-multi"
 import { formatFullTime, formatMessageTime } from "../../time-ago"
 import { canOpenWithDefaultApp, isPreviewable, previewTypeOf } from "../../../shared/preview-kinds"
+import { imageFailureView } from "../../../shared/app-chat-image"
 import { usePreview } from "../preview/PreviewContext"
 import { ImageLightbox, LIGHTBOX_ICON_SIZE, LIGHTBOX_TOOL_BUTTON } from "./ImageLightbox"
 import { CopyButton } from "./Markdown"
@@ -13,8 +14,8 @@ import { CopyButton } from "./Markdown"
 const IMAGE_CACHE_MAX = 24
 const imageCache = new Map<string, string>()
 
-function useLocalImage(path: string): { url?: string; failed: boolean } {
-  const [state, setState] = useState<{ url?: string; failed: boolean }>(() => ({ url: imageCache.get(path), failed: false }))
+function useLocalImage(path: string): { url?: string; failed: boolean; error?: string } {
+  const [state, setState] = useState<{ url?: string; failed: boolean; error?: string }>(() => ({ url: imageCache.get(path), failed: false }))
   useEffect(() => {
     const hit = imageCache.get(path)
     if (hit) { setState({ url: hit, failed: false }); return }
@@ -22,7 +23,7 @@ function useLocalImage(path: string): { url?: string; failed: boolean } {
     setState({ failed: false })
     void window.electronAPI.appChatReadImage(path).then((r) => {
       if (cancelled) return
-      if (!r.ok) { setState({ failed: true }); return }
+      if (!r.ok) { setState({ failed: true, error: r.error }); return }
       if (imageCache.size >= IMAGE_CACHE_MAX) imageCache.delete(imageCache.keys().next().value as string)
       imageCache.set(path, r.dataUrl)
       setState({ url: r.dataUrl, failed: false })
@@ -67,10 +68,11 @@ export function ImageActions({ path, large }: { path: string; large?: boolean })
 
 /** 缩略图：点击放大，悬浮出现复制/另存为；加载失败/文件已被清理时给占位，不报错 */
 export function LocalImage({ path, className }: { path: string; className: string }) {
-  const { url, failed } = useLocalImage(path)
+  const { url, failed, error } = useLocalImage(path)
   const [zoom, setZoom] = useState(false)
   if (failed) {
-    return <div className={`flex items-center justify-center gap-1 rounded bg-raised text-xs text-fg-muted ${className}`} title={path}><ImageOff size={14} />图片不可用</div>
+    const view = imageFailureView(error, path)
+    return <div className={`flex items-center justify-center gap-1 rounded bg-raised text-xs text-fg-muted ${className}`} title={view.hint}><ImageOff size={14} />{view.label}</div>
   }
   if (!url) {
     return <div className={`flex items-center justify-center rounded bg-raised ${className}`}><Loader2 size={14} className="animate-spin text-fg-muted" /></div>

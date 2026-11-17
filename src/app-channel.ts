@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { channelIdFromSessionKey } from "./shared/channel-types.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
+import { appChatImageMime, MAX_APP_CHAT_IMAGE_BYTES } from "./shared/app-chat-image.js";
 import {
   appChatSessionId,
   chatItemInsertIndex,
@@ -24,10 +25,14 @@ import {
 const MAX_ITEMS_PER_SESSION = 1000;
 const PERSIST_DEBOUNCE_MS = 1000;
 const CLOSED_CARD_MEMORY = 8;
+/** 会话的图片目录 = 记录文件名去掉 .jsonl 再加这个后缀，放在同一个通道目录里 */
+const IMAGE_DIR_SUFFIX = ".images";
 
 interface SessionEntry {
   sessionKey: string;
   file: string;
+  /** 这个会话的图片目录：紧挨着记录文件，和记录同生命周期 */
+  imageDir: string;
   items: AppChatItem[];
   timer: NodeJS.Timeout | null;
   liveCardId?: string;
@@ -104,6 +109,43 @@ function withoutHeld(item: AppChatQuestionItem): AppChatQuestionItem {
  */
 export type AnswerQuestionResult = { ok: false } | { ok: true; deliver?: string };
 
+/** 路径比较用的规整形式：绝对化、统一大小写（Windows / macOS 默认大小写不敏感，和 referencesPath 一致） */
+function pathKey(p: string): string {
+  return path.resolve(p).toLowerCase();
+}
+
+/** 记录里引用的图片路径：用户发的图和 AI 发的图 */
+function imagePathsOf(items: readonly AppChatItem[]): string[] {
+  const out: string[] = [];
+  for (const item of items) {
+    if (item.kind === "image") out.push(item.path);
+    else if (item.kind === "user" && item.images) out.push(...item.images);
+  }
+  return out;
+}
+
+function isInsideDir(dir: string, target: string): boolean {
+  return pathKey(target).startsWith(pathKey(dir) + path.sep);
+}
+
+/** 目录占用的字节数（含子目录） */
+function dirBytes(dir: string): number {
+  let total = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    try {
+      total += e.isDirectory() ? dirBytes(full) : fs.statSync(full).size;
+    } catch { /* 读的时候被删了，不计 */ }
+  }
+  return total;
+}
+
 /** 重启后内存里没有活卡：未收口的回合一律视为已结束 */
 function readItems(file: string): AppChatItem[] {
   if (!fs.existsSync(file)) return [];
@@ -136,10 +178,49 @@ export class AppChat {
     const cached = this.sessions.get(id);
     if (cached) return cached;
     const channelId = channelIdFromSessionKey(sessionKey) ?? "_";
-    const file = path.join(this.channelDir(channelId), `${createHash("sha1").update(id).digest("hex").slice(0, 16)}.jsonl`);
-    const created: SessionEntry = { sessionKey, file, items: readItems(file), timer: null, closedCardIds: [] };
+    const stem = path.join(this.channelDir(channelId), createHash("sha1").update(id).digest("hex").slice(0, 16));
+    const file = `${stem}.jsonl`;
+    const created: SessionEntry = { sessionKey, file, imageDir: `${stem}${IMAGE_DIR_SUFFIX}`, items: readItems(file), timer: null, closedCardIds: [] };
     this.sessions.set(id, created);
+    this.pruneOrphanImages(created);
     return created;
+  }
+
+  /**
+   * 图片目录里记录没引用的文件一律删掉：收进图片之后、记录落盘之前进程退出，会留下没人要的图。
+   * 只在会话第一次载入时做一次，此时本进程还没往里收过图，不会误删刚收进来的。
+   */
+  private pruneOrphanImages(entry: SessionEntry): void {
+    let names: string[];
+    try {
+      names = fs.readdirSync(entry.imageDir);
+    } catch {
+      return;
+    }
+    const keep = new Set(imagePathsOf(entry.items).map(pathKey));
+    for (const name of names) {
+      const full = path.join(entry.imageDir, name);
+      if (!keep.has(pathKey(full))) fs.rmSync(full, { recursive: true, force: true });
+    }
+    this.removeImageDirIfEmpty(entry);
+  }
+
+  private removeImageDirIfEmpty(entry: SessionEntry): void {
+    try {
+      fs.rmdirSync(entry.imageDir);
+    } catch { /* 还有图片，或本来就没有这个目录 */ }
+  }
+
+  /** 记录里不再引用的图片（被删的记录、被挤出上限的旧记录）一并删掉；还被别的记录引用的、不在会话图片目录里的不碰 */
+  private releaseImages(entry: SessionEntry, removed: readonly AppChatItem[]): void {
+    const candidates = new Map<string, string>();
+    for (const p of imagePathsOf(removed)) {
+      if (isInsideDir(entry.imageDir, p)) candidates.set(pathKey(p), path.resolve(p));
+    }
+    if (candidates.size === 0) return;
+    for (const p of imagePathsOf(entry.items)) candidates.delete(pathKey(p));
+    for (const full of candidates.values()) fs.rmSync(full, { force: true });
+    this.removeImageDirIfEmpty(entry);
   }
 
   private schedulePersist(entry: SessionEntry): void {
@@ -175,7 +256,9 @@ export class AppChat {
     const idx = entry.items.findIndex((i) => i.id === item.id);
     if (idx >= 0) entry.items[idx] = item;
     else entry.items.splice(chatItemInsertIndex(entry.items, item.ts), 0, item);
-    if (entry.items.length > MAX_ITEMS_PER_SESSION) entry.items.splice(0, entry.items.length - MAX_ITEMS_PER_SESSION);
+    if (entry.items.length > MAX_ITEMS_PER_SESSION) {
+      this.releaseImages(entry, entry.items.splice(0, entry.items.length - MAX_ITEMS_PER_SESSION));
+    }
     this.schedulePersist(entry);
     this.emit({ type: "item", sessionKey: entry.sessionKey, item });
     return item;
@@ -263,7 +346,8 @@ export class AppChat {
     const entry = this.entry(sessionKey);
     const idx = entry.items.findIndex((i) => i.id === id);
     if (idx < 0) return false;
-    entry.items.splice(idx, 1);
+    const [removed] = entry.items.splice(idx, 1);
+    this.releaseImages(entry, [removed]);
     this.schedulePersist(entry);
     this.emit({ type: "remove", sessionKey: entry.sessionKey, itemId: id });
     return true;
@@ -303,7 +387,39 @@ export class AppChat {
   }
 
   addImage(sessionKey: string, imagePath: string): void {
-    this.upsert(this.entry(sessionKey), { kind: "image", id: randomUUID(), ts: Date.now(), path: imagePath });
+    this.upsert(this.entry(sessionKey), { kind: "image", id: randomUUID(), ts: Date.now(), path: this.adoptImage(sessionKey, imagePath) });
+  }
+
+  /**
+   * 把图片收进这个会话自己的目录，返回收进去之后的路径。
+   * 对话里的图片只存路径：原来放在系统临时目录、或 AI 随手生成的位置，被清理 / 被删就成了「图片不可用」。
+   * 收进来之后和会话记录同生命周期：会话清空、删除、旧记录被挤出上限时一起删。
+   * 每次都是独立的一份：同一个路径被重新生成后再发，旧消息里的图不能跟着变。
+   * 不是图片格式 / 超过大小上限 / 文件不在 / 复制失败：原样返回原路径，不挡发送。
+   */
+  adoptImage(sessionKey: string, source: string): string {
+    if (!source || !appChatImageMime(source)) return source;
+    const entry = this.entry(sessionKey);
+    if (isInsideDir(entry.imageDir, source)) return source;
+    let dest = "";
+    try {
+      const st = fs.statSync(source);
+      if (!st.isFile() || st.size > MAX_APP_CHAT_IMAGE_BYTES) return source;
+      fs.mkdirSync(entry.imageDir, { recursive: true });
+      const { name, ext } = path.parse(source);
+      dest = path.join(entry.imageDir, `${name.slice(0, 60)}_${randomUUID().slice(0, 8)}${ext}`);
+      fs.copyFileSync(source, dest, fs.constants.COPYFILE_EXCL);
+      return dest;
+    } catch (e: unknown) {
+      // 撞名（EEXIST）说明那个文件不是这次复制的，不能删；其余失败清掉没复制完整的半成品
+      if (dest && (e as NodeJS.ErrnoException)?.code !== "EEXIST") fs.rmSync(dest, { force: true });
+      this.removeImageDirIfEmpty(entry);
+      return source;
+    }
+  }
+
+  adoptImages(sessionKey: string, sources: readonly string[]): string[] {
+    return sources.map((p) => this.adoptImage(sessionKey, p));
   }
 
   addFile(sessionKey: string, filePath: string): void {
@@ -443,6 +559,7 @@ export class AppChat {
     entry.items = [];
     if (entry.liveCardId) this.closeCard(entry, entry.liveCardId);
     fs.rmSync(entry.file, { force: true });
+    fs.rmSync(entry.imageDir, { recursive: true, force: true });
     this.emit({ type: "clear", sessionKey: entry.sessionKey });
   }
 
@@ -456,10 +573,8 @@ export class AppChat {
     this.emit({ type: "clear", channelId });
   }
 
-  /** 通道聊天记录占用的磁盘字节数（含尚未落盘的会话不计） */
+  /** 通道聊天记录占用的磁盘字节数（含会话里的图片；尚未落盘的会话不计） */
   usageBytes(channelId: string): number {
-    const dir = this.channelDir(channelId);
-    if (!fs.existsSync(dir)) return 0;
-    return fs.readdirSync(dir).reduce((sum, name) => sum + fs.statSync(path.join(dir, name)).size, 0);
+    return dirBytes(this.channelDir(channelId));
   }
 }

@@ -27,6 +27,7 @@ vi.mock("electron", () => ({
 }))
 
 import { readAppChatImage } from "../electron/app-chat"
+import { APP_CHAT_IMAGE_MISSING, imageFailureView } from "../src/shared/app-chat-image"
 
 let dir: string
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "lk-app-image-")) })
@@ -55,8 +56,10 @@ describe("readAppChatImage", () => {
     expect(await readAppChatImage(file)).toEqual({ ok: false, error: "不是图片文件" })
   })
 
-  it("文件不存在 → 报错而不是抛异常", async () => {
-    expect(await readAppChatImage(path.join(dir, "gone.png"))).toEqual({ ok: false, error: "文件不存在" })
+  it("文件不存在 → 报错而不是抛异常；报错文案就是界面据以显示「图片已被清理」的那个", async () => {
+    const r = await readAppChatImage(path.join(dir, "gone.png"))
+    expect(r).toEqual({ ok: false, error: APP_CHAT_IMAGE_MISSING })
+    expect(imageFailureView(r.ok ? undefined : r.error, "gone.png").label).toBe("图片已被清理")
   })
 
   it("超过 20MB → 报错（稀疏文件，不真占盘）", async () => {

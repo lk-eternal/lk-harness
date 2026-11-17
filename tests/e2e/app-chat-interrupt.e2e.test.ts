@@ -43,6 +43,14 @@ function makeImage(name: string): string {
 
 const marker = (p: string) => `[图片已保存: ${p}]`
 
+/**
+ * 发出去之后，记录里（也是交给 Agent 的）图片路径。
+ * 发送的那一刻图片被收进会话自己的目录，所以和原文件不是同一个路径（详见 app-chat-images.e2e.test.ts）。
+ */
+async function imagesOf(messageId: string): Promise<string[]> {
+  return (await d.users()).find((u) => u.id === messageId)?.images ?? []
+}
+
 async function pendingCommands(): Promise<Array<{ command: string; messageId: string }>> {
   return (await d.get("/commands")).commands ?? []
 }
@@ -60,13 +68,15 @@ describe("带图片发 /f：照样是指令，不进暂存区排队", () => {
     expect(item).toBeTruthy()
     expect(item!.queued).toBeFalsy()
     expect(item!.text).toBe("/f ci先让他跑着吧")
-    expect(item!.images).toEqual([img])
+    const [kept, ...rest] = item!.images ?? []
+    expect(rest).toEqual([])
+    expect(fs.readFileSync(kept)).toEqual(fs.readFileSync(img))
 
     const cmds = await pendingCommands()
     expect(cmds).toHaveLength(1)
     expect(cmds[0].messageId).toBe(sent.messageId)
-    // 主进程的 /f 把指令里除 /f 外的内容原样交给 Agent：图片标记要在里面
-    expect(cmds[0].command).toBe(`/f ci先让他跑着吧 ${marker(img)}`)
+    // 主进程的 /f 把指令里除 /f 外的内容原样交给 Agent：图片标记要在里面（收进会话目录之后的那份）
+    expect(cmds[0].command).toBe(`/f ci先让他跑着吧 ${marker(kept)}`)
   })
 
   it("没有任何排队消息；也没有把它当普通消息交给 Agent", async () => {
@@ -82,15 +92,19 @@ describe("带图片发 /f：照样是指令，不进暂存区排队", () => {
     const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/f", images: [img] })
     expect(sent.ok).toBe(true)
     expect(await d.queuedOf()).toEqual([])
-    expect((await pendingCommands()).map((c) => c.command)).toEqual([`/f ${marker(img)}`])
+    expect((await pendingCommands()).map((c) => c.command)).toEqual([`/f ${marker((await imagesOf(sent.messageId))[0])}`])
   })
 
   it("多张图片：按发送顺序全部带上", async () => {
     await makeBusy()
     const a = makeImage("a.png")
     const b = makeImage("b.png")
-    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/f 看这两张", images: [a, b] })
-    expect((await pendingCommands()).map((c) => c.command)).toEqual([`/f 看这两张 ${marker(a)} ${marker(b)}`])
+    const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/f 看这两张", images: [a, b] })
+    const [ka, kb] = await imagesOf(sent.messageId)
+    expect(path.extname(ka)).toBe(".png")
+    expect(path.basename(ka)).toMatch(/^a_/)
+    expect(path.basename(kb)).toMatch(/^b_/)
+    expect((await pendingCommands()).map((c) => c.command)).toEqual([`/f 看这两张 ${marker(ka)} ${marker(kb)}`])
   })
 
   it("大小写不敏感，和不带图时的 /f 一致", async () => {
@@ -125,12 +139,12 @@ describe("带图片发 /f：照样是指令，不进暂存区排队", () => {
   it("别的指令带图：保持原来的行为——当普通消息，图片交给 Agent（指令本身不用图片）", async () => {
     await makeBusy()
     const img = makeImage("s.png")
-    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/s", images: [img] })
+    const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/s", images: [img] })
     expect(await d.queuedOf()).toEqual(["/s"])
     expect(await pendingCommands()).toHaveLength(0)
     // 已领取未确认的第一条会一起再投递，所以只断言带图的这条在里面、而且图片标记排在正文前（和平时一样）
     const delivered = ((await d.poll()).messages ?? []).map((m) => m.text)
-    expect(delivered).toContain(`${marker(img)}\n/s`)
+    expect(delivered).toContain(`${marker((await imagesOf(sent.messageId))[0])}\n/s`)
   })
 
   it("普通带图消息仍然排队、图片照常交给 Agent（回归）", async () => {
@@ -215,11 +229,14 @@ describe("立即发送：排队的消息马上进聊天流，不等 Agent 领走
   it("带图片的排队消息放出后图片还在", async () => {
     await makeBusy()
     const img = makeImage("q.png")
-    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "看图", images: [img] })
+    const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "看图", images: [img] })
+    const before = await imagesOf(sent.messageId)
+    expect(before).toHaveLength(1)
     await d.post("/api/app-chat/queue-release", { sessionKey: d.sessionKey })
     const item = (await d.users()).find((u) => u.text === "看图")
     expect(item?.queued).toBeFalsy()
-    expect(item?.images).toEqual([img])
+    expect(item?.images).toEqual(before)
+    expect(fs.existsSync(before[0])).toBe(true)
   })
 
   it("不是应用内对话的会话：拒绝", async () => {

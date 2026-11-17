@@ -83,13 +83,17 @@ describe("/api/app-chat/references-path：手机端取图片/文件前的归属�
     fs.writeFileSync(img, "png")
     const other = path.join(d.wsDir, "other.png")
     fs.writeFileSync(other, "png")
-    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "看图", images: [img] })
+    const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "看图", images: [img] })
+    // 记录里存的是发送时收进会话目录的那份，手机端按记录里的路径来取
+    const kept = (await d.users()).find((u) => u.id === sent.messageId)?.images?.[0] ?? ""
+    expect(kept).not.toBe("")
 
     const owns = async (p: string, sessionKey = d.sessionKey) =>
       ((await d.post("/api/app-chat/references-path", { sessionKey, path: p })) as { ok: boolean; owned?: boolean })
-    expect(await owns(img)).toEqual({ ok: true, owned: true })
+    expect(await owns(kept)).toEqual({ ok: true, owned: true })
+    expect(await owns(img)).toEqual({ ok: true, owned: false })
     expect(await owns(other)).toEqual({ ok: true, owned: false })
-    expect((await owns(img, "不属于应用内对话的会话键")).ok).toBe(false)
+    expect((await owns(kept, "不属于应用内对话的会话键")).ok).toBe(false)
     expect(await owns("")).toEqual({ ok: true, owned: false })
   })
 })
