@@ -9,7 +9,7 @@ import { getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { listProjects, getProject } from "./shared/project-store.js";
 import { concatUtf8 } from "./shared/utf8-stream.js";
 import { getHostRpc, type HostRpc } from "./shared/host-rpc.js";
-import { formatCreated, formatRepos, formatTemplates } from "./shared/project-ai-format.js";
+import { formatCreated, formatRepos, formatTemplates, parseAiChatChoice } from "./shared/project-ai-format.js";
 import type { AiProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo } from "./shared/project-app-types.js";
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR ?? "";
@@ -156,7 +156,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       "- list：列出所有项目（含 ID）。",
       "- templates：列出项目模板：每个模板的 ID、要填的信息（哪些必填）、接不接代码仓库、默认工作分支。",
       "- repos：列出常用代码仓库（路径、基线分支）。",
-      "- create：创建项目。用户让你建项目、又不想自己填表时用。流程：先 templates 看模板和必填项（要接代码再 repos），把用户的话整理成参数；信息不够就问用户，不要猜；创建前把整理好的内容（名称、模板、各项信息、仓库和分支、文件夹）发给用户确认（send_question），确认后才调用。会建项目目录、按设置克隆仓库，可能要一会儿。建完只返回项目 ID：不会进入项目会话（当前对话不受影响），也不建飞书独立群；把项目 ID 告诉用户，他需要时自己进入。",
+      "- create：创建项目。用户让你建项目、又不想自己填表时用。流程：先 templates 看模板和必填项（要接代码再 repos），把用户的话整理成参数；信息不够就问用户，不要猜；创建前把整理好的内容（名称、模板、各项信息、仓库和分支、文件夹）发给用户确认（send_question），确认后才调用。会建项目目录、按设置克隆仓库，可能要一会儿。建完不会进入项目会话（当前对话不受影响）。必须指定 chat_mode，没有默认值，用户没说清楚就先问他（send_question），确认内容里要写明选了哪种：group=建飞书独立群并把用户拉入群，bind=绑定已有的飞书群（还要给 existing_group_chat_id），inline=不建群、项目绑在当前聊天上；应用内对话和微信只能 inline。建完把结果告诉用户：inline 项目他需要时自己进入，群里的项目到群里协作。",
       "- delete：删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
     ].join("\n"),
     {
@@ -175,8 +175,10 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       story_url: z.string().optional().describe("项目链接：需求、任务单等入口（create 可选）"),
       related_docs: z.string().optional().describe("相关文档，链接或说明（create 可选）"),
       folder: z.string().optional().describe("用一个已有文件夹当项目目录，绝对路径（create；只有不接代码仓库的模板可用，应用不会改动里面的文件）"),
+      chat_mode: z.enum(["group", "bind", "inline"]).optional().describe("项目的会话落点（create 必填，没有默认值，不给会报错；拿不准就问用户）：group=建飞书独立群并拉用户入群, bind=绑定已有飞书群, inline=不建群、绑在当前聊天；应用内对话和微信只能 inline"),
+      existing_group_chat_id: z.string().optional().describe("chat_mode=bind 时必填：要绑定的飞书群 chat_id（oc_ 开头）；机器人要已经在群里"),
     },
-    async ({ action, project_id, name, goal, template_id, fields, repos, work_branch, feature_branch, story_url, related_docs, folder }) => {
+    async ({ action, project_id, name, goal, template_id, fields, repos, work_branch, feature_branch, story_url, related_docs, folder, chat_mode, existing_group_chat_id }) => {
       if (action === "list") {
         const list = listProjects()
         if (list.length === 0) return txt("📭 暂无项目")
@@ -194,9 +196,13 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       if (action === "create") {
         const invoker = getMcpInvokerSessionKey()
         if (!invoker) return txt("❌ 无法确定你所在的会话，不能创建项目")
+        const chat = parseAiChatChoice(chat_mode, existing_group_chat_id)
+        if (!chat.ok) return txt(`❌ ${chat.error}`)
         if (!template_id?.trim()) return txt("❌ create 需要 template_id：先用 templates 查看可用模板")
         const out = await hostRpc().request<AiProjectCreateResult>("project.create", {
           chatKey: chatIdFromSessionKey(invoker),
+          chatMode: chat.choice.mode,
+          existingGroupChatId: chat.choice.existingGroupChatId,
           input: {
             name, goal, templateId: template_id, fields,
             repos: repos?.map((r) => ({ repoPath: r.repo_path, baseBranch: r.base_branch })),

@@ -258,17 +258,26 @@ function projectGroupDescription(project: Project): string {
   return (goal || repoLine).slice(0, 100)
 }
 
-/** 独立群模式：建项目专属群并把项目会话/通知绑定到群；失败由调用方回退当前会话模式 */
+/** 独立群的群名 */
+function projectGroupName(project: Pick<Project, "name">): string {
+  return `📦 ${project.name}`
+}
+
+/**
+ * 独立群模式：建项目专属群并把项目会话/通知绑定到群；失败由调用方回退当前会话模式。
+ * keepCurrent：不清全局「当前项目」指针（AI 建项用——它不进项目会话，也不该动用户正在用的那个）。
+ */
 async function setupProjectGroup(
   port: number,
   project: Project,
   chatId: string,
   operatorOpenId?: string,
+  keepCurrent = false,
 ): Promise<{ ok: boolean; chatKey?: string; error?: string }> {
   if (!operatorOpenId) return { ok: false, error: "缺少操作者 open_id（文本建项暂不支持独立群）" }
   try {
     const r = await httpPost(`http://127.0.0.1:${port}/create-project-group`, {
-      name: `📦 ${project.name}`,
+      name: projectGroupName(project),
       description: projectGroupDescription(project),
       channelId: parseChatKey(chatId).channelId,
       ownerOpenId: operatorOpenId,
@@ -280,7 +289,7 @@ async function setupProjectGroup(
     const { saveProject } = await import("../src/shared/project-store.js")
     saveProject(project)
     // 群模式项目不抢占主会话的当前项目指针
-    setCurrentProjectId(null)
+    if (!keepCurrent) setCurrentProjectId(null)
     return { ok: true, chatKey: r.chatKey }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -306,10 +315,10 @@ function bindProjectGroup(
   return { ok: true, chatKey: parsed.chatKey, rawChatId: parsed.rawChatId }
 }
 
-async function persistBoundProjectGroup(project: Project): Promise<void> {
+async function persistBoundProjectGroup(project: Project, keepCurrent = false): Promise<void> {
   const { saveProject } = await import("../src/shared/project-store.js")
   saveProject(project)
-  setCurrentProjectId(null)
+  if (!keepCurrent) setCurrentProjectId(null)
 }
 
 /** 绑定已有群模式：写入 groupChatId 并通知群/私聊 */
@@ -395,6 +404,50 @@ async function finishGroupModeCreate(
     [{ label: "项目菜单", cmd: "/p" }],
   )
   return { ok: true }
+}
+
+/**
+ * AI 建项（管理 MCP 的 manage_project create）：把刚建好的项目接到飞书群上——建独立群并拉主用户入群（group），
+ * 或绑定一个已有的群（bind）。和飞书表单建项（finishGroupModeCreate / finishBindGroupModeCreate）的区别：
+ * 不离开当前会话、不动全局「当前项目」指针、不往私聊发回执（AI 自己向用户汇报）。
+ * 失败时项目保持原来的绑定（调用者所在的聊天），由调用方把原因告诉 AI。
+ */
+export async function attachProjectToGroupForAi(
+  port: number,
+  project: Project,
+  operatorChatKey: string,
+  target: { mode: "group"; ownerOpenId: string } | { mode: "bind"; existingGroupChatId: string },
+): Promise<
+  | { ok: true; chatKey: string; groupName?: string; rawChatId?: string }
+  | { ok: false; error: string }
+> {
+  let chatKey: string
+  let groupName: string | undefined
+  let rawChatId: string | undefined
+  if (target.mode === "group") {
+    const g = await setupProjectGroup(port, project, operatorChatKey, target.ownerOpenId, true)
+    if (!g.ok || !g.chatKey) return { ok: false, error: g.error || "建群失败" }
+    chatKey = g.chatKey
+    groupName = projectGroupName(project)
+    rawChatId = parseChatKey(g.chatKey).chatId
+  } else {
+    const bound = bindProjectGroup(project, operatorChatKey, target.existingGroupChatId)
+    if (!bound.ok || !bound.chatKey) return { ok: false, error: bound.error || "绑定群失败" }
+    try {
+      await persistBoundProjectGroup(project, true)
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    chatKey = bound.chatKey
+    rawChatId = bound.rawChatId
+  }
+  // 项目卡是尽力而为：reportCommandResult 自己吞掉发送错误、daemon 也不回送达结果，所以这里没法知道有没有发进群
+  // （比如绑定的群里机器人不在）。项目已经绑好，不因此算失败；绑群的提示里让 AI 提醒用户确认机器人在群里
+  await reportCommandResult(port, "", true, "", chatKey, projectButtonsCreate(project), {
+    cardTitle: projectCardTitle(project),
+    sessionKey: project.sessionKey,
+  })
+  return { ok: true, chatKey, groupName, rawChatId }
 }
 
 /**

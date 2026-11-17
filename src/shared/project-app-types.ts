@@ -1,6 +1,6 @@
 // ── 应用内（桌面端 / 手机端）项目：接口里传的数据形状 ─────────────────────────
 
-import type { ProjectFieldDef, WorkBranchMode } from "./project-types.js"
+import type { ProjectChatMode, ProjectFieldDef, WorkBranchMode } from "./project-types.js"
 
 /**
  * 项目会话键 → 项目 id；不是项目会话返回 undefined。
@@ -129,9 +129,33 @@ export interface ProjectCreateResult {
   sessionKey?: string
 }
 
+/**
+ * AI 建项时项目的会话落在哪（没有默认值，调用方必须明确给出）：
+ * inline=不建群，绑在调用者所在的聊天上；group=建飞书独立群并拉主用户入群；bind=绑定一个已有的飞书群。
+ */
+export interface AiChatChoice {
+  mode: ProjectChatMode
+  /** bind 才有：要绑定的飞书群 chat_id（oc_…） */
+  existingGroupChatId?: string
+}
+
 /** AI 建项（管理 MCP 的 manage_project create）的结果：建好就返回，不进入项目会话 */
 export type AiProjectCreateResult =
-  | { ok: true; projectId: string; name: string; dir: string; templateName: string }
+  | {
+      ok: true
+      projectId: string
+      name: string
+      dir: string
+      templateName: string
+      /** 项目实际落在哪：建群或绑群没成功时是 inline，原因在 warning */
+      chatMode: ProjectChatMode
+      /** group：群名；bind：不填 */
+      groupName?: string
+      /** group / bind：群的原始 chat_id */
+      groupChatId?: string
+      /** 项目建好了，但有件事没做成（比如建群失败退回了 inline）；AI 必须如实告诉用户 */
+      warning?: string
+    }
   | { ok: false; error: string }
 
 /** 项目步骤条里的一项 */

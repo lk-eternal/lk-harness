@@ -10,6 +10,7 @@ import { readLockFile, resolveMainChatId } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import {
   archiveProjectGroup,
+  attachProjectToGroupForAi,
   enterProjectSession,
   executeProjectDelete,
   startProjectNode,
@@ -44,6 +45,7 @@ import {
 } from "../src/shared/project-create-plan.js"
 import {
   createProject,
+  findProjectByGroupChat,
   getCurrentProject,
   getCurrentProjectId,
   getNodeGroups,
@@ -57,8 +59,9 @@ import {
   setProjectArchived,
 } from "../src/shared/project-store.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
-import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
-import { projectRootDir, projectSessionKey, type Project } from "../src/shared/project-types.js"
+import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience, type ChannelType } from "../src/shared/channel-types.js"
+import { parseExistingGroupChatBinding, projectRootDir, projectSessionKey, type Project } from "../src/shared/project-types.js"
+import { parseAiChatChoice } from "../src/shared/project-ai-format.js"
 
 export { projectsRootDir }
 
@@ -209,20 +212,32 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
 // ── AI 建项（管理 MCP 的 manage_project：templates / repos / create）────────────────
 // 和应用里点「新建」走同一套校验和落盘（createProjectCore），区别有三：
 // 任何通道的主用户都能建（应用内、飞书、微信）；建完不进入项目会话，不打断 AI 正在跑的这一轮对话；
-// 不建飞书独立群（建群要发卡片、还会把当前会话切走）——项目绑在调用者所在的聊天上，用户之后自己进入。
+// 项目的会话落点由调用方明确指定（chat_mode，没有默认值）：inline 绑在调用者所在的聊天上，
+// group 建飞书独立群（群主是主用户）并把项目绑到群，bind 绑定已有的飞书群——后两种只有飞书私聊能用。
 
 /** 同一个聊天里同名项目只允许一个在途：AI 的调用超时后重试、或同一轮里连发两次，不会建出两个一模一样的项目 */
 const aiCreateInFlight = new Set<string>()
+
+type AiCreateWhere = {
+  ok: true
+  chatKey: string
+  channelId: string
+  channelType: ChannelType
+  /** 通道记录的主用户飞书 open_id（建独立群时设为群主）；没记到是空 */
+  mainUserOpenId?: string
+}
 
 /**
  * 调用者的聊天键 → 项目该绑的聊天。只认主用户：管理 MCP 本来就只挂给主用户的会话，这里再兜一层。
  * 应用内对话通道永远是主用户私聊，项目绑在它固定的那个聊天上（和应用里点「新建」一致）。
  */
-function resolveAiCreateChat(chatKey: string): { ok: true; chatKey: string } | { ok: false; error: string } {
+function resolveAiCreateChat(chatKey: string): AiCreateWhere | { ok: false; error: string } {
   const { channelId } = parseChatKey(String(chatKey ?? ""))
   const channel = channelId ? getChannel(channelId) : undefined
   if (!channel) return { ok: false, error: "找不到你所在的消息通道，无法确定项目归属" }
-  if (channel.type === "app") return { ok: true, chatKey: makeChatKey(channel.id, APP_CHANNEL_CHAT_ID) }
+  if (channel.type === "app") {
+    return { ok: true, chatKey: makeChatKey(channel.id, APP_CHANNEL_CHAT_ID), channelId: channel.id, channelType: "app" }
+  }
   const audience = resolveChannelAudience({
     mainUserEnabled: channel.mainUserEnabled,
     mainUserChatId: channel.mainUserChatId,
@@ -230,14 +245,51 @@ function resolveAiCreateChat(chatKey: string): { ok: true; chatKey: string } | {
     chatType: "p2p",
   })
   if (audience !== "main") return { ok: false, error: "只有主用户的私聊可以创建项目" }
-  return { ok: true, chatKey }
+  return { ok: true, chatKey, channelId: channel.id, channelType: channel.type, mainUserOpenId: channel.mainUserOpenId?.trim() || undefined }
 }
 
-/** AI 建项：建好就返回，不进入项目会话、不动全局「当前项目」指针 */
-export async function createProjectForAi(chatKey: string, input: ProjectCreateInput): Promise<AiProjectCreateResult> {
+type AiGroupTarget = { mode: "group"; ownerOpenId: string } | { mode: "bind"; existingGroupChatId: string }
+
+/** 建项之前就能判断的：这个通道能不能用所选的会话落点。不通过就一个目录、一个群都不建 */
+function checkAiChat(
+  where: AiCreateWhere,
+  chat: { mode: string; existingGroupChatId?: string },
+): { ok: true; target?: AiGroupTarget } | { ok: false; error: string } {
+  if (chat.mode === "inline") return { ok: true }
+  if (where.channelType !== "feishu") {
+    return { ok: false, error: "应用内对话和微信里不能建群或绑群，chat_mode 只能用 inline（项目绑在当前聊天上）。飞书群只能从飞书私聊里建。" }
+  }
+  if (chat.mode === "group") {
+    if (!where.mainUserOpenId) {
+      return { ok: false, error: "没有记录到你的飞书身份（open_id），建群时没法把你设为群主并拉进群。稍后再试一次；仍然不行就改用 inline，或让用户在设置里重新绑定主用户。" }
+    }
+    return { ok: true, target: { mode: "group", ownerOpenId: where.mainUserOpenId } }
+  }
+  const existing = chat.existingGroupChatId ?? ""
+  const parsed = parseExistingGroupChatBinding(existing, where.channelId)
+  if ("error" in parsed) return { ok: false, error: parsed.error }
+  const taken = findProjectByGroupChat(parsed.chatKey)
+  if (taken) return { ok: false, error: `该群已绑定项目「${taken.name}」(${taken.id})` }
+  return { ok: true, target: { mode: "bind", existingGroupChatId: existing } }
+}
+
+/**
+ * AI 建项：建好就返回，不进入项目会话、不动全局「当前项目」指针。
+ * chat 是项目的会话落点（没有默认值，不给或给错直接报错，让 AI 去问用户）；建群 / 绑群放在项目整个建成之后，
+ * 校验不过、克隆失败都不会留下群。建群或绑群这一步本身失败：项目保留（绑在调用者的聊天上），warning 里写明原因。
+ */
+export async function createProjectForAi(
+  chatKey: string,
+  input: ProjectCreateInput,
+  chat: { mode?: string; existingGroupChatId?: string },
+): Promise<AiProjectCreateResult> {
   ensureStore()
   const where = resolveAiCreateChat(chatKey)
   if (!where.ok) return where
+  const choice = parseAiChatChoice(chat?.mode, chat?.existingGroupChatId)
+  if (!choice.ok) return choice
+  const checked = checkAiChat(where, choice.choice)
+  if (!checked.ok) return checked
   const name = String(input?.name ?? "").trim()
   const flightKey = name ? `${where.chatKey}\n${name.toLowerCase()}` : ""
   if (flightKey && aiCreateInFlight.has(flightKey)) {
@@ -248,13 +300,32 @@ export async function createProjectForAi(chatKey: string, input: ProjectCreateIn
     const created = await createProjectCore(where.chatKey, input)
     if (!created.ok) return created
     const p = created.project
-    pushUiLog("Project", "INFO", `[AiCreate] AI 创建了项目「${p.name}」(${p.id})，聊天 ${where.chatKey}`)
+
+    let outcome: Pick<Extract<AiProjectCreateResult, { ok: true }>, "chatMode" | "groupName" | "groupChatId" | "warning"> = { chatMode: "inline" }
+    if (checked.target) {
+      const port = readLockFile()?.port
+      const attached = port
+        ? await attachProjectToGroupForAi(port, p, where.chatKey, checked.target)
+        : ({ ok: false, error: "后台服务没有在运行" } as const)
+      if (attached.ok) {
+        outcome = { chatMode: checked.target.mode, groupName: attached.groupName, groupChatId: attached.rawChatId }
+      } else {
+        const what = checked.target.mode === "group" ? "建独立群" : "绑定群"
+        pushUiLog("Project", "WARN", `[AiCreate] 项目 ${p.id} 已创建，但${what}失败: ${attached.error}`)
+        outcome = {
+          chatMode: "inline",
+          warning: `${what}没成功：${attached.error}。项目已经建好，绑在当前聊天上（没有群）。请如实告诉用户，由他决定怎么处理（比如删掉这个项目重建）。`,
+        }
+      }
+    }
+    pushUiLog("Project", "INFO", `[AiCreate] AI 创建了项目「${p.name}」(${p.id})，聊天 ${where.chatKey}，会话落点 ${outcome.chatMode}`)
     return {
       ok: true,
       projectId: p.id,
       name: p.name,
       dir: projectRootDir(p) || p.worktreePath,
       templateName: projectGroups(p).map((g) => g.name).join("、"),
+      ...outcome,
     }
   } finally {
     if (flightKey) aiCreateInFlight.delete(flightKey)
@@ -278,7 +349,10 @@ export const projectHostRpcHandlers: Record<string, (payload: unknown) => unknow
     const raw = (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>
     const folder = strOf(raw.folder)
     const input: ProjectCreateInput = { ...parseGatewayCreateInput(raw), ...(folder ? { folder } : {}) }
-    return createProjectForAi(strOf(p.chatKey) ?? "", input)
+    return createProjectForAi(strOf(p.chatKey) ?? "", input, {
+      mode: strOf(p.chatMode),
+      existingGroupChatId: strOf(p.existingGroupChatId),
+    })
   },
 }
 

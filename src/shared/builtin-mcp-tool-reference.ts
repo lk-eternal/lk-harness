@@ -170,7 +170,7 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
     },
     manage_project: {
       summary: "列出、创建、删除项目（仅主用户）。用户不想自己填表时，可以让 AI 代为创建。",
-      notes: "创建流程：先 templates 看模板和必填项（要接代码再 repos），按用户的话整理参数，信息不够就问；创建前把内容发给用户确认，确认后再 create。建完只返回项目 ID：不会进入项目会话（当前对话不受影响），也不建飞书独立群；用户需要时自己进入（应用里在项目列表点开，飞书/微信里发 /p use <项目 ID>）。应用内、飞书、微信的主用户私聊都可以用。",
+      notes: "创建流程：先 templates 看模板和必填项（要接代码再 repos），按用户的话整理参数，信息不够就问；创建前把内容发给用户确认，确认后再 create。create 必须指定 chat_mode（没有默认值，不给会报错），用户没说清楚就先问他：group 建飞书独立群并把用户拉入群，bind 绑定已有飞书群，inline 不建群、项目绑在当前聊天上；群模式只有飞书私聊能用，应用内和微信只能 inline。建完不会进入项目会话（当前对话不受影响）：inline 的项目用户需要时自己进入（应用里在项目列表点开，飞书/微信里发 /p use <项目 ID>），群里的项目到群里协作。应用内、飞书、微信的主用户私聊都可以用。",
       params: [
         {
           name: "action",
@@ -190,6 +190,8 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "story_url", type: "string", description: "create 可选：项目链接" },
         { name: "related_docs", type: "string", description: "create 可选：相关文档" },
         { name: "folder", type: "string", description: "create 可选：用已有文件夹当项目目录（绝对路径），只有不接代码仓库的模板可用" },
+        { name: "chat_mode", type: "enum", enumValues: ["group", "bind", "inline"], description: "create 必填，没有默认值：group 建飞书独立群并拉用户入群，bind 绑定已有飞书群，inline 不建群、绑在当前聊天；应用内和微信只能 inline" },
+        { name: "existing_group_chat_id", type: "string", description: "chat_mode 为 bind 时必填：要绑定的飞书群 chat_id（oc_ 开头），机器人要已经在群里" },
       ],
     },
     manage_workspace: {
