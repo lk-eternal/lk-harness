@@ -503,9 +503,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                 </div>
                 <div className="rounded-lg border border-line-subtle divide-y divide-line-subtle">
                   {FEISHU_EVENT_SUBSCRIPTIONS.map((e) => (
-                    <div key={e.event} className="px-3 py-2 flex items-center justify-between">
-                      <code className="text-xs text-accent">{e.event}</code>
-                      <span className="text-xs text-fg-muted">{e.desc}</span>
+                    <div key={e.event} className="px-3 py-2 flex items-center justify-between gap-3">
+                      <code className="text-xs text-accent shrink-0">{e.event}</code>
+                      <span className="text-xs text-fg-muted text-right">{e.desc}</span>
                     </div>
                   ))}
                   <div className="px-3 py-2 flex items-center justify-between">

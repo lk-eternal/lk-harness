@@ -1736,6 +1736,7 @@ export async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
     messagePrefix: MESSAGE_PREFIX,
     log: (level: string, ...args: unknown[]) => log(level, `[${rt.cfg.name}]`, ...args),
   });
+  wireReplyTargetRecalled(rt);
 
   await ensureBotIdentity(rt);
 
@@ -2902,6 +2903,19 @@ function handleMessageRecalled(rt: ChannelRuntime, messageId: string, chatId: st
   }
 }
 
+/**
+ * 撤回事件（im.message.recalled_v1）要在开发者后台单独订阅，没订阅就一条都收不到，处理中的消息撤了也没人知道。
+ * 回复用户消息时飞书说它已撤回（230011）是另一条不依赖订阅的线索：走和撤回事件同一套处理。
+ */
+function wireReplyTargetRecalled(rt: ChannelRuntime): void {
+  const sender = rt.sender;
+  if (!sender) return;
+  sender.onReplyTargetRecalled = (messageId, chatId) => {
+    log("INFO", `[${rt.cfg.name}] 回复时飞书提示目标消息已撤回(230011)，按撤回处理 messageId=${messageId}`);
+    handleMessageRecalled(rt, messageId, chatId ?? "", "reply_target_recalled");
+  };
+}
+
 function rememberCardQuestion(messageId: string, entry: CardQuestionEntry): void {
   if (cardQuestionMap.size >= CARD_QUESTION_MAX) {
     const oldest = cardQuestionMap.keys().next().value;
@@ -3276,7 +3290,7 @@ async function handleOrphanStreamQuestionAction(
 }
 
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, closeOpenQuestionsForSession, rememberStreamCardQuestion };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, closeOpenQuestionsForSession, rememberStreamCardQuestion, handleMessageRecalled, wireReplyTargetRecalled, sseClients };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {

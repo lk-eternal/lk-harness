@@ -19,5 +19,5 @@ export const FEISHU_SCOPES_JSON = JSON.stringify(
 
 export const FEISHU_EVENT_SUBSCRIPTIONS = [
   { event: "im.message.receive_v1", desc: "接收消息 v2.0" },
-  { event: "im.message.recalled_v1", desc: "撤回消息 v2.0 · 可选" },
+  { event: "im.message.recalled_v1", desc: "撤回消息 v2.0 · 建议订阅，否则撤回消息后 Agent 不会停" },
 ]

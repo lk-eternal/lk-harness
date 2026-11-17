@@ -79,6 +79,29 @@ export function createLarkClient(appId: string, appSecret: string): Lark.Client 
   });
 }
 
+// ── 飞书错误码 ───────────────────────────────────────────
+
+/** 回复一条已被撤回的消息时返回（HTTP 400）。官方：The message is recalled. */
+export const LARK_ERR_MESSAGE_RECALLED = 230011;
+
+/**
+ * 取飞书的业务错误码。SDK 对 HTTP 非 2xx 抛的是 axios 错误：自带的 code 是字符串（ERR_BAD_REQUEST），
+ * 飞书的业务码在 response.data.code；响应体直接带 code（HTTP 200）时也认。
+ */
+export function larkBizCode(x: unknown): number | undefined {
+  const o = x as { response?: { data?: { code?: unknown } }; code?: unknown } | null | undefined;
+  const c = o?.response?.data?.code ?? o?.code;
+  return typeof c === "number" ? c : undefined;
+}
+
+/** 日志用：axios 的 message 只有「status code 400」，这里补上飞书返回的业务码和说明，否则看不出为什么失败 */
+export function describeLarkError(e: unknown): string {
+  const base = String((e as { message?: unknown } | null | undefined)?.message ?? e);
+  const data = (e as { response?: { data?: { code?: unknown; msg?: unknown } } } | null | undefined)?.response?.data;
+  if (typeof data?.code !== "number") return base;
+  return `${base} (code=${data.code}${data.msg ? ` msg=${String(data.msg).slice(0, 200)}` : ""})`;
+}
+
 // ── 飞书发送 ─────────────────────────────────────────────
 
 export interface CardButton {
@@ -152,6 +175,12 @@ export class LarkSender {
   private cardkitDenied = false;
 
   chatId: string | null = null;
+
+  /**
+   * 回复某条用户消息时发现它已被撤回（230011）。撤回事件（im.message.recalled_v1）要在开发者后台单独订阅，
+   * 没订阅就收不到；回复失败是不依赖订阅的另一条线索，调用方据此走和撤回事件同一套处理。
+   */
+  onReplyTargetRecalled?: (messageId: string, chatId?: string) => void;
 
   constructor(opts: LarkSenderOptions) {
     this.client = opts.client;
@@ -1980,6 +2009,16 @@ export class LarkSender {
     }
   }
 
+  /** 回复失败的业务码是「目标消息已撤回」时通知调用方；回调自己出错不能影响发送流程 */
+  private notifyReplyTargetRecalled(code: unknown, messageId: string, chatId?: string): void {
+    if (code !== LARK_ERR_MESSAGE_RECALLED || !this.onReplyTargetRecalled) return;
+    try {
+      this.onReplyTargetRecalled(messageId, chatId);
+    } catch (e: any) {
+      this.log("WARN", `撤回通知回调异常: ${e?.message ?? e}`);
+    }
+  }
+
   /** 通过 card_id 发送已创建的 CardKit 卡片实体 */
   async sendCardEntity(cardId: string, replyMessageId?: string, chatId?: string): Promise<string | null | undefined> {
     const content = JSON.stringify({ type: "card", data: { card_id: cardId } });
@@ -1992,12 +2031,14 @@ export class LarkSender {
         const code = (res as any)?.code;
         const mid = ((res as any)?.data?.message_id ?? (res as any)?.message_id) as string | undefined;
         if (code !== undefined && code !== 0) {
-          this.log("WARN", `流式卡片回复失败 code=${code}`);
+          this.log("WARN", `流式卡片回复失败 code=${code} msg=${(res as any)?.msg ?? ""}`);
+          this.notifyReplyTargetRecalled(code, replyMessageId, chatId);
           return undefined;
         }
         return mid ?? null;
       } catch (e: any) {
-        this.log("WARN", `流式卡片回复失败: ${e?.message ?? e}`);
+        this.log("WARN", `流式卡片回复失败: ${describeLarkError(e)}`);
+        this.notifyReplyTargetRecalled(larkBizCode(e), replyMessageId, chatId);
         return undefined;
       }
     }
