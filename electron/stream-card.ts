@@ -686,6 +686,10 @@ export async function flushStreamCard(host: StreamCardHost, finish: boolean, opt
 
   const run = async (): Promise<void> => {
     if (finish) {
+      // 状态事件和回合收尾各调一次 finish，两次都在卡收口前通过了入口检查、排进同一条链：
+      // 排在后面的这次到这里时卡已经收口。再发一次 daemon 里已没有这张卡的状态，
+      // 会按 cardId 当孤儿卡再 PATCH 一遍，飞书把它当成新事件重推给卡里被 @ 的机器人
+      if (agg.finished) return
       ensureFinishPlaceholder(agg, host.sessionKey);
       while (agg.dirty) {
         if (!await pushFrame({ ignoreGate: true })) break

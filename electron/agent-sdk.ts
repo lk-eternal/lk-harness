@@ -197,6 +197,23 @@ function isResumeEligible(session: SdkSessionAgent): boolean {
     && (session.chatType === "p2p" || session.chatType === "group" || session.chatType === "project")
 }
 
+/**
+ * 会话记录里要留的「未收口卡」cardId。
+ * 只有还没结束的卡（进行中，或断线挂起待续写）才值得留给 Resume 收口；已收口的卡必须从记录里去掉。
+ * flushStreamCard(finish) 不会换掉 session.streamAgg，回合末尾它仍指着那张已结束的卡：
+ * 直接取它的 cardId 会把刚清掉的记录写回去，之后每次 Resume 都对这张早已结束的卡再 PATCH 一遍，
+ * 飞书会把这次更新当成新事件重推给卡里被 @ 的机器人。
+ * agg 没有卡（还没建 / 已摘除）时记录保持原样。
+ */
+export function resolveRememberedStreamCardId(
+  agg: { cardId?: string; finished: boolean } | null | undefined,
+  recordedCardId: string | undefined,
+): string | undefined {
+  if (!agg?.cardId) return recordedCardId
+  if (!agg.finished) return agg.cardId
+  return recordedCardId === agg.cardId ? undefined : recordedCardId
+}
+
 function rememberResumable(session: SdkSessionAgent): void {
   if (!isResumeEligible(session) || !session.workspaceDir) return
   ensureModelStore()
@@ -207,7 +224,7 @@ function rememberResumable(session: SdkSessionAgent): void {
     rulesHash: promptHashForSession(session),
     skillsHash: session.skillsHash,
     daemonPort: resolveDaemonPortForPrompt() ?? undefined,
-    streamCardId: session.streamAgg?.cardId ?? prev?.streamCardId,
+    streamCardId: resolveRememberedStreamCardId(session.streamAgg, prev?.streamCardId),
   })
 }
 
@@ -790,7 +807,7 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
       session.lastStatus = { status: event.status, message: event.message }
       const lvl = isErr ? "ERROR" as const : "INFO" as const
       pushUiLog("SDK", lvl, `[${session.sessionKey}] [status] ${event.status}${event.message ? ` - ${event.message}` : ""}`)
-      // FINISHED / 终态：尽快收口流式卡（finally 还会再 finish 一次，daemon 侧幂等）
+      // FINISHED / 终态：尽快收口流式卡（finally 还会再调一次 finish，排在后面的那次发现卡已收口就直接跳过）
       if (stream && (event.status === "FINISHED" || event.status === "ERROR" || event.status === "CANCELLED" || event.status === "EXPIRED")) {
         sealAllThinking(stream)
         sealRunningTools(stream)

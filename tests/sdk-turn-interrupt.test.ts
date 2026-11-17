@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const h = vi.hoisted(() => ({
   dir: "",
   create: vi.fn(),
+  resume: vi.fn(),
   startWorker: vi.fn(),
   posts: [] as Array<Record<string, unknown>>,
   cardSeq: 0,
@@ -25,7 +26,7 @@ vi.mock("electron", async () => {
   }
 })
 vi.mock("@cursor/sdk", () => ({
-  Agent: { resume: vi.fn(), create: h.create, listRuns: vi.fn(), getRun: vi.fn(), cancelRun: vi.fn() },
+  Agent: { resume: h.resume, create: h.create, listRuns: vi.fn(), getRun: vi.fn(), cancelRun: vi.fn() },
   Cursor: { models: { list: vi.fn(async () => []) } },
   JsonlLocalAgentStore: class {},
 }))
@@ -60,8 +61,16 @@ vi.mock("../electron/sdk-session-worker", () => ({
   stopSdkWorker: vi.fn(async () => undefined),
 }))
 
-import { executeSdkTurn, finishInterruptedTurn, launchSdkAgent, type SdkSessionAgent } from "../electron/agent-sdk"
+import {
+  executeSdkTurn,
+  finishInterruptedTurn,
+  launchSdkAgent,
+  resolveRememberedStreamCardId,
+  unregisterSdkSessionForWorker,
+  type SdkSessionAgent,
+} from "../electron/agent-sdk"
 import { initSessionModelStore } from "../src/shared/session-model-store"
+import { getSessionRecord } from "../src/shared/session-overrides-store"
 
 /** 一轮 run：事件由测试按需推入，status 由测试在结束时给 */
 function fakeRun() {
@@ -105,6 +114,7 @@ beforeEach(async () => {
   h.posts.length = 0
   h.cardSeq = 0
   h.create.mockReset()
+  h.resume.mockReset()
   h.startWorker.mockReset()
   h.startWorker.mockImplementation(() => new Promise<void>(() => {}))
   agent = { agentId: "agent-t", close: vi.fn(), send: vi.fn() }
@@ -167,18 +177,16 @@ describe("软打断：被取消的那张卡封成「已打断」，下一轮开�
     next.end("finished")
     expect((await turn2).ok).toBe(true)
 
-    // 回合返回时卡的请求都已发完（收尾会等 inflight）。FINISHED 事件和收尾各 finish 一次是原有行为（daemon 幂等），不数次数
+    // 回合返回时卡的请求都已发完（收尾会等 inflight）。FINISHED 事件和回合收尾各调一次 finish，但新卡只发一次
     const ensures = postsOf("ensure")
     expect(ensures).toHaveLength(2)
     expect(ensures[1].card_id).toBeUndefined() // 新卡：ensure 不带旧卡号
     const finishes = postsOf("finish")
     expect(finishes[0]).toMatchObject({ card_id: cardId, interrupted: true })
     const afterwards = finishes.slice(1)
-    expect(afterwards.length).toBeGreaterThanOrEqual(1)
-    for (const f of afterwards) {
-      expect(f.card_id).toBe("card-2") // 新一轮收口的是新卡
-      expect(f.interrupted).toBeUndefined() // 正常结束，不带「已打断」
-    }
+    expect(afterwards).toHaveLength(1)
+    expect(afterwards[0].card_id).toBe("card-2") // 新一轮收口的是新卡
+    expect(afterwards[0].interrupted).toBeUndefined() // 正常结束，不带「已打断」
   })
 
   it("对照：没有打断标记时，CANCELLED 照旧把卡挂起（/stop、断线续写的行为不变），不会 finish", async () => {
@@ -253,5 +261,118 @@ describe("send 还没返回 run 时被打断", () => {
     fr.end("finished")
     await turn
     expect(fr.run.cancel).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * 卡片收口后，会话记录里不能还留着它的 cardId。
+ * 记录里的 cardId 是给「进程重启时卡停在流式状态」用的：Resume 会按它再收口一次。
+ * 回合末尾记续聊信息时若把已结束 agg 的 cardId 又写回去，每次 Resume 都会对一张早已结束的卡再 PATCH 一遍，
+ * 飞书会把这次更新当成新的 @ 事件重推给卡里被 @ 的机器人（两个机器人互相触发的根因）。
+ */
+describe("记录里该留哪张卡 resolveRememberedStreamCardId", () => {
+  it("没有 agg、或 agg 还没建出卡：记录保持原样", () => {
+    expect(resolveRememberedStreamCardId(null, "old")).toBe("old")
+    expect(resolveRememberedStreamCardId(undefined, undefined)).toBeUndefined()
+    expect(resolveRememberedStreamCardId({ finished: false }, "old")).toBe("old")
+  })
+
+  it("卡还没收口（进行中或挂起待续写）：记 agg 当前这张", () => {
+    expect(resolveRememberedStreamCardId({ cardId: "c2", finished: false }, undefined)).toBe("c2")
+    expect(resolveRememberedStreamCardId({ cardId: "c2", finished: false }, "c1")).toBe("c2")
+  })
+
+  it("卡已收口：不再记它；记录里存的恰是它就清掉", () => {
+    expect(resolveRememberedStreamCardId({ cardId: "c1", finished: true }, "c1")).toBeUndefined()
+    expect(resolveRememberedStreamCardId({ cardId: "c1", finished: true }, undefined)).toBeUndefined()
+  })
+
+  it("卡已收口但记录里存的是另一张卡：不动那一张（清除要对得上期望的卡号）", () => {
+    expect(resolveRememberedStreamCardId({ cardId: "c1", finished: true }, "c2")).toBe("c2")
+  })
+})
+
+describe("卡片收口后不再留 cardId 给 Resume", () => {
+  const recordedCard = () => getSessionRecord(session.sessionKey)?.streamCardId
+
+  /** 一整轮：建卡、出正文、FINISHED，等回合收尾返回 */
+  async function finishedTurn() {
+    const { fr, turn } = await startTurnWithCard()
+    const cardId = session.streamAgg!.cardId!
+    expect(recordedCard()).toBe(cardId) // 进行中的卡要记着，进程挂了 Resume 才收得了口
+    fr.push(text("做完了"))
+    fr.push(status("FINISHED"))
+    fr.end("finished")
+    expect((await turn).ok).toBe(true)
+    return cardId
+  }
+
+  it("一轮正常结束：对这张卡只发一次 finish（状态事件和回合收尾不各发一次）", async () => {
+    const cardId = await finishedTurn()
+    const finishes = postsOf("finish")
+    expect(finishes).toHaveLength(1)
+    expect(finishes[0]).toMatchObject({ card_id: cardId })
+  })
+
+  it("一轮正常结束：会话记录里不留这张已收口的卡号", async () => {
+    await finishedTurn()
+    expect(recordedCard()).toBeUndefined()
+  })
+
+  it("对照：卡被挂起（CANCELLED 且不是软打断）时，卡号照旧留在记录里供 Resume 接续", async () => {
+    const { fr, turn } = await startTurnWithCard()
+    const cardId = session.streamAgg!.cardId!
+    fr.push(status("CANCELLED"))
+    fr.end("cancelled")
+    await turn
+    expect(session.streamAgg?.suspended).toBe(true)
+    expect(recordedCard()).toBe(cardId)
+  })
+
+  const relaunchOpts = () => ({
+    sessionKey: session.sessionKey,
+    chatType: "p2p" as const,
+    workspaceDir: h.dir,
+    apiKey: "key",
+    model: "grok-4.7",
+    senderOpenId: "ou_x",
+  })
+
+  it("正常结束、worker 收尾后重新拉起（Resume）：不会再对那张旧卡发 finish", async () => {
+    const cardId = await finishedTurn()
+    // 真实流程里 Resume 之前一定走过 worker 收尾；内存里还留着旧实例的话 launch 会直接当作已在运行
+    await unregisterSdkSessionForWorker(session, false)
+    h.resume.mockResolvedValue(agent)
+    const before = h.posts.length
+
+    const r = await launchSdkAgent(relaunchOpts())
+
+    expect(r.ok).toBe(true)
+    expect(h.resume).toHaveBeenCalledTimes(1) // 真的走了 Resume，不是全新拉起
+    expect(h.posts.slice(before).filter((p) => p.card_id === cardId)).toEqual([])
+  })
+
+  it("进程重启时卡还挂着没收口：Resume 照旧把那张卡收掉，并清掉记录", async () => {
+    const { fr, turn } = await startTurnWithCard()
+    const cardId = session.streamAgg!.cardId!
+    fr.push(status("CANCELLED"))
+    fr.end("cancelled")
+    await turn
+    expect(recordedCard()).toBe(cardId)
+
+    // 模拟进程重启：重新加载模块，内存里的会话没了，记录留在磁盘上
+    vi.resetModules()
+    const fresh = await import("../electron/agent-sdk")
+    h.resume.mockResolvedValue(agent)
+    const before = h.posts.length
+
+    const r = await fresh.launchSdkAgent(relaunchOpts())
+
+    expect(r.ok).toBe(true)
+    expect(h.resume).toHaveBeenCalledTimes(1)
+    const closes = h.posts.slice(before).filter((p) => p.action === "finish")
+    expect(closes).toHaveLength(1)
+    expect(closes[0]).toMatchObject({ card_id: cardId })
+    expect(recordedCard()).toBeUndefined()
   })
 })
