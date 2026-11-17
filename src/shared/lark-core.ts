@@ -1139,10 +1139,20 @@ export class LarkSender {
       ?? (foot?.includes("已选择") ? "✅ 已作答"
         : foot?.includes("已关闭") || foot?.includes("⌛") ? "⌛ 已关闭"
           : "❓ 待选择");
+    return LarkSender.buildQuestionPanel(panelId, headerTitle, inner, opts.expanded ?? true);
+  }
+
+  /** 问题区的灰框折叠面板（待选 / 已作答 / 已关闭同款）：单选题块和表单里的多选题共用，边框和标题样式只此一份 */
+  private static buildQuestionPanel(
+    panelId: string,
+    headerTitle: string,
+    inner: Record<string, unknown>[],
+    expanded: boolean,
+  ): Record<string, unknown> {
     return {
       tag: "collapsible_panel",
       element_id: panelId,
-      expanded: opts.expanded ?? true,
+      expanded,
       header: {
         title: {
           tag: "plain_text",
@@ -1164,8 +1174,11 @@ export class LarkSender {
 
   /**
    * 未决多选题：题干 + 表单（每个选项一个勾选框 + 「提交」）+ 灰字提示。
-   * 飞书的表单容器只能放在卡片根节点、不能进折叠面板，所以这里返回的是一组根节点元素，
-   * 不像 buildQuestionBlockElement 包成灰框面板；答完 / 关闭后会回到面板样式。
+   * 飞书规定表单容器只能放在卡片根节点，不能放进折叠面板（也不能放进分栏、交互容器），
+   * 但表单自己可以包折叠面板——所以流式卡里（panel: true）是根节点一个表单，
+   * 表单里一个和别的问题块同款的灰框面板，题干、勾选框、提交按钮、提示都在面板里，边框不会丢。
+   * 独立的多选题卡（不传 panel）没有灰框，题干和提示在表单外面，和独立的单选题卡一样朴素。
+   * 答完 / 关闭后回到 buildQuestionBlockElement 的面板样式。
    * 勾选在客户端本地完成，点「提交」才回调一次，所以勾选时没有等待渲染。
    */
   static buildQuestionMultiFormElements(opts: {
@@ -1173,38 +1186,59 @@ export class LarkSender {
     form: QuestionMultiForm;
     footer?: string;
     elementId?: string;
+    /** 题干、勾选框、提交按钮、提示一起放进表单里的灰框面板（流式卡用） */
+    panel?: boolean;
   }): Record<string, unknown>[] {
     const { form } = opts;
     const eid = opts.elementId ?? form.namePrefix;
-    const els: Record<string, unknown>[] = [
-      { tag: "markdown", content: opts.questionText, element_id: `${eid}_md`.slice(0, 20) },
+    const mdId = `${eid}_md`.slice(0, 20);
+    const formName = `${form.namePrefix}_form`;
+    const foot = opts.footer?.replace(/^\s+|\s+$/gu, "");
+    const fields: Record<string, unknown>[] = [
+      ...form.labels.map((label, i) => ({
+        tag: "checker",
+        name: checkerFieldName(form.namePrefix, i),
+        checked: false,
+        text: { tag: "plain_text", content: label },
+        // 飞书客户端会校验交互组件带 value（缺了点勾选时报 200340）；表单里的勾选不触发回调，这个值不会被用到
+        value: { kind: "question_check" },
+      })),
       {
-        tag: "form",
-        name: `${form.namePrefix}_form`,
-        element_id: eid.slice(0, 20),
-        vertical_spacing: "4px",
-        elements: [
-          ...form.labels.map((label, i) => ({
-            tag: "checker",
-            name: checkerFieldName(form.namePrefix, i),
-            checked: false,
-            text: { tag: "plain_text", content: label },
-            // 飞书客户端会校验交互组件带 value（缺了点勾选时报 200340）；表单里的勾选不触发回调，这个值不会被用到
-            value: { kind: "question_check" },
-          })),
-          {
-            tag: "button",
-            name: `${form.namePrefix}_submit`,
-            text: { tag: "plain_text", content: "提交" },
-            type: "primary",
-            margin: "8px 0px 0px 0px",
-            form_action_type: "submit",
-            behaviors: [{ type: "callback", value: form.submitValue }],
-          },
-        ],
+        tag: "button",
+        name: `${form.namePrefix}_submit`,
+        text: { tag: "plain_text", content: "提交" },
+        type: "primary",
+        // 面板自己有 8px 的组件间距，不用再额外垫一段
+        margin: opts.panel ? "0px" : "8px 0px 0px 0px",
+        form_action_type: "submit",
+        behaviors: [{ type: "callback", value: form.submitValue }],
       },
     ];
-    const foot = opts.footer?.replace(/^\s+|\s+$/gu, "");
+
+    if (opts.panel) {
+      const inner: Record<string, unknown>[] = [
+        { tag: "markdown", content: opts.questionText, element_id: mdId },
+        ...fields,
+      ];
+      if (foot) inner.push({ tag: "markdown", content: foot, text_size: "notation" });
+      return [{
+        tag: "form",
+        name: formName,
+        element_id: eid.slice(0, 20),
+        elements: [LarkSender.buildQuestionPanel(`${eid}_pn`.slice(0, 20), "❓ 待选择", inner, true)],
+      }];
+    }
+
+    const els: Record<string, unknown>[] = [
+      { tag: "markdown", content: opts.questionText, element_id: mdId },
+      {
+        tag: "form",
+        name: formName,
+        element_id: eid.slice(0, 20),
+        vertical_spacing: "4px",
+        elements: fields,
+      },
+    ];
     if (foot) els.push({ tag: "markdown", content: foot, text_size: "notation" });
     return els;
   }
@@ -1581,12 +1615,13 @@ export class LarkSender {
           els.push({ tag: "markdown", content: seg.text, element_id: "omitted_notice" });
         } else if (seg.type === "question") {
           if (seg.form) {
-            // 未决多选题：表单必须在根节点，不能包进折叠面板
+            // 未决多选题：表单必须在根节点，不能被折叠面板包着；灰框面板放在表单里面，边框和别的问题块一致
             els.push(...LarkSender.buildQuestionMultiFormElements({
               questionText: seg.questionText,
               form: seg.form,
               footer: seg.footer,
               elementId: seg.elementId,
+              panel: true,
             }));
           } else {
             els.push(LarkSender.buildQuestionBlockElement({

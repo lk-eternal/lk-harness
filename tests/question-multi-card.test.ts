@@ -62,7 +62,8 @@ describe("飞书多选题卡片", () => {
 
     const form = card.body.elements.find((e) => e.tag === "form")!
     expect(form).toBeDefined()
-    const checkers = form.elements.filter((e: El) => e.tag === "checker")
+    // 勾选框在表单里的灰框面板中（面板见下一条用例），不一定是表单的直接子节点
+    const checkers = nodesIn(form.elements, "checker")
     expect(checkers.map((c: El) => c.text.content)).toEqual(["A. SUB_CHILD", "B. SUB_TEEN", "C. SUB_ADULT"])
     expect(checkers.every((c: El) => c.checked === false)).toBe(true)
     // 飞书客户端要求交互组件带 value，缺了点勾选时报 200340
@@ -73,9 +74,10 @@ describe("飞书多选题卡片", () => {
     expect(checkers.map((c: El) => c.name)).toEqual(OPTIONS.map((_, i) => checkerFieldName(prefix, i)))
     expect(String(form.element_id).length).toBeLessThanOrEqual(20)
 
-    // 提交按钮是表单最后一个元素：form_action_type=submit，回调值带上会话和题块，服务端据此找到这道题
-    const submit = form.elements[form.elements.length - 1]
-    expect(submit.tag).toBe("button")
+    // 表单里只有一个提交按钮：form_action_type=submit，回调值带上会话和题块，服务端据此找到这道题
+    const submits = nodesIn(form.elements, "button")
+    expect(submits).toHaveLength(1)
+    const submit = submits[0]
     expect(submit.form_action_type).toBe("submit")
     expect(submit.name).toBeTruthy()
     expect(submit.behaviors).toEqual([{ type: "callback", value: { kind: "question_submit", sk: "sk1", blockId: "q1" } }])
@@ -84,13 +86,55 @@ describe("飞书多选题卡片", () => {
     expect(nodesIn(card.body.elements, "checker")).toHaveLength(3)
   })
 
-  it("表单在卡片根节点，不在折叠面板里（飞书表单容器只能放根节点）", () => {
+  it("表单在卡片根节点，不被任何折叠面板包着（飞书规定表单容器只能放根节点）", () => {
     const { card } = renderQuestion({ multi: true })
     expect(card.body.elements.filter((e) => e.tag === "form")).toHaveLength(1)
     for (const panel of nodesIn(card.body.elements, "collapsible_panel")) {
-      expect(nodesIn(panel, "form")).toEqual([])
-      expect(nodesIn(panel, "checker")).toEqual([])
+      expect(nodesIn(panel.elements, "form")).toEqual([])
     }
+  })
+
+  it("未决多选题和别的问题一样有灰色边框：灰框面板放在表单里面（表单可以包面板，反过来不行）", () => {
+    const { card } = renderQuestion({ multi: true })
+    const form = card.body.elements.find((e) => e.tag === "form")!
+    // 表单里就这一个面板，题干、勾选框、提交按钮、灰字提示都在面板里
+    expect(form.elements.map((e: El) => e.tag)).toEqual(["collapsible_panel"])
+    const panel = form.elements[0]
+    expect(panel.expanded).toBe(true)
+    expect(panel.elements[0]).toMatchObject({ tag: "markdown", content: "给哪些人开？" })
+    expect(nodesIn(panel.elements, "checker")).toHaveLength(OPTIONS.length)
+    expect(nodesIn(panel.elements, "button")).toHaveLength(1)
+    expect(panel.elements.at(-1)).toMatchObject({ tag: "markdown", text_size: "notation" })
+    expect(panel.elements.at(-1).content).toContain("可多选")
+    // 卡片根节点上只剩这个表单：没有游离在外面的题干或提示
+    expect(card.body.elements.filter((e) => e.tag === "markdown")).toEqual([])
+
+    // 边框、标题、图标和单选题的待选面板完全一致，以后谁改了样式另一边不会掉队
+    const single = renderQuestion({}).card.body.elements.find((e) => e.tag === "collapsible_panel")!
+    expect(panel.border).toEqual(single.border)
+    expect(panel.header).toEqual(single.header)
+    expect(panel.header.title.content).toBe("❓ 待选择")
+  })
+
+  it("element_id 整张卡内不重名、不超过 20 个字符（表单、面板、题干各一个）", () => {
+    const { card } = renderSegments([
+      { type: "question", blockId: "q1", text: "第一题？", options: OPTIONS, multi: true },
+      { type: "question", blockId: "q2", text: "第二题？", options: OPTIONS, multi: true },
+      { type: "question", blockId: "q3", text: "第三题？", options: OPTIONS },
+    ])
+    const ids: string[] = []
+    const walk = (x: unknown) => {
+      if (Array.isArray(x)) return x.forEach(walk)
+      if (x && typeof x === "object") {
+        const el = x as El
+        if (typeof el.element_id === "string") ids.push(el.element_id)
+        Object.values(el).forEach(walk)
+      }
+    }
+    walk(card.body.elements)
+    expect(ids.length).toBeGreaterThanOrEqual(3 * 2)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect(ids.every((id) => id.length <= 20 && /^[A-Za-z][A-Za-z0-9_]*$/.test(id))).toBe(true)
   })
 
   it("有未决多选题时卡片不再是流式输出状态（和单选题一样，否则点不了）", () => {
