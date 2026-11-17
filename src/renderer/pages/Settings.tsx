@@ -647,12 +647,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     </button>
                   )}
                 </div>
-                {(updateCheck?.status === "available" || updateCheck?.status === "ready") && updateCheck.releaseNotes && (
-                  <div className="rounded-lg border border-line bg-surface/50 px-3 py-2">
-                    <p className="mb-1.5 text-xs font-medium text-fg-2">更新内容</p>
-                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-fg-3">{updateCheck.releaseNotes}</p>
-                  </div>
-                )}
+                {/* 状态提示（下载进度、「已下载好」、下载直链）放在更新内容前面：更新说明可能很长，放后面会被推到看不见 */}
                 {updateMsg && (
                   <div className="space-y-2">
                     <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface/50 px-3 py-2 text-xs text-fg-3">{updateMsg}</p>
@@ -674,6 +669,12 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                         />
                       </div>
                     )}
+                  </div>
+                )}
+                {(updateCheck?.status === "available" || updateCheck?.status === "ready") && updateCheck.releaseNotes && (
+                  <div className="rounded-lg border border-line bg-surface/50 px-3 py-2">
+                    <p className="mb-1.5 text-xs font-medium text-fg-2">更新内容</p>
+                    <p className="whitespace-pre-wrap text-xs leading-relaxed text-fg-3">{updateCheck.releaseNotes}</p>
                   </div>
                 )}
               </section>
