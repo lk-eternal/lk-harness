@@ -1935,6 +1935,11 @@ interface AgentStreamCardState {
   expandedPanelIds: Set<string>;
   /** 卡已终态：渲染剥块/completed；与 opts.finish（收口动作）分离 */
   finished?: boolean;
+  /**
+   * 收口时刻，页脚耗时（建卡→收口）的终点。带未决问题的卡收口后还会活着，点选答案、关题都会再刷新一次，
+   * 页脚不能跟着「现在」走，否则等用户点选的时间也被算进去。卡被续写后再次收口时重新记。
+   */
+  finishedAt?: number;
   /** 页脚用模型名（Electron 随 finish 下发，update 刷新） */
   modelLabel?: string;
   /** 回合没跑完就被收口（Electron 随 finish 下发），页脚标注「Agent 已中断」 */
@@ -2373,7 +2378,8 @@ function buildAgentStreamCardJson(
     const parts: string[] = [];
     if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
     if (state.interrupted) parts.push("Agent 已中断");
-    const elapsedMs = Date.now() - (state.createdAt || Date.now());
+    const endAt = state.finishedAt ?? Date.now();
+    const elapsedMs = endAt - (state.createdAt || endAt);
     if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
     if (parts.length > 0) footer = parts.join(" · ");
   }
@@ -2399,6 +2405,8 @@ async function refreshAgentStreamCard(
   opts: { finish: boolean },
 ): Promise<boolean> {
   const run = async (): Promise<boolean> => {
+    // 首次收口记下终点；已收口的卡再刷新（点选答案、新消息送达关题）沿用原值，页脚耗时不再增长
+    if (opts.finish && !state.finished) state.finishedAt = Date.now();
     let { cardJson } = buildAgentStreamCardJson(sessionKey, state, ch, opts.finish);
     const merged = buildCardMergedPayload(sessionKey, state);
     const terminal = opts.finish || state.finished === true;
