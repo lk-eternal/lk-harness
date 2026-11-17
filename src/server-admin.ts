@@ -8,6 +8,9 @@ import { parseChatKey, chatIdFromSessionKey } from "./shared/channel-types.js";
 import { getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
 import { listProjects, getProject } from "./shared/project-store.js";
 import { concatUtf8 } from "./shared/utf8-stream.js";
+import { getHostRpc, type HostRpc } from "./shared/host-rpc.js";
+import { formatCreated, formatRepos, formatTemplates } from "./shared/project-ai-format.js";
+import type { AiProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo } from "./shared/project-app-types.js";
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR ?? "";
 
@@ -58,7 +61,18 @@ async function daemonPost(path: string, body: unknown): Promise<any> {
   });
 }
 
-export function registerAdminTools(mcpServer: McpServer): void {
+export interface AdminToolDeps {
+  /** 请宿主（Electron 主进程）做事的通道；测试里换成假的 */
+  hostRpc?: HostRpc;
+}
+
+/** 读模板 / 常用仓库：宿主只是读配置，几秒内一定有结果 */
+const HOST_QUICK_TIMEOUT_MS = 15_000;
+/** 建项要建目录、按设置克隆仓库（大仓库、远程仓库可能很慢），给足时间 */
+const HOST_CREATE_TIMEOUT_MS = 10 * 60_000;
+
+export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {}): void {
+  const hostRpc = (): HostRpc => deps.hostRpc ?? getHostRpc();
 
   // ── manage_agent ──
 
@@ -137,17 +151,63 @@ export function registerAdminTools(mcpServer: McpServer): void {
   // ── manage_project ──
   mcpServer.tool(
     "manage_project",
-    "管理项目。list=列出所有项目；delete=删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
+    [
+      "管理项目：列出、创建、删除。",
+      "- list：列出所有项目（含 ID）。",
+      "- templates：列出项目模板：每个模板的 ID、要填的信息（哪些必填）、接不接代码仓库、默认工作分支。",
+      "- repos：列出常用代码仓库（路径、基线分支）。",
+      "- create：创建项目。用户让你建项目、又不想自己填表时用。流程：先 templates 看模板和必填项（要接代码再 repos），把用户的话整理成参数；信息不够就问用户，不要猜；创建前把整理好的内容（名称、模板、各项信息、仓库和分支、文件夹）发给用户确认（send_question），确认后才调用。会建项目目录、按设置克隆仓库，可能要一会儿。建完只返回项目 ID：不会进入项目会话（当前对话不受影响），也不建飞书独立群；把项目 ID 告诉用户，他需要时自己进入。",
+      "- delete：删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
+    ].join("\n"),
     {
-      action: z.enum(["list", "delete"]).describe("操作：list=列出所有项目, delete=删除项目"),
+      action: z.enum(["list", "delete", "templates", "repos", "create"]).describe("操作：list=列出所有项目, templates=列出项目模板, repos=列出常用代码仓库, create=创建项目, delete=删除项目"),
       project_id: z.string().optional().describe("项目 ID（delete 时必填）"),
+      name: z.string().optional().describe("项目名称（create 必填）"),
+      goal: z.string().optional().describe("项目目标，一两句话（create 可选）"),
+      template_id: z.string().optional().describe("模板 ID（create 必填；先用 templates 查）"),
+      fields: z.record(z.string(), z.string()).optional().describe("模板要填的信息：键是字段名，值是内容（create；必填项必须给，字段名以 templates 返回的为准）"),
+      repos: z.array(z.object({
+        repo_path: z.string().describe("本地 git 仓库的根目录（绝对路径）或远程仓库地址"),
+        base_branch: z.string().describe("基线分支，必填（常用仓库用 repos 里列出的那个）"),
+      })).optional().describe("要接入的代码仓库（create；只有接代码仓库的模板才有效，可以一个都不选）"),
+      work_branch: z.enum(["new", "base", "test", "develop"]).optional().describe("克隆副本停在哪个分支（create；不给就用模板默认）：new=新建分支, base=基线分支, test=测试分支, develop=开发分支"),
+      feature_branch: z.string().optional().describe("work_branch 是 new 时的分支名；不填自动生成"),
+      story_url: z.string().optional().describe("项目链接：需求、任务单等入口（create 可选）"),
+      related_docs: z.string().optional().describe("相关文档，链接或说明（create 可选）"),
+      folder: z.string().optional().describe("用一个已有文件夹当项目目录，绝对路径（create；只有不接代码仓库的模板可用，应用不会改动里面的文件）"),
     },
-    async ({ action, project_id }) => {
+    async ({ action, project_id, name, goal, template_id, fields, repos, work_branch, feature_branch, story_url, related_docs, folder }) => {
       if (action === "list") {
         const list = listProjects()
         if (list.length === 0) return txt("📭 暂无项目")
         const lines = list.map((p, i) => `#${i + 1} ${p.name}${p.archivedAt ? "（已归档）" : ""} id=${p.id}`)
         return txt(lines.join("\n"))
+      }
+      if (action === "templates" || action === "repos") {
+        const out = await hostRpc().request<ProjectTemplateInfo[] | ProjectRepoOption[]>(
+          action === "templates" ? "project.templates" : "project.repos", {}, HOST_QUICK_TIMEOUT_MS,
+        )
+        if (!out.ok) return txt(`❌ ${out.error}`)
+        const rows = Array.isArray(out.result) ? out.result : []
+        return txt(action === "templates" ? formatTemplates(rows as ProjectTemplateInfo[]) : formatRepos(rows as ProjectRepoOption[]))
+      }
+      if (action === "create") {
+        const invoker = getMcpInvokerSessionKey()
+        if (!invoker) return txt("❌ 无法确定你所在的会话，不能创建项目")
+        if (!template_id?.trim()) return txt("❌ create 需要 template_id：先用 templates 查看可用模板")
+        const out = await hostRpc().request<AiProjectCreateResult>("project.create", {
+          chatKey: chatIdFromSessionKey(invoker),
+          input: {
+            name, goal, templateId: template_id, fields,
+            repos: repos?.map((r) => ({ repoPath: r.repo_path, baseBranch: r.base_branch })),
+            workBranch: work_branch, featureBranch: feature_branch,
+            storyUrl: story_url, relatedDocs: related_docs, folder,
+          },
+        }, HOST_CREATE_TIMEOUT_MS)
+        if (!out.ok) return txt(`❌ ${out.error}`)
+        const r = out.result;
+        if (!r?.ok) return txt(`❌ ${(r as { error?: string } | undefined)?.error ?? "创建失败"}`)
+        return txt(formatCreated(r))
       }
       const p = getProject(project_id ?? "")
       if (!p) return txt("❌ 未找到项目")

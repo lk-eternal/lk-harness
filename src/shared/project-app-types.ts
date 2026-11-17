@@ -129,6 +129,11 @@ export interface ProjectCreateResult {
   sessionKey?: string
 }
 
+/** AI 建项（管理 MCP 的 manage_project create）的结果：建好就返回，不进入项目会话 */
+export type AiProjectCreateResult =
+  | { ok: true; projectId: string; name: string; dir: string; templateName: string }
+  | { ok: false; error: string }
+
 /** 项目步骤条里的一项 */
 export interface ProjectStepInfo {
   id: string

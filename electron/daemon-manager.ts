@@ -78,7 +78,9 @@ import {
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
-import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
+import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectHostRpcHandlers, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
+import { createHostRpcDispatcher } from "./host-rpc"
+import { HOST_RPC_PREFIX } from "../src/shared/host-rpc.js"
 import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
 import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
 import {
@@ -176,6 +178,12 @@ export interface DaemonStatus {
 let daemonProcess: ChildProcess | null = null
 let statusInterval: NodeJS.Timeout | null = null
 let cachedPort: number | null = null
+/** daemon 经标准输出发来的「要宿主做件事并回结果」的请求（管理 MCP 的 manage_project 建项等） */
+const handleHostRpcLine = createHostRpcDispatcher({
+  post: (url, body) => httpPost(url, body),
+  handlers: projectHostRpcHandlers,
+  warn: (m) => pushUiLog("Daemon", "WARN", `[HostRpc] ${m}`),
+})
 /** 本次由本应用启动成功时 Daemon 所绑定的工作目录（用于目录切换后的状态判断） */
 let activeDaemonWorkspaceDir: string | null = null
 
@@ -637,6 +645,10 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
       for (const raw of parts) {
         const line = raw.trim()
         if (!line || line.startsWith("[info]:")) continue
+        if (line.startsWith(HOST_RPC_PREFIX)) {
+          void handleHostRpcLine(line, cachedPort ?? readLockFile()?.port)
+          continue
+        }
         if (line.startsWith("__PROJECT_NOTIFY__:")) {
           try {
             const { chatId, text, buttons, footer, filePath, sessionKey } = JSON.parse(line.slice("__PROJECT_NOTIFY__:".length)) as {

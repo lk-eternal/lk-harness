@@ -22,6 +22,7 @@ import {
   isRemoteRepoUrl,
   projectNotOwnedHint,
   repoDisplayName,
+  type AiProjectCreateResult,
   type InspectRepoResult,
   type ProjectActionResult,
   type ProjectCreateInput,
@@ -36,6 +37,7 @@ import {
   buildProjectView,
   checkExternalFolder,
   isProjectOwnedBy,
+  parseGatewayCreateInput,
   planProjectCreate,
   syncedSnapshot,
   templateInfos,
@@ -55,7 +57,7 @@ import {
   setProjectArchived,
 } from "../src/shared/project-store.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
-import { APP_CHANNEL_CHAT_ID, makeChatKey } from "../src/shared/channel-types.js"
+import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience } from "../src/shared/channel-types.js"
 import { projectRootDir, projectSessionKey, type Project } from "../src/shared/project-types.js"
 
 export { projectsRootDir }
@@ -116,12 +118,15 @@ function prepareFolderWorkspace(folder: string): FolderWorkspace {
   return { ok: true, dir: checked.dir }
 }
 
-/** 新建项目：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）→ 进入项目会话 */
-export async function createProjectFromApp(channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> {
+/**
+ * 建项核心：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）→ 项目会话键绑到 chatKey。
+ * 不进入项目会话：应用里点「新建」（createProjectFromApp）在它后面接着进入；AI 建项（createProjectForAi）不进，不打断当前对话。
+ */
+async function createProjectCore(
+  chatKey: string,
+  input: ProjectCreateInput,
+): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   ensureStore()
-  const chatKey = appChatKeyOf(channelId)
-  if (!chatKey) return { ok: false, error: "不是应用内对话的通道" }
-
   const plan = planProjectCreate(input, getNodeGroups())
   if (!plan.ok) return { ok: false, error: plan.error }
 
@@ -177,6 +182,17 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
 
   project.sessionKey = projectSessionKey(chatKey, project.id)
   saveProject(project)
+  return { ok: true, project }
+}
+
+/** 新建项目（应用里点「新建」）：建项核心 → 进入项目会话 */
+export async function createProjectFromApp(channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> {
+  ensureStore()
+  const chatKey = appChatKeyOf(channelId)
+  if (!chatKey) return { ok: false, error: "不是应用内对话的通道" }
+  const created = await createProjectCore(chatKey, input)
+  if (!created.ok) return created
+  const project = created.project
 
   const lock = readLockFile()
   if (!lock?.port) {
@@ -188,6 +204,82 @@ export async function createProjectFromApp(channelId: string, input: ProjectCrea
     return { ok: true, projectId: project.id, sessionKey: project.sessionKey, warning: `项目已创建，但进入会话失败：${entered.error}` }
   }
   return { ok: true, projectId: project.id, sessionKey: getProject(project.id)?.sessionKey ?? project.sessionKey }
+}
+
+// ── AI 建项（管理 MCP 的 manage_project：templates / repos / create）────────────────
+// 和应用里点「新建」走同一套校验和落盘（createProjectCore），区别有三：
+// 任何通道的主用户都能建（应用内、飞书、微信）；建完不进入项目会话，不打断 AI 正在跑的这一轮对话；
+// 不建飞书独立群（建群要发卡片、还会把当前会话切走）——项目绑在调用者所在的聊天上，用户之后自己进入。
+
+/** 同一个聊天里同名项目只允许一个在途：AI 的调用超时后重试、或同一轮里连发两次，不会建出两个一模一样的项目 */
+const aiCreateInFlight = new Set<string>()
+
+/**
+ * 调用者的聊天键 → 项目该绑的聊天。只认主用户：管理 MCP 本来就只挂给主用户的会话，这里再兜一层。
+ * 应用内对话通道永远是主用户私聊，项目绑在它固定的那个聊天上（和应用里点「新建」一致）。
+ */
+function resolveAiCreateChat(chatKey: string): { ok: true; chatKey: string } | { ok: false; error: string } {
+  const { channelId } = parseChatKey(String(chatKey ?? ""))
+  const channel = channelId ? getChannel(channelId) : undefined
+  if (!channel) return { ok: false, error: "找不到你所在的消息通道，无法确定项目归属" }
+  if (channel.type === "app") return { ok: true, chatKey: makeChatKey(channel.id, APP_CHANNEL_CHAT_ID) }
+  const audience = resolveChannelAudience({
+    mainUserEnabled: channel.mainUserEnabled,
+    mainUserChatId: channel.mainUserChatId,
+    chatKey,
+    chatType: "p2p",
+  })
+  if (audience !== "main") return { ok: false, error: "只有主用户的私聊可以创建项目" }
+  return { ok: true, chatKey }
+}
+
+/** AI 建项：建好就返回，不进入项目会话、不动全局「当前项目」指针 */
+export async function createProjectForAi(chatKey: string, input: ProjectCreateInput): Promise<AiProjectCreateResult> {
+  ensureStore()
+  const where = resolveAiCreateChat(chatKey)
+  if (!where.ok) return where
+  const name = String(input?.name ?? "").trim()
+  const flightKey = name ? `${where.chatKey}\n${name.toLowerCase()}` : ""
+  if (flightKey && aiCreateInFlight.has(flightKey)) {
+    return { ok: false, error: `「${name}」正在创建中（克隆仓库可能要一会儿），请稍后用 list 确认，不要重复提交` }
+  }
+  if (flightKey) aiCreateInFlight.add(flightKey)
+  try {
+    const created = await createProjectCore(where.chatKey, input)
+    if (!created.ok) return created
+    const p = created.project
+    pushUiLog("Project", "INFO", `[AiCreate] AI 创建了项目「${p.name}」(${p.id})，聊天 ${where.chatKey}`)
+    return {
+      ok: true,
+      projectId: p.id,
+      name: p.name,
+      dir: projectRootDir(p) || p.worktreePath,
+      templateName: projectGroups(p).map((g) => g.name).join("、"),
+    }
+  } finally {
+    if (flightKey) aiCreateInFlight.delete(flightKey)
+  }
+}
+
+function strOf(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined
+}
+
+/**
+ * 管理 MCP（daemon 进程）经宿主通道（src/shared/host-rpc.ts）发来的项目请求。
+ * 入参形状同手机端网关（只认字符串，其余丢掉），另外认 folder：不接代码仓库的模板可以指定一个已有文件夹，
+ * 它和界面里选文件夹走同一套校验（不能是应用数据目录、不能已属于别的项目）。
+ */
+export const projectHostRpcHandlers: Record<string, (payload: unknown) => unknown | Promise<unknown>> = {
+  "project.templates": () => listProjectTemplates(),
+  "project.repos": () => listProjectRepoOptions(),
+  "project.create": (payload) => {
+    const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>
+    const raw = (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>
+    const folder = strOf(raw.folder)
+    const input: ProjectCreateInput = { ...parseGatewayCreateInput(raw), ...(folder ? { folder } : {}) }
+    return createProjectForAi(strOf(p.chatKey) ?? "", input)
+  },
 }
 
 /** 设置页项目列表：每个项目的完整资料（字段、快捷操作取自项目实际在用的模板） */

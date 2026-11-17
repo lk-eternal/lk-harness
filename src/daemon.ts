@@ -88,6 +88,7 @@ import {
 } from "./shared/ai-schedule.js";
 import { createTempChatSession } from "./shared/temp-chat-session.js";
 import { runWithMcpInvokerSessionKey, getMcpInvokerSessionKey } from "./shared/mcp-invoker-context.js";
+import { getHostRpc } from "./shared/host-rpc.js";
 import { resolveMcpSendSessionKey } from "./shared/mcp-outbound-session-key.js";
 import { configDir, sessionStateDir, migrateDataLayout } from "./shared/data-paths.js";
 import { ensureSessionLayoutMigrated } from "./shared/session-layout-migrate.js";
@@ -4850,9 +4851,19 @@ async function handleAgentAdmin(_method: string, req: http.IncomingMessage, res:
   return true;
 }
 
+/** 宿主对「要它做件事」请求的回执 / 结果（协议见 shared/host-rpc.ts）；不认识的 id（已超时、已完成）静默忽略 */
+async function handleHostRpcReply(method: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
+  if (method !== "POST") return false;
+  let body: unknown;
+  try { body = JSON.parse(await readBody(req)); } catch { json(res, { ok: false, error: "invalid json" }, 400); return true; }
+  json(res, { ok: true, known: getHostRpc().settle(body) });
+  return true;
+}
+
 const ADMIN_ENTITY_ROUTES: Record<string, RouteHandler> = {
   "/api/workspace": handleWorkspaceAdmin,
   "/api/agent": handleAgentAdmin,
+  "/api/host-rpc": handleHostRpcReply,
 };
 
 /** sessionKey 属于某个应用内对话通道的固定主用户私聊时返回该通道运行时 */
