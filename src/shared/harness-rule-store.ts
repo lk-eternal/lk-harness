@@ -175,6 +175,10 @@ export function saveHarnessRule(id: string | null, name: string, content: string
     targetId = uniqueId(name, new Set(order))
     order.push(targetId)
   }
+  // id 对得上、却没登记过（磁盘上有文件、清单里没有）：补登记。
+  // manage_rules 的 save 就是把新规则的名字当 id 传进来的；不补的话文件写了、清单没有，
+  // list 看不到、提示词也不带，「已保存」的规则永远不生效。
+  if (!order.includes(targetId)) order.push(targetId)
 
   const dir = rulesDir()
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
