@@ -255,9 +255,9 @@ interface NewProjectInput {
   repos?: { repoPath: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
 }
 
-/** 项目卡发进新接入的群里（尽力而为：reportCommandResult 自己吞掉发送错误，机器人不在群里时发不进去也不算失败） */
+/** 项目信息卡发进新接入的群里（尽力而为：reportCommandResult 自己吞掉发送错误，机器人不在群里时发不进去也不算失败）：正文是项目信息，按钮只留流程节点（信息已经在卡上，不再放「项目详细信息」） */
 async function announceProjectInGroup(port: number, project: Project, groupChatKey: string): Promise<void> {
-  await reportCommandResult(port, "", true, "", groupChatKey, projectButtonsCreate(project), {
+  await reportCommandResult(port, "", true, formatProjectCard(project), groupChatKey, projectNodeButtons(project), {
     cardTitle: projectCardTitle(project),
     sessionKey: projectSessionKeyFor(project, groupChatKey),
   })

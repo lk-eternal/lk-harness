@@ -636,7 +636,7 @@ describe("接线（只有真实应用跑得到的部分，读源码守住）", (
     expect(attach).not.toContain("setCurrentProjectId")
     // 回执只发到群里（chatKey 是群），不发回调用者的私聊
     const announce = cmds.slice(cmds.indexOf("async function announceProjectInGroup"), cmds.indexOf("export async function attachPlannedBindings"))
-    expect(announce).toContain(`reportCommandResult(port, "", true, "", groupChatKey,`)
+    expect(announce).toContain(`reportCommandResult(port, "", true, formatProjectCard(project), groupChatKey, projectNodeButtons(project),`)
 
     // 飞书表单建项的老路径行为不变：选了群就回到主会话（项目只在群里协作），沿用当前会话的照样进入项目、记下当前项目
     expect(cmds).toMatch(/await leaveProjectSession\(port, chatId\)/)

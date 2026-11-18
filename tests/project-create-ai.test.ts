@@ -121,6 +121,17 @@ async function boot(channelOverrides: Record<string, Record<string, unknown>> = 
 
 const hit = (url: string) => hits.filter((h) => h.url === url)
 
+/** 发进群里的是项目信息卡：正文是项目信息（同 /p info），按钮只有流程节点，不再重复放「项目详细信息」 */
+function expectProjectInfoCard(body: Record<string, unknown>, projectId: string, name: string): void {
+  const text = String(body.message)
+  expect(text).toContain(`📦 项目 · ${name}`)
+  expect(text).toContain(`🆔 ${projectId}`)
+  const cmds = (body.buttons as { cmd: string }[]).map((b) => b.cmd)
+  expect(cmds.length).toBeGreaterThan(0)
+  expect(cmds).not.toContain("/p info")
+  expect(cmds.every((c) => c.startsWith("/p "))).toBe(true)
+}
+
 function git(cwd: string, args: string[]): string {
   const r = spawnSync("git", args, { cwd, encoding: "utf-8", windowsHide: true })
   if (r.status !== 0) throw new Error(r.stderr || r.stdout || "git failed")
@@ -529,10 +540,12 @@ describe("AI 建项：新建飞书独立群（mode=group）", () => {
       url: "/create-project-group",
       body: { name: "📦 改版", description: "把首页改掉", channelId: FEISHU, ownerOpenId: MAIN_OPEN_ID },
     }])
-    // 项目卡只发往新群，不回私聊；没有切会话
+    // 项目信息卡只发往新群，不回私聊；没有切会话
     const cards = hit("/cmd/result")
     expect(cards).toHaveLength(1)
-    expect(cards[0].body).toMatchObject({ ok: true, messageId: "", message: "", chatId: GROUP_KEY, sessionKey: `${GROUP_KEY}::project_${r.projectId}` })
+    expect(cards[0].body).toMatchObject({ ok: true, messageId: "", chatId: GROUP_KEY, sessionKey: `${GROUP_KEY}::project_${r.projectId}` })
+    expectProjectInfoCard(cards[0].body, r.projectId, "改版")
+    expect(String(cards[0].body.message)).toContain("📝 把首页改掉")
     expect(hit("/api/active-session")).toEqual([])
 
     const p = store.getProject(r.projectId)!
@@ -646,6 +659,7 @@ describe("AI 建项：绑定已有飞书群（mode=bind）", () => {
     const cards = hit("/cmd/result")
     expect(cards).toHaveLength(1)
     expect(cards[0].body).toMatchObject({ ok: true, chatId: EXISTING_KEY, sessionKey: `${EXISTING_KEY}::project_${r.projectId}` })
+    expectProjectInfoCard(cards[0].body, r.projectId, "改版")
     expect(hit("/api/active-session")).toEqual([])
 
     const p = store.getProject(r.projectId)!
