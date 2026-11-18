@@ -42,10 +42,14 @@ import {
   hasSessionQueueDir,
   cleanupStaleMessages,
   clearAllQueueMessages,
+  isMessageHandled,
+  setDuplicateDropLogger,
   type QueueMessage,
   type QueueMessageMeta,
 } from "./file-queue.js";
 import { LOCK_FILE_NAME } from "./shared/constants.js";
+import { guardBrokenPipe, parsePidEnv, startParentWatchdog } from "./shared/process-guards.js";
+import { removeLockFileIfOwned } from "./shared/lock-file.js";
 import {
   makeChatKey,
   parseChatKey,
@@ -1480,6 +1484,8 @@ function resolveRoutingKey(chatId?: string, replyMessageId?: string): { sessionK
 function initQueue(): void {
   const dir = initFileQueue();
   log("INFO", `共享文件队列: ${dir}`);
+  // 队列里冒出「已经处理过的消息」的文件：只可能是别的进程写进来的（比如没退干净的旧 daemon），留一条日志方便认出它
+  setDuplicateDropLogger((id) => log("WARN", `丢弃重复投递的队列文件（该消息此前已处理过）: id=${id}；若反复出现，说明还有别的 daemon 进程在往同一个队列目录写`));
   cleanupStaleMessages();
   // 周期清理：.tmp 孤儿 + 超 72h 未确认的 .claimed（死会话兜底）
   setInterval(() => cleanupStaleMessages(), 6 * 60 * 60 * 1000).unref();
@@ -1568,6 +1574,8 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
     const preview = content.length > 200 ? `${content.slice(0, 200)} …(+${content.length - 200} chars)` : content;
     log("INFO", `消息已写入共享队列: ${JSON.stringify(preview)} (id=${messageId ?? "none"}, chat=${chatId ?? "none"}${routedId !== chatId ? ` → routed=${routedId}` : ""}${replyMessageId ? `, reply=${replyMessageId}` : ""})`);
     broadcastQueueEvent(routedId);
+  } else if (isMessageHandled(messageId)) {
+    log("INFO", `消息已跳过（此前已处理过，飞书重推）: id=${messageId}`);
   } else {
     log("INFO", `消息已跳过（重复或写入失败）: id=${messageId ?? "none"}`);
   }
@@ -6084,10 +6092,10 @@ function writeLockFile(port: number): void {
   }));
 }
 
+/** 只删自己写的锁：旧 daemon 晚退出时不能把新 daemon 的锁带走 */
 function removeLockFile(): void {
   try {
-    const lockPath = getLockFilePath();
-    if (fs.existsSync(lockPath)) { fs.unlinkSync(lockPath); }
+    removeLockFileIfOwned(getLockFilePath(), process.pid);
   } catch { /* ignore */ }
 }
 
@@ -6546,6 +6554,8 @@ function cancelAiTaskRecord(tasks: ScheduledTask[], target: ScheduledTask): { bu
 }
 
 export async function daemonMain(): Promise<void> {
+  // 必须最先装：应用没了以后 stderr 写不出去会 EPIPE，没有监听就会在 uncaughtException 里无限自激
+  guardBrokenPipe([process.stdout, process.stderr]);
   if (CHANNEL_CONFIGS.length === 0) {
     log("ERROR", "未配置任何消息通道，至少需要启用一个（CLAW_CHANNELS_JSON 为空）");
     process.exit(1);
@@ -6566,6 +6576,18 @@ export async function daemonMain(): Promise<void> {
   process.on("SIGTERM", cleanup);
   process.on("exit", removeLockFile);
   process.on("exit", () => appChat.flush());
+
+  // 应用把自己的 pid 交给 daemon：应用没了（被强杀 / 崩溃）就跟着退出，不留没人管的孤儿
+  const parentPid = parsePidEnv(process.env.LK_HARNESS_PARENT_PID);
+  if (parentPid) {
+    startParentWatchdog({
+      parentPid,
+      onOrphaned: () => {
+        log("WARN", `父进程 (pid=${parentPid}) 已退出，daemon 自行退出，避免变成没人管的孤儿进程`);
+        cleanup();
+      },
+    });
+  }
 
   // 全局兜底：消息桥接守护进程，掉线比带病更糟——漏网异步异常只记录不退出，避免飞书/微信整体掉线
   process.on("uncaughtException", (e) => {

@@ -618,6 +618,8 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
       APP_DATA_DIR: app.getPath("userData"),
       LK_HARNESS_TEMPLATE_DIR: templateDir,
       NODE_USE_ENV_PROXY: "1",
+      // daemon 靠它发现应用已退出并自行结束（应用被强杀时子进程不会自动跟着死）
+      LK_HARNESS_PARENT_PID: String(process.pid),
       CLAW_CHANNELS_JSON: JSON.stringify(channelConfigs),
       ...(config.daemonPort ? { LARK_DAEMON_PORT: String(config.daemonPort) } : {}),
     }

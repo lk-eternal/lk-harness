@@ -15,6 +15,121 @@ const STALE_TMP_MS = 5 * 60 * 1000;
 
 let queueDir = "";
 
+// ── 已处理消息的去重记忆 ─────────────────────────────────────────────
+// 队列文件一确认就删了，入队去重（看目录里有没有同 id 的文件）从此认不出这条消息。
+// 可同一个 message_id 之后还会再来：
+//  - 飞书对 3 秒内没应答的事件，按 15 秒 / 5 分钟 / 1 小时 / 6 小时重推，最晚在首发后约 7 小时；
+//  - 同一个应用有多个进程在线时（比如没退干净的旧 daemon），事件被随机分给其中一个，别的进程也会往这个目录写文件。
+// 没有这份记忆，Agent 会把几小时前答过的消息当新消息再答一遍。
+// 记「已确认 / 被撤回 / 被删除」的 id，保留 24 小时，落盘，重启不丢。key 是文件名里用的 safeId。
+const HANDLED_TTL_MS = 24 * 60 * 60 * 1000;
+const HANDLED_MAX_ENTRIES = 5000;
+const HANDLED_FILE_NAME = "handled-message-ids.json";
+let handledIds = new Map<string, number>();
+let duplicateDropLogger: ((messageId: string) => void) | undefined;
+
+/** 丢弃别的进程写进来的重复投递时回调（队列模块自己不打日志） */
+export function setDuplicateDropLogger(fn?: (messageId: string) => void): void {
+  duplicateDropLogger = fn;
+}
+
+function toSafeId(messageId: string): string {
+  return messageId.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+function handledFilePath(): string {
+  return path.join(queueDir, HANDLED_FILE_NAME);
+}
+
+function pruneHandledIds(now: number): void {
+  for (const [id, ts] of handledIds) {
+    if (now - ts > HANDLED_TTL_MS) handledIds.delete(id);
+  }
+  if (handledIds.size > HANDLED_MAX_ENTRIES) {
+    const oldestFirst = [...handledIds.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [id] of oldestFirst.slice(0, handledIds.size - HANDLED_MAX_ENTRIES)) handledIds.delete(id);
+  }
+}
+
+function loadHandledIds(): void {
+  handledIds = new Map();
+  try {
+    const parsed = JSON.parse(fs.readFileSync(handledFilePath(), "utf-8")) as Record<string, unknown>;
+    for (const [id, ts] of Object.entries(parsed)) {
+      if (typeof ts === "number") handledIds.set(id, ts);
+    }
+    pruneHandledIds(Date.now());
+  } catch { /* 没有或损坏：从空开始 */ }
+}
+
+function persistHandledIds(): void {
+  if (!queueDir) return;
+  try {
+    const tmp = handledFilePath() + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify(Object.fromEntries(handledIds)), "utf-8");
+    fs.renameSync(tmp, handledFilePath());
+  } catch { /* 写不了就只靠内存 */ }
+}
+
+function rememberHandled(messageIds: Iterable<string | undefined>): void {
+  if (!queueDir) return;
+  const now = Date.now();
+  let changed = false;
+  for (const id of messageIds) {
+    if (!id) continue;
+    handledIds.set(toSafeId(id), now);
+    changed = true;
+  }
+  if (!changed) return;
+  pruneHandledIds(now);
+  persistHandledIds();
+}
+
+function isHandledSafeId(safeId: string): boolean {
+  const ts = handledIds.get(safeId);
+  if (ts === undefined) return false;
+  if (Date.now() - ts > HANDLED_TTL_MS) {
+    handledIds.delete(safeId);
+    return false;
+  }
+  return true;
+}
+
+/** 这条消息是不是已经处理过（确认 / 撤回 / 删除）。同一个 message_id 再来就是重复投递 */
+export function isMessageHandled(messageId: string | undefined): boolean {
+  return !!messageId && isHandledSafeId(toSafeId(messageId));
+}
+
+/** 文件名 `${ts}_${safeId}.ext` 里的 safeId */
+function safeIdOfFile(filename: string): string {
+  const base = filename.replace(/\.\w+$/, "");
+  const idx = base.indexOf("_");
+  return idx >= 0 ? base.slice(idx + 1) : "";
+}
+
+/**
+ * 目录里待投递的 .qmsg 文件名。其中 id 已处理过的是重复投递（飞书重推、别的进程写进来的），
+ * 直接删掉不投：留着只会让 Agent 把旧消息当新消息再答一遍，还会白白拉起一次 Agent。
+ */
+function listPendingFiles(dir: string, names?: string[]): string[] {
+  let all: string[];
+  try { all = names ?? fs.readdirSync(dir); } catch { return []; }
+  const pending: string[] = [];
+  for (const f of all) {
+    if (!f.endsWith(".qmsg")) continue;
+    const sid = safeIdOfFile(f);
+    if (sid && isHandledSafeId(sid)) {
+      try {
+        fs.unlinkSync(path.join(dir, f));
+        duplicateDropLogger?.(sid);
+      } catch { /* 已被别处清走 */ }
+      continue;
+    }
+    pending.push(f);
+  }
+  return pending;
+}
+
 export function initFileQueue(): string {
   const appDataDir = process.env.APP_DATA_DIR;
   if (!appDataDir) throw new Error("APP_DATA_DIR 环境变量未设置");
@@ -22,6 +137,7 @@ export function initFileQueue(): string {
   queueDir = path.join(appDataDir, "file-queue");
   if (!fs.existsSync(queueDir)) fs.mkdirSync(queueDir, { recursive: true });
   migrateDoubledPathSessions();
+  loadHandledIds();
   return queueDir;
 }
 
@@ -121,6 +237,8 @@ export function pushToFileQueue(text: string, messageId?: string, source?: strin
   const filename = `${ts}_${safeId}.qmsg`;
 
   if (messageId && !skipDedup) {
+    // 已经确认 / 撤回 / 删除过的消息再来一遍（飞书重推），文件早没了，只能靠记忆认出来
+    if (isHandledSafeId(safeId)) return false;
     try {
       const existing = fs.readdirSync(dir);
       if (existing.some((f) => (f.endsWith(".qmsg") || f.endsWith(".claimed")) && matchesSafeId(f, safeId))) {
@@ -210,12 +328,7 @@ export function claimNextMessage(filterSessionKey?: string): QueueMessage | null
   if (!queueDir) return null;
 
   const dir = getSessionDir(filterSessionKey);
-  let files: string[];
-  try {
-    files = fs.readdirSync(dir).filter((f) => f.endsWith(".qmsg")).sort();
-  } catch {
-    return null;
-  }
+  const files = listPendingFiles(dir).sort();
 
   for (const file of files) {
     const srcPath = path.join(dir, file);
@@ -228,7 +341,10 @@ export function claimNextMessage(filterSessionKey?: string): QueueMessage | null
     }
     const parsed = parseMessageFile(claimedPath);
     try { fs.unlinkSync(claimedPath); } catch { /* ignore */ }
-    if (parsed) return parsed;
+    if (parsed) {
+      rememberHandled([parsed.messageId]);
+      return parsed;
+    }
   }
   return null;
 }
@@ -236,11 +352,7 @@ export function claimNextMessage(filterSessionKey?: string): QueueMessage | null
 /** 会话目录下是否存在待投递的新消息（仅 .qmsg；.claimed 是处理中不算新，
  * 阻塞 poll 进入时已被隐式确认删除，不参与挂起判断） */
 function hasNewMessages(dir: string): boolean {
-  try {
-    return fs.readdirSync(dir).some((f) => f.endsWith(".qmsg"));
-  } catch {
-    return false;
-  }
+  return listPendingFiles(dir).length > 0;
 }
 
 /**
@@ -256,15 +368,7 @@ export function claimSessionMessages(filterSessionKey?: string): QueueMessage[] 
   if (!queueDir) return [];
   const dir = getSessionDir(filterSessionKey);
 
-  let files: string[];
-  try {
-    files = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-
-  for (const f of files) {
-    if (!f.endsWith(".qmsg")) continue;
+  for (const f of listPendingFiles(dir)) {
     const src = path.join(dir, f);
     try {
       fs.renameSync(src, path.join(dir, f.replace(/\.qmsg$/, ".claimed")));
@@ -353,6 +457,8 @@ export function confirmClaimedMessages(
         if (mid) done.push(mid);
       } catch { /* ignore */ }
     }
+    // 文件删了，这些 id 以后再来就是重复投递
+    rememberHandled(done);
     return done;
   };
 
@@ -486,7 +592,12 @@ export function deleteQueueMessage(fileId: string, filterSessionKey?: string): b
   for (const dir of dirs) {
     try {
       const filePath = path.join(dir, basename);
-      if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return true; }
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        // 人手删掉的，别让飞书重推把它又变回来
+        rememberHandled([safeIdOfFile(basename)]);
+        return true;
+      }
     } catch { /* ignore */ }
   }
   return false;
@@ -547,6 +658,8 @@ export function removePendingMessage(sessionKey: string, messageId: string): boo
   if (!file) return false;
   try {
     fs.unlinkSync(path.join(dir, file));
+    // 撤回的消息，飞书重推时不能又被当成新消息排进来
+    rememberHandled([messageId]);
     return true;
   } catch {
     return false;
@@ -617,6 +730,7 @@ export function deleteQueueMessagesByMessageId(messageId: string): DeletedQueueM
       }
     } catch { /* ignore */ }
   }
+  if (removed > 0) rememberHandled([messageId]);
   return { removed, sessionKeys: [...sessionKeys], processingSessionKeys: [...processingSessionKeys] };
 }
 
@@ -642,7 +756,10 @@ export function getDistinctSessions(): QueueSessionInfo[] {
   const map = new Map<string, { chatType: string; senderOpenId?: string; hasPending?: boolean }>();
   for (const dir of queueMessageDirs()) {
     try {
-      const files = fs.readdirSync(dir).filter((f) => f.endsWith(".qmsg") || f.endsWith(".claimed"));
+      const names = fs.readdirSync(dir);
+      // 重复投递的 .qmsg 在这里就清掉：调度器看到有 .qmsg 就会拉起 Agent，不能为一条旧消息白起一次
+      const pending = new Set(listPendingFiles(dir, names));
+      const files = names.filter((f) => f.endsWith(".claimed") || pending.has(f));
       for (const f of files) {
         try {
           const raw = fs.readFileSync(path.join(dir, f), "utf-8");
@@ -691,9 +808,11 @@ export function cleanupStaleMessages(): void {
 
 const QUEUE_FILE_SUFFIXES = [".qmsg", ".claimed", ".done", ".tmp"] as const;
 
-/** 删除全部会话 queue 目录下的排队/处理中消息文件 */
+/** 删除全部会话 queue 目录下的排队/处理中消息文件；「已处理消息」的记忆一并清空，回到干净状态 */
 export function clearAllQueueMessages(): number {
   if (!queueDir) return 0;
+  handledIds = new Map();
+  try { fs.unlinkSync(handledFilePath()); } catch { /* 本来就没有 */ }
   let count = 0;
   for (const dir of queueMessageDirs()) {
     try {
