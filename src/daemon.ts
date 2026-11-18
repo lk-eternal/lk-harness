@@ -18,6 +18,7 @@ import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
+import { resolveInboundTexts } from "./shared/lark-mentions.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS, commandTextWithImages, isImageCarryingCommand } from "./shared/command-catalog.js";
 import {
@@ -1667,25 +1668,6 @@ function isBotMentioned(rt: ChannelRuntime, ev: LarkMessageEvent): boolean {
   return ev.mentions.some((m) => m.id === rt.botOpenId || m.key === "@_all");
 }
 
-/**
- * 将 `@_user_N` 占位符还原为可读形式：
- * - @自己 → 删除（与旧行为一致）
- * - @其他人/机器人 → `@名字(open_id=ou_xxx)`，Agent 可直接取 open_id 回 @
- */
-function resolveMentionTags(text: string, mentions: LarkMessageEvent["mentions"], selfOpenId?: string): string {
-  let out = text;
-  for (const m of mentions) {
-    if (!m.key) continue;
-    const replacement = (selfOpenId && m.id === selfOpenId) || m.key === "@_all"
-      ? ""
-      : (m.id ? `@${m.name}(open_id=${m.id})` : `@${m.name}`);
-    out = out.split(m.key).join(replacement);
-  }
-  out = out.replace(/@_user_\d+/g, "");
-  if (!mentions.length) return out.trim();
-  return out.replace(/[ \t]{2,}/g, " ").trim();
-}
-
 function sanitizePollMessages(messages: QueueMessage[]): QueueMessage[] {
   return messages.map((m) => {
     if (!m.meta) return m;
@@ -1778,8 +1760,10 @@ export async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
       return;
     }
 
-    // p2p 带 @ 占位符（如 @_user_1 /p）也需剥除，否则 isCommand 无法识别
-    const cleanText = resolveMentionTags(text, ev.mentions, rt.botOpenId);
+    // 两份文本：cleanText 剥掉 @ 自己——指令识别（含 p2p 里 @_user_1 /p 这种）、建项草稿、日志、判空都用它，
+    // 否则 isCommand 认不出「@机器人 /p use xxx」；agentText 给 Agent 看，群聊里保留 @ 自己，
+    // 让它知道这条消息点名了谁、其中有没有自己（只 @ 了机器人、正文为空时仍是空串，交给 pushMessage 的兜底）
+    const { command: cleanText, agent: agentText } = resolveInboundTexts(text, ev.mentions, rt.botOpenId, chatType);
 
     // 入口准入：其他人私聊 / 群聊没开放的，这里直接丢掉（不入队、不起 Agent）。
     // 例外：主用户在还没开通的群里发 /group，那是开通这个群的唯一入口。
@@ -1830,7 +1814,7 @@ export async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
     };
 
     if (messageType === "text") {
-      enqueue(cleanText);
+      enqueue(agentText);
     } else {
       // 非文本先落盘再判指令：图文混排（post）也可能是指令（/f + 图片），不能只看 messageType
       // interactive 事件快照可能是流式占位/降级文本，先用 API 全量重拉，失败再回退事件快照
@@ -1839,16 +1823,16 @@ export async function startFeishuChannel(rt: ChannelRuntime): Promise<void> {
         : sender.processIncomingMessage(messageId, messageType, rawContent);
       loadBody
         .then((result) => {
-          const body = resolveMentionTags(result || cleanText, ev.mentions, rt.botOpenId);
-          if (isCommand(body)) {
-            handleCommand(body, messageId, chatKey, chatType, undefined, senderOpenId).catch((e: any) =>
+          const body = resolveInboundTexts(result || text, ev.mentions, rt.botOpenId, chatType);
+          if (isCommand(body.command)) {
+            handleCommand(body.command, messageId, chatKey, chatType, undefined, senderOpenId).catch((e: any) =>
               log("ERROR", `指令处理失败: ${e?.message ?? e}`),
             );
             return;
           }
-          enqueue(body);
+          enqueue(body.agent);
         })
-        .catch(() => enqueue(cleanText));
+        .catch(() => enqueue(agentText));
     }
   };
   sender.startConnection(appId, appSecret, ENCRYPT_KEY, (ev) => {
