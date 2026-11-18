@@ -97,7 +97,7 @@ export function MessageTime({ ts }: { ts: number }) {
 
 export function UserBubble({ item }: { item: AppChatUserItem }) {
   return (
-    <div className="flex max-w-[85%] flex-col items-end gap-1.5 self-end">
+    <div data-user-item={item.id} className="flex max-w-[85%] flex-col items-end gap-1.5 self-end">
       {item.images && item.images.length > 0 && (
         <div className="flex flex-wrap justify-end gap-1.5">
           {item.images.map((p) => <LocalImage key={p} path={p} className="h-24 w-24" />)}

@@ -6,6 +6,7 @@ import { useStickToBottom } from "../../hooks/useStickToBottom"
 import AssistantTurn from "./AssistantTurn"
 import { FileCard, LocalImage, NoticePill, QuestionCard, UserBubble } from "./ItemViews"
 import Markdown from "./Markdown"
+import StickyUserMessage from "./StickyUserMessage"
 
 interface Props {
   items: AppChatItem[]
@@ -51,7 +52,7 @@ function EmptyChat({ workspaceName, projectName }: { workspaceName?: string; pro
 
 export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, projectName, onAnswer, onCommand }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
-  const { sentinelRef, atBottom, scrollToBottom } = useStickToBottom(scrollRef, [items])
+  const { sentinelRef, atBottom, stickRef, scrollToBottom } = useStickToBottom(scrollRef, [items])
   const waiting = busy && items.length > 0 && items[items.length - 1].kind === "user"
 
   // 往前加载一页是把记录插在顶部，要保住用户正在看的位置
@@ -98,6 +99,7 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
           <div ref={sentinelRef} />
         </div>
       </div>
+      <StickyUserMessage scrollRef={scrollRef} items={items} onBeforeJump={() => { stickRef.current = false }} />
       {!atBottom && (
         <button
           type="button"
