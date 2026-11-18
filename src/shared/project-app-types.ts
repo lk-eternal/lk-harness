@@ -55,6 +55,9 @@ export interface ProjectRepoOption {
   /** 显示名：目录名或仓库名 */
   name: string
   baseBranch: string
+  /** 设置里配的测试 / 开发分支（只是信息，研发流程里用；没配就没有） */
+  testBranch?: string
+  developBranch?: string
   /** 建项时克隆一份到项目目录；false=不克隆，只把仓库信息记进项目（在设置的「常用代码仓库」里改） */
   clone: boolean
 }

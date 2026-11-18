@@ -71,7 +71,7 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
         { name: "manage_rules", description: "管理 Harness 规则。" },
         { name: "manage_skills", description: "管理 Harness Agent Skills。" },
         { name: "manage_tasks", description: "管理定时任务。" },
-        { name: "manage_project", description: "管理项目（列出 / 查模板和常用仓库 / 创建 / 删除，仅主用户）。" },
+        { name: "manage_project", description: "管理项目和项目相关配置（建 / 查 / 改 / 归档 / 删项目，常用仓库，项目模板，存放位置、GitLab 等设置；带操作手册 help，仅主用户）。" },
         { name: "manage_workspace", description: "管理工作目录。" },
       ]),
     },

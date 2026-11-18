@@ -268,8 +268,24 @@ describe("manage_project 的 templates / repos / create", () => {
       chat_mode: "bind", existing_group_chat_id: "oc_aa2192cfececee92d57dccd0b59980fd",
     })
     expect(ok.success).toBe(true)
-    for (const action of ["list", "delete", "templates", "repos", "create"]) expect(tool.inputSchema.safeParse({ action }).success).toBe(true)
-    expect(tool.inputSchema.safeParse({ action: "update" }).success).toBe(false)
+    for (const action of [
+      "help", "list", "get", "create", "update", "archive", "delete", "sync_steps",
+      "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
+    ]) expect(tool.inputSchema.safeParse({ action }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "rename" }).success).toBe(false)
+    // 管理类的新参数：repo / template / settings 是对象，topic / work_branch 是枚举
+    expect(tool.inputSchema.safeParse({
+      action: "template_save", template_id: "t",
+      template: { name: "n", needs_repo: true, work_branch: "test", fields: [{ label: "a", required: true }], actions: [{ id: "x", label: "y", prompt: "p" }] },
+    }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "repo_save", repo: { repo_path: "/r/a", base_branch: "main", clone: false } }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "repo_save", repo: { base_branch: "main" } }).success).toBe(false)
+    expect(tool.inputSchema.safeParse({ action: "settings_set", settings: { worktree_root: "/p", gitlab_token: "t", reset_git_principles: true } }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "settings_set", settings: { gitlab_token: 123 } }).success).toBe(false)
+    expect(tool.inputSchema.safeParse({ action: "help", topic: "create" }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "help", topic: "billing" }).success).toBe(false)
+    expect(tool.inputSchema.safeParse({ action: "archive", project_id: "p", archived: "yes" }).success).toBe(false)
+    expect(tool.inputSchema.safeParse({ action: "template_save", template: { work_branch: "main" } }).success).toBe(false)
     expect(tool.inputSchema.safeParse({ action: "create", work_branch: "main" }).success).toBe(false)
     expect(tool.inputSchema.safeParse({ action: "create", repos: [{ repo_path: "/r/a" }] }).success).toBe(false)
     for (const mode of ["group", "bind", "inline"]) expect(tool.inputSchema.safeParse({ action: "create", chat_mode: mode }).success).toBe(true)

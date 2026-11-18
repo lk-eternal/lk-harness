@@ -10,6 +10,9 @@ import { listProjects, getProject } from "./shared/project-store.js";
 import { concatUtf8 } from "./shared/utf8-stream.js";
 import { getHostRpc, type HostRpc } from "./shared/host-rpc.js";
 import { formatCreated, formatRepos, formatTemplates, parseAiChatChoice } from "./shared/project-ai-format.js";
+import { formatSetupChecklist } from "./shared/project-admin-format.js";
+import { buildProjectHelp, PROJECT_HELP_TOPICS } from "./shared/project-ai-help.js";
+import type { AdminOutcome, SettingsOutcome } from "./shared/project-admin-plan.js";
 import type { AiProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo } from "./shared/project-app-types.js";
 
 const APP_DATA_DIR = process.env.APP_DATA_DIR ?? "";
@@ -68,6 +71,8 @@ export interface AdminToolDeps {
 
 /** 读模板 / 常用仓库：宿主只是读配置，几秒内一定有结果 */
 const HOST_QUICK_TIMEOUT_MS = 15_000;
+/** 登记仓库要用 git 看一眼它是不是仓库、有哪些分支，本地大仓库也要几秒 */
+const HOST_ADMIN_TIMEOUT_MS = 60_000;
 /** 建项要建目录、按设置克隆仓库（大仓库、远程仓库可能很慢），给足时间 */
 const HOST_CREATE_TIMEOUT_MS = 10 * 60_000;
 
@@ -152,20 +157,65 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
   mcpServer.tool(
     "manage_project",
     [
-      "管理项目：列出、创建、删除。",
-      "- list：列出所有项目（含 ID）。",
-      "- templates：列出项目模板：每个模板的 ID、要填的信息（哪些必填）、接不接代码仓库、默认工作分支。",
-      "- repos：列出常用代码仓库（路径、基线分支）。",
+      "管理项目，以及项目相关的全部配置：创建、查看、修改、归档、删除项目；常用代码仓库、项目模板、项目存放位置、Git 基本原则、GitLab 的查看和修改。用户用自然语言说要建项目、配仓库、改模板时由你替他办，不要让他去设置页翻。",
+      "- help：【先读它】项目功能的完整操作手册：概念、建项目的完整流程、怎么引导新手用户、各项配置怎么做（topic 可选 create / repos / templates / settings / manage 看细节）。用户提到项目、仓库、模板、GitLab、配置，或你拿不准怎么做时，先 help；不带 topic 的 help 还会列出当前配了什么、还缺什么。",
+      "- list：列出所有项目（含 ID）；get：看一个项目的完整资料（project_id）。",
+      "- templates：列出项目模板：每个模板的 ID、要填的信息（哪些必填）、接不接代码仓库、默认工作分支；给 template_id 看一个模板的完整内容，再给 action_id 看某个快捷操作的提示词全文。",
+      "- repos：列出常用代码仓库（路径、基线分支、测试 / 开发分支、是否克隆）。",
       "- create：创建项目。用户让你建项目、又不想自己填表时用。流程：先 templates 看模板和必填项（要接代码再 repos），把用户的话整理成参数；信息不够就问用户，不要猜；创建前把整理好的内容（名称、模板、各项信息、仓库和分支、文件夹）发给用户确认（send_question），确认后才调用。会建项目目录、按设置克隆仓库，可能要一会儿。建完不会进入项目会话（当前对话不受影响）。必须指定 chat_mode，没有默认值，用户没说清楚就先问他（send_question），确认内容里要写明选了哪种：group=建飞书独立群并把用户拉入群，bind=绑定已有的飞书群（还要给 existing_group_chat_id），inline=不建群、项目绑在当前聊天上；应用内对话和微信只能 inline。建完把结果告诉用户：inline 项目他需要时自己进入，群里的项目到群里协作。",
+      "- update：改项目资料（project_id；只给要改的：name / goal / story_url / related_docs / fields=项目信息键值，空字符串删掉该项）。archive：归档 / 取消归档（project_id + archived）。sync_steps：把项目的快捷操作同步成模板最新版。",
+      "- repo_save：登记或修改常用代码仓库（repo={repo_path, base_branch?, test_branch?, develop_branch?, clone?}）；repo_remove：移除（repo={repo_path}）。",
+      "- template_save：新建（不给 template_id）或修改项目模板（template；改动只影响之后新建的项目）；template_delete：删除模板（template_id）。新建 / 修改前先 help topic=templates。",
+      "- settings：看项目设置现状（项目存放位置、Git 基本原则、GitLab、共享空间；密钥只显示打码）；settings_set：修改（settings；只给要改的）。用户发来的 Token 直接写入，回复里不要重复原文。",
       "- delete：删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
     ].join("\n"),
     {
-      action: z.enum(["list", "delete", "templates", "repos", "create"]).describe("操作：list=列出所有项目, templates=列出项目模板, repos=列出常用代码仓库, create=创建项目, delete=删除项目"),
-      project_id: z.string().optional().describe("项目 ID（delete 时必填）"),
-      name: z.string().optional().describe("项目名称（create 必填）"),
-      goal: z.string().optional().describe("项目目标，一两句话（create 可选）"),
-      template_id: z.string().optional().describe("模板 ID（create 必填；先用 templates 查）"),
-      fields: z.record(z.string(), z.string()).optional().describe("模板要填的信息：键是字段名，值是内容（create；必填项必须给，字段名以 templates 返回的为准）"),
+      action: z.enum([
+        "help", "list", "get", "create", "update", "archive", "delete", "sync_steps",
+        "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
+      ]).describe("操作：help=操作手册（先读）, list=列出所有项目, get=项目详情, create=创建项目, update=改项目资料, archive=归档/取消归档, delete=删除项目, sync_steps=同步快捷操作, templates=查看模板, template_save=新建/修改模板, template_delete=删除模板, repos=列出常用仓库, repo_save=登记/修改仓库, repo_remove=移除仓库, settings=查看项目设置, settings_set=修改项目设置"),
+      topic: z.enum(PROJECT_HELP_TOPICS).optional().describe("help 时可选：不给=总览（含建项目完整流程和当前状态）；create / repos / templates / settings / manage=各块细节"),
+      project_id: z.string().optional().describe("项目 ID（get / update / archive / sync_steps / delete 时必填）"),
+      archived: z.boolean().optional().describe("archive 必填：true=归档, false=取消归档"),
+      name: z.string().optional().describe("项目名称（create 必填；update 时是新名称）"),
+      goal: z.string().optional().describe("项目目标，一两句话（create 可选；update 时是新目标）"),
+      template_id: z.string().optional().describe("模板 ID（create 必填；template_save 修改时、template_delete、templates 看详情时用；先用 templates 查）"),
+      action_id: z.string().optional().describe("templates 带 template_id 时可选：看这个快捷操作的提示词全文"),
+      fields: z.record(z.string(), z.string()).optional().describe("create：模板要填的信息，键是字段名，值是内容（必填项必须给，字段名以 templates 返回的为准）；update：项目信息键值，合并写入，值为空字符串=删掉这一项"),
+      repo: z.object({
+        repo_path: z.string().describe("本地 git 仓库根目录（绝对路径）或远程仓库地址"),
+        base_branch: z.string().optional().describe("基线分支（新分支从哪切出）；本地仓库不给会用它的默认分支，远程仓库必须给；已登记的不给=不变"),
+        test_branch: z.string().optional().describe("测试分支，可选；空字符串=清掉"),
+        develop_branch: z.string().optional().describe("开发分支，可选；空字符串=清掉"),
+        clone: z.boolean().optional().describe("建项时是否克隆一份副本到项目目录（默认 true，推荐）；false=不克隆，AI 直接用用户本机这份；远程地址一定克隆"),
+      }).optional().describe("repo_save / repo_remove 用"),
+      template: z.object({
+        name: z.string().optional().describe("模板名称（新建必填；≤30 字，不能和别的模板重名）"),
+        description: z.string().optional().describe("一句话说明适合干什么（≤200 字）"),
+        needs_repo: z.boolean().optional().describe("接不接代码仓库（写代码、测试类 true；新建默认 false）"),
+        work_branch: z.enum(["new", "base", "test", "develop"]).optional().describe("needs_repo=true 时，克隆副本停在哪个分支的默认值"),
+        fields: z.array(z.object({
+          label: z.string().describe("信息名称"),
+          placeholder: z.string().optional().describe("填写示例"),
+          required: z.boolean().optional(),
+          multiline: z.boolean().optional(),
+        })).optional().describe("建项时要用户填的信息（最多 8 项）；给了就是完整新列表"),
+        actions: z.array(z.object({
+          id: z.string().optional().describe("已有操作带它（保留原提示词）；新增的不用给"),
+          label: z.string().describe("快捷操作名称，≤20 字，同一模板里不重名"),
+          prompt: z.string().optional().describe("点它时交给 AI 的工作要求；已有操作不给=不变；新增的必须给"),
+        })).optional().describe("快捷操作（至少 1 个）；给了就是完整新列表，没列出的已有操作会被删掉"),
+      }).optional().describe("template_save 用：新建时 name 必填，修改时只给要改的项"),
+      settings: z.object({
+        worktree_root: z.string().optional().describe("项目存放位置（绝对路径，不存在会创建）；空字符串=改回默认位置"),
+        git_principles: z.string().optional().describe("Git 基本原则全文（≤4000 字）；空字符串=关闭"),
+        reset_git_principles: z.boolean().optional().describe("true=恢复默认的 Git 基本原则（不要和 git_principles 一起给）"),
+        gitlab_host: z.string().optional().describe("GitLab 地址，只写域名部分，如 https://gitlab.example.com；空字符串=清空"),
+        gitlab_token: z.string().optional().describe("GitLab Token；空字符串=清除。不要在回复里重复它"),
+        flow_hub_url: z.string().optional().describe("共享空间（团队共用的模板仓库）地址；空字符串=清空"),
+        flow_hub_token: z.string().optional().describe("共享空间 Token；空字符串=清除（改用 GitLab Token）。不要在回复里重复它"),
+        flow_hub_author: z.string().optional().describe("共享空间里显示的署名"),
+      }).optional().describe("settings_set 用：只给要改的项"),
       repos: z.array(z.object({
         repo_path: z.string().describe("本地 git 仓库的根目录（绝对路径）或远程仓库地址"),
         base_branch: z.string().describe("基线分支，必填（常用仓库用 repos 里列出的那个）"),
@@ -178,12 +228,86 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       chat_mode: z.enum(["group", "bind", "inline"]).optional().describe("项目的会话落点（create 必填，没有默认值，不给会报错；拿不准就问用户）：group=建飞书独立群并拉用户入群, bind=绑定已有飞书群, inline=不建群、绑在当前聊天；应用内对话和微信只能 inline"),
       existing_group_chat_id: z.string().optional().describe("chat_mode=bind 时必填：要绑定的飞书群 chat_id（oc_ 开头）；机器人要已经在群里"),
     },
-    async ({ action, project_id, name, goal, template_id, fields, repos, work_branch, feature_branch, story_url, related_docs, folder, chat_mode, existing_group_chat_id }) => {
+    async ({ action, topic, project_id, archived, name, goal, template_id, action_id, fields, repo, template, settings, repos, work_branch, feature_branch, story_url, related_docs, folder, chat_mode, existing_group_chat_id }) => {
+      /** 把请求交给宿主，原样返回它给 AI 看的文字（宿主不在、超时、校验没过都带原因） */
+      const callAdmin = async (kind: string, payload: unknown, timeoutMs = HOST_QUICK_TIMEOUT_MS): Promise<string> => {
+        const out = await hostRpc().request<AdminOutcome>(kind, payload, timeoutMs);
+        if (!out.ok) return `❌ ${out.error}`;
+        const r = out.result;
+        if (!r) return "❌ 应用主进程没有返回结果";
+        return r.ok ? r.message : `❌ ${r.error}`;
+      };
+      const needProject = (): string | undefined => (project_id?.trim() ? undefined : "❌ 需要 project_id（用 list 查看）");
+
+      if (action === "help") {
+        const h = buildProjectHelp(topic);
+        if (!h.ok) return txt(`❌ ${h.error}`);
+        let text = h.text;
+        // 总览末尾附上当前配了什么、还缺什么；宿主没响应也不耽误看手册
+        if (!topic || topic === "overview") {
+          const st = await hostRpc().request<SettingsOutcome>("project.settings.get", {}, HOST_QUICK_TIMEOUT_MS);
+          if (st.ok && st.result?.ok) text += `\n\n${formatSetupChecklist(st.result.view)}`;
+        }
+        return txt(text);
+      }
       if (action === "list") {
         const list = listProjects()
         if (list.length === 0) return txt("📭 暂无项目")
         const lines = list.map((p, i) => `#${i + 1} ${p.name}${p.archivedAt ? "（已归档）" : ""} id=${p.id}`)
         return txt(lines.join("\n"))
+      }
+      if (action === "get") return txt(needProject() ?? await callAdmin("project.get", { projectId: project_id }));
+      if (action === "update") {
+        const missing = needProject();
+        if (missing) return txt(missing);
+        return txt(await callAdmin("project.update", {
+          projectId: project_id,
+          update: { name, goal, storyUrl: story_url, relatedDocs: related_docs, info: fields },
+        }));
+      }
+      if (action === "archive") {
+        const missing = needProject();
+        if (missing) return txt(missing);
+        if (archived === undefined) return txt("❌ archive 需要 archived：true=归档，false=取消归档");
+        return txt(await callAdmin("project.archive", { projectId: project_id, archived }));
+      }
+      if (action === "sync_steps") return txt(needProject() ?? await callAdmin("project.sync-steps", { projectId: project_id }));
+      if (action === "settings") return txt(await callAdmin("project.settings.get", {}));
+      if (action === "settings_set") {
+        if (!settings) return txt("❌ settings_set 需要 settings：只给要改的项（help topic=settings 看有哪些）");
+        return txt(await callAdmin("project.settings.set", {
+          settings: {
+            worktreeRoot: settings.worktree_root, gitPrinciples: settings.git_principles, resetGitPrinciples: settings.reset_git_principles,
+            gitlabHost: settings.gitlab_host, gitlabToken: settings.gitlab_token,
+            flowHubUrl: settings.flow_hub_url, flowHubToken: settings.flow_hub_token, flowHubAuthor: settings.flow_hub_author,
+          },
+        }));
+      }
+      if (action === "repo_save" || action === "repo_remove") {
+        if (!repo?.repo_path?.trim()) return txt(`❌ ${action} 需要 repo.repo_path：本地 git 仓库根目录（绝对路径）或远程地址`);
+        return txt(await callAdmin(action === "repo_save" ? "project.repo.save" : "project.repo.remove", {
+          repo: {
+            repoPath: repo.repo_path, baseBranch: repo.base_branch, testBranch: repo.test_branch,
+            developBranch: repo.develop_branch, clone: repo.clone,
+          },
+        }, HOST_ADMIN_TIMEOUT_MS));
+      }
+      if (action === "template_save") {
+        if (!template) return txt("❌ template_save 需要 template：新建要给 name，修改只给要改的项（help topic=templates 看写法）");
+        return txt(await callAdmin("project.template.save", {
+          templateId: template_id,
+          template: {
+            name: template.name, description: template.description, needsRepo: template.needs_repo, workBranch: template.work_branch,
+            fields: template.fields, actions: template.actions,
+          },
+        }));
+      }
+      if (action === "template_delete") {
+        if (!template_id?.trim()) return txt("❌ template_delete 需要 template_id（用 templates 查看）");
+        return txt(await callAdmin("project.template.delete", { templateId: template_id }));
+      }
+      if (action === "templates" && template_id?.trim()) {
+        return txt(await callAdmin("project.template.detail", { templateId: template_id, actionId: action_id }));
       }
       if (action === "templates" || action === "repos") {
         const out = await hostRpc().request<ProjectTemplateInfo[] | ProjectRepoOption[]>(
@@ -215,6 +339,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
         if (!r?.ok) return txt(`❌ ${(r as { error?: string } | undefined)?.error ?? "创建失败"}`)
         return txt(formatCreated(r))
       }
+      // 只剩 delete
       const p = getProject(project_id ?? "")
       if (!p) return txt("❌ 未找到项目")
       process.stdout.write(`__PROJECT_DELETE__:${JSON.stringify({ projectId: project_id })}\n`)

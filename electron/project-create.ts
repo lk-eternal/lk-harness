@@ -17,6 +17,7 @@ import {
 } from "./project-commands"
 import { leaveProjectSession, releaseProjectRoutes, stopSessionAgent } from "./session-dispatcher"
 import { inspectLocalRepo } from "./project-worktree"
+import { createProjectAdminHandlers } from "./project-admin"
 import { prepareProjectWorkspace, projectsRootDir } from "./project-workspace"
 import { pushUiLog } from "./ui-logger"
 import {
@@ -87,6 +88,8 @@ export function listProjectRepoOptions(): ProjectRepoOption[] {
     path: p.path,
     name: repoDisplayName(p.path),
     baseBranch: p.baseBranch,
+    ...(p.testBranch ? { testBranch: p.testBranch } : {}),
+    ...(p.developBranch ? { developBranch: p.developBranch } : {}),
     // 远程地址本机没有副本可用，一律克隆（设置页里这个勾选对它不可改）
     clone: isRemoteRepoUrl(p.path) || p.clone !== false,
   }))
@@ -342,6 +345,8 @@ function strOf(v: unknown): string | undefined {
  * 它和界面里选文件夹走同一套校验（不能是应用数据目录、不能已属于别的项目）。
  */
 export const projectHostRpcHandlers: Record<string, (payload: unknown) => unknown | Promise<unknown>> = {
+  // 设置 / 常用仓库 / 模板 / 已有项目的查看和修改（manage_project 的其余 action），实现见 project-admin.ts
+  ...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser, syncSteps: syncProjectSteps }),
   "project.templates": () => listProjectTemplates(),
   "project.repos": () => listProjectRepoOptions(),
   "project.create": (payload) => {

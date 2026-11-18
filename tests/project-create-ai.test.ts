@@ -319,7 +319,12 @@ describe("宿主请求处理函数（project.templates / project.repos / project
   it("templates / repos：就是应用里「新建项目」界面用的那两份数据", async () => {
     const { create } = await boot()
     const h = create.projectHostRpcHandlers
-    expect(Object.keys(h).sort()).toEqual(["project.create", "project.repos", "project.templates"])
+    // 创建 / 选项两类在这里测；其余是项目管理类（行为见 project-admin-host.test.ts）
+    expect(Object.keys(h).sort()).toEqual([
+      "project.archive", "project.create", "project.get", "project.repo.remove", "project.repo.save", "project.repos",
+      "project.settings.get", "project.settings.set", "project.sync-steps", "project.template.delete", "project.template.detail",
+      "project.template.save", "project.templates", "project.update",
+    ])
     const templates = (await h["project.templates"]({})) as { id: string; needsRepo: boolean }[]
     expect(templates.map((t) => t.id)).toEqual(expect.arrayContaining(["general", "develop", "research"]))
     expect(templates.find((t) => t.id === "develop")?.needsRepo).toBe(true)

@@ -30,11 +30,12 @@ export function parseAiChatChoice(
 const BRANCH_LABEL: Record<string, string> = Object.fromEntries(WORK_BRANCH_MODES.map((m) => [m.value, m.label]))
 
 export function formatTemplates(list: readonly ProjectTemplateInfo[]): string {
-  if (!list.length) return "📭 没有可用的项目模板（请用户先到设置里建一个）"
-  const lines = [`共 ${list.length} 个项目模板（create 的 template_id 填 id）：`]
+  if (!list.length) return "📭 没有可用的项目模板（可以用 template_save 新建一个；先和用户商量清楚）"
+  const lines = [`共 ${list.length} 个项目模板（create 的 template_id 填 id；看某个模板的详情或要改它，用 templates + template_id）：`]
   list.forEach((t, i) => {
     lines.push("")
     lines.push(`#${i + 1} id=${t.id}「${t.name}」${t.description ? `— ${t.description}` : ""}`)
+    if (t.steps?.length) lines.push(`   快捷操作：${t.steps.map((s) => s.label).join("、")}`)
     if (t.fields.length) {
       const fields = t.fields.map((f) => {
         const hint = f.placeholder?.trim()
@@ -55,13 +56,14 @@ export function formatTemplates(list: readonly ProjectTemplateInfo[]): string {
 
 export function formatRepos(list: readonly ProjectRepoOption[]): string {
   if (!list.length) {
-    return "📭 还没有常用代码仓库。create 的 repos 里可以直接填本地 git 仓库的根目录（绝对路径）或远程地址，并给出基线分支。"
+    return "📭 还没有常用代码仓库。create 的 repos 里可以直接填本地 git 仓库的根目录（绝对路径）或远程地址，并给出基线分支；想先登记下来以后直接选，用 repo_save。"
   }
   const lines = [
-    `共 ${list.length} 个常用代码仓库。create 的 repos 里 repo_path 用下面的路径，base_branch 用它的基线分支（用户另有要求时按用户的）；也可以填没列在这里的本地 git 仓库根目录或远程地址：`,
+    `共 ${list.length} 个常用代码仓库。create 的 repos 里 repo_path 用下面的路径，base_branch 用它的基线分支（用户另有要求时按用户的）；也可以填没列在这里的本地 git 仓库根目录或远程地址（改或加用 repo_save，移除用 repo_remove）：`,
   ]
   list.forEach((r, i) => {
-    lines.push(`#${i + 1} ${r.name}｜${r.path}｜基线分支 ${r.baseBranch || "（未配置，需要问用户）"}｜${r.clone ? "建项时克隆一份副本" : "不克隆，只记录仓库信息"}`)
+    const extra = [r.testBranch ? `测试分支 ${r.testBranch}` : "", r.developBranch ? `开发分支 ${r.developBranch}` : ""].filter(Boolean).join("，")
+    lines.push(`#${i + 1} ${r.name}｜${r.path}｜基线分支 ${r.baseBranch || "（未配置，需要问用户）"}${extra ? `｜${extra}` : ""}｜${r.clone ? "建项时克隆一份副本" : "不克隆，只记录仓库信息"}`)
   })
   return lines.join("\n")
 }
