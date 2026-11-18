@@ -5,6 +5,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { COMMANDS } from "../src/shared/command-catalog"
 import { PROJECT_RESERVED_SUBCOMMANDS } from "../src/shared/project-types"
+import { buildProjectHelp } from "../src/shared/project-ai-help"
 import { LOCK_FILE_NAME } from "../src/shared/constants"
 import { makeChatKey } from "../src/shared/channel-types"
 import {
@@ -67,6 +68,24 @@ describe("欢迎卡", () => {
     expect(card.text).toContain("/help")
   })
 
+  it("自然语言优先：先教怎么说（建项目、配仓库、看配置、改模板），指令只在最后兜底", () => {
+    expect(card.text).toContain("不用记指令")
+    for (const phrase of ["「帮我建个项目」", "「把 D:/code/demo 加到常用仓库」", "「看看项目现在都配了什么」", "「把开发模板的审查步骤改成……」"]) {
+      expect(card.text, phrase).toContain(phrase)
+    }
+    // 用户要发的是话，不是要敲的指令：正文里不再让人去敲 /p new、/p setup
+    expect(card.text).not.toContain("/p new")
+    expect(card.text).not.toContain("/p setup")
+    // 示例话术排在「点按钮」备选之前
+    expect(card.text.indexOf("帮我建个项目")).toBeLessThan(card.text.indexOf("不想打字"))
+  })
+
+  it("话术说的事 AI 真能办：对应的 manage_project 手册里有这些能力", () => {
+    const all = ["overview", "create", "repos", "templates", "settings", "manage"].map((t) => buildProjectHelp(t).text).join("\n")
+    // 建项目 / 加常用仓库 / 看配置 / 改模板，各有对应的 action
+    for (const word of ["「帮我建个项目」", "常用仓库", "repo_save", "action=settings", "settings_set", "template_save"]) expect(all, word).toContain(word)
+  })
+
   it("按钮：新建项目、我的项目、配置仓库/目录、全部指令，指令都真实存在", () => {
     expect(cmds(card.buttons)).toEqual(["/p new", "/p", "/p setup", "/h"])
     expectRealCommands(card.buttons)
@@ -108,6 +127,13 @@ describe("/help", () => {
     expect(buildHelpButtons(true).map((b) => b.label)).toContain("🆕 新建项目")
   })
 
+  it("主用户的正文以「大白话 / 不用记指令」开头，并给配仓库的说法", () => {
+    const body = buildHelpBodyForAdmin()
+    expect(body.split("\n")[0]).toContain("不用记指令")
+    expect(body).toContain("加到常用仓库")
+    expect(body).not.toContain("发送指令")
+  })
+
   it("正文比欢迎卡短（每次打开 /help 都看，不能太长）", () => {
     expect(buildHelpBodyForAdmin().length).toBeLessThan(buildWelcomeCard().text.length / 2)
   })
@@ -119,6 +145,7 @@ describe("还没有项目时的 /p 内容", () => {
   it("先说没有项目，再讲项目是什么、怎么建；不再是一串子指令", () => {
     expect(menu.text.startsWith("📭 还没有项目")).toBe(true)
     expect(menu.text).toContain("帮我建个项目")
+    expect(menu.text).toContain("加到常用仓库")
     expect(menu.text).not.toContain("/p plan")
     expect(menu.text).not.toContain("/p use")
   })
