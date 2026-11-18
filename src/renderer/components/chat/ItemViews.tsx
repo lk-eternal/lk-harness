@@ -99,11 +99,11 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
   return (
     <div data-user-item={item.id} className="flex max-w-[85%] flex-col items-end gap-1.5 self-end">
       {item.images && item.images.length > 0 && (
-        <div className="flex flex-wrap justify-end gap-1.5">
+        <div data-user-flash className="flex flex-wrap justify-end gap-1.5 rounded">
           {item.images.map((p) => <LocalImage key={p} path={p} className="h-24 w-24" />)}
         </div>
       )}
-      {item.text && <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
+      {item.text && <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
       <div className="flex items-center gap-2 text-[11px] text-fg-faint">
         <MessageTime ts={item.ts} />
         {item.text && <CopyButton text={item.text} />}

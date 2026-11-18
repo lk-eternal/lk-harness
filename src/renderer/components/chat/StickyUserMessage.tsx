@@ -11,9 +11,10 @@ const PREVIEW_MAX_CHARS = 200
 const SWAP_MS = 200
 const FLASH_MS = 900
 
+/** 光圈沿着被闪的那块自己的圆角扩散，所以这里不写 borderRadius */
 const FLASH_FRAMES: Keyframe[] = [
-  { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.55)", borderRadius: "1rem" },
-  { boxShadow: "0 0 0 10px rgba(37, 99, 235, 0)", borderRadius: "1rem" },
+  { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.55)" },
+  { boxShadow: "0 0 0 10px rgba(37, 99, 235, 0)" },
 ]
 
 /**
@@ -137,7 +138,8 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
       top: scroll.scrollTop + el.getBoundingClientRect().top - scroll.getBoundingClientRect().top - DOCK_HEIGHT - JUMP_GAP,
       behavior: reduced ? "auto" : "smooth",
     })
-    if (!reduced) el.animate(FLASH_FRAMES, { duration: FLASH_MS, easing: "ease-out" })
+    // 只闪图片组和文字气泡（带 data-user-flash 的块），不闪外层：外层还包着下面的时间行
+    if (!reduced) el.querySelectorAll("[data-user-flash]").forEach((block) => block.animate(FLASH_FRAMES, { duration: FLASH_MS, easing: "ease-out" }))
   }
 
   const visible = shown?.visible === true
@@ -157,7 +159,7 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
           tabIndex={visible ? 0 : -1}
           onClick={jump}
           title="回到这条消息"
-          className="pointer-events-auto inline-flex max-w-[85%] items-center gap-1.5 rounded-[14px] rounded-tr-[3px] bg-blue-600 px-3 py-1.5 text-left text-[13px] leading-snug text-white transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="pointer-events-auto inline-flex max-w-[85%] cursor-pointer items-center gap-1.5 rounded-[14px] rounded-tr-[3px] bg-blue-600 px-3 py-1.5 text-left text-[13px] leading-snug text-white transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <ArrowUp size={12} className="shrink-0 opacity-85" />
           <span className="min-w-0 truncate">{shown?.text}</span>

@@ -82,6 +82,22 @@ describe("接线：浮条靠 data-user-item 找消息，靠 ChatItemList 挂载"
     expect(html).toContain('data-user-item="u-42"')
   })
 
+  it("点浮条回去时闪的是文字气泡，不是外层（外层还包着时间行）", () => {
+    const html = renderToStaticMarkup(createElement(UserBubble, { item: user("u1", "你好") }))
+    expect(html.match(/data-user-flash/g)).toHaveLength(1)
+    expect(html).toMatch(/<div data-user-flash="true" class="[^"]*">你好<\/div>/)
+    expect(html.match(/<div [^>]*data-user-item[^>]*>/)?.[0]).not.toContain("data-user-flash")
+  })
+
+  it("带图片：图片组和文字气泡各闪各的；纯图片只闪图片组", () => {
+    const withImages = (text: string): AppChatUserItem => ({ ...user("u1", text), images: ["D:/a.png", "D:/b.png"] })
+    const both = renderToStaticMarkup(createElement(UserBubble, { item: withImages("看图") }))
+    expect(both.match(/data-user-flash/g)).toHaveLength(2)
+    expect(both).toMatch(/<div data-user-flash="true" class="[^"]*">看图<\/div>/)
+    const onlyImages = renderToStaticMarkup(createElement(UserBubble, { item: withImages("") }))
+    expect(onlyImages.match(/data-user-flash/g)).toHaveLength(1)
+  })
+
   it("ChatItemList 里每条用户消息都带标记，浮条默认隐藏且不可聚焦", () => {
     const items: AppChatItem[] = [
       user("u1", "第一问"),
@@ -96,5 +112,12 @@ describe("接线：浮条靠 data-user-item 找消息，靠 ChatItemList 挂载"
     // 浮条本身默认隐藏（图标自己也带 aria-hidden，所以要对着浮条那一层断言）
     expect(html).toMatch(/<div aria-hidden="true" style="background:linear-gradient[^>]*class="[^"]*\binvisible\b/)
     expect(html).toMatch(/<button type="button" tabindex="-1" title="回到这条消息"/)
+  })
+
+  it("浮条按钮是手形光标（Tailwind v4 的按钮默认是箭头）", () => {
+    const html = renderToStaticMarkup(createElement(ChatItemList, {
+      items: [user("u1", "第一问")], loading: false, hasMore: false, loadingEarlier: false, onLoadEarlier: () => {}, busy: false, onAnswer: () => {}, onCommand: () => {},
+    }))
+    expect(html).toMatch(/<button [^>]*title="回到这条消息"[^>]*class="[^"]*\bcursor-pointer\b/)
   })
 })
