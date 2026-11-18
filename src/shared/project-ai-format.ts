@@ -1,31 +1,61 @@
-// manage_project 的 templates / repos / create 返回给 AI 的文字：纯函数，便于单测。
+// manage_project 的 templates / repos / channels / create / bind / unbind 返回给 AI 的文字：纯函数，便于单测。
 
-import { PROJECT_REPOS_MAX, type AiChatChoice, type AiProjectCreateResult, type ProjectRepoOption, type ProjectTemplateInfo } from "./project-app-types.js"
+import {
+  PROJECT_REPOS_MAX,
+  type AiProjectCreateResult,
+  type ProjectBindingChoice,
+  type ProjectBindingOutcome,
+  type ProjectBindResult,
+  type ProjectChannelOption,
+  type ProjectRepoOption,
+  type ProjectTemplateInfo,
+  type ProjectUnbindResult,
+} from "./project-app-types.js"
+import type { ProjectChatMode } from "./project-types.js"
 import { WORK_BRANCH_MODES } from "./work-branch-mode.js"
 
-/** create 没给 chat_mode（或给错）时带回给 AI 的话：让它拿不准就去问用户，不要替用户选 */
-export const AI_CHAT_MODE_HINT = [
-  "create 必须指定 chat_mode，没有默认值。用户没说清楚就先问他（send_question），不要替他选：",
-  "- group：建飞书独立群「📦 项目名」，用户是群主并被拉入群，之后在群里协作（只有飞书私聊能用）",
-  "- bind：绑定一个已有的飞书群，还要给 existing_group_chat_id（oc_ 开头，机器人要已经在群里）（只有飞书私聊能用）",
-  "- inline：不建群，项目绑在当前聊天上（应用内对话、微信只能选这个）",
-].join("\n")
-
-/** manage_project create 的 chat_mode / existing_group_chat_id → 校验后的选择。必填：不给就报错，不猜默认值 */
-export function parseAiChatChoice(
-  mode: unknown,
-  existingGroupChatId: unknown,
-): { ok: true; choice: AiChatChoice } | { ok: false; error: string } {
-  const m = typeof mode === "string" ? mode.trim() : ""
-  if (!m) return { ok: false, error: AI_CHAT_MODE_HINT }
-  if (m === "inline" || m === "group") return { ok: true, choice: { mode: m } }
-  if (m === "bind") {
-    const id = typeof existingGroupChatId === "string" ? existingGroupChatId.trim() : ""
-    if (!id) return { ok: false, error: "chat_mode=bind 还需要 existing_group_chat_id（要绑定的飞书群 chat_id，oc_ 开头）；不知道群号就问用户" }
-    return { ok: true, choice: { mode: "bind", existingGroupChatId: id } }
-  }
-  return { ok: false, error: `chat_mode 只能是 group / bind / inline，收到「${m}」。\n${AI_CHAT_MODE_HINT}` }
+/** 每种接入方式是什么意思：channels 的返回、create / bind 缺少 bindings 时的提示都用这一份 */
+const MODE_EXPLAIN: Record<ProjectChatMode, string> = {
+  inline: "inline=接这个通道的主聊天（飞书、微信是主用户私聊，应用内是应用内对话），不建群",
+  group: "group=新建飞书独立群「📦 项目名」，主用户是群主并被拉进群，之后在群里协作",
+  bind: "bind=绑定一个已有的飞书群（还要给 group_chat_id：oc_ 开头，机器人要已经在群里）",
 }
+
+/** MCP 里 bindings 参数的形状（snake_case）→ 宿主认的接入点。不判断对错，由宿主的规则校验并给出带原因的报错 */
+export function parseAiBindings(
+  raw: readonly { channel_id?: string; mode?: string; group_chat_id?: string }[] | undefined,
+): ProjectBindingChoice[] {
+  return (raw ?? []).map((b) => ({
+    channelId: String(b?.channel_id ?? "").trim(),
+    mode: String(b?.mode ?? "").trim() as ProjectChatMode,
+    ...(b?.group_chat_id?.trim() ? { groupChatId: b.group_chat_id.trim() } : {}),
+  }))
+}
+
+/** channels 的返回：当前在哪个通道，能把项目接到哪些通道、各自能用什么方式 */
+export function formatChannels(current: string, channels: readonly ProjectChannelOption[]): string {
+  if (!channels.length) return "📭 没有可以接入项目的消息通道"
+  const here = channels.find((c) => c.id === current)
+  const lines = [
+    here ? `你现在在「${here.name}」通道（channel_id=${here.id}）。` : "",
+    channels.length === 1
+      ? "项目只能接到你当前所在的这个通道（其它通道的接入要在应用内对话里操作）。"
+      : "你在应用内对话里，可以把项目接到下面任何通道；一个项目可以同时接多个通道，每个通道各自一条独立会话，互不合并。",
+    "create / bind 的 bindings 每一项是 {channel_id, mode, group_chat_id?}，mode 的含义：",
+    ...(["inline", "group", "bind"] as const).map((m) => `- ${MODE_EXPLAIN[m]}`),
+    "",
+    `共 ${channels.length} 个通道：`,
+  ]
+  channels.forEach((c, i) => {
+    const modes = c.modes.length ? c.modes.join(" / ") : "暂时都不能选"
+    lines.push(`#${i + 1} ${c.name}｜channel_id=${c.id}｜${CHANNEL_TYPE_LABEL[c.type] ?? c.type}${c.current ? "｜当前所在" : ""}｜能用：${modes}`)
+    if (c.note) lines.push(`   ⚠️ ${c.note}`)
+  })
+  lines.push("", "没有默认值：用户没说清楚项目要放到哪些通道、用哪种方式，就先问他（send_question），确认内容里写明每个通道选了什么。")
+  return lines.filter((l, i) => l !== "" || i > 0).join("\n")
+}
+
+const CHANNEL_TYPE_LABEL: Record<string, string> = { feishu: "飞书", wechat: "微信", app: "应用内对话" }
 
 const BRANCH_LABEL: Record<string, string> = Object.fromEntries(WORK_BRANCH_MODES.map((m) => [m.value, m.label]))
 
@@ -68,6 +98,18 @@ export function formatRepos(list: readonly ProjectRepoOption[]): string {
   return lines.join("\n")
 }
 
+/** 一个接入点最后的样子，一行说清（没接成的带原因） */
+export function formatBindingOutcome(o: ProjectBindingOutcome): string {
+  if (!o.ok) return `⚠️「${o.channelName}」${o.warning ?? "没接成"}`
+  if (o.mode === "group") {
+    return `✅「${o.channelName}」新建了飞书独立群「${o.groupName ?? ""}」，用户是群主并已被拉入群，群里已发项目卡片；群里的项目只能在群里进入和推进`
+  }
+  if (o.mode === "bind") {
+    return `✅「${o.channelName}」绑定了飞书群 ${o.groupChatId ?? ""}，已向群里发项目卡片（机器人不在群里的话发不进去，请提醒用户确认机器人已经在群里）；群里的项目只能在群里进入和推进`
+  }
+  return `✅「${o.channelName}」接了主聊天（不建群）：需要时在那里进入——应用里在项目列表点开，飞书 / 微信里发 /p use <项目 ID>`
+}
+
 export function formatCreated(r: Extract<AiProjectCreateResult, { ok: true }>): string {
   const lines = [
     `✅ 已创建项目「${r.name}」`,
@@ -76,18 +118,21 @@ export function formatCreated(r: Extract<AiProjectCreateResult, { ok: true }>): 
     `项目目录：${r.dir}`,
   ]
   if (r.warning) lines.push(`⚠️ ${r.warning}`)
-  if (r.chatMode === "group") {
-    lines.push(
-      `已建飞书独立群「${r.groupName ?? ""}」，用户是群主并已被拉入群，已向群里发出项目卡片。`,
-      "没有进入项目会话，当前对话不受影响。群绑定的项目只能在群里进入和推进（私聊里 /p use 会被拒）：请告诉用户到这个群里协作。",
-    )
-  } else if (r.chatMode === "bind") {
-    lines.push(
-      `已绑定飞书群 ${r.groupChatId ?? ""}，已向群里发出项目卡片（机器人不在群里的话发不进去）。请提醒用户确认机器人已经在群里，否则群里收发不了消息。`,
-      "没有进入项目会话，当前对话不受影响。群绑定的项目只能在群里进入和推进（私聊里 /p use 会被拒）：请告诉用户到这个群里协作。",
-    )
-  } else {
-    lines.push("没有建群：项目绑在当前聊天上，没有进入项目会话，当前对话不受影响。请把项目 ID 告诉用户，他需要时自己进入：应用里在项目列表点开，飞书/微信里发 /p use <项目 ID>。")
-  }
+  lines.push("项目接入的聊天（每个通道各自一条独立会话）：")
+  for (const o of r.bindings) lines.push(`- ${formatBindingOutcome(o)}`)
+  lines.push("没有进入项目会话，当前对话不受影响。")
   return lines.filter(Boolean).join("\n")
+}
+
+export function formatBound(r: Extract<ProjectBindResult, { ok: true }>): string {
+  const lines = [`✅ 项目「${r.name}」（${r.projectId}）的接入已更新：`]
+  for (const o of r.bindings) lines.push(`- ${formatBindingOutcome(o)}`)
+  if (r.warning) lines.push(`⚠️ ${r.warning}`)
+  return lines.join("\n")
+}
+
+export function formatUnbound(r: Extract<ProjectUnbindResult, { ok: true }>): string {
+  const lines = [`✅ 项目「${r.name}」（${r.projectId}）已取消接入：${r.removed}；那条会话已一并清理。`]
+  if (r.note) lines.push(r.note)
+  return lines.join("\n")
 }

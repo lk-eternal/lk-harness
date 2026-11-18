@@ -4,12 +4,19 @@ import { randomBytes, randomUUID } from "node:crypto"
 import {
   DEFAULT_NODE_GROUPS,
   DEFAULT_NODE_GROUP_ID,
+  bindingsFromLegacy,
+  legacyMirrorOf,
   normalizeWorkBranchMode,
+  projectBoundToChannel,
   projectGroupChatMatches,
+  projectMainBindings,
+  type LegacyProjectBindingFields,
   type Project,
+  type ProjectBinding,
   type ProjectNodeDef,
   type ProjectNodeGroupDef,
 } from "./project-types.js"
+import { parseChatKey } from "./channel-types.js"
 import { migrateLegacyRepoFields } from "./project-repo-info.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
 import { cloneGroupPlain, normalizeFieldDefs } from "./project-templates.js"
@@ -53,7 +60,7 @@ function migrateLegacyProjectFilesOnce(): void {
         ensureDir(backupDir)
         const backup = path.join(backupDir, f)
         if (!fs.existsSync(backup)) fs.copyFileSync(fp, backup)
-        writeJson(fp, normalizeProject(raw))
+        writeJson(fp, projectToDisk(normalizeProject(raw)))
       } catch {
         allOk = false
       }
@@ -403,12 +410,16 @@ function writeJson(filePath: string, data: unknown): void {
  * 存量 actions[] → lastArtifact*；去掉运行态数组。
  * 旧版有 status（进行中 / 已暂停 / 已完成）：「已完成」按已归档读，其余当普通项目；读出来之后不再带这个字段，下次保存时从文件里消失。
  */
-function normalizeProject(raw: Project & { status?: unknown; watchBugs?: unknown }): Project {
+function normalizeProject(raw: Project & LegacyProjectBindingFields & { status?: unknown; watchBugs?: unknown }): Project {
   // status 是旧版的三态；watchBugs 是旧版「自动盯缺陷」的开关（功能已去掉）：老项目文件里留着的都不要了，下次保存时一并清掉
-  const { status, watchBugs, ...legacyRest } = raw
+  const { status, watchBugs, sessionKey: legacySessionKey, notifyChatId: legacyNotify, groupChatId: legacyGroup, ...legacyRest } = raw
   // 旧版的仓库、分支字段折进项目信息（见 project-repo-info.ts）：读出来就是新形状，下次保存时旧字段从文件里消失
   const rest = migrateLegacyRepoFields(legacyRest)
   const p: Project = { ...rest }
+  // 旧版只有一个入口（sessionKey / notifyChatId / groupChatId）：没有 bindings 才迁移，有了就只认 bindings
+  if (!Array.isArray(p.bindings)) {
+    p.bindings = bindingsFromLegacy(p.id, { sessionKey: legacySessionKey, notifyChatId: legacyNotify, groupChatId: legacyGroup })
+  }
   if (status === "done" && !p.archivedAt) p.archivedAt = p.updatedAt || p.createdAt || Date.now()
   if (!p.lastArtifactPath && Array.isArray(p.actions) && p.actions.length) {
     const accepted = [...p.actions].reverse().find((a) => a.status === "accepted" && a.artifactPath)
@@ -447,10 +458,36 @@ export function getProject(id: string): Project | undefined {
   return raw ? normalizeProject(raw) : undefined
 }
 
+/** 写盘的形状：Project 加上旧版的单入口字段（只为回退到旧版本时项目还认得会话和专属群，读文件时会被丢掉） */
+function projectToDisk(p: Project): Project & LegacyProjectBindingFields {
+  return { ...p, ...legacyMirrorOf(p) }
+}
+
 export function saveProject(project: Project): void {
   if (!baseDir) throw new Error("project store not initialized")
   const toSave = normalizeProject({ ...project, updatedAt: Date.now() })
-  writeJson(projectPath(toSave.id), toSave)
+  writeJson(projectPath(toSave.id), projectToDisk(toSave))
+}
+
+/**
+ * 这个通道能管的项目：项目接入了它的主聊天或某个专属群（管理员在这个通道里用 AI 管项目看的是这份）。
+ * 没有任何入口的项目谁的清单里都没有，只在设置页里看得到。
+ */
+export function listProjectsForChannel(channelId?: string): Project[] {
+  if (!channelId) return []
+  return listProjects().filter((p) => projectBoundToChannel(p, channelId))
+}
+
+/**
+ * 这个聊天里看得到的项目（/p 菜单、/p ls、按序号或名字选项目、/p del 都只在这份里找）：
+ * - 在某个项目的专属群里：只有这一个项目（群里看不到、也切不到别的项目，群成员未必是管理员）；
+ * - 其余（主聊天）：接入了这个通道的项目。只接了专属群的项目也在里面（管理员要能删、能看），但主聊天里进不去它（见 canEnterProjectFromChat）。
+ */
+export function listProjectsForChat(chatKey?: string): Project[] {
+  if (!chatKey) return []
+  const grp = findProjectByGroupChat(chatKey)
+  if (grp) return [grp]
+  return listProjectsForChannel(parseChatKey(chatKey).channelId)
 }
 
 export function deleteProject(id: string): boolean {
@@ -466,8 +503,7 @@ export function deleteProject(id: string): boolean {
     fs.copyFileSync(fp, trashFp)
     fs.unlinkSync(fp)
   }
-  const cur = getCurrentProjectId()
-  if (cur === id) setCurrentProjectId(null)
+  clearCurrentProjectOf(id)
   return true
 }
 
@@ -534,23 +570,79 @@ export function resetProjectArchivedCacheForTests(): void {
   archivedCache.clear()
 }
 
-export function getCurrentProjectId(): string | null {
-  const data = readJsonSafe<{ id?: string }>(currentPath(), {})
-  return data.id ?? null
+/**
+ * 「当前项目」指针：按通道记，每个通道（它的主聊天）各有一个，互不影响。
+ * 旧版全局只有一个 { id }：读的时候，那个项目接入了哪个通道的主聊天，就算哪个通道的当前项目；
+ * 第一次写的时候落成按通道的形状，旧的 id 就没了。
+ */
+interface CurrentFile {
+  id?: string
+  byChannel?: Record<string, string>
 }
 
-export function setCurrentProjectId(id: string | null): void {
+/**
+ * 「当前项目」属于通道的主聊天。聊天键认不出通道、或者是某个项目的专属群（含已归档项目的群）时返回 undefined：
+ * 群里的项目由群自己认（findProjectByGroupChat），不碰通道的当前项目，否则群里的操作会把主聊天正在用的项目挤掉。
+ */
+function channelOfChat(chatKey?: string): string | undefined {
+  if (!chatKey) return undefined
+  if (listProjects().some((p) => projectGroupChatMatches(p, chatKey))) return undefined
+  return parseChatKey(chatKey).channelId
+}
+
+function readCurrentByChannel(): Record<string, string> {
+  const data = readJsonSafe<CurrentFile>(currentPath(), {})
+  const byChannel: Record<string, string> = { ...(data.byChannel ?? {}) }
+  if (data.id) {
+    const legacy = getProject(data.id)
+    if (legacy) for (const b of projectMainBindings(legacy)) if (b.channelId && !byChannel[b.channelId]) byChannel[b.channelId] = data.id
+  }
+  return byChannel
+}
+
+function writeCurrentByChannel(byChannel: Record<string, string>): void {
   if (!baseDir) throw new Error("project store not initialized")
-  if (!id) {
+  if (!Object.keys(byChannel).length) {
     if (fs.existsSync(currentPath())) fs.unlinkSync(currentPath())
     return
   }
-  writeJson(currentPath(), { id })
+  writeJson(currentPath(), { byChannel })
 }
 
-export function getCurrentProject(): Project | undefined {
-  const id = getCurrentProjectId()
-  return id ? getProject(id) : undefined
+export function getCurrentProjectId(chatKey: string | undefined): string | null {
+  const ch = channelOfChat(chatKey)
+  if (!ch) return null
+  return readCurrentByChannel()[ch] ?? null
+}
+
+/** 设置（id 为 null 就是清掉）这个聊天所在通道的当前项目；聊天键认不出通道就什么也不做 */
+export function setCurrentProjectId(id: string | null, chatKey: string | undefined): void {
+  if (!baseDir) throw new Error("project store not initialized")
+  const ch = channelOfChat(chatKey)
+  if (!ch) return
+  const byChannel = readCurrentByChannel()
+  if (id) byChannel[ch] = id
+  else delete byChannel[ch]
+  writeCurrentByChannel(byChannel)
+}
+
+/** 项目没了或归档了：所有通道里指向它的当前项目指针一并清掉 */
+export function clearCurrentProjectOf(id: string): void {
+  if (!baseDir) return
+  const byChannel = readCurrentByChannel()
+  let changed = false
+  for (const [ch, pid] of Object.entries(byChannel)) {
+    if (pid === id) { delete byChannel[ch]; changed = true }
+  }
+  const raw = readJsonSafe<CurrentFile>(currentPath(), {})
+  if (changed || raw.id === id) writeCurrentByChannel(byChannel)
+}
+
+/** 这个聊天所在通道的当前项目；指针指着的项目已经没接入这个通道（解绑了）就当没有，不会越过隔离 */
+export function getCurrentProject(chatKey: string | undefined): Project | undefined {
+  const id = getCurrentProjectId(chatKey)
+  const p = id ? getProject(id) : undefined
+  return p && projectBoundToChannel(p, channelOfChat(chatKey)) ? p : undefined
 }
 
 export function createProject(input: Omit<Project, "id" | "archivedAt" | "createdAt" | "updatedAt" | "actions"> & {
@@ -577,14 +669,11 @@ export function createProject(input: Omit<Project, "id" | "archivedAt" | "create
     lastMrUrl: input.lastMrUrl,
     lastFeishuDocUrl: input.lastFeishuDocUrl,
     lastArtifactAt: input.lastArtifactAt,
-    sessionKey: input.sessionKey,
-    notifyChatId: input.notifyChatId,
-    groupChatId: input.groupChatId,
+    ...(input.bindings?.length ? { bindings: input.bindings } : {}),
     createdAt: now,
     updatedAt: now,
   }
   saveProject(project)
-  setCurrentProjectId(project.id)
   return project
 }
 
@@ -616,9 +705,13 @@ export function registerArtifact(
   saveProject(project)
   return { ok: true, project }
 }
-export function resolveProjectRef(token: string | undefined, projects?: Project[]): Project | undefined {
-  const list = projects ?? listProjects()
-  if (!token) return getCurrentProject()
+/**
+ * 在给定的项目清单里按序号 / id / 名字找项目；不带 token 就取 current。
+ * 清单要由调用方定：聊天里用 listProjectsForChat（只含接入了这个通道的），设置页管理才用全量 listProjects。
+ */
+export function resolveProjectRef(token: string | undefined, projects: Project[], current?: Project): Project | undefined {
+  const list = projects
+  if (!token) return current && list.some((p) => p.id === current.id) ? current : undefined
   // 仅纯数字才当序号；hex id（如 3d2abd629656）绝不能 parseInt——否则会变成 3 误删第 3 项
   if (/^\d+$/.test(token)) {
     const idx = Number.parseInt(token, 10)

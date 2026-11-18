@@ -3,6 +3,7 @@
 
 import type { ProjectListItem } from "./project-app-types.js"
 import { repoDisplayName } from "./project-app-types.js"
+import { parseChatKey } from "./channel-types.js"
 import type {
   ProjectSettingsView,
   RepoProfileLike,
@@ -122,7 +123,18 @@ export function formatTemplateSaved(plan: Extract<TemplateSavePlan, { ok: true }
   return lines.join("\n")
 }
 
-export function formatProjectDetail(p: ProjectListItem): string {
+/** 项目接入了哪些聊天入口；channelName 把通道 id 换成人看得懂的名字 */
+export function formatBindingsLine(bindings: ProjectListItem["bindings"], channelName: (channelId: string) => string = (id) => id): string {
+  if (!bindings.length) return "接入的消息通道：无（没有任何聊天能看到它，只有设置页里能管；要用先 bind 接到某个通道）"
+  const parts = bindings.map((b) => {
+    const name = channelName(b.channelId)
+    if (b.kind === "group") return `「${name}」的专属群 ${b.chatKey ? parseChatKey(b.chatKey).chatId : ""}`.trim()
+    return `「${name}」的主聊天`
+  })
+  return `接入的消息通道（各自一条独立会话，互不通消息）：${parts.join("；")}`
+}
+
+export function formatProjectDetail(p: ProjectListItem, channelName?: (channelId: string) => string): string {
   const lines = [
     `项目「${p.name}」id=${p.id}${p.archived ? "（已归档）" : ""}`,
     `目标：${p.goal || "（未填）"}`,
@@ -132,7 +144,7 @@ export function formatProjectDetail(p: ProjectListItem): string {
   if (p.relatedDocs) lines.push(`相关文档：${p.relatedDocs}`)
   if (p.productDocUrl) lines.push(`产品文档：${p.productDocUrl}`)
   if (p.techDocUrl) lines.push(`技术文档：${p.techDocUrl}`)
-  if (p.groupChatId) lines.push(`绑定的飞书群：${p.groupChatId}`)
+  lines.push(formatBindingsLine(p.bindings, channelName))
   const info = Object.entries(p.metadata ?? {})
   lines.push(info.length ? "项目信息：" : "项目信息：无")
   for (const [k, v] of info) lines.push(`  - ${k}：${v}`)

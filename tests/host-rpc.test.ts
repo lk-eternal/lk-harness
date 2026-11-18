@@ -14,12 +14,12 @@ import {
 import { createHostRpcDispatcher } from "../electron/host-rpc"
 import { registerAdminTools } from "../src/server-admin"
 import { runWithMcpInvokerSessionKey } from "../src/shared/mcp-invoker-context"
-import { AI_CHAT_MODE_HINT, formatCreated, parseAiChatChoice } from "../src/shared/project-ai-format"
+import { formatBound, formatChannels, formatCreated, formatUnbound, parseAiBindings } from "../src/shared/project-ai-format"
 
 /**
- * daemon → 宿主的「发请求、等结果」通道，以及用它的 manage_project（templates / repos / create）。
+ * daemon → 宿主的「发请求、等结果」通道，以及用它的 manage_project（templates / repos / channels / create）。
  * 守住几件事：宿主不在时几秒内就报错（不白等）、超时后提醒 AI 先查再重试、
- * 回执顺序是 ack 在前结果在后、建项请求带上调用者所在的聊天和翻成驼峰的参数。
+ * 回执顺序是 ack 在前结果在后、建项请求带上调用者所在的聊天、接入的通道（bindings）和翻成驼峰的参数。
  */
 
 describe("请求跟踪器（daemon 侧）", () => {
@@ -253,11 +253,19 @@ describe("manage_project 的 templates / repos / create", () => {
     return { calls, tool, call }
   }
 
-  const CREATED = { ok: true as const, projectId: "abc123def456", name: "Q4 调研", dir: "D:\\projects\\q4", templateName: "调研", chatMode: "inline" as const }
+  const INLINE_FS = [{ channel_id: "ch_fs", mode: "inline" }]
+  const CREATED = {
+    ok: true as const, projectId: "abc123def456", name: "Q4 调研", dir: "D:\\projects\\q4", templateName: "调研",
+    bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "inline" as const }],
+  }
 
-  it("工具说明讲清几件事：先查模板、建前要用户确认、建完不进入会话、chat_mode 必须指定", () => {
+  it("工具说明讲清几件事：先查通道和模板、建前要用户确认、建完不进入会话、bindings 必须指定、通道之间隔离", () => {
     const { tool } = setup(() => ({ ok: true, result: [] }))
-    for (const word of ["templates", "repos", "create", "send_question", "不会进入项目会话", "独立群", "delete", "chat_mode", "没有默认值", "inline"]) expect(tool.description).toContain(word)
+    for (const word of [
+      "templates", "repos", "channels", "create", "bind", "unbind", "send_question", "不会进入项目会话", "独立群", "delete",
+      "bindings", "没有默认值", "inline", "只能接自己所在的通道", "按消息通道隔离",
+    ]) expect(tool.description, word).toContain(word)
+    expect(tool.description).not.toContain("chat_mode")
   })
 
   it("参数校验：认新的 action 和 snake_case 参数，拒掉不认识的", () => {
@@ -265,11 +273,11 @@ describe("manage_project 的 templates / repos / create", () => {
     const ok = tool.inputSchema.safeParse({
       action: "create", name: "n", template_id: "develop", fields: { 交付形式: "PPT" },
       repos: [{ repo_path: "/r/a", base_branch: "main" }], work_branch: "test", feature_branch: "f", story_url: "u", related_docs: "d", folder: "/x",
-      chat_mode: "bind", existing_group_chat_id: "oc_aa2192cfececee92d57dccd0b59980fd",
+      bindings: [{ channel_id: "ch_fs", mode: "bind", group_chat_id: "oc_aa2192cfececee92d57dccd0b59980fd" }, { channel_id: "ch_app", mode: "inline" }],
     })
     expect(ok.success).toBe(true)
     for (const action of [
-      "help", "list", "get", "create", "update", "archive", "delete", "sync_steps",
+      "help", "list", "get", "create", "update", "archive", "delete", "sync_steps", "channels", "bind", "unbind",
       "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
     ]) expect(tool.inputSchema.safeParse({ action }).success).toBe(true)
     expect(tool.inputSchema.safeParse({ action: "rename" }).success).toBe(false)
@@ -288,8 +296,14 @@ describe("manage_project 的 templates / repos / create", () => {
     expect(tool.inputSchema.safeParse({ action: "template_save", template: { work_branch: "main" } }).success).toBe(false)
     expect(tool.inputSchema.safeParse({ action: "create", work_branch: "main" }).success).toBe(false)
     expect(tool.inputSchema.safeParse({ action: "create", repos: [{ repo_path: "/r/a" }] }).success).toBe(false)
-    for (const mode of ["group", "bind", "inline"]) expect(tool.inputSchema.safeParse({ action: "create", chat_mode: mode }).success).toBe(true)
-    expect(tool.inputSchema.safeParse({ action: "create", chat_mode: "dedicated" }).success).toBe(false)
+    for (const mode of ["group", "bind", "inline"]) expect(tool.inputSchema.safeParse({ action: "create", bindings: [{ channel_id: "c", mode }] }).success).toBe(true)
+    expect(tool.inputSchema.safeParse({ action: "create", bindings: [{ channel_id: "c", mode: "dedicated" }] }).success).toBe(false)
+    // 每一项都要有 channel_id；bindings 是数组
+    expect(tool.inputSchema.safeParse({ action: "create", bindings: [{ mode: "inline" }] }).success).toBe(false)
+    expect(tool.inputSchema.safeParse({ action: "create", bindings: "inline" }).success).toBe(false)
+    // 旧的 chat_mode 参数没有了：不认的参数被丢掉（不会再当成选了 inline）
+    const legacy = tool.inputSchema.safeParse({ action: "create", chat_mode: "inline" })
+    expect(legacy.success && "chat_mode" in (legacy.data ?? {})).toBe(false)
   })
 
   it("create：带上调用者所在的聊天（去掉会话里的工作目录后缀）和翻成驼峰的参数，给足建项时间", async () => {
@@ -297,14 +311,19 @@ describe("manage_project 的 templates / repos / create", () => {
     const text = await call({
       action: "create", name: "Q4 调研", goal: "看清竞品", template_id: "research", fields: { 交付形式: "PPT" },
       repos: [{ repo_path: "/r/shop", base_branch: "main" }], work_branch: "test", feature_branch: "feature/x",
-      story_url: "https://t.example.com/1", related_docs: "见 wiki", folder: "/f", chat_mode: "inline",
+      story_url: "https://t.example.com/1", related_docs: "见 wiki", folder: "/f",
+      bindings: [{ channel_id: "ch_fs", mode: "inline" }, { channel_id: "ch_fs", mode: "bind", group_chat_id: " oc_aa2192cfececee92d57dccd0b59980fd " }],
     }, FEISHU_SK)
     expect(calls).toHaveLength(1)
     expect(calls[0].kind).toBe("project.create")
     expect(calls[0].timeoutMs).toBeGreaterThanOrEqual(5 * 60_000)
     expect(calls[0].payload).toEqual({
       chatKey: "ch_fs|ou_main",
-      chatMode: "inline",
+      // snake_case 翻成驼峰，群号去掉首尾空白
+      bindings: [
+        { channelId: "ch_fs", mode: "inline" },
+        { channelId: "ch_fs", mode: "bind", groupChatId: "oc_aa2192cfececee92d57dccd0b59980fd" },
+      ],
       input: {
         name: "Q4 调研", goal: "看清竞品", templateId: "research", fields: { 交付形式: "PPT" },
         repos: [{ repoPath: "/r/shop", baseBranch: "main" }], workBranch: "test", featureBranch: "feature/x",
@@ -319,51 +338,90 @@ describe("manage_project 的 templates / repos / create", () => {
 
   it("应用内对话的会话键也能解出聊天", async () => {
     const { call, calls } = setup(() => ({ ok: true, result: CREATED }))
-    await call({ action: "create", name: "n", template_id: "general", chat_mode: "inline" }, APP_SK)
+    await call({ action: "create", name: "n", template_id: "general", bindings: [{ channel_id: "ch_app", mode: "inline" }] }, APP_SK)
     expect(calls[0].payload.chatKey).toBe("ch_app|app_main")
   })
 
   it("没有调用者会话 / 没给模板：直接报错，不去打扰宿主", async () => {
     const { call, calls } = setup(() => ({ ok: true, result: CREATED }))
-    expect(await call({ action: "create", name: "n", template_id: "general", chat_mode: "inline" })).toContain("无法确定你所在的会话")
-    expect(await call({ action: "create", name: "n", chat_mode: "inline" }, FEISHU_SK)).toContain("template_id")
-    expect(await call({ action: "create", name: "n", template_id: "  ", chat_mode: "inline" }, FEISHU_SK)).toContain("template_id")
+    expect(await call({ action: "create", name: "n", template_id: "general", bindings: INLINE_FS })).toContain("无法确定你所在的会话")
+    expect(await call({ action: "create", name: "n", bindings: INLINE_FS }, FEISHU_SK)).toContain("template_id")
+    expect(await call({ action: "create", name: "n", template_id: "  ", bindings: INLINE_FS }, FEISHU_SK)).toContain("template_id")
     expect(calls).toEqual([])
   })
 
-  it("chat_mode 必须指定：不给就报错并让 AI 去问用户，不去打扰宿主（各个通道都一样，没有默认值）", async () => {
+  it("bindings 必须指定：不给就报错并让 AI 先看 channels、再去问用户，不去打扰宿主（各个通道都一样，没有默认值）", async () => {
     const { call, calls } = setup(() => ({ ok: true, result: CREATED }))
     for (const sk of [FEISHU_SK, APP_SK]) {
-      const text = await call({ action: "create", name: "n", template_id: "general" }, sk)
-      expect(text.startsWith("❌ ")).toBe(true)
-      expect(text).toContain(AI_CHAT_MODE_HINT)
-      expect(text).toContain("send_question")
+      for (const args of [{}, { bindings: [] }]) {
+        const text = await call({ action: "create", name: "n", template_id: "general", ...args }, sk)
+        expect(text.startsWith("❌ ")).toBe(true)
+        expect(text).toContain("bindings")
+        expect(text).toContain("channels")
+        expect(text).toContain("send_question")
+      }
     }
-    // bind 还要群号；缺了同样直接报错
-    const noGroup = await call({ action: "create", name: "n", template_id: "general", chat_mode: "bind" }, FEISHU_SK)
-    expect(noGroup).toContain("existing_group_chat_id")
     expect(calls).toEqual([])
   })
 
-  it("chat_mode=group / bind：连同群号原样交给宿主", async () => {
-    const { call, calls } = setup(() => ({ ok: true, result: { ...CREATED, chatMode: "group", groupName: "📦 Q4 调研", groupChatId: "oc_new" } }))
-    const text = await call({ action: "create", name: "Q4 调研", template_id: "general", chat_mode: "group" }, FEISHU_SK)
-    expect(calls[0].payload).toMatchObject({ chatKey: "ch_fs|ou_main", chatMode: "group" })
-    expect(calls[0].payload.existingGroupChatId).toBeUndefined()
-    expect(text).toContain("已建飞书独立群「📦 Q4 调研」")
-
-    const b = setup(() => ({ ok: true, result: { ...CREATED, chatMode: "bind", groupChatId: "oc_aa2192cfececee92d57dccd0b59980fd" } }))
-    await b.call({ action: "create", name: "n", template_id: "general", chat_mode: "bind", existing_group_chat_id: " oc_aa2192cfececee92d57dccd0b59980fd " }, FEISHU_SK)
-    expect(b.calls[0].payload).toMatchObject({ chatMode: "bind", existingGroupChatId: "oc_aa2192cfececee92d57dccd0b59980fd" })
+  it("bindings 里的 group / bind / 多个通道：连同群号原样交给宿主，结果里每个通道各说一句", async () => {
+    const { call, calls } = setup(() => ({
+      ok: true,
+      result: {
+        ...CREATED,
+        bindings: [
+          { channelId: "ch_app", channelName: "应用内", ok: true, mode: "inline" },
+          { channelId: "ch_fs", channelName: "飞书", ok: true, mode: "group", groupName: "📦 Q4 调研", groupChatId: "oc_new" },
+        ],
+      },
+    }))
+    const text = await call({
+      action: "create", name: "Q4 调研", template_id: "general",
+      bindings: [{ channel_id: "ch_app", mode: "inline" }, { channel_id: "ch_fs", mode: "group" }],
+    }, APP_SK)
+    expect(calls[0].payload).toMatchObject({
+      chatKey: "ch_app|app_main",
+      bindings: [{ channelId: "ch_app", mode: "inline" }, { channelId: "ch_fs", mode: "group" }],
+    })
+    expect(text).toContain("「应用内」接了主聊天")
+    expect(text).toContain("「飞书」新建了飞书独立群「📦 Q4 调研」")
   })
 
   it("宿主没响应 / 超时 / 建项校验没过：原因原样带给 AI，不当成功", async () => {
     const down = setup(() => ({ ok: false, error: "应用主进程没有响应" }))
-    expect(await down.call({ action: "create", name: "n", template_id: "general", chat_mode: "inline" }, FEISHU_SK)).toBe("❌ 应用主进程没有响应")
+    expect(await down.call({ action: "create", name: "n", template_id: "general", bindings: INLINE_FS }, FEISHU_SK)).toBe("❌ 应用主进程没有响应")
     const invalid = setup(() => ({ ok: true, result: { ok: false, error: "请填写：交付形式" } }))
-    expect(await invalid.call({ action: "create", name: "n", template_id: "research", chat_mode: "inline" }, FEISHU_SK)).toBe("❌ 请填写：交付形式")
+    expect(await invalid.call({ action: "create", name: "n", template_id: "research", bindings: INLINE_FS }, FEISHU_SK)).toBe("❌ 请填写：交付形式")
     const empty = setup(() => ({ ok: true, result: undefined }))
-    expect(await empty.call({ action: "create", name: "n", template_id: "general", chat_mode: "inline" }, FEISHU_SK)).toContain("❌")
+    expect(await empty.call({ action: "create", name: "n", template_id: "general", bindings: INLINE_FS }, FEISHU_SK)).toContain("❌")
+  })
+
+  it("channels：问宿主「我在哪个通道、能接哪些」，把清单讲给 AI；没有会话 / 宿主出错带原因", async () => {
+    const options = [
+      { id: "ch_app", name: "应用内", type: "app", current: true, modes: ["inline"] },
+      { id: "ch_fs", name: "飞书", type: "feishu", current: false, modes: ["inline", "bind"], note: "没有记录到主用户的飞书身份（open_id），不能新建独立群" },
+    ]
+    const s = setup(() => ({ ok: true, result: { ok: true, current: "ch_app", channels: options } }))
+    const text = await s.call({ action: "channels" }, APP_SK)
+    expect(s.calls).toHaveLength(1)
+    expect(s.calls[0]).toMatchObject({ kind: "project.channels", payload: { chatKey: "ch_app|app_main" } })
+    expect(s.calls[0].timeoutMs).toBeLessThan(5 * 60_000)
+    expect(text).toContain("你现在在「应用内」通道（channel_id=ch_app）")
+    expect(text).toContain("channel_id=ch_fs")
+    expect(text).toContain("当前所在")
+    expect(text).toContain("不能新建独立群")
+
+    expect(await s.call({ action: "channels" })).toContain("无法确定你所在的会话")
+    expect(await setup(() => ({ ok: false, error: "应用主进程没有响应" })).call({ action: "channels" }, APP_SK)).toBe("❌ 应用主进程没有响应")
+    expect(await setup(() => ({ ok: true, result: { ok: false, error: "只有主用户的私聊可以创建项目" } })).call({ action: "channels" }, FEISHU_SK)).toBe("❌ 只有主用户的私聊可以创建项目")
+    expect(await setup(() => ({ ok: true, result: undefined })).call({ action: "channels" }, FEISHU_SK)).toContain("❌")
+  })
+
+  it("bind / unbind：没有调用者会话时直接报错，不去打扰宿主", async () => {
+    const { call, calls } = setup(() => ({ ok: true, result: { ok: true } }))
+    expect(await call({ action: "bind", project_id: "p1", bindings: INLINE_FS })).toContain("无法确定你所在的会话")
+    expect(await call({ action: "unbind", project_id: "p1", bindings: INLINE_FS })).toContain("无法确定你所在的会话")
+    expect(calls).toEqual([])
   })
 
   it("templates / repos：走宿主，返回可读的清单；没有就说没有", async () => {
@@ -406,85 +464,135 @@ describe("manage_project 的 templates / repos / create", () => {
   })
 })
 
-describe("parseAiChatChoice：chat_mode 必填，没有默认值", () => {
-  it("三个合法值通过；bind 的群号去掉首尾空白", () => {
-    expect(parseAiChatChoice("inline", undefined)).toEqual({ ok: true, choice: { mode: "inline" } })
-    expect(parseAiChatChoice(" group ", "oc_ignored")).toEqual({ ok: true, choice: { mode: "group" } })
-    expect(parseAiChatChoice("bind", "  oc_x1  ")).toEqual({ ok: true, choice: { mode: "bind", existingGroupChatId: "oc_x1" } })
+describe("parseAiBindings：MCP 参数（snake_case）→ 接入点", () => {
+  it("channel_id / mode / group_chat_id 翻成驼峰，去掉首尾空白；没给群号就不带这个字段", () => {
+    expect(parseAiBindings([
+      { channel_id: " ch_fs ", mode: " inline " },
+      { channel_id: "ch_fs", mode: "bind", group_chat_id: "  oc_x1  " },
+      { channel_id: "ch_fs", mode: "group", group_chat_id: "   " },
+    ])).toEqual([
+      { channelId: "ch_fs", mode: "inline" },
+      { channelId: "ch_fs", mode: "bind", groupChatId: "oc_x1" },
+      { channelId: "ch_fs", mode: "group" },
+    ])
   })
 
-  it("没给 / 空白 / 不是字符串：报错，原文就是教 AI 去问用户的那段话", () => {
-    for (const v of [undefined, null, "", "   ", 5, {}]) {
-      expect(parseAiChatChoice(v, undefined), String(v)).toEqual({ ok: false, error: AI_CHAT_MODE_HINT })
-    }
-    for (const word of ["必须指定 chat_mode", "没有默认值", "send_question", "group", "bind", "inline", "只有飞书私聊能用", "应用内对话、微信只能选这个"]) {
-      expect(AI_CHAT_MODE_HINT).toContain(word)
-    }
-  })
-
-  it("不认识的值：点出收到了什么，并附上选项说明", () => {
-    const r = parseAiChatChoice("dedicated", undefined)
-    expect(r.ok).toBe(false)
-    expect(!r.ok && r.error).toContain("收到「dedicated」")
-    expect(!r.ok && r.error).toContain(AI_CHAT_MODE_HINT)
-  })
-
-  it("bind 没给群号（空、空白、不是字符串）：报错，并让 AI 去问", () => {
-    for (const v of [undefined, "", "   ", 7]) {
-      const r = parseAiChatChoice("bind", v)
-      expect(r.ok, String(v)).toBe(false)
-      expect(!r.ok && r.error).toContain("existing_group_chat_id")
-      expect(!r.ok && r.error).toContain("问用户")
-    }
+  it("没给 / 空数组：得到空列表（由调用方报「必须指定 bindings」）；缺的字段变成空串，由宿主的校验带原因报错", () => {
+    expect(parseAiBindings(undefined)).toEqual([])
+    expect(parseAiBindings([])).toEqual([])
+    expect(parseAiBindings([{ mode: "inline" }])).toEqual([{ channelId: "", mode: "inline" }])
+    expect(parseAiBindings([{ channel_id: "c" }])).toEqual([{ channelId: "c", mode: "" }])
   })
 })
 
-describe("formatCreated：按项目实际落在哪里，告诉 AI 接下来怎么跟用户说", () => {
-  const base = { ok: true as const, projectId: "pid1", name: "改版", dir: "D:\\p\\改版", templateName: "开发" }
+describe("formatChannels：告诉 AI 当前在哪、能接哪些通道、各自能用什么方式", () => {
+  const app = { id: "ch_app", name: "应用内", type: "app" as const, current: true, modes: ["inline" as const] }
+  const fs = { id: "ch_fs", name: "飞书", type: "feishu" as const, current: false, modes: ["inline" as const, "group" as const, "bind" as const] }
 
-  it("inline：没建群，项目 ID 给用户，可以 /p use 进入", () => {
-    const t = formatCreated({ ...base, chatMode: "inline" })
-    expect(t).toContain("没有建群")
+  it("在应用内对话里：能接任何通道，当前所在的通道有标记，说明三种方式和没有默认值", () => {
+    const t = formatChannels("ch_app", [app, fs])
+    expect(t).toContain("你现在在「应用内」通道（channel_id=ch_app）")
+    expect(t).toContain("可以把项目接到下面任何通道")
+    expect(t).toContain("共 2 个通道")
+    expect(t).toContain("#1 应用内｜channel_id=ch_app｜应用内对话｜当前所在｜能用：inline")
+    expect(t).toContain("#2 飞书｜channel_id=ch_fs｜飞书｜能用：inline / group / bind")
+    expect(t).not.toContain("#2 飞书｜channel_id=ch_fs｜飞书｜当前所在")
+    for (const word of ["inline", "group", "bind", "没有默认值", "send_question"]) expect(t).toContain(word)
+  })
+
+  it("只有自己所在的通道：说明别的通道要到应用内对话里操作；受限的原因（note）原样给出", () => {
+    const t = formatChannels("ch_fs", [{ ...fs, current: true, modes: ["inline", "bind"], note: "没有记录到主用户的飞书身份（open_id），不能新建独立群" }])
+    expect(t).toContain("项目只能接到你当前所在的这个通道")
+    expect(t).toContain("⚠️ 没有记录到主用户的飞书身份（open_id），不能新建独立群")
+    expect(t).toContain("能用：inline / bind")
+  })
+
+  it("一种方式都不能用 / 没有通道：照实说", () => {
+    expect(formatChannels("ch_fs", [{ ...fs, current: true, modes: [], note: "这个通道已停用" }])).toContain("暂时都不能选")
+    expect(formatChannels("x", [])).toContain("没有可以接入项目的消息通道")
+  })
+})
+
+describe("formatCreated：按项目接入的每个通道，告诉 AI 接下来怎么跟用户说", () => {
+  const base = { ok: true as const, projectId: "pid1", name: "改版", dir: "D:\\p\\改版", templateName: "开发" }
+  const inline = { channelId: "ch_fs", channelName: "飞书", ok: true, mode: "inline" as const }
+
+  it("inline：没建群，项目 ID 给用户，可以 /p use 进入；没有进入会话", () => {
+    const t = formatCreated({ ...base, bindings: [inline] })
+    expect(t).toContain("✅ 已创建项目「改版」")
+    expect(t).toContain("项目 ID：pid1")
+    expect(t).toContain("「飞书」接了主聊天（不建群）")
     expect(t).toContain("/p use <项目 ID>")
+    expect(t).toContain("没有进入项目会话")
     expect(t).not.toContain("飞书独立群")
     expect(t).not.toContain("⚠️")
   })
 
-  it("group：说明建了群、用户是群主、要到群里协作；不能再让用户 /p use（群项目私聊进不去）", () => {
-    const t = formatCreated({ ...base, chatMode: "group", groupName: "📦 改版", groupChatId: "oc_new" })
-    expect(t).toContain("已建飞书独立群「📦 改版」")
+  it("group：说明建了群、用户是群主、群里的项目只能在群里进入和推进", () => {
+    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "group", groupName: "📦 改版", groupChatId: "oc_new" }] })
+    expect(t).toContain("「飞书」新建了飞书独立群「📦 改版」")
     expect(t).toContain("群主")
-    expect(t).toContain("到这个群里协作")
-    expect(t).toContain("私聊里 /p use 会被拒")
-    expect(t).not.toContain("请把项目 ID 告诉用户，他需要时自己进入")
+    expect(t).toContain("群里的项目只能在群里进入和推进")
   })
 
   it("bind：说明绑了哪个群，提醒确认机器人在群里；不声称项目卡一定送达", () => {
-    const t = formatCreated({ ...base, chatMode: "bind", groupChatId: "oc_exist" })
-    expect(t).toContain("已绑定飞书群 oc_exist")
-    expect(t).toContain("确认机器人已经在群里")
+    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "bind", groupChatId: "oc_exist" }] })
+    expect(t).toContain("「飞书」绑定了飞书群 oc_exist")
     expect(t).toContain("机器人不在群里的话发不进去")
-    expect(t).toContain("到这个群里协作")
+    expect(t).toContain("群里的项目只能在群里进入和推进")
   })
 
-  it("建群 / 绑群没成功退回 inline：warning 排在前面，让 AI 如实转述；正文按 inline 写", () => {
-    const t = formatCreated({ ...base, chatMode: "inline", warning: "建独立群没成功：无权限。项目已经建好，绑在当前聊天上（没有群）。" })
+  it("多个通道：每个通道一行；没接成的带原因，warning 排在接入清单前面，让 AI 如实转述", () => {
+    const t = formatCreated({
+      ...base,
+      bindings: [
+        { channelId: "ch_app", channelName: "应用内", ok: true, mode: "inline" },
+        { channelId: "ch_fs", channelName: "飞书", ok: false, mode: "group", warning: "建独立群没成功：无权限" },
+      ],
+      warning: "「飞书」建独立群没成功：无权限。项目已经建好，其余接入照常。",
+    })
     const lines = t.split("\n")
-    expect(lines.findIndex((l) => l.startsWith("⚠️ 建独立群没成功"))).toBeGreaterThan(-1)
-    expect(lines.findIndex((l) => l.startsWith("⚠️"))).toBeLessThan(lines.findIndex((l) => l.startsWith("没有建群")))
-    expect(t).toContain("没有建群")
+    const warnAt = lines.findIndex((l) => l.startsWith("⚠️ 「飞书」建独立群没成功"))
+    expect(warnAt).toBeGreaterThan(-1)
+    expect(warnAt).toBeLessThan(lines.findIndex((l) => l.startsWith("- ✅「应用内」")))
+    expect(t).toContain("- ⚠️「飞书」建独立群没成功：无权限")
+  })
+})
+
+describe("formatBound / formatUnbound", () => {
+  it("bind：列出每个接入点的结果，部分没接成带 warning", () => {
+    const t = formatBound({
+      ok: true, projectId: "p1", name: "改版",
+      bindings: [
+        { channelId: "ch_wx", channelName: "微信", ok: true, mode: "inline" },
+        { channelId: "ch_fs", channelName: "飞书", ok: false, mode: "bind", warning: "绑定群没成功：该群已绑定项目「甲」(x)" },
+      ],
+      warning: "「飞书」绑定群没成功。其余接入已生效，请如实告诉用户",
+    })
+    expect(t).toContain("项目「改版」（p1）的接入已更新")
+    expect(t).toContain("- ✅「微信」接了主聊天")
+    expect(t).toContain("- ⚠️「飞书」绑定群没成功")
+    expect(t).toContain("其余接入已生效")
+  })
+
+  it("unbind：说清取消了什么、会话已清理；专属群的备注（没解散）一并带上", () => {
+    const main = formatUnbound({ ok: true, projectId: "p1", name: "改版", removed: "飞书 的主聊天" })
+    expect(main).toContain("项目「改版」（p1）已取消接入：飞书 的主聊天")
+    expect(main).toContain("那条会话已一并清理")
+    const group = formatUnbound({ ok: true, projectId: "p1", name: "改版", removed: "飞书 的专属群", note: "群没有改名也没有解散，只是不再接入这个项目" })
+    expect(group).toContain("群没有改名也没有解散")
   })
 })
 
 describe("接线（只有真实应用跑得到的部分，读源码守住）", () => {
   const read = (...p: string[]) => fs.readFileSync(path.resolve(__dirname, "..", ...p), "utf8").replace(/\r\n/g, "\n")
 
-  it("宿主：daemon 输出里的 __HOST_RPC__ 行交给分发器，处理函数就是项目那三个", () => {
+  it("宿主：daemon 输出里的 __HOST_RPC__ 行交给分发器，处理函数就是项目那几个", () => {
     const src = read("electron", "daemon-manager.ts")
     expect(src).toMatch(/createHostRpcDispatcher\(\{[^}]*handlers: projectHostRpcHandlers/s)
     expect(src).toMatch(/line\.startsWith\(HOST_RPC_PREFIX\)\) \{\n\s*void handleHostRpcLine\(line, cachedPort \?\? readLockFile\(\)\?\.port\)\n\s*continue/)
     const proj = read("electron", "project-create.ts")
-    for (const kind of ["project.templates", "project.repos", "project.create"]) expect(proj).toContain(`"${kind}"`)
+    for (const kind of ["project.templates", "project.repos", "project.channels", "project.create", "project.bind", "project.unbind"]) expect(proj).toContain(`"${kind}"`)
   })
 
   it("daemon：/api/host-rpc 把回执交给同一个跟踪器；管理 MCP 默认用它", () => {
@@ -501,43 +609,48 @@ describe("接线（只有真实应用跑得到的部分，读源码守住）", (
     expect(core).not.toContain("enterProjectSession")
     const ai = src.slice(src.indexOf("export async function createProjectForAi"), src.indexOf("function strOf"))
     expect(ai).not.toContain("enterProjectSession")
-    expect(ai).toContain("createProjectCore(where.chatKey, input)")
+    expect(ai).toContain("createProjectCore(input)")
     const app = src.slice(src.indexOf("export async function createProjectFromApp"), src.indexOf("export async function createProjectForAi"))
     expect(app).toContain("enterProjectSession")
   })
 
-  it("AI 建群 / 绑群：只在项目整个建成之后，且不离开会话、不清「当前项目」指针、不往私聊发回执", () => {
+  it("AI 建群 / 绑群：先认人、再校验接入点，都在建项之前；接入只在项目整个建成之后，且不离开会话、不清「当前项目」指针、不往私聊发回执", () => {
     const create = read("electron", "project-create.ts")
     const ai = create.slice(create.indexOf("export async function createProjectForAi"), create.indexOf("function strOf"))
-    // 先建项目（createProjectCore 里校验、克隆、落盘都过了），再接群
-    expect(ai.indexOf("createProjectCore(where.chatKey, input)")).toBeGreaterThan(-1)
-    expect(ai.indexOf("attachProjectToGroupForAi(")).toBeGreaterThan(ai.indexOf("createProjectCore(where.chatKey, input)"))
-    // chat_mode 先校验、再检查通道，都在建项之前
-    expect(ai.indexOf("parseAiChatChoice(")).toBeLessThan(ai.indexOf("createProjectCore("))
-    expect(ai.indexOf("checkAiChat(")).toBeLessThan(ai.indexOf("createProjectCore("))
+    const core = ai.indexOf("createProjectCore(input)")
+    expect(core).toBeGreaterThan(-1)
+    // 先认出调用者（只认主用户）、再校验 bindings（没有默认值），然后才建目录建项目
+    expect(ai.indexOf("resolveAiCreateChat(chatKey)")).toBeGreaterThan(-1)
+    expect(ai.indexOf("resolveAiCreateChat(chatKey)")).toBeLessThan(ai.indexOf("planBindingChoices("))
+    expect(ai.indexOf("planBindingChoices(")).toBeLessThan(core)
+    // 项目建好（校验、克隆、落盘都过了）才去接入通道
+    expect(ai.indexOf("attachPlannedBindings(")).toBeGreaterThan(core)
     expect(ai).not.toContain("leaveProjectSession")
     expect(ai).not.toContain("setCurrentProjectId")
 
     const cmds = read("electron", "project-commands.ts")
-    const attach = cmds.slice(cmds.indexOf("export async function attachProjectToGroupForAi"), cmds.indexOf("async function finalizeNewProject"))
-    expect(attach).toContain("setupProjectGroup(port, project, operatorChatKey, target.ownerOpenId, true)")
-    expect(attach).toContain("persistBoundProjectGroup(project, true)")
+    const attach = cmds.slice(cmds.indexOf("export async function attachPlannedBindings"), cmds.indexOf("async function replyGroupModeCreated"))
+    expect(attach).toContain("createGroupBinding(")
+    expect(attach).toContain("bindExistingGroup(")
     expect(attach).not.toContain("leaveProjectSession")
     expect(attach).not.toContain("setCurrentProjectId")
     // 回执只发到群里（chatKey 是群），不发回调用者的私聊
-    expect(attach).toContain(`reportCommandResult(port, "", true, "", chatKey,`)
+    const announce = cmds.slice(cmds.indexOf("async function announceProjectInGroup"), cmds.indexOf("export async function attachPlannedBindings"))
+    expect(announce).toContain(`reportCommandResult(port, "", true, "", groupChatKey,`)
 
-    // 飞书表单建项的老路径行为不变：照样清指针、离开当前会话
-    expect(cmds).toMatch(/if \(!keepCurrent\) setCurrentProjectId\(null\)/)
+    // 飞书表单建项的老路径行为不变：选了群就回到主会话（项目只在群里协作），沿用当前会话的照样进入项目、记下当前项目
     expect(cmds).toMatch(/await leaveProjectSession\(port, chatId\)/)
-    expect(cmds).toContain("setupProjectGroup(port, project, chatId, operatorOpenId)")
+    expect(cmds).toMatch(/await enterProjectSession\(port, chatId, project\)\n\s*if \(!r\.ok\)/)
+    expect(cmds).toMatch(/setCurrentProjectId\(project\.id, chatId\)/)
   })
 
-  it("server-admin：create 在打扰宿主之前先校验 chat_mode", () => {
+  it("server-admin：create 在打扰宿主之前先要求 bindings；带上调用者的聊天", () => {
     const admin = read("src", "server-admin.ts")
-    const block = admin.slice(admin.indexOf('if (action === "create")'), admin.indexOf("const p = getProject(project_id"))
-    expect(block.indexOf("parseAiChatChoice(chat_mode, existing_group_chat_id)")).toBeGreaterThan(-1)
-    expect(block.indexOf("parseAiChatChoice(")).toBeLessThan(block.indexOf('request<AiProjectCreateResult>("project.create"'))
-    expect(block).toContain("chatMode: chat.choice.mode")
+    const block = admin.slice(admin.indexOf('if (action === "create")'), admin.indexOf("// 只剩 delete"))
+    expect(block.indexOf("parseAiBindings(bindings)")).toBeGreaterThan(-1)
+    expect(block.indexOf("if (!choices.length)")).toBeLessThan(block.indexOf('request<AiProjectCreateResult>("project.create"'))
+    expect(block).toContain("bindings: choices")
+    expect(block).toContain("chatKey: chatIdFromSessionKey(invoker)")
+    expect(block).not.toContain("chat_mode")
   })
 })

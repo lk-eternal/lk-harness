@@ -107,7 +107,7 @@ import { registerProjectAgentTools } from "./server-project.js";
 import { registerScheduleTools, type ScheduleApi } from "./server-schedule.js";
 import { aiScheduleStateFile, readAiScheduleRuns, writeAiScheduleRuns } from "./shared/ai-schedule-state.js";
 import { registerDiffTools } from "./server-diff.js";
-import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, listProjects, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
+import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
   initHarnessMcpStore,
   listHarnessMcpServers,
@@ -122,7 +122,7 @@ import {
   saveHarnessRule,
   deleteHarnessRule,
 } from "./shared/harness-rule-store.js";
-import { projectIdFromSessionKey, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
+import { projectIdFromSessionKey, projectSessionKeyFor, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
 import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey, sessionHeaderTemplate } from "./shared/session-label.js";
 import {
   listFeishuProjectsForPicker,
@@ -1537,26 +1537,14 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
       }
     }
   }
-  // 项目专属群：命中 groupChatId 的消息强制路由到该项目会话（无视 active 指针，永不串台）
+  // 项目专属群：命中项目接入的某个群的消息强制路由到该群自己的项目会话（无视 active 指针，永不串台；
+  // 每次都按群查，所以 daemon 重启后路由映射丢了也不会落进裸 chatKey 幽灵会话）
   if (!resolved.viaReply && chatId && chatType === "group") {
     const grp = findProjectByGroupChat(chatId);
-    if (grp?.sessionKey && routedId !== grp.sessionKey) {
-      setActiveSession(chatId, grp.sessionKey, true);
-      routedId = grp.sessionKey;
-    }
-  }
-  // 群聊无活跃会话映射（如 daemon 重启后路由丢失）：唯一活跃项目兜底，防消息落入裸 chatKey 幽灵会话
-  if (!resolved.viaReply && chatId && chatType === "group" && routedId === chatId) {
-    const rawChat = parseChatKey(chatId).chatId;
-    const owned = listProjects().filter((p) => {
-      if (p.archivedAt || !p.sessionKey) return false;
-      const n = p.notifyChatId || "";
-      return n === chatId || parseChatKey(n).chatId === rawChat;
-    });
-    if (owned.length === 1) {
-      setActiveSession(chatId, owned[0].sessionKey!, true);
-      routedId = owned[0].sessionKey!;
-      log("INFO", `[Routing] 群会话映射缺失，兜底路由到项目「${owned[0].name}」: ${routedId}`);
+    const grpSessionKey = grp ? projectSessionKeyFor(grp, chatId) : undefined;
+    if (grpSessionKey && routedId !== grpSessionKey) {
+      setActiveSession(chatId, grpSessionKey, true);
+      routedId = grpSessionKey;
     }
   }
   if (chatId && chatType) rememberChatType(chatId, chatType);
@@ -6136,7 +6124,7 @@ function aiChatOwnerSessionKey(task: ScheduledTask): string {
 function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
   const projectId = task.targetProjectId?.trim();
   if (projectId) {
-    const r = resolveProjectAgentTarget(projectId, getProject(projectId));
+    const r = resolveProjectAgentTarget(projectId, getProject(projectId), withResolvedChannel(task).channelId);
     return r.ok ? { ...r, chatType: "project" } : r;
   }
   const ownerKey = aiChatOwnerSessionKey(task);

@@ -9,6 +9,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import {
   findRepoProfile,
+  getChannel,
   getConfig,
   getRepoProfiles,
   removeRepoProfile,
@@ -261,7 +262,7 @@ export function getProjectDetail(payload: unknown): AdminOutcome {
   const r = projectOf(payload)
   if (!r.ok) return r
   const item = buildProjectListItem(r.project, { groups: projectGroups(r.project), globals: getNodeGroups() })
-  return { ok: true, message: formatProjectDetail(item) }
+  return { ok: true, message: formatProjectDetail(item, (id) => getChannel(id)?.name ?? id) }
 }
 
 export function updateProjectInfo(payload: unknown): AdminOutcome {

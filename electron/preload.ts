@@ -4,7 +4,7 @@ import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/sha
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
 import type { BranchListResult, BranchSwitchResult, BranchTarget } from "../src/shared/git-branch"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types"
-import type { InspectRepoResult, ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectView } from "../src/shared/project-app-types"
+import type { InspectRepoResult, ProjectActionResult, ProjectBindingChoice, ProjectBindResult, ProjectChannelOption, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectUnbindResult, ProjectView } from "../src/shared/project-app-types"
 import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
@@ -320,6 +320,13 @@ const api = {
   inspectProjectRepo: (repoPath: string): Promise<InspectRepoResult> => ipcRenderer.invoke("project:inspect-repo", repoPath),
   createProjectInApp: (channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> =>
     ipcRenderer.invoke("project:create-in-app", channelId, input),
+  /** 项目能接入的消息通道和各自能用的方式；建项对话框传它所在的应用内通道，设置页不传 */
+  listProjectChannelOptions: (channelId?: string): Promise<ProjectChannelOption[]> =>
+    ipcRenderer.invoke("project:channel-options", channelId),
+  bindProject: (projectId: string, choices: ProjectBindingChoice[]): Promise<ProjectBindResult> =>
+    ipcRenderer.invoke("project:bind", projectId, choices),
+  unbindProject: (projectId: string, choice: ProjectBindingChoice): Promise<ProjectUnbindResult> =>
+    ipcRenderer.invoke("project:unbind", projectId, choice),
   getProjectView: (projectId: string, channelId: string): Promise<ProjectView | null> =>
     ipcRenderer.invoke("project:view", projectId, channelId),
   runProjectStep: (channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResult> =>

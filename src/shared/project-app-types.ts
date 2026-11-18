@@ -1,5 +1,6 @@
 // ── 应用内（桌面端 / 手机端）项目：接口里传的数据形状 ─────────────────────────
 
+import type { ChannelType } from "./channel-types.js"
 import type { ProjectChatMode, ProjectFieldDef, WorkBranchMode } from "./project-types.js"
 
 /**
@@ -120,6 +121,35 @@ export interface ProjectCreateInput {
   storyUrl?: string
   /** 相关文档（链接或说明） */
   relatedDocs?: string
+  /**
+   * 项目接入哪些消息通道、用什么方式（可以多个）。不给 = 只接当前所在的应用内通道的主聊天（inline）。
+   * 每个入口各有一条独立的项目会话，互不合并；没接入的通道看不到这个项目。
+   */
+  bindings?: ProjectBindingChoice[]
+}
+
+/**
+ * 建项时选的一个接入点。inline=该通道的主聊天（应用内对话 / 主用户私聊，不建群）；
+ * group=新建飞书独立群并把主用户拉进去；bind=绑定一个已有的飞书群（机器人要已经在群里）。
+ */
+export interface ProjectBindingChoice {
+  channelId: string
+  mode: ProjectChatMode
+  /** bind 才有：飞书群的 chat_id（oc_…） */
+  groupChatId?: string
+}
+
+/** 建项时能选的一个消息通道，以及在它上面能用哪几种接入方式 */
+export interface ProjectChannelOption {
+  id: string
+  name: string
+  type: ChannelType
+  /** 你现在就在这个通道里 */
+  current: boolean
+  /** 在这个通道上能用的接入方式；空 = 暂时不能选，原因看 note */
+  modes: ProjectChatMode[]
+  /** 能用的方式受限、或暂时不能选的原因（没绑主用户、没记到飞书身份等） */
+  note?: string
 }
 
 export interface ProjectCreateResult {
@@ -132,14 +162,20 @@ export interface ProjectCreateResult {
   sessionKey?: string
 }
 
-/**
- * AI 建项时项目的会话落在哪（没有默认值，调用方必须明确给出）：
- * inline=不建群，绑在调用者所在的聊天上；group=建飞书独立群并拉主用户入群；bind=绑定一个已有的飞书群。
- */
-export interface AiChatChoice {
+/** 一个接入点最后实际的样子（建群 / 绑群没成功时，原因在 warning） */
+export interface ProjectBindingOutcome {
+  channelId: string
+  channelName: string
+  /** 接成了没有（没成功的原因在 warning） */
+  ok: boolean
+  /** 要求的方式：inline=主聊天，group=新建的独立群，bind=绑定的已有群 */
   mode: ProjectChatMode
-  /** bind 才有：要绑定的飞书群 chat_id（oc_…） */
-  existingGroupChatId?: string
+  /** group：群名 */
+  groupName?: string
+  /** group / bind：群的原始 chat_id */
+  groupChatId?: string
+  /** 这个接入点没按要求做成时的原因 */
+  warning?: string
 }
 
 /** AI 建项（管理 MCP 的 manage_project create）的结果：建好就返回，不进入项目会话 */
@@ -150,15 +186,33 @@ export type AiProjectCreateResult =
       name: string
       dir: string
       templateName: string
-      /** 项目实际落在哪：建群或绑群没成功时是 inline，原因在 warning */
-      chatMode: ProjectChatMode
-      /** group：群名；bind：不填 */
-      groupName?: string
-      /** group / bind：群的原始 chat_id */
-      groupChatId?: string
-      /** 项目建好了，但有件事没做成（比如建群失败退回了 inline）；AI 必须如实告诉用户 */
+      /** 项目实际接入的聊天，逐个通道列出 */
+      bindings: ProjectBindingOutcome[]
+      /** 项目建好了，但有件事没做成（比如建群失败）；AI 必须如实告诉用户 */
       warning?: string
     }
+  | { ok: false; error: string }
+
+/** manage_project channels：调用者当前所在的通道，和他能把项目接到哪些通道 */
+export type AiProjectChannelsResult =
+  | { ok: true; current: string; channels: ProjectChannelOption[] }
+  | { ok: false; error: string }
+
+/** 给已有项目补接入（manage_project bind / 设置页项目详情）的结果 */
+export type ProjectBindResult =
+  | {
+      ok: true
+      projectId: string
+      name: string
+      /** 这次要求的每个接入点各自的结果（已经接着的会写在 warning 里，不重复接） */
+      bindings: ProjectBindingOutcome[]
+      warning?: string
+    }
+  | { ok: false; error: string }
+
+/** 取消项目在某个通道上的接入（manage_project unbind / 设置页项目详情）的结果 */
+export type ProjectUnbindResult =
+  | { ok: true; projectId: string; name: string; removed: string; note?: string }
   | { ok: false; error: string }
 
 /** 项目步骤条里的一项 */
@@ -191,8 +245,8 @@ export interface ProjectView {
   /** 最近一次登记的成果 */
   artifact?: { path: string; name: string; summary?: string; at?: number; exists: boolean }
   /**
-   * 项目归当前这个通道管：步骤、同步、删除都只对归自己的项目开放。
-   * 飞书里建的项目也会出现在应用内的会话列表里，在这边点步骤会把它的会话绑定抢过来，所以只读。
+   * 项目接入了当前这个通道：只有接入了的通道才能看到项目、推进项目；
+   * 没接入的通道里（比如设置页里看别的通道的项目）步骤、同步、删除都只读。
    */
   ownedHere: boolean
   /** 模板的步骤和项目副本不一致，可以同步 */
@@ -232,7 +286,16 @@ export interface ProjectListItem {
   worktreePath?: string
   /** 项目信息（含「代码仓库」几行）；仓库、分支都在这里，改它就是改项目信息 */
   metadata: Record<string, string>
-  groupChatId?: string
+  /** 项目接入的聊天入口（通道的主聊天、专属群）；一个都没有的项目只在设置页里看得到 */
+  bindings: ProjectBindingItem[]
+}
+
+/** 项目接入的一个聊天入口，设置页展示用（通道名由界面按 channelId 查） */
+export interface ProjectBindingItem {
+  kind: "main" | "group"
+  channelId: string
+  /** group 才有：群的聊天键（ch_xxx|oc_yyy） */
+  chatKey?: string
 }
 
 /**
@@ -246,9 +309,9 @@ export function projectDeleteNote(view: Pick<ProjectView, "externalDir" | "dir" 
   return `项目文件夹（含 AI 生成的全部成果）会移到${recycleBin}。`
 }
 
-/** 项目归别的通道管（比如飞书）时，应用里动不了它的删除 / 归档，这句话告诉用户去哪做 */
+/** 项目没接入当前通道时，这里动不了它的删除 / 归档，这句话告诉用户去哪做 */
 export function projectNotOwnedHint(action: "删除" | "归档"): string {
-  return `这个项目归其它通道管（比如飞书），${action}可以在设置的项目管理里做`
+  return `这个项目没有接入当前通道，${action}可以在设置的项目管理里做`
 }
 
 /** 对话页项目栏、会话列表、手机端删项目时确认框里的正文（三处同一句话，不各写一份） */

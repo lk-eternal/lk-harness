@@ -1,21 +1,24 @@
 // ── 应用内建项目 / 推进步骤 / 项目信息（桌面端 IPC 与手机端网关共用） ─────────────
-// 项目归属：在应用里建的项目绑在「应用内对话」通道上，会话键 = <应用通道>|app_main::project_<id>。
-// 不动飞书私聊用的全局「当前项目」指针（建项和推进步骤都显式指定项目，不读那个指针）。
+// 项目归属：项目可以接入多个聊天入口（通道的主聊天、专属群），每个入口一条独立会话，见 project-types 的 ProjectBinding。
+// 在应用里建的项目默认只接「应用内对话」通道的主聊天，会话键 = <应用通道>|app_main::project_<id>；
+// 建项时也可以同时选别的通道。「当前项目」按通道记，应用内的操作不碰飞书私聊正在用的那个。
 
 import { app } from "electron"
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { addRepoProfilesIfMissing, getChannel, getRepoProfiles } from "./config-store"
-import { readLockFile, resolveMainChatId } from "./daemon-client"
+import { addRepoProfilesIfMissing, getChannel, getChannels, getRepoProfiles } from "./config-store"
+import { readLockFile } from "./daemon-client"
 import { reportCommandResult } from "./command-handler"
 import {
   archiveProjectGroup,
-  attachProjectToGroupForAi,
+  attachPlannedBindings,
   enterProjectSession,
   executeProjectDelete,
   startProjectNode,
 } from "./project-commands"
-import { leaveProjectSession, releaseProjectRoutes, stopSessionAgent } from "./session-dispatcher"
+import { bindingChannelFacts, connectMainBinding } from "./project-bind"
+import { bindProjectChoices, unbindProjectChoice } from "./project-bind-ops"
+import { releaseProjectRoutes } from "./session-dispatcher"
 import { inspectLocalRepo } from "./project-worktree"
 import { createProjectAdminHandlers } from "./project-admin"
 import { prepareProjectWorkspace, projectsRootDir } from "./project-workspace"
@@ -24,14 +27,20 @@ import {
   isRemoteRepoUrl,
   projectNotOwnedHint,
   repoDisplayName,
+  type AiProjectChannelsResult,
   type AiProjectCreateResult,
   type InspectRepoResult,
   type ProjectActionResult,
+  type ProjectBindResult,
+  type ProjectBindingChoice,
+  type ProjectBindingOutcome,
+  type ProjectChannelOption,
   type ProjectCreateInput,
   type ProjectCreateResult,
   type ProjectListItem,
   type ProjectRepoOption,
   type ProjectTemplateInfo,
+  type ProjectUnbindResult,
   type ProjectView,
 } from "../src/shared/project-app-types.js"
 import {
@@ -44,11 +53,10 @@ import {
   syncedSnapshot,
   templateInfos,
 } from "../src/shared/project-create-plan.js"
+import { parseBindingChoices, planBindingChoices, projectChannelOptions } from "../src/shared/project-bindings.js"
 import {
+  clearCurrentProjectOf,
   createProject,
-  findProjectByGroupChat,
-  getCurrentProject,
-  getCurrentProjectId,
   getNodeGroups,
   getProject,
   initProjectStore,
@@ -56,13 +64,11 @@ import {
   projectGroups,
   projectNodes,
   saveProject,
-  setCurrentProjectId,
   setProjectArchived,
 } from "../src/shared/project-store.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience, type ChannelType } from "../src/shared/channel-types.js"
-import { parseExistingGroupChatBinding, projectRootDir, projectSessionKey, type Project } from "../src/shared/project-types.js"
-import { parseAiChatChoice } from "../src/shared/project-ai-format.js"
+import { canEnterProjectFromChat, projectRootDir, projectSessionKeyFor, type Project } from "../src/shared/project-types.js"
 
 export { projectsRootDir }
 
@@ -70,7 +76,7 @@ function ensureStore(): void {
   initProjectStore(app.getPath("userData"))
 }
 
-const NOT_OWNED_HINT = "这个项目归其它通道管（比如飞书），请到它所在的聊天里推进；删除可以在设置的项目管理里做"
+const NOT_OWNED_HINT = "这个项目没有接入当前通道，请到它接入的聊天里推进；删除可以在设置的项目管理里做"
 /** 应用内对话通道的 chatKey；不是应用内通道返回 undefined */
 function appChatKeyOf(channelId: string): string | undefined {
   if (!channelId || getChannel(channelId)?.type !== "app") return undefined
@@ -125,11 +131,11 @@ function prepareFolderWorkspace(folder: string): FolderWorkspace {
 }
 
 /**
- * 建项核心：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）→ 项目会话键绑到 chatKey。
- * 不进入项目会话：应用里点「新建」（createProjectFromApp）在它后面接着进入；AI 建项（createProjectForAi）不进，不打断当前对话。
+ * 建项核心：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）。
+ * 建出来的项目还没有接入任何聊天（谁都看不到它）：调用方接着用 attachPlannedBindings 把它接到选好的通道上。
+ * 不进入项目会话：应用里点「新建」（createProjectFromApp）在接入之后接着进入；AI 建项（createProjectForAi）不进，不打断当前对话。
  */
 async function createProjectCore(
-  chatKey: string,
   input: ProjectCreateInput,
 ): Promise<{ ok: true; project: Project } | { ok: false; error: string }> {
   ensureStore()
@@ -160,8 +166,6 @@ async function createProjectCore(
     undo = prepared.undo
   }
 
-  // createProject 会把它设成全局当前项目；应用内建项不该改飞书私聊正在用的那个，建完还原
-  const prevCurrent = getCurrentProjectId()
   let project: Project
   try {
     project = createProject({
@@ -175,48 +179,65 @@ async function createProjectCore(
       groupSnapshot: snapshotGroups([plan.group]),
       ...(external ? { externalWorkspace: true } : {}),
       metadata: { ...plan.metadata, ...repoInfo },
-      notifyChatId: chatKey,
     })
   } catch (e: unknown) {
     await undo?.()
-    setCurrentProjectId(prevCurrent)
     return { ok: false, error: `无法保存项目：${e instanceof Error ? e.message : String(e)}` }
   }
-  setCurrentProjectId(prevCurrent)
   // 这次用到的、还没记过的仓库记进常用仓库，下次建项直接勾选
   addRepoProfilesIfMissing(plan.repos.map((r) => ({ path: r.repoPath, baseBranch: r.baseBranch })))
-
-  project.sessionKey = projectSessionKey(chatKey, project.id)
-  saveProject(project)
   return { ok: true, project }
 }
 
-/** 新建项目（应用里点「新建」）：建项核心 → 进入项目会话 */
+/** 接入点没按要求接成的原因，合成一句话（建项结果的提示用） */
+function bindingWarnings(outcomes: readonly ProjectBindingOutcome[]): string[] {
+  return outcomes.filter((o) => !o.ok).map((o) => `「${o.channelName}」${o.warning ?? "没接成"}`)
+}
+
+/** 新建项目（应用里点「新建」）：建项核心 → 接入选好的通道 → 接了应用内对话的话进入项目会话 */
 export async function createProjectFromApp(channelId: string, input: ProjectCreateInput): Promise<ProjectCreateResult> {
   ensureStore()
   const chatKey = appChatKeyOf(channelId)
   if (!chatKey) return { ok: false, error: "不是应用内对话的通道" }
-  const created = await createProjectCore(chatKey, input)
+  // 没选就只接当前这个应用内对话。接入点要在建目录、建群之前校验：选得不对，一个目录、一个群都不建
+  const choices = input.bindings?.length ? input.bindings : [{ channelId, mode: "inline" as const }]
+  const planned = planBindingChoices(choices, bindingChannelFacts(), channelId)
+  if (!planned.ok) return planned
+  const created = await createProjectCore(input)
   if (!created.ok) return created
   const project = created.project
 
   const lock = readLockFile()
+  const outcomes = await attachPlannedBindings(lock?.port, project, planned.items)
+  const warnings = bindingWarnings(outcomes)
+  // 一个都没接成：项目不能没有入口（谁都看不到），退回应用内对话
+  if (!outcomes.some((o) => o.ok)) connectMainBinding(project, channelId, chatKey)
+  const sessionKeyIfBound = () => projectSessionKeyFor(getProject(project.id) ?? project, chatKey)
+  const withWarnings = (extra?: string): { warning?: string } => {
+    const all = [...(extra ? [extra] : []), ...warnings]
+    return all.length ? { warning: all.join("；") } : {}
+  }
+
+  // 没接应用内对话（比如只接了飞书群）：项目建好了，不进会话，界面也没有会话可切
+  if (!canEnterProjectFromChat(project, chatKey)) {
+    return { ok: true, projectId: project.id, ...withWarnings("项目已创建并接入了所选的聊天；没有接入应用内对话，所以这里不会出现它的会话") }
+  }
   if (!lock?.port) {
-    return { ok: true, projectId: project.id, sessionKey: project.sessionKey, warning: "项目已创建，但服务未运行，会话稍后再进入" }
+    return { ok: true, projectId: project.id, sessionKey: sessionKeyIfBound(), ...withWarnings("项目已创建，但服务未运行，会话稍后再进入") }
   }
   const entered = await enterProjectSession(lock.port, chatKey, project)
   if (!entered.ok) {
     pushUiLog("Project", "WARN", `[AppCreate] 项目 ${project.id} 已创建，进入会话失败: ${entered.error}`)
-    return { ok: true, projectId: project.id, sessionKey: project.sessionKey, warning: `项目已创建，但进入会话失败：${entered.error}` }
+    return { ok: true, projectId: project.id, sessionKey: sessionKeyIfBound(), ...withWarnings(`项目已创建，但进入会话失败：${entered.error}`) }
   }
-  return { ok: true, projectId: project.id, sessionKey: getProject(project.id)?.sessionKey ?? project.sessionKey }
+  return { ok: true, projectId: project.id, sessionKey: sessionKeyIfBound(), ...withWarnings() }
 }
 
-// ── AI 建项（管理 MCP 的 manage_project：templates / repos / create）────────────────
+// ── AI 建项（管理 MCP 的 manage_project：templates / repos / channels / create）──────────────
 // 和应用里点「新建」走同一套校验和落盘（createProjectCore），区别有三：
 // 任何通道的主用户都能建（应用内、飞书、微信）；建完不进入项目会话，不打断 AI 正在跑的这一轮对话；
-// 项目的会话落点由调用方明确指定（chat_mode，没有默认值）：inline 绑在调用者所在的聊天上，
-// group 建飞书独立群（群主是主用户）并把项目绑到群，bind 绑定已有的飞书群——后两种只有飞书私聊能用。
+// 项目接入哪些通道由调用方明确指定（bindings，没有默认值，AI 要先问用户）：每个通道可以接主聊天（inline）、
+// 新建飞书独立群（group）、绑定已有飞书群（bind）；应用内对话里的 AI 可以接任何通道，飞书 / 微信里只能接自己所在的通道。
 
 /** 同一个聊天里同名项目只允许一个在途：AI 的调用超时后重试、或同一轮里连发两次，不会建出两个一模一样的项目 */
 const aiCreateInFlight = new Set<string>()
@@ -225,21 +246,20 @@ type AiCreateWhere = {
   ok: true
   chatKey: string
   channelId: string
+  channelName: string
   channelType: ChannelType
-  /** 通道记录的主用户飞书 open_id（建独立群时设为群主）；没记到是空 */
-  mainUserOpenId?: string
 }
 
 /**
- * 调用者的聊天键 → 项目该绑的聊天。只认主用户：管理 MCP 本来就只挂给主用户的会话，这里再兜一层。
- * 应用内对话通道永远是主用户私聊，项目绑在它固定的那个聊天上（和应用里点「新建」一致）。
+ * 调用者的聊天键 → 它所在的通道。只认主用户：管理 MCP 本来就只挂给主用户的会话，这里再兜一层。
+ * 应用内对话通道永远是主用户私聊，项目的「当前聊天」就是它固定的那个聊天（和应用里点「新建」一致）。
  */
 function resolveAiCreateChat(chatKey: string): AiCreateWhere | { ok: false; error: string } {
   const { channelId } = parseChatKey(String(chatKey ?? ""))
   const channel = channelId ? getChannel(channelId) : undefined
   if (!channel) return { ok: false, error: "找不到你所在的消息通道，无法确定项目归属" }
   if (channel.type === "app") {
-    return { ok: true, chatKey: makeChatKey(channel.id, APP_CHANNEL_CHAT_ID), channelId: channel.id, channelType: "app" }
+    return { ok: true, chatKey: makeChatKey(channel.id, APP_CHANNEL_CHAT_ID), channelId: channel.id, channelName: channel.name, channelType: "app" }
   }
   const audience = resolveChannelAudience({
     mainUserEnabled: channel.mainUserEnabled,
@@ -248,51 +268,25 @@ function resolveAiCreateChat(chatKey: string): AiCreateWhere | { ok: false; erro
     chatType: "p2p",
   })
   if (audience !== "main") return { ok: false, error: "只有主用户的私聊可以创建项目" }
-  return { ok: true, chatKey, channelId: channel.id, channelType: channel.type, mainUserOpenId: channel.mainUserOpenId?.trim() || undefined }
-}
-
-type AiGroupTarget = { mode: "group"; ownerOpenId: string } | { mode: "bind"; existingGroupChatId: string }
-
-/** 建项之前就能判断的：这个通道能不能用所选的会话落点。不通过就一个目录、一个群都不建 */
-function checkAiChat(
-  where: AiCreateWhere,
-  chat: { mode: string; existingGroupChatId?: string },
-): { ok: true; target?: AiGroupTarget } | { ok: false; error: string } {
-  if (chat.mode === "inline") return { ok: true }
-  if (where.channelType !== "feishu") {
-    return { ok: false, error: "应用内对话和微信里不能建群或绑群，chat_mode 只能用 inline（项目绑在当前聊天上）。飞书群只能从飞书私聊里建。" }
-  }
-  if (chat.mode === "group") {
-    if (!where.mainUserOpenId) {
-      return { ok: false, error: "没有记录到你的飞书身份（open_id），建群时没法把你设为群主并拉进群。稍后再试一次；仍然不行就改用 inline，或让用户在设置里重新绑定主用户。" }
-    }
-    return { ok: true, target: { mode: "group", ownerOpenId: where.mainUserOpenId } }
-  }
-  const existing = chat.existingGroupChatId ?? ""
-  const parsed = parseExistingGroupChatBinding(existing, where.channelId)
-  if ("error" in parsed) return { ok: false, error: parsed.error }
-  const taken = findProjectByGroupChat(parsed.chatKey)
-  if (taken) return { ok: false, error: `该群已绑定项目「${taken.name}」(${taken.id})` }
-  return { ok: true, target: { mode: "bind", existingGroupChatId: existing } }
+  return { ok: true, chatKey, channelId: channel.id, channelName: channel.name, channelType: channel.type }
 }
 
 /**
- * AI 建项：建好就返回，不进入项目会话、不动全局「当前项目」指针。
- * chat 是项目的会话落点（没有默认值，不给或给错直接报错，让 AI 去问用户）；建群 / 绑群放在项目整个建成之后，
- * 校验不过、克隆失败都不会留下群。建群或绑群这一步本身失败：项目保留（绑在调用者的聊天上），warning 里写明原因。
+ * AI 建项：建好就返回，不进入项目会话、不动「当前项目」。
+ * bindings 是项目接入的通道和方式（没有默认值，不给或给错直接报错，让 AI 去问用户）；先校验再建：
+ * 校验不过、克隆失败都不会留下目录和群。建群或绑群这一步本身失败：项目保留，成功的接入照常，warning 里写明原因；
+ * 一个都没接成就退回调用者当前的聊天，项目不会没有入口。
  */
 export async function createProjectForAi(
   chatKey: string,
   input: ProjectCreateInput,
-  chat: { mode?: string; existingGroupChatId?: string },
+  bindings: ProjectBindingChoice[],
 ): Promise<AiProjectCreateResult> {
   ensureStore()
   const where = resolveAiCreateChat(chatKey)
   if (!where.ok) return where
-  const choice = parseAiChatChoice(chat?.mode, chat?.existingGroupChatId)
-  if (!choice.ok) return choice
-  const checked = checkAiChat(where, choice.choice)
-  if (!checked.ok) return checked
+  const planned = planBindingChoices(bindings, bindingChannelFacts(), where.channelId)
+  if (!planned.ok) return planned
   const name = String(input?.name ?? "").trim()
   const flightKey = name ? `${where.chatKey}\n${name.toLowerCase()}` : ""
   if (flightKey && aiCreateInFlight.has(flightKey)) {
@@ -300,35 +294,31 @@ export async function createProjectForAi(
   }
   if (flightKey) aiCreateInFlight.add(flightKey)
   try {
-    const created = await createProjectCore(where.chatKey, input)
+    const created = await createProjectCore(input)
     if (!created.ok) return created
     const p = created.project
 
-    let outcome: Pick<Extract<AiProjectCreateResult, { ok: true }>, "chatMode" | "groupName" | "groupChatId" | "warning"> = { chatMode: "inline" }
-    if (checked.target) {
-      const port = readLockFile()?.port
-      const attached = port
-        ? await attachProjectToGroupForAi(port, p, where.chatKey, checked.target)
-        : ({ ok: false, error: "后台服务没有在运行" } as const)
-      if (attached.ok) {
-        outcome = { chatMode: checked.target.mode, groupName: attached.groupName, groupChatId: attached.rawChatId }
-      } else {
-        const what = checked.target.mode === "group" ? "建独立群" : "绑定群"
-        pushUiLog("Project", "WARN", `[AiCreate] 项目 ${p.id} 已创建，但${what}失败: ${attached.error}`)
-        outcome = {
-          chatMode: "inline",
-          warning: `${what}没成功：${attached.error}。项目已经建好，绑在当前聊天上（没有群）。请如实告诉用户，由他决定怎么处理（比如删掉这个项目重建）。`,
-        }
-      }
+    const port = readLockFile()?.port
+    const outcomes = await attachPlannedBindings(port, p, planned.items)
+    const failed = bindingWarnings(outcomes)
+    let fallback = false
+    if (!outcomes.some((o) => o.ok)) {
+      connectMainBinding(p, where.channelId, where.chatKey)
+      outcomes.push({ channelId: where.channelId, channelName: where.channelName, ok: true, mode: "inline" })
+      fallback = true
     }
-    pushUiLog("Project", "INFO", `[AiCreate] AI 创建了项目「${p.name}」(${p.id})，聊天 ${where.chatKey}，会话落点 ${outcome.chatMode}`)
+    const warning = failed.length
+      ? `${failed.join("；")}。项目已经建好${fallback ? `，退回绑在你当前所在的「${where.channelName}」主聊天上` : "，其余接入照常"}。请如实告诉用户，由他决定怎么处理（比如用 bind 补接，或删掉这个项目重建）。`
+      : undefined
+    pushUiLog("Project", "INFO", `[AiCreate] AI 创建了项目「${p.name}」(${p.id})，调用者 ${where.chatKey}，接入 ${outcomes.map((o) => `${o.channelName}:${o.mode}${o.ok ? "" : "(失败)"}`).join("、")}`)
     return {
       ok: true,
       projectId: p.id,
       name: p.name,
       dir: projectRootDir(p) || p.worktreePath,
       templateName: projectGroups(p).map((g) => g.name).join("、"),
-      ...outcome,
+      bindings: outcomes,
+      ...(warning ? { warning } : {}),
     }
   } finally {
     if (flightKey) aiCreateInFlight.delete(flightKey)
@@ -349,16 +339,76 @@ export const projectHostRpcHandlers: Record<string, (payload: unknown) => unknow
   ...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser, syncSteps: syncProjectSteps }),
   "project.templates": () => listProjectTemplates(),
   "project.repos": () => listProjectRepoOptions(),
+  "project.channels": (payload): AiProjectChannelsResult => {
+    const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>
+    const where = resolveAiCreateChat(strOf(p.chatKey) ?? "")
+    if (!where.ok) return where
+    return { ok: true, current: where.channelId, channels: projectChannelOptions(bindingChannelFacts(), where.channelId) }
+  },
   "project.create": (payload) => {
     const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>
     const raw = (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>
     const folder = strOf(raw.folder)
     const input: ProjectCreateInput = { ...parseGatewayCreateInput(raw), ...(folder ? { folder } : {}) }
-    return createProjectForAi(strOf(p.chatKey) ?? "", input, {
-      mode: strOf(p.chatMode),
-      existingGroupChatId: strOf(p.existingGroupChatId),
-    })
+    return createProjectForAi(strOf(p.chatKey) ?? "", input, parseBindingChoices(p.bindings))
   },
+  "project.bind": (payload) => {
+    const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>
+    return bindProjectForAi(strOf(p.chatKey) ?? "", strOf(p.projectId) ?? "", parseBindingChoices(p.bindings))
+  },
+  "project.unbind": (payload) => {
+    const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>
+    const choice = parseBindingChoices([p.binding])[0]
+    if (!choice) return { ok: false, error: "要指明取消哪个接入：channel_id + mode" }
+    return unbindProjectForAi(strOf(p.chatKey) ?? "", strOf(p.projectId) ?? "", choice)
+  },
+}
+
+// ── 给已有项目增减接入点（AI 用 manage_project bind / unbind，设置页项目详情用 *FromSettings） ──
+
+/** AI 补接入：项目要是接入了调用者所在通道的项目才能动；能接到哪些通道同建项 */
+async function bindProjectForAi(chatKey: string, projectId: string, choices: ProjectBindingChoice[]): Promise<ProjectBindResult> {
+  ensureStore()
+  const where = resolveAiCreateChat(chatKey)
+  if (!where.ok) return where
+  const p = getProject(projectId.trim())
+  if (!p || !isProjectOwnedBy(p, where.channelId)) return { ok: false, error: "未找到项目（只能管接入了当前消息通道的项目）" }
+  return bindProjectChoices(p, choices, where.channelId)
+}
+
+async function unbindProjectForAi(chatKey: string, projectId: string, choice: ProjectBindingChoice): Promise<ProjectUnbindResult> {
+  ensureStore()
+  const where = resolveAiCreateChat(chatKey)
+  if (!where.ok) return where
+  const p = getProject(projectId.trim())
+  if (!p || !isProjectOwnedBy(p, where.channelId)) return { ok: false, error: "未找到项目（只能管接入了当前消息通道的项目）" }
+  return unbindProjectChoice(p, choice, where.channelId)
+}
+
+/** 设置页是本机管理员在操作：按应用内通道的权限（能动任何通道、任何项目） */
+function localAdminChannelId(): string | undefined {
+  return getChannels().find((c) => c.type === "app")?.id
+}
+
+/** 建项对话框 / 设置页的通道清单：能接哪些通道、各自能用什么方式。channelId 是对话框所在的应用内通道；设置页不传 */
+export function listProjectChannelOptions(channelId?: string): ProjectChannelOption[] {
+  return projectChannelOptions(bindingChannelFacts(), channelId || localAdminChannelId())
+}
+
+export async function bindProjectFromSettings(projectId: string, choices: ProjectBindingChoice[]): Promise<ProjectBindResult> {
+  ensureStore()
+  const p = getProject(String(projectId || "").trim())
+  if (!p) return { ok: false, error: "项目不存在" }
+  return bindProjectChoices(p, parseBindingChoices(choices), localAdminChannelId())
+}
+
+export async function unbindProjectFromSettings(projectId: string, choice: ProjectBindingChoice): Promise<ProjectUnbindResult> {
+  ensureStore()
+  const p = getProject(String(projectId || "").trim())
+  if (!p) return { ok: false, error: "项目不存在" }
+  const parsed = parseBindingChoices([choice])[0]
+  if (!parsed) return { ok: false, error: "要指明取消哪个接入" }
+  return unbindProjectChoice(p, parsed, localAdminChannelId())
 }
 
 /** 设置页项目列表：每个项目的完整资料（字段、快捷操作取自项目实际在用的模板） */
@@ -422,18 +472,10 @@ export async function deleteProjectByUser(
     return { ok: false, error: NOT_OWNED_HINT }
   }
   const lock = readLockFile()
-  const wasCurrent = getCurrentProject()?.id === id
-  const sk = target.sessionKey || (lock?.port
-    ? projectSessionKey(await resolveMainChatId(lock.port) || "", id)
-    : "")
-  if (sk) await stopSessionAgent(sk)
+  // 停每个入口上的会话 Agent、清路由和应用内聊天记录、把停在它上面的聊天挪回主会话，都在 executeProjectDelete 里做
   const r = await executeProjectDelete(id)
   if (!r.ok) return { ok: false, error: "删除失败" }
   if (lock?.port) await archiveProjectGroup(lock.port, target)
-  if (wasCurrent && lock?.port) {
-    const chatId = await resolveMainChatId(lock.port)
-    if (chatId) await leaveProjectSession(lock.port, chatId)
-  }
   return { ok: true, name: target.name }
 }
 
@@ -464,8 +506,8 @@ export function setProjectArchivedByUser(
  * 归档只改了项目上的标记，不做这一步，私聊会一直停在已归档的项目里。
  * 挪会话要问 daemon，是 best-effort，不拖归档本身：daemon 没起来就算了。
  */
-function releaseArchivedProject(project: { id: string; groupChatId?: string }): void {
-  if (getCurrentProjectId() === project.id) setCurrentProjectId(null)
+function releaseArchivedProject(project: Pick<Project, "id" | "bindings">): void {
+  clearCurrentProjectOf(project.id)
   const lock = readLockFile()
   if (!lock?.port) return
   void releaseProjectRoutes(lock.port, project).catch(() => { /* best-effort */ })

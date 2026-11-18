@@ -180,7 +180,7 @@ describe("releaseProjectRoutes：挪走谁、不动谁", () => {
 
   it("项目自己的专属群不动（归档后仍可 /p use 回去继续）；别的群、私聊照挪", async () => {
     const { dispatcher, mk } = await boot()
-    const p = mk("慢sql", { groupChatId: FEISHU_GROUP })
+    const p = mk("慢sql", { bindings: [{ kind: "group", channelId: FEISHU, chatKey: FEISHU_GROUP }] })
     activeSessions = {
       [FEISHU_GROUP]: projectSessionKey(FEISHU_GROUP, p.id),
       [FEISHU_OTHER_GROUP]: projectSessionKey(FEISHU_OTHER_GROUP, p.id),
@@ -247,28 +247,30 @@ describe("归档项目时触发（setProjectArchivedByUser）", () => {
     expect(activeSessions[FEISHU_CHAT]).toBe(projectSessionKey(FEISHU_CHAT, p.id))
   })
 
-  it("全局「当前项目」指针：指着被归档的就清掉，指着别的不动", async () => {
+  it("各通道的「当前项目」指针：指着被归档的就清掉（每个通道都清），指着别的不动", async () => {
     const { create, store, mk } = await boot()
     const p = mk("慢sql")
     const other = mk("别的")
-    store.setCurrentProjectId(other.id)
+    store.setCurrentProjectId(other.id, FEISHU_CHAT)
     create.setProjectArchivedByUser(p.id, true)
-    expect(store.getCurrentProjectId()).toBe(other.id)
-    store.setCurrentProjectId(p.id)
+    expect(store.getCurrentProjectId(FEISHU_CHAT)).toBe(other.id)
+    store.setCurrentProjectId(p.id, FEISHU_CHAT)
+    store.setCurrentProjectId(p.id, APP_CHAT)
     create.setProjectArchivedByUser(p.id, true)
-    expect(store.getCurrentProjectId()).toBeNull()
+    expect(store.getCurrentProjectId(FEISHU_CHAT)).toBeNull()
+    expect(store.getCurrentProjectId(APP_CHAT)).toBeNull()
   })
 
   it("daemon 没起来（没有锁文件）：归档照常成功，当前项目指针照样清", async () => {
     const b = await boot()
     const p = b.mk("慢sql")
-    b.store.setCurrentProjectId(p.id)
+    b.store.setCurrentProjectId(p.id, FEISHU_CHAT)
     activeSessions = { [FEISHU_CHAT]: projectSessionKey(FEISHU_CHAT, p.id) }
     const lockPath = path.join(userData, LOCK_FILE_NAME)
     const lock = fs.readFileSync(lockPath)
     fs.rmSync(lockPath)
     expect(b.create.setProjectArchivedByUser(p.id, true)).toEqual({ ok: true, name: "慢sql" })
-    expect(b.store.getCurrentProjectId()).toBeNull()
+    expect(b.store.getCurrentProjectId(FEISHU_CHAT)).toBeNull()
     expect(b.store.getProject(p.id)?.archivedAt).toBeTruthy()
     // 之后 daemon 起来了：对照归档能挪，而刚才那次一个请求都没发过
     fs.writeFileSync(lockPath, lock)

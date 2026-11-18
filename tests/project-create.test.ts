@@ -100,6 +100,7 @@ async function boot() {
 }
 
 const hit = (url: string) => hits.filter((h) => h.url === url)
+const portOf = (): number => (server.address() as { port: number }).port
 
 describe("应用内建项目", () => {
   it("建好的项目：通用模板的步骤副本、项目信息、应用内会话键、目录和成果目录", async () => {
@@ -115,15 +116,16 @@ describe("应用内建项目", () => {
     expect(p.groupId).toBe("research")
     expect(p.groupSnapshot?.map((g) => g.id)).toEqual(["research"])
     expect(p.metadata).toEqual({ 交付形式: "PPT", 截止时间: "周五" })
-    expect(p.notifyChatId).toBe(APP_CHAT)
-    expect(p.sessionKey).toBe(`${APP_CHAT}::project_${p.id}`)
-    expect(r.sessionKey).toBe(p.sessionKey)
+    // 默认只接应用内对话通道的主聊天，会话键记在这个入口上
+    const sessionKey = `${APP_CHAT}::project_${p.id}`
+    expect(p.bindings).toEqual([{ kind: "main", channelId: APP, sessionKey }])
+    expect(r.sessionKey).toBe(sessionKey)
     // 目录在应用数据目录下，成果目录已建好
     expect(path.resolve(p.worktreePath).startsWith(path.resolve(userData))).toBe(true)
     expect(fs.existsSync(path.join(p.worktreePath, ".lk-harness", "artifacts"))).toBe(true)
     // 进入项目会话：daemon 的当前会话切到项目会话
     expect(hit("/api/active-session")).toEqual([
-      { url: "/api/active-session", body: { chatId: APP_CHAT, sessionKey: p.sessionKey } },
+      { url: "/api/active-session", body: { chatId: APP_CHAT, sessionKey } },
     ])
   })
 
@@ -135,16 +137,18 @@ describe("应用内建项目", () => {
     expect(store.getProject(a.projectId!)!.worktreePath).not.toBe(store.getProject(b.projectId!)!.worktreePath)
   })
 
-  it("不动飞书私聊用的全局「当前项目」指针", async () => {
+  it("不动飞书私聊用的「当前项目」指针（指针按通道记，应用内建项目只动应用内通道的）", async () => {
     const { store, create } = await boot()
+    const FS_CHAT = makeChatKey(FEISHU, "ou_main")
     const first = store.createProject({
       name: "飞书那边的项目", goal: "",
       worktreePath: path.join(userData, "fs-proj", "workspace"), groupIds: ["develop"], groupId: "develop",
+      bindings: [{ kind: "main", channelId: FEISHU }],
     })
-    store.setCurrentProjectId(first.id)
+    store.setCurrentProjectId(first.id, FS_CHAT)
     const r = await create.createProjectFromApp(APP, { name: "应用里建的", templateId: "general" })
     expect(r.ok).toBe(true)
-    expect(store.getCurrentProjectId()).toBe(first.id)
+    expect(store.getCurrentProjectId(FS_CHAT)).toBe(first.id)
   })
 
   it("不是应用内通道不能建；校验不过不留项目", async () => {
@@ -192,9 +196,9 @@ describe("应用内建项目", () => {
     expect(r.ok).toBe(true)
     expect(r.warning).toContain("服务未运行")
     const p = store.getProject(r.projectId!)!
-    expect(p.sessionKey).toBe(`${APP_CHAT}::project_${r.projectId}`)
-    // 项目归应用内通道：后面 daemon 起来、步骤产出通知时按它回到应用内对话
-    expect(p.notifyChatId).toBe(APP_CHAT)
+    // 项目接入了应用内对话通道的主聊天，会话键已记下：后面 daemon 起来、步骤产出通知时按它回到应用内对话
+    expect(p.bindings).toEqual([{ kind: "main", channelId: APP, sessionKey: `${APP_CHAT}::project_${r.projectId}` }])
+    expect(r.sessionKey).toBe(`${APP_CHAT}::project_${r.projectId}`)
   })
 })
 
@@ -202,7 +206,7 @@ describe("点步骤", () => {
   it("步骤提示词投进项目会话；不动全局指针；聊天里留一条记录", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(APP, { name: "写作", templateId: "writing" })
-    const before = store.getCurrentProjectId()
+    const before = store.getCurrentProjectId(APP_CHAT)
     hits.length = 0
 
     const run = await create.runProjectStepFromApp(APP, r.projectId!, "outline")
@@ -212,7 +216,7 @@ describe("点步骤", () => {
     expect(enq[0].body.sessionKey).toBe(r.sessionKey)
     expect(String(enq[0].body.content)).toContain("[PROJECT_ACTION]")
     expect(String(enq[0].body.content)).not.toMatch(/分支与红线|飞书|GitLab/)
-    expect(store.getCurrentProjectId()).toBe(before)
+    expect(store.getCurrentProjectId(APP_CHAT)).toBe(before)
     const notice = hit("/cmd/result")
     expect(notice).toHaveLength(1)
     expect(notice[0].body).toMatchObject({ chatId: APP_CHAT, sessionKey: r.sessionKey, ok: true })
@@ -252,8 +256,47 @@ describe("删项目", () => {
     expect(await create.deleteProjectByUser(p.id)).toEqual({ ok: true, name: "临时调研" })
     expect(store.getProject(p.id)).toBeUndefined()
     expect(trashed).toEqual([path.dirname(p.worktreePath)])
-    expect(hit("/api/purge-session-routing").map((h) => h.body.sessionKey)).toEqual([p.sessionKey])
-    expect(hits.some((h) => h.url.includes("app-chat") && JSON.stringify(h.body).includes(p.sessionKey!))).toBe(true)
+    const sessionKey = `${APP_CHAT}::project_${p.id}`
+    expect(hit("/api/purge-session-routing").map((h) => h.body.sessionKey)).toEqual([sessionKey])
+    expect(hits.some((h) => h.url.includes("app-chat") && JSON.stringify(h.body).includes(sessionKey))).toBe(true)
+  })
+
+  it("在飞书里删项目：应用内留着的那条项目会话（找不到项目的幽灵会话）一起清掉，飞书这条也清", async () => {
+    const { store, create, commands } = await boot()
+    const FS_CHAT = makeChatKey(FEISHU, "ou_main")
+    // 项目同时接了应用内对话和飞书主聊天：删它的时候两边的会话都要收拾
+    const created = await create.createProjectFromApp(APP, {
+      name: "两边都有", templateId: "general",
+      bindings: [{ channelId: APP, mode: "inline" }, { channelId: FEISHU, mode: "inline" }],
+    })
+    expect(created.ok).toBe(true)
+    const p = store.getProject(created.projectId!)!
+    const appKey = `${APP_CHAT}::project_${p.id}`
+    const fsKey = `${FS_CHAT}::project_${p.id}`
+    store.setCurrentProjectId(p.id, FS_CHAT)
+    hits.length = 0
+
+    await commands.handleFeishuProjectCommand(portOf(), "m1", `/p del ${p.id} --yes`, FS_CHAT)
+
+    expect(store.getProject(p.id)).toBeUndefined()
+    expect(hit("/api/purge-session-routing").map((h) => h.body.sessionKey).sort()).toEqual([appKey, fsKey].sort())
+    // 应用内的聊天记录也清了
+    expect(hits.some((h) => h.url.includes("app-chat") && JSON.stringify(h.body).includes(appKey))).toBe(true)
+    // 停在这个项目上的飞书私聊，活跃会话被挪回主会话；指针清掉
+    expect(hit("/api/active-session").some((h) => h.body.chatId === FS_CHAT && !String(h.body.sessionKey).includes("::project_"))).toBe(true)
+    expect(store.getCurrentProjectId(FS_CHAT)).toBeNull()
+  })
+
+  it("项目只接了飞书（还没进过会话）：在设置页删，应用内通道上按通道推出来的会话（可能留着的幽灵会话）也清", async () => {
+    const { store, create } = await boot()
+    const p = store.createProject({
+      name: "飞书的项目", goal: "", worktreePath: path.join(userData, "fs-only", "workspace"), groupIds: ["general"], groupId: "general",
+      bindings: [{ kind: "main", channelId: FEISHU }],
+    })
+    hits.length = 0
+    expect((await create.deleteProjectByUser(p.id)).ok).toBe(true)
+    // 飞书那个入口没记过会话（没进去过），不用清；应用内的会话键只由通道推出来，照清
+    expect(hit("/api/purge-session-routing").map((h) => h.body.sessionKey)).toEqual([`${APP_CHAT}::project_${p.id}`])
   })
 
   it("用户自己选的文件夹：只解绑，文件夹和里面的东西原样保留，不进回收站", async () => {
@@ -293,7 +336,7 @@ describe("归档项目", () => {
 
     expect(create.setProjectArchivedByUser(id, true)).toEqual({ ok: true, name: "做完了" })
     expect(store.getProject(id)?.archivedAt).toBeGreaterThan(0)
-    expect(store.getProject(id)?.sessionKey).toBeTruthy()
+    expect(store.getProject(id)?.bindings?.[0]?.sessionKey).toBeTruthy()
     expect(trashed).toEqual([]) // 不删任何东西
     expect(create.getProjectView(id, APP)?.archived).toBe(true)
     expect(create.listProjectItems().find((x) => x.id === id)?.archived).toBe(true)
@@ -406,7 +449,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     const p = store.getProject(r.projectId!)!
     expect(p).toMatchObject({
       groupId: "develop", storyUrl: "https://t.example.com/1", relatedDocs: "见 wiki",
-      notifyChatId: APP_CHAT, sessionKey: `${APP_CHAT}::project_${p.id}`,
+      bindings: [{ kind: "main", channelId: APP, sessionKey: `${APP_CHAT}::project_${p.id}` }],
     })
     // 仓库、分支不再有专门的字段
     for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
@@ -427,7 +470,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     expect(git(repo, ["status", "--porcelain"])).toBe("")
     // 进入项目会话
     expect(hit("/api/active-session")).toEqual([
-      { url: "/api/active-session", body: { chatId: APP_CHAT, sessionKey: p.sessionKey } },
+      { url: "/api/active-session", body: { chatId: APP_CHAT, sessionKey: `${APP_CHAT}::project_${p.id}` } },
     ])
   })
 
@@ -870,7 +913,7 @@ describe("看一个本地仓库（添加仓库时用）", () => {
 describe("飞书里建的项目在应用内只读", () => {
   const FS_CHAT = makeChatKey(FEISHU, "ou_main")
 
-  /** 飞书那边建好、已经进过会话的项目：它的会话和通知都绑在飞书私聊上 */
+  /** 飞书那边建好、已经进过会话的项目：只接入了飞书通道的主聊天，会话绑在飞书私聊上 */
   async function feishuProject() {
     const booted = await boot()
     const dir = path.join(userData, "fs-proj", "workspace")
@@ -878,20 +921,20 @@ describe("飞书里建的项目在应用内只读", () => {
     const p = booted.store.createProject({
       name: "飞书项目", goal: "",
       worktreePath: dir, groupIds: ["writing"], groupId: "writing",
-      notifyChatId: FS_CHAT,
+      bindings: [{ kind: "main", channelId: FEISHU }],
     })
-    p.sessionKey = `${FS_CHAT}::project_${p.id}`
+    p.bindings = [{ kind: "main", channelId: FEISHU, sessionKey: `${FS_CHAT}::project_${p.id}` }]
     booted.store.saveProject(p)
     hits.length = 0
     return { ...booted, p }
   }
 
-  it("在应用里点它的步骤会被拒绝，它的会话绑定原样不动，也不投任何提示词", async () => {
+  it("在应用里点它的步骤会被拒绝，它的会话绑定原样不动，也不投任何提示词（项目没接入应用内通道，应用内看不到它）", async () => {
     const { store, create, p } = await feishuProject()
     const run = await create.runProjectStepFromApp(APP, p.id, "outline")
     expect(run.ok).toBe(false)
-    expect(run.error).toContain("其它通道")
-    expect(store.getProject(p.id)).toMatchObject({ sessionKey: `${FS_CHAT}::project_${p.id}`, notifyChatId: FS_CHAT })
+    expect(run.error).toContain("没有接入当前通道")
+    expect(store.getProject(p.id)?.bindings).toEqual([{ kind: "main", channelId: FEISHU, sessionKey: `${FS_CHAT}::project_${p.id}` }])
     expect(hit("/enqueue")).toHaveLength(0)
   })
 
@@ -976,7 +1019,8 @@ describe("飞书里建项目（/p new 表单提交）：和应用内共用同一
     expect(p.name).toBe("周报")
     expect(path.basename(p.worktreePath)).toBe("workspace")
     expect(p.metadata).toBeUndefined()
-    expect(p.sessionKey).toBe(`${FS_CHAT}::project_${p.id}`)
+    // 在飞书私聊里建：接入这个通道的主聊天，会话键记在这个入口上
+    expect(p.bindings).toEqual([{ kind: "main", channelId: FEISHU, sessionKey: `${FS_CHAT}::project_${p.id}` }])
     expect(fs.readdirSync(path.dirname(p.worktreePath))).toEqual(["workspace"])
     expect(config.getRepoProfiles()).toEqual([])
     expect(git(repo, ["branch", "--format=%(refname:short)"]).split(/\r?\n/).sort()).toEqual(["develop", "main"])

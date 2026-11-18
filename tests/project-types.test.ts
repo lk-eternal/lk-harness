@@ -1,5 +1,5 @@
 import * as path from "node:path"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   coerceFormMultiSelect,
   decodeRepoPair,
@@ -168,5 +168,46 @@ describe("projectRootDir", () => {
     expect(projectRootDir(p)).toBe(folder)
     // 对照：非外部目录按约定取上一层
     expect(projectRootDir({ ...p, externalWorkspace: false } as Project)).toBe(path.join("D:", "Documents"))
+  })
+})
+
+describe("decodeRepoPair：本地路径按当前系统还原（mac / Linux 的 /Users/… 不能被换成反斜杠）", () => {
+  afterEach(() => {
+    vi.doUnmock("node:path")
+    vi.resetModules()
+  })
+
+  /** 在 POSIX 路径语义下重新加载（Windows 上跑也能验证 mac 的行为） */
+  async function loadOn(flavor: "posix" | "win32") {
+    vi.resetModules()
+    vi.doMock("node:path", async () => {
+      const real = await vi.importActual<typeof import("node:path")>("node:path")
+      const p = real[flavor]
+      return { ...p, default: p }
+    })
+    return import("../src/shared/project-types.js")
+  }
+
+  it("mac：/Users/… 的仓库路径来回编码后原样不变（修复前飞书建项目会报「不是可用的仓库」，路径变成 \\Users\\…）", async () => {
+    const t = await loadOn("posix")
+    const repo = "/Users/jinjifu/workspace/wk/cp-student-center-v2"
+    expect(t.decodeRepoPair(t.encodeRepoPair(repo, "main", "test", "dev"))).toEqual({ path: repo, baseBranch: "main", testBranch: "test", developBranch: "dev" })
+    expect(t.decodeRepoPairOption(t.encodeRepoPairOption(repo, "release/1.0")).path).toBe(repo)
+    expect(t.decodeRepoPair(repo).path).toBe(repo)
+  })
+
+  it("Windows：编码时换成正斜杠的盘符路径，还原回反斜杠", async () => {
+    const t = await loadOn("win32")
+    expect(t.decodeRepoPair(t.encodeRepoPair("D:\\work\\shop", "main")).path).toBe("D:\\work\\shop")
+  })
+
+  it("远程地址、空路径任何系统上都原样保留", async () => {
+    for (const flavor of ["posix", "win32"] as const) {
+      const t = await loadOn(flavor)
+      for (const url of ["https://gitlab.example.com/a/b.git", "ssh://git@host/a/b.git", "git@github.com:a/b.git"]) {
+        expect(t.decodeRepoPair(t.encodeRepoPair(url, "main")).path, `${flavor} ${url}`).toBe(url)
+      }
+      expect(t.decodeRepoPair("").path).toBe("")
+    }
   })
 })

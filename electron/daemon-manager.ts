@@ -14,7 +14,7 @@ import {
   mainChatScopeKey, setMainChatIdForScope, upsertRepoProfiles, type MessageChannel,
   retireGlobalWorkspaceDir, primaryProbeWorkspace,
 } from "./config-store"
-import { parseChatKey, channelIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
+import { parseChatKey, channelIdFromSessionKey, chatIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
@@ -79,10 +79,10 @@ import {
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
-import { createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectHostRpcHandlers, projectsRootDir, runProjectStepFromApp, syncProjectSteps } from "./project-create"
+import { bindProjectFromSettings, createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectChannelOptions, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectHostRpcHandlers, projectsRootDir, runProjectStepFromApp, syncProjectSteps, unbindProjectFromSettings } from "./project-create"
 import { createHostRpcDispatcher } from "./host-rpc"
 import { HOST_RPC_PREFIX } from "../src/shared/host-rpc.js"
-import type { ProjectCreateInput } from "../src/shared/project-app-types.js"
+import type { ProjectBindingChoice, ProjectCreateInput } from "../src/shared/project-app-types.js"
 import { changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
 import {
   readGitBranch,
@@ -1009,7 +1009,7 @@ function connectSseQueueEvents(): void {
           } else if (ev.type === "command-update") {
             void checkAndExecutePendingCommands().catch(() => {})
           } else if (ev.type === "temp-chat-active" && ev.invokerSessionKey) {
-            if (projectIdFromSessionKey(ev.invokerSessionKey)) setCurrentProjectId(null)
+            if (projectIdFromSessionKey(ev.invokerSessionKey)) setCurrentProjectId(null, chatIdFromSessionKey(ev.invokerSessionKey))
           } else if (ev.type === "poll-phase" && ev.sessionKey && ev.phase) {
             handleAgentPollPhase(ev.sessionKey, ev.phase, ev)
           } else if (ev.type === "app-chat" && ev.event) {
@@ -2089,6 +2089,10 @@ export function initDaemonManager(): void {
   ipcMain.handle("project:repo-options", () => listProjectRepoOptions())
   ipcMain.handle("project:inspect-repo", (_e, repoPath: string) => inspectProjectRepo(String(repoPath || "")))
   ipcMain.handle("project:create-in-app", (_e, channelId: string, input: ProjectCreateInput) => createProjectFromApp(String(channelId || ""), input))
+  // 项目接入哪些消息通道：建项对话框传它所在的应用内通道；设置页的项目详情不传（按本机管理员的权限）
+  ipcMain.handle("project:channel-options", (_e, channelId?: string) => listProjectChannelOptions(channelId ? String(channelId) : undefined))
+  ipcMain.handle("project:bind", (_e, projectId: string, choices: ProjectBindingChoice[]) => bindProjectFromSettings(String(projectId || ""), choices))
+  ipcMain.handle("project:unbind", (_e, projectId: string, choice: ProjectBindingChoice) => unbindProjectFromSettings(String(projectId || ""), choice))
   ipcMain.handle("project:view", (_e, projectId: string, channelId: string) => getProjectView(projectId, channelId))
   ipcMain.handle("project:run-step", (_e, channelId: string, projectId: string, nodeId: string) =>
     runProjectStepFromApp(String(channelId || ""), projectId, String(nodeId || "")))

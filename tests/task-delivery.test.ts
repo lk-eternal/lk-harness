@@ -240,20 +240,33 @@ describe("describeTaskDelivery：设置页文案", () => {
 })
 
 describe("resolveProjectAgentTarget：项目会话能不能当投递目标", () => {
-  const base = { name: "组班", archivedAt: undefined as number | undefined, sessionKey: "ch_a|oc_grp::project_p1", groupChatId: "ch_a|oc_grp" }
+  const main = { kind: "main" as const, channelId: "ch_a", sessionKey: "ch_a|ou_alice::project_p1" }
+  const group = { kind: "group" as const, channelId: "ch_a", chatKey: "ch_a|oc_grp" }
+  const base = { name: "组班", archivedAt: undefined as number | undefined, bindings: [main, group] }
 
-  it("用项目记录的会话 key，聊天键从中取", () => {
-    const r = resolveProjectAgentTarget("p1", base)
-    expect(r).toEqual({ ok: true, sessionKey: "ch_a|oc_grp::project_p1", chatKey: "ch_a|oc_grp", label: "项目「组班」的会话" })
+  it("按任务所属通道取项目在这个通道上记录的会话，聊天键从中取（主聊天优先）", () => {
+    const r = resolveProjectAgentTarget("p1", base, "ch_a")
+    expect(r).toEqual({ ok: true, sessionKey: "ch_a|ou_alice::project_p1", chatKey: "ch_a|ou_alice", label: "项目「组班」的会话" })
   })
 
-  it("没记录会话 key 但有独立群：按群拼", () => {
-    const r = resolveProjectAgentTarget("p1", { ...base, sessionKey: undefined })
+  it("没记录主聊天的会话 key 但有独立群：按群拼", () => {
+    const r = resolveProjectAgentTarget("p1", { ...base, bindings: [group] }, "ch_a")
     expect(r.ok && r.sessionKey).toBe("ch_a|oc_grp::project_p1")
   })
 
-  it("没会话也没群：不可用但不作废（进过项目就会有）", () => {
-    const r = resolveProjectAgentTarget("p1", { ...base, sessionKey: undefined, groupChatId: undefined })
+  it("没指定通道：退回项目的第一条会话", () => {
+    const r = resolveProjectAgentTarget("p1", base)
+    expect(r.ok && r.sessionKey).toBe("ch_a|ou_alice::project_p1")
+  })
+
+  it("项目没接入任务所在的通道：不投（不越过隔离去别的通道的会话），不作废（绑定后能恢复）", () => {
+    const r = resolveProjectAgentTarget("p1", base, "ch_other")
+    expect(r).toMatchObject({ ok: false, retire: false })
+    expect(!r.ok && r.error).toContain("没有接入")
+  })
+
+  it("接入了但还没有会话键（主聊天没进入过）：不可用但不作废（进过项目就会有）", () => {
+    const r = resolveProjectAgentTarget("p1", { ...base, bindings: [{ kind: "main", channelId: "ch_a" }] }, "ch_a")
     expect(r).toMatchObject({ ok: false, retire: false })
   })
 
@@ -265,7 +278,7 @@ describe("resolveProjectAgentTarget：项目会话能不能当投递目标", () 
   })
 
   it("没归档：照常可用（取消归档后恢复投递）", () => {
-    expect(resolveProjectAgentTarget("p1", { ...base, archivedAt: undefined })).toMatchObject({ ok: true })
+    expect(resolveProjectAgentTarget("p1", { ...base, archivedAt: undefined }, "ch_a")).toMatchObject({ ok: true })
   })
 })
 

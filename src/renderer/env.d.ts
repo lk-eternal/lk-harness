@@ -28,11 +28,15 @@ import type { ProjectNodeGroupDef as ProjectNodeGroupDefType } from "../shared/p
 import type {
   InspectRepoResult as InspectRepoResultType,
   ProjectActionResult as ProjectActionResultType,
+  ProjectBindingChoice as ProjectBindingChoiceType,
+  ProjectBindResult as ProjectBindResultType,
+  ProjectChannelOption as ProjectChannelOptionType,
   ProjectCreateInput as ProjectCreateInputType,
   ProjectCreateResult as ProjectCreateResultType,
   ProjectListItem as ProjectListItemType,
   ProjectRepoOption as ProjectRepoOptionType,
   ProjectTemplateInfo as ProjectTemplateInfoType,
+  ProjectUnbindResult as ProjectUnbindResultType,
   ProjectView as ProjectViewType,
 } from "../shared/project-app-types"
 import type {
@@ -336,6 +340,9 @@ declare global {
     listProjectRepoOptions(): Promise<ProjectRepoOptionType[]>
     inspectProjectRepo(repoPath: string): Promise<InspectRepoResultType>
     createProjectInApp(channelId: string, input: ProjectCreateInputType): Promise<ProjectCreateResultType>
+    listProjectChannelOptions(channelId?: string): Promise<ProjectChannelOptionType[]>
+    bindProject(projectId: string, choices: ProjectBindingChoiceType[]): Promise<ProjectBindResultType>
+    unbindProject(projectId: string, choice: ProjectBindingChoiceType): Promise<ProjectUnbindResultType>
     getProjectView(projectId: string, channelId: string): Promise<ProjectViewType | null>
     runProjectStep(channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResultType>
     syncProjectSteps(projectId: string): Promise<ProjectActionResultType>

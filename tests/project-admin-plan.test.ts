@@ -468,8 +468,14 @@ describe("planProjectUpdate：改项目资料", () => {
       id: "p1", name: "改版", goal: "做完", archived: true, groupIds: ["general"], groupNames: ["通用任务"], fields: [],
       actions: [{ id: "a", label: "开始" }], hasGroupSnapshot: true, canSyncSteps: true, externalWorkspace: false, isCode: false,
       dir: "D:\\p\\改版", metadata: { 截止: "周五" }, storyUrl: "https://t/1",
+      bindings: [{ kind: "main", channelId: "ch_app" }, { kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_grp1" }],
     }
-    const t = formatProjectDetail(item)
-    for (const w of ["「改版」id=p1（已归档）", "目标：做完", "模板：通用任务", "D:\\p\\改版", "https://t/1", "截止：周五", "快捷操作：开始", "sync_steps"]) expect(t).toContain(w)
+    const names: Record<string, string> = { ch_app: "应用内", ch_fs: "飞书A" }
+    const t = formatProjectDetail(item, (id) => names[id] ?? id)
+    for (const w of ["「改版」id=p1（已归档）", "目标：做完", "模板：通用任务", "D:\\p\\改版", "https://t/1", "截止：周五", "快捷操作：开始", "sync_steps",
+      "「应用内」的主聊天", "「飞书A」的专属群 oc_grp1"]) expect(t).toContain(w)
+    // 没传通道名时退回通道 ID；没有任何接入要明说（只能在设置页管）
+    expect(formatProjectDetail(item)).toContain("「ch_app」的主聊天")
+    expect(formatProjectDetail({ ...item, bindings: [] })).toContain("接入的消息通道：无")
   })
 })

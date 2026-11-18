@@ -6,8 +6,10 @@ import * as path from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   createProject,
+  deleteProject,
   findProjectByGroupChat,
   getCurrentProject,
+  getCurrentProjectId,
   getNodeGroups,
   getProject,
   isProjectArchived,
@@ -41,6 +43,7 @@ import {
   projectGroupChatMatches,
 } from "../src/shared/project-types.js"
 import { snapshotGroups } from "../src/shared/project-templates.js"
+import { parseChatKey } from "../src/shared/channel-types.js"
 
 describe("project-store", () => {
   let dir: string
@@ -54,19 +57,20 @@ describe("project-store", () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it("creates project and sets current", () => {
+  it("creates project; 建项不动任何通道的「当前项目」（指针由进入项目的人显式设置）", () => {
     const p = createProject({
       name: "login",
       goal: "add login",
       worktreePath: "D:/claw/login",
       metadata: { 代码仓库: "D:/repos/foo（工作分支 feature/login；基线分支 main）" },
+      bindings: [{ kind: "main", channelId: "ch_a" }],
     })
     expect(p.id).toBeTruthy()
     // 仓库、分支不再有专门的字段：只在项目信息里
     expect(p).not.toHaveProperty("repoPath")
     expect(p).not.toHaveProperty("featureBranch")
     expect(getProject(p.id)?.metadata?.代码仓库).toContain("feature/login")
-    expect(getCurrentProject()?.id).toBe(p.id)
+    expect(getCurrentProject("ch_a|ou_alice")).toBeUndefined()
     expect(listProjects()).toHaveLength(1)
   })
 
@@ -116,9 +120,9 @@ describe("project-store", () => {
   })
 
   describe("归档（没有「进行中 / 已暂停 / 已完成」状态，做完了就归档或删除）", () => {
-    const make = (name: string, groupChatId?: string) => createProject({
+    const make = (name: string, groupChatKey?: string) => createProject({
       name, goal: "g", worktreePath: "/w", metadata: { 代码仓库: "/r（工作分支 f；基线分支 main）" },
-      ...(groupChatId ? { groupChatId } : {}),
+      ...(groupChatKey ? { bindings: [{ kind: "group" as const, channelId: parseChatKey(groupChatKey).channelId ?? "", chatKey: groupChatKey }] } : {}),
     })
     const fileOf = (id: string) => path.join(dir, "projects", `${id}.json`)
     const rawOf = (id: string) => JSON.parse(fs.readFileSync(fileOf(id), "utf-8")) as Record<string, unknown>
@@ -343,16 +347,62 @@ describe("project-store", () => {
     })
   })
 
-  it("switches current project", () => {
-    const a = createProject({
-      name: "a", goal: "g", worktreePath: "/wa",
-    })
-    const b = createProject({
-      name: "b", goal: "g", worktreePath: "/wb",
-    })
-    expect(getCurrentProject()?.id).toBe(b.id)
-    setCurrentProjectId(a.id)
-    expect(getCurrentProject()?.id).toBe(a.id)
+  it("switches current project（按通道记：一个通道里切换，不影响别的通道）", () => {
+    const both = [{ kind: "main" as const, channelId: "ch_a" }, { kind: "main" as const, channelId: "ch_b" }]
+    const a = createProject({ name: "a", goal: "g", worktreePath: "/wa", bindings: both })
+    const b = createProject({ name: "b", goal: "g", worktreePath: "/wb", bindings: both })
+    const A = "ch_a|ou_alice"
+    const B = "ch_b|ou_bob"
+    expect(getCurrentProject(A)).toBeUndefined()
+
+    setCurrentProjectId(a.id, A)
+    expect(getCurrentProject(A)?.id).toBe(a.id)
+    expect(getCurrentProject(B)).toBeUndefined()
+    setCurrentProjectId(b.id, B)
+    setCurrentProjectId(b.id, A)
+    expect(getCurrentProject(A)?.id).toBe(b.id)
+    setCurrentProjectId(a.id, A)
+    expect(getCurrentProject(A)?.id).toBe(a.id)
+    // B 通道不受 A 通道切换的影响
+    expect(getCurrentProject(B)?.id).toBe(b.id)
+
+    setCurrentProjectId(null, A)
+    expect(getCurrentProject(A)).toBeUndefined()
+    expect(getCurrentProject(B)?.id).toBe(b.id)
+  })
+
+  it("当前项目指针：同一通道的不同聊天共用；项目没接入这个通道就当没有；专属群不动它；认不出通道的聊天什么也不做", () => {
+    const p = createProject({ name: "p", goal: "g", worktreePath: "/w", bindings: [
+      { kind: "main", channelId: "ch_a" },
+      { kind: "group", channelId: "ch_a", chatKey: "ch_a|oc_grp" },
+    ] })
+    setCurrentProjectId(p.id, "ch_a|ou_alice")
+    expect(getCurrentProject("ch_a|ou_other")?.id).toBe(p.id)
+    // 专属群里不看也不改指针
+    expect(getCurrentProject("ch_a|oc_grp")).toBeUndefined()
+    setCurrentProjectId(null, "ch_a|oc_grp")
+    expect(getCurrentProject("ch_a|ou_alice")?.id).toBe(p.id)
+    // 认不出通道
+    setCurrentProjectId(null, "no-channel-prefix")
+    expect(getCurrentProject(undefined)).toBeUndefined()
+    expect(getCurrentProject("ch_a|ou_alice")?.id).toBe(p.id)
+
+    // 项目被取消了这个通道的接入：指针还在，但不会越过隔离
+    const saved = getProject(p.id)!
+    saved.bindings = [{ kind: "main", channelId: "ch_b" }]
+    saveProject(saved)
+    expect(getCurrentProject("ch_a|ou_alice")).toBeUndefined()
+  })
+
+  it("旧版全局指针 {id} 读成它所在通道的当前项目；删项目清掉所有通道上指着它的指针", () => {
+    const p = createProject({ name: "p", goal: "g", worktreePath: "/w", bindings: [{ kind: "main", channelId: "ch_a" }] })
+    fs.writeFileSync(path.join(dir, "projects", "current.json"), JSON.stringify({ id: p.id }), "utf-8")
+    expect(getCurrentProject("ch_a|ou_alice")?.id).toBe(p.id)
+    expect(getCurrentProject("ch_b|ou_bob")).toBeUndefined()
+    setCurrentProjectId(p.id, "ch_a|ou_alice")
+    expect(getCurrentProjectId("ch_a|ou_alice")).toBe(p.id)
+    deleteProject(p.id)
+    expect(getCurrentProjectId("ch_a|ou_alice")).toBeNull()
   })
 
   it("seeds default node groups without ship", () => {
@@ -488,37 +538,50 @@ describe("project-store", () => {
   it("findProjectByGroupChat resolves by chatKey or bare chatId", () => {
     const groupKey = "ch_feishu|oc_group123"
     const p = createProject({
-      name: "grp-proj", goal: "g", worktreePath: "/w1", groupChatId: groupKey,
+      name: "grp-proj", goal: "g", worktreePath: "/w1",
+      bindings: [{ kind: "group", channelId: "ch_feishu", chatKey: groupKey }],
     })
     expect(findProjectByGroupChat(groupKey)?.id).toBe(p.id)
     expect(findProjectByGroupChat("oc_group123")?.id).toBe(p.id)
-    expect(findProjectByGroupChat("ch_other|oc_group123")?.id).toBe(p.id)
+    // 飞书的群号是整个租户通用的：别的通道里同一个群号不能认成这个项目的群（集中部署时不能串）
+    expect(findProjectByGroupChat("ch_other|oc_group123")).toBeUndefined()
     expect(findProjectByGroupChat("oc_other")).toBeUndefined()
   })
 
   it("projectGroupChatMatches and canEnterProjectFromChat enforce independent group isolation", () => {
     const groupKey = "ch_feishu|oc_group123"
     const otherKey = "ch_feishu|oc_other456"
-    const withGroup = { groupChatId: groupKey }
+    const withGroup = { bindings: [{ kind: "group" as const, channelId: "ch_feishu", chatKey: groupKey }] }
+    const withMain = { bindings: [{ kind: "main" as const, channelId: "ch_feishu" }] }
 
     expect(projectGroupChatMatches(withGroup, groupKey)).toBe(true)
     expect(projectGroupChatMatches(withGroup, "oc_group123")).toBe(true)
     expect(projectGroupChatMatches(withGroup, otherKey)).toBe(false)
+    expect(projectGroupChatMatches(withGroup, "ch_other|oc_group123")).toBe(false)
     expect(projectGroupChatMatches(withGroup, undefined)).toBe(false)
     expect(projectGroupChatMatches({}, groupKey)).toBe(false)
+    expect(projectGroupChatMatches(withMain, groupKey)).toBe(false)
 
-    expect(canEnterProjectFromChat({}, groupKey)).toBe(true)
-    expect(canEnterProjectFromChat({}, undefined)).toBe(true)
+    // 没接入任何入口的项目，从哪个聊天都进不去
+    expect(canEnterProjectFromChat({}, groupKey)).toBe(false)
+    expect(canEnterProjectFromChat({}, undefined)).toBe(false)
+    // 只接了专属群：只有这个群能进；同通道的私聊也不行（防串台）
     expect(canEnterProjectFromChat(withGroup, groupKey)).toBe(true)
     expect(canEnterProjectFromChat(withGroup, otherKey)).toBe(false)
+    expect(canEnterProjectFromChat(withGroup, "ch_feishu|ou_alice")).toBe(false)
     expect(canEnterProjectFromChat(withGroup, undefined)).toBe(false)
+    // 接了某通道的主聊天：这个通道的聊天能进，别的通道不行（主聊天按通道认，不比聊天键）
+    expect(canEnterProjectFromChat(withMain, "ch_feishu|ou_alice")).toBe(true)
+    expect(canEnterProjectFromChat(withMain, "ch_feishu|ou_new_main_user")).toBe(true)
+    expect(canEnterProjectFromChat(withMain, "ch_other|ou_alice")).toBe(false)
+    expect(canEnterProjectFromChat(withMain, undefined)).toBe(false)
   })
 
   it("resolveProjectRef matches hex id when id starts with digits, not list index", () => {
     const first = createProject({
       name: "first", goal: "g", worktreePath: "/w1",
     })
-    expect(resolveProjectRef("1")?.id).toBe(first.id)
+    expect(resolveProjectRef("1", listProjects())?.id).toBe(first.id)
     const hexId = "1abc000000000001"
     const secondPath = path.join(dir, "projects", `${hexId}.json`)
     const second = {
@@ -530,9 +593,9 @@ describe("project-store", () => {
     }
     fs.writeFileSync(secondPath, JSON.stringify(second), "utf-8")
     saveProject(getProject(first.id)!)
-    expect(resolveProjectRef(hexId)?.id).toBe(hexId)
-    expect(resolveProjectRef(hexId)?.name).toBe("digit-prefix-id")
-    expect(resolveProjectRef("1")?.id).toBe(first.id)
+    expect(resolveProjectRef(hexId, listProjects())?.id).toBe(hexId)
+    expect(resolveProjectRef(hexId, listProjects())?.name).toBe("digit-prefix-id")
+    expect(resolveProjectRef("1", listProjects())?.id).toBe(first.id)
   })
 
   it("mergeProjectMetadata merges and deletes empty values", () => {

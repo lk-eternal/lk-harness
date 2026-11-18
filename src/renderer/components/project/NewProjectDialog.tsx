@@ -3,8 +3,10 @@ import { FolderOpen, GitBranch, Loader2, Plus, X } from "lucide-react"
 import { ModalShell, modalBtnGhost, modalBtnPrimary } from "../ModalShell"
 import {
   PROJECT_NAME_MAX, PROJECT_REPOS_MAX, PROJECT_TEXT_MAX, repoPicksProblem, sortTemplatesForPicker,
-  type ProjectCreateResult, type ProjectTemplateInfo,
+  type ProjectBindingChoice, type ProjectChannelOption, type ProjectCreateResult, type ProjectTemplateInfo,
 } from "../../../shared/project-app-types"
+// 只取类型：project-types 里有 node 专用的代码，不能被渲染进程打包进去
+import type { ProjectChatMode } from "../../../shared/project-types"
 import {
   parseRemoteRepoInput, picksOf, repoItemsFromOptions, upsertPickedRepo,
   type RepoPickItem,
@@ -24,6 +26,16 @@ interface Props {
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] text-fg outline-none transition focus:border-blue-500/70"
 const smallInputCls = "rounded-md border border-line bg-surface px-2 py-1 text-[12px] text-fg outline-none transition focus:border-blue-500/70"
 const dashedBtnCls = "inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3 py-1.5 text-[12px] text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2 disabled:opacity-50"
+
+/** 一个通道在对话框里的选择：勾没勾、用哪种方式接入、绑已有群时填的群 ID */
+interface BindPick { on: boolean; mode: ProjectChatMode; groupChatId: string }
+
+const BINDING_MODE_LABEL: Record<ProjectChatMode, string> = {
+  inline: "主聊天（不建群）",
+  group: "新建独立群",
+  bind: "绑定已有群",
+}
+const CHANNEL_TYPE_LABEL: Record<string, string> = { feishu: "飞书", wechat: "微信", app: "应用内" }
 
 function dirLabel(dir: string): string {
   return dir.split(/[\\/]/).filter(Boolean).pop() ?? dir
@@ -47,6 +59,8 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
   const [featureBranch, setFeatureBranch] = useState("")
   const [storyUrl, setStoryUrl] = useState("")
   const [relatedDocs, setRelatedDocs] = useState("")
+  const [channelOpts, setChannelOpts] = useState<ProjectChannelOption[]>([])
+  const [bindPicks, setBindPicks] = useState<Record<string, BindPick>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
   const aliveRef = useRef(true)
@@ -79,6 +93,25 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
   }, [])
 
   useEffect(() => {
+    let alive = true
+    window.electronAPI.listProjectChannelOptions(channelId).then((opts) => {
+      if (!alive) return
+      setChannelOpts(opts)
+      // 默认只接当前所在的通道（能接主聊天的话），其它通道要用户自己勾
+      const picks: Record<string, BindPick> = {}
+      for (const o of opts) {
+        picks[o.id] = {
+          on: o.id === channelId && o.modes.includes("inline"),
+          mode: o.modes.includes("inline") ? "inline" : (o.modes[0] ?? "inline"),
+          groupChatId: "",
+        }
+      }
+      setBindPicks(picks)
+    }).catch(() => { /* 读不到通道清单就按只接当前对话建 */ })
+    return () => { alive = false }
+  }, [channelId])
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !busy) onClose() }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
@@ -91,6 +124,23 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
   /** 勾上的仓库里要克隆的有几个：工作分支只对它们有意义，不克隆的仓库应用不碰 */
   const cloneCount = repos.filter((i) => i.checked && i.clone).length
   const pickedCount = picks.length
+
+  // 接入的聊天：配了不止一个通道才让选；只有当前这个应用内通道时和以前一样，项目就接在它的对话里
+  const showChannels = channelOpts.length > 1
+  const choices: ProjectBindingChoice[] = channelOpts
+    .filter((o) => bindPicks[o.id]?.on)
+    .map((o) => {
+      const p = bindPicks[o.id]
+      return { channelId: o.id, mode: p.mode, ...(p.mode === "bind" ? { groupChatId: p.groupChatId.trim() } : {}) }
+    })
+  const bindProblem = !showChannels
+    ? ""
+    : choices.length === 0
+      ? "至少选一个接入的聊天"
+      : choices.some((c) => c.mode === "bind" && !c.groupChatId) ? "绑定已有群要填群 ID" : ""
+
+  const setBindPick = (id: string, patch: Partial<BindPick>) =>
+    setBindPicks((cur) => (cur[id] ? { ...cur, [id]: { ...cur[id], ...patch } } : cur))
 
   const pickTemplate = (t: ProjectTemplateInfo) => {
     if (busy) return
@@ -161,7 +211,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
             ...(relatedDocs.trim() ? { relatedDocs: relatedDocs.trim() } : {}),
           }
         : { name, goal, templateId: current.id, fields: values, ...(folder ? { folder } : {}) }
-      const r = await window.electronAPI.createProjectInApp(channelId, input)
+      const r = await window.electronAPI.createProjectInApp(channelId, showChannels ? { ...input, bindings: choices } : input)
       if (!r.ok) { setError(r.error ?? "创建失败"); return }
       onCreated(r)
     } catch (e: unknown) {
@@ -171,8 +221,8 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
     }
   }
 
-  const canSubmit = !!current && name.trim().length > 0 && !repoProblem && !busy
-  const footerHint = error || (needsRepo && name.trim() ? repoProblem : "")
+  const canSubmit = !!current && name.trim().length > 0 && !repoProblem && !bindProblem && !busy
+  const footerHint = error || (name.trim() ? (needsRepo ? repoProblem : "") || bindProblem : "")
 
   return (
     <ModalShell
@@ -425,6 +475,62 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                 ? "AI 会在这个文件夹里工作，成果放在其中的 .lk-harness 文件夹里；你原有的文件，除非你明确要求，AI 不会去改。删除项目时这个文件夹不会被删。"
                 : "不选的话，应用会自动给项目建一个文件夹，成果都放在里面；删除项目时会一起移到回收站。"}
             </p>
+          </section>
+        )}
+
+        {/* 项目接入哪些聊天：只有配了不止一个通道时才出现；没选的通道里看不到这个项目 */}
+        {showChannels && (
+          <section>
+            <p className="mb-1.5 text-[12px] font-medium text-fg-3">接入的聊天 <span className="font-normal text-fg-faint">（只有接入了的通道里才看得到这个项目，每个通道各自一条独立会话）</span></p>
+            <ul className="space-y-1.5">
+              {channelOpts.map((o) => {
+                const pick = bindPicks[o.id]
+                if (!pick) return null
+                const disabled = busy || o.modes.length === 0
+                return (
+                  <li key={o.id} className={`rounded-lg border px-3 py-2 ${pick.on ? "border-blue-500/50 bg-blue-600/5" : "border-line bg-surface/60"}`}>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={pick.on}
+                        disabled={disabled}
+                        onChange={() => setBindPick(o.id, { on: !pick.on })}
+                        aria-label={`接入 ${o.name}`}
+                        className="h-3.5 w-3.5 shrink-0 accent-blue-500"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">
+                        {o.name}
+                        <span className="ml-1.5 text-[11px] font-normal text-fg-faint">{CHANNEL_TYPE_LABEL[o.type] ?? o.type}{o.current ? "（当前）" : ""}</span>
+                      </span>
+                      {pick.on && o.modes.length > 0 && (
+                        <select
+                          value={pick.mode}
+                          disabled={busy}
+                          onChange={(e) => setBindPick(o.id, { mode: e.target.value as ProjectChatMode })}
+                          aria-label={`${o.name} 的接入方式`}
+                          className={smallInputCls}
+                        >
+                          {o.modes.map((m) => <option key={m} value={m}>{BINDING_MODE_LABEL[m]}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    {pick.on && pick.mode === "bind" && (
+                      <input
+                        value={pick.groupChatId}
+                        disabled={busy}
+                        placeholder="已有群的 ID（oc_ 开头），机器人要已经在群里"
+                        onChange={(e) => setBindPick(o.id, { groupChatId: e.target.value })}
+                        className={`${smallInputCls} mt-1.5 w-full`}
+                      />
+                    )}
+                    {pick.on && pick.mode === "group" && (
+                      <p className="mt-1 text-[11.5px] text-fg-muted">会建一个专属飞书群并把你拉进去，后续在群里协作。</p>
+                    )}
+                    {o.note && <p className="mt-1 text-[11.5px] text-fg-muted">{o.note}</p>}
+                  </li>
+                )
+              })}
+            </ul>
           </section>
         )}
       </div>

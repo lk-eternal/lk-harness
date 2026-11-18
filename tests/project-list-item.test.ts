@@ -33,6 +33,21 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
     expect(item.fields.map((f) => f.label)).toContain("汇报对象")
   })
 
+  it("接入的聊天：每个入口的类型、通道、群聊天键带出（会话键不外传）；没接入任何通道就是空列表", () => {
+    const none = buildProjectListItem(project(), { groups: pick("general"), globals: globals() })
+    expect(none.bindings).toEqual([])
+    const item = buildProjectListItem(project({
+      bindings: [
+        { kind: "main", channelId: "ch_app", sessionKey: "ch_app|app_main::project_abc123def456" },
+        { kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_g1", sessionKey: "ch_fs|oc_g1::project_abc123def456" },
+      ],
+    }), { groups: pick("general"), globals: globals() })
+    expect(item.bindings).toEqual([
+      { kind: "main", channelId: "ch_app" },
+      { kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_g1" },
+    ])
+  })
+
   it("项目里填过的资料原样带出（包括模板里没有的），不会被字段表过滤掉", () => {
     const item = buildProjectListItem(
       project({ metadata: { 汇报对象: "老板", 临时备注: "别忘了" } }),

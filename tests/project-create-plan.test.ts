@@ -373,31 +373,33 @@ describe("buildProjectView", () => {
     expect(buildProjectView(project({ archivedAt: 1700000000000 }), opts).archived).toBe(true)
   })
 
-  it("项目归不归当前通道：按项目现在绑的会话判断", () => {
+  it("项目归不归当前通道：看项目有没有接入这个通道（主聊天或专属群都算）", () => {
     const opts = { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true }
-    expect(buildProjectView(project({ sessionKey: projectSessionKey(`${CH}|app_main`, "abc123def456") }), opts).ownedHere).toBe(true)
-    expect(buildProjectView(project({ sessionKey: projectSessionKey("ch_fs|oc_x", "abc123def456") }), opts).ownedHere).toBe(false)
+    expect(buildProjectView(project({ bindings: [{ kind: "main", channelId: CH }] }), opts).ownedHere).toBe(true)
+    expect(buildProjectView(project({ bindings: [{ kind: "group", channelId: CH, chatKey: `${CH}|oc_x` }] }), opts).ownedHere).toBe(true)
+    expect(buildProjectView(project({ bindings: [{ kind: "main", channelId: "ch_fs" }] }), opts).ownedHere).toBe(false)
+    expect(buildProjectView(project({ bindings: [{ kind: "main", channelId: "ch_fs" }, { kind: "main", channelId: CH }] }), opts).ownedHere).toBe(true)
   })
 })
 
 describe("isProjectOwnedBy", () => {
-  const key = (ch: string) => projectSessionKey(`${ch}|app_main`, "abc123def456")
-
-  it("会话键所在通道就是归属；换了通道就不是", () => {
-    expect(isProjectOwnedBy({ sessionKey: key("ch_app") }, "ch_app")).toBe(true)
-    expect(isProjectOwnedBy({ sessionKey: key("ch_fs") }, "ch_app")).toBe(false)
+  it("接入了这个通道就是归属；只接了别的通道就不是", () => {
+    expect(isProjectOwnedBy({ bindings: [{ kind: "main", channelId: "ch_app" }] }, "ch_app")).toBe(true)
+    expect(isProjectOwnedBy({ bindings: [{ kind: "main", channelId: "ch_fs" }] }, "ch_app")).toBe(false)
   })
 
-  it("还没有会话键：看独立群，再看通知会话", () => {
-    expect(isProjectOwnedBy({ groupChatId: "ch_fs|oc_group" }, "ch_app")).toBe(false)
-    expect(isProjectOwnedBy({ notifyChatId: "ch_app|app_main" }, "ch_app")).toBe(true)
-    expect(isProjectOwnedBy({ notifyChatId: "ch_fs|ou_x" }, "ch_app")).toBe(false)
+  it("专属群也是接入：群所在的通道能看到项目", () => {
+    expect(isProjectOwnedBy({ bindings: [{ kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_group" }] }, "ch_fs")).toBe(true)
+    expect(isProjectOwnedBy({ bindings: [{ kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_group" }] }, "ch_app")).toBe(false)
   })
 
-  it("什么都没绑过的项目谁都能认领；老版本没有通道前缀的飞书会话键认不出通道，算别人的", () => {
-    expect(isProjectOwnedBy({}, "ch_app")).toBe(true)
-    expect(isProjectOwnedBy({ notifyChatId: "oc_legacy_chat" }, "ch_app")).toBe(false)
-    expect(isProjectOwnedBy({ sessionKey: "oc_legacy_chat::project_abc123def456" }, "ch_app")).toBe(false)
+  it("可以同时接入多个通道；什么都没接入的项目任何通道都不认（只能在设置页管）", () => {
+    const multi = { bindings: [{ kind: "main" as const, channelId: "ch_app" }, { kind: "main" as const, channelId: "ch_fs" }] }
+    expect(isProjectOwnedBy(multi, "ch_app")).toBe(true)
+    expect(isProjectOwnedBy(multi, "ch_fs")).toBe(true)
+    expect(isProjectOwnedBy(multi, "ch_other")).toBe(false)
+    expect(isProjectOwnedBy({}, "ch_app")).toBe(false)
+    expect(isProjectOwnedBy({ bindings: [] }, "ch_app")).toBe(false)
   })
 })
 

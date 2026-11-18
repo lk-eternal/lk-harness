@@ -40,8 +40,8 @@ import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
 import { buildSessionCardTitle, readGitBranch, readGitBranchCached, dirBaseName } from "../src/shared/session-label.js"
 import { disambiguatePathLabel } from "../src/shared/path-label.js"
-import { getProject, findProjectByGroupChat, initProjectStore, isProjectArchived, listProjects, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
-import { projectIdFromSessionKey, projectSessionKey, canEnterProjectFromChat, projectGroupChatMatches } from "../src/shared/project-types.js"
+import { getProject, findProjectByGroupChat, initProjectStore, isProjectArchived, listProjectsForChat, getCurrentProjectId, setCurrentProjectId } from "../src/shared/project-store.js"
+import { projectIdFromSessionKey, projectSessionKeyFor, canEnterProjectFromChat, projectGroupChatMatches, type ProjectBinding } from "../src/shared/project-types.js"
 import { globalChatNamesPath, purgeSessionEntry, readRoutingFileView } from "../src/shared/session-entry-paths.js"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import { ensureProjectDir } from "./project-workspace"
@@ -879,24 +879,19 @@ function buildSwitchableSessions(
   }
   const channel = resolveChannelForSession(chatId)
   const mainDir = effectiveWorkspaceDir(channel)
-  const bound = listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
+  const bound = findProjectByGroupChat(chatId)
   // 专属群：只协作本群项目，目录会话/其它项目一律不列（切了也会被强制路由拉回）
   if (bound) {
-    const key = bound.sessionKey || projectSessionKey(bound.groupChatId || chatId, bound.id)
-    push(key)
+    push(projectSessionKeyFor(bound, chatId) ?? "")
     return out.slice(0, 8)
   }
   if (mainDir) {
     const key = normalizeSessionKey(`${chatId}::${mainDir}`) || `${chatId}::${mainDir}`
     push(key)
   }
-  for (const p of listProjects()) {
-    // 私聊/普通群：独立群项目不可切，不列
-    if (!canEnterProjectFromChat(p, chatId)) continue
-    const key = p.groupChatId
-      ? (p.sessionKey || projectSessionKey(p.groupChatId, p.id))
-      : projectSessionKey(chatId, p.id)
-    push(key)
+  // 只列接入了这个通道主聊天的项目：别的通道的项目、只接了专属群的项目，在这里看不到也切不过去
+  for (const p of listProjectsForChat(chatId)) {
+    push(projectSessionKeyFor(p, chatId) ?? "")
   }
   for (const dir of getChannelFavoriteWorkspaces(channel)) {
     const key = normalizeSessionKey(`${chatId}::${dir}`) || `${chatId}::${dir}`
@@ -1123,7 +1118,7 @@ export async function leaveProjectSession(
   port: number,
   chatId: string,
 ): Promise<{ sessionKey?: string; workspaceDir?: string; branch?: string }> {
-  setCurrentProjectId(null)
+  setCurrentProjectId(null, chatId)
   const mainKey = resolveMainSessionKey(chatId)
   if (mainKey) await syncActiveSession(port, chatId, mainKey)
   const ws = mainKey ? workspaceDirFromSessionKey(mainKey) : undefined
@@ -1146,7 +1141,7 @@ export async function leaveProjectSession(
  */
 export async function releaseProjectRoutes(
   port: number,
-  project: { id: string; groupChatId?: string },
+  project: { id: string; bindings?: ProjectBinding[] },
 ): Promise<string[]> {
   let sessions: Record<string, string> | undefined
   try {
@@ -1264,7 +1259,7 @@ export async function deleteUserSession(
     // 没配主目录时 resolveMainSessionKey 回的是裸 chatId，不是真实会话，不能当活跃会话；活跃指向由下面的 purgeSessionRouting 清掉
     if (mainKey && mainKey !== resolvedChatId) {
       await syncActiveSession(lock.port, resolvedChatId, mainKey)
-      setCurrentProjectId(null)
+      setCurrentProjectId(null, resolvedChatId)
     }
   }
   await purgeSessionRouting(lock.port, key)
@@ -1491,24 +1486,18 @@ export async function switchMainSession(sessionKey: string): Promise<{ ok: boole
   const pid = projectIdFromSessionKey(key)
   if (pid) {
     const proj = getProject(pid)
-    const bound = listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
+    const bound = findProjectByGroupChat(chatId)
     if (bound && bound.id !== pid) {
       return { ok: false, error: "当前为项目专属群，不能切换其它项目" }
     }
+    // 项目没接入这个聊天：不能把它的会话切到这个聊天上（会话属于项目接入的那个入口，不能被别的通道拿走）
     if (proj && !canEnterProjectFromChat(proj, chatId)) {
-      return { ok: false, error: "该项目为独立群协作，请到专属群内操作（私聊不可进入）" }
+      return { ok: false, error: "这个项目没有接入当前通道，请到它接入的聊天里操作，或先在设置的项目管理里绑定" }
     }
   }
   await syncActiveSession(lock.port, chatId, key)
-  if (pid) {
-    const proj = getProject(pid)
-    if (proj?.groupChatId) {
-      // 独立群不抢占主会话 current 指针
-      setCurrentProjectId(null)
-    } else {
-      setCurrentProjectId(pid)
-    }
-  }
+  // 当前项目只记在通道的主聊天上（专属群里的项目由群自己认，store 里不会记）
+  if (pid) setCurrentProjectId(pid, chatId)
   return { ok: true }
 }
 
@@ -1577,7 +1566,7 @@ async function handleChatWorkspaceSubcommand(
     await reply(true, `📂 当前已在该目录会话: ${w}`)
     return
   }
-  if (inProject) setCurrentProjectId(null)
+  if (inProject) setCurrentProjectId(null, chatId)
   const synced = await syncActiveSession(port, chatId, sessionKey)
   if (!synced) {
     await reply(false, "❌ 会话路由绑定失败（请重试 /c w）")
@@ -1641,15 +1630,15 @@ export async function handleChatCommand(
     if (!mainKey || mainKey === chatId) { await reply(false, "❌ 未配置主工作目录，无法定位主会话"); return }
     if (activeKey === mainKey) {
       const ws = workspaceDirFromSessionKey(mainKey)
-      const stalePid = getCurrentProjectId()
-      if (stalePid) setCurrentProjectId(null)
+      const stalePid = getCurrentProjectId(chatId)
+      if (stalePid) setCurrentProjectId(null, chatId)
       const lines = ["🏠 当前已在主会话"]
       if (stalePid) lines.push(`已清除残留的项目指针（${stalePid}）`)
       if (ws) lines.push(`主工作目录: ${ws}`)
       await reply(true, lines.join("\n"))
       return
     }
-    setCurrentProjectId(null)
+    setCurrentProjectId(null, chatId)
     const fromProject = activeKey ? projectIdFromSessionKey(activeKey) : null
     await syncActiveSession(port, chatId, mainKey)
     const ws = workspaceDirFromSessionKey(mainKey)
@@ -1686,7 +1675,7 @@ export async function handleChatCommand(
     }
     const curSk = await resolveEffectiveSessionKey(chatId, "p2p", port)
     const inProject = !!(curSk && projectIdFromSessionKey(curSk))
-    if (inProject) setCurrentProjectId(null)
+    if (inProject) setCurrentProjectId(null, chatId)
 
     const { sessionKey, workspaceDir: w } = createTempChatSession(app.getPath("userData"), chatId)
 
@@ -1773,7 +1762,7 @@ export async function handleChatCommand(
     if (chatId) {
       await syncActiveSession(port, chatId, entry.sessionKey)
       const pid = projectIdFromSessionKey(entry.sessionKey)
-      if (pid) setCurrentProjectId(pid)
+      if (pid) setCurrentProjectId(pid, chatId)
     }
     if (patchMessageId) {
       await handleChatCommand(["/c", "ls"], port, messageId, chatId, patchMessageId)

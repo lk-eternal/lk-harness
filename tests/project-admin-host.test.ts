@@ -44,6 +44,8 @@ vi.mock("electron", () => ({
 
 const FEISHU = "ch_fs"
 const FS_SK = `${FEISHU}|ou_main::${path.resolve("/work")}`
+/** 项目接入调用者所在飞书通道的主聊天（建项必须明确指定接入哪里，没有默认值） */
+const BIND = [{ channel_id: FEISHU, mode: "inline" }]
 const TOKEN = "glpat-TOPSECRET9876543210"
 const HUB_TOKEN = "hubtoken-TOPSECRET-abcdef"
 
@@ -147,7 +149,7 @@ describe("设置：看现状、改项目存放位置", () => {
   it("worktree_root：目录被建出来、配置写入，之后建的项目就落在那里；已有项目不搬家", async () => {
     const { call, config, store, create } = await boot()
     const before = await call({
-      action: "create", name: "旧项目", template_id: "general", chat_mode: "inline",
+      action: "create", name: "旧项目", template_id: "general", bindings: BIND,
     })
     expect(before).toContain("✅ 已创建项目")
     const oldDir = store.listProjects()[0].worktreePath
@@ -160,7 +162,7 @@ describe("设置：看现状、改项目存放位置", () => {
     expect(config.getConfig().worktreeRoot).toBe(path.normalize(root))
     expect(create.projectsRootDir()).toBe(path.normalize(root))
 
-    const after = await call({ action: "create", name: "新项目", template_id: "general", chat_mode: "inline" })
+    const after = await call({ action: "create", name: "新项目", template_id: "general", bindings: BIND })
     expect(after).toContain(path.normalize(root))
     const created = store.listProjects().find((p) => p.name === "新项目")!
     expect(path.resolve(created.worktreePath).startsWith(path.resolve(root))).toBe(true)
@@ -352,7 +354,7 @@ describe("常用代码仓库：登记、修改、移除", () => {
     const repo = makeRepo("shop")
     await call({ action: "repo_save", repo: { repo_path: repo, base_branch: "main", test_branch: "release" } })
     const out = await call({
-      action: "create", name: "改版", template_id: "develop", chat_mode: "inline", feature_branch: "feature/x",
+      action: "create", name: "改版", template_id: "develop", bindings: BIND, feature_branch: "feature/x",
       repos: [{ repo_path: repo, base_branch: "main" }],
     })
     expect(out).toContain("✅ 已创建项目「改版」")
@@ -394,9 +396,9 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(g.nodes.map((n) => n.prompt)).toEqual(["整理客户背景和上次沟通要点", "整理纪要和待办"])
     expect(await call({ action: "templates" })).toContain("客户名称（必填，例：某某公司）")
 
-    const missing = await call({ action: "create", name: "拜访A公司", template_id: g.id, chat_mode: "inline" })
+    const missing = await call({ action: "create", name: "拜访A公司", template_id: g.id, bindings: BIND })
     expect(missing).toContain("请填写：客户名称")
-    const created = await call({ action: "create", name: "拜访A公司", template_id: g.id, fields: { 客户名称: "A 公司" }, chat_mode: "inline" })
+    const created = await call({ action: "create", name: "拜访A公司", template_id: g.id, fields: { 客户名称: "A 公司" }, bindings: BIND })
     expect(created).toContain("✅ 已创建项目")
     const p = store.listProjects().find((x) => x.name === "拜访A公司")!
     expect(p.metadata).toEqual({ 客户名称: "A 公司" })
@@ -417,7 +419,7 @@ describe("项目模板：看、新建、修改、删除", () => {
     const { call, store } = await boot()
     const g0 = store.getNodeGroups().find((x) => x.id === "research")!
     expect(g0.nodes.length).toBeGreaterThan(1)
-    const created = await call({ action: "create", name: "调研A", template_id: "research", chat_mode: "inline" })
+    const created = await call({ action: "create", name: "调研A", template_id: "research", bindings: BIND })
     expect(created).toContain("✅")
     const id = store.listProjects().find((x) => x.name === "调研A")!.id
     const snapBefore = whole(store.getProject(id)!.groupSnapshot)
@@ -435,7 +437,7 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(await call({ action: "sync_steps", project_id: id })).toContain("✅ 已把项目「调研A」的快捷操作同步成模板最新版")
     expect(store.getProject(id)!.groupSnapshot![0].nodes.map((n) => n.label)).toEqual(["新版第一步", "收尾"])
     expect(await call({ action: "sync_steps" })).toContain("需要 project_id")
-    expect(await call({ action: "sync_steps", project_id: "nope" })).toContain("没有 id 为「nope」")
+    expect(await call({ action: "sync_steps", project_id: "nope" })).toContain("未找到项目")
   })
 
   it("删除模板：自定义的能删；还有老项目（没有自己的副本）在用的不能删；有副本的项目不拦；至少留一个", async () => {
@@ -453,7 +455,7 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(blocked).toContain("还有 1 个老项目在用")
     expect(store.getNodeGroups().some((x) => x.id === "event")).toBe(true)
     // 用 AI 建的项目（有副本）不拦
-    await call({ action: "create", name: "新项目", template_id: "report", chat_mode: "inline" })
+    await call({ action: "create", name: "新项目", template_id: "report", bindings: BIND })
     expect(await call({ action: "template_delete", template_id: "report" })).toContain("✅ 已删除")
 
     store.saveNodeGroups(store.getNodeGroups().filter((x) => x.id === "general"))
@@ -463,7 +465,7 @@ describe("项目模板：看、新建、修改、删除", () => {
 
 describe("已有项目：看、改、归档", () => {
   async function newProject(call: (a: Record<string, unknown>) => Promise<string>, store: typeof import("../src/shared/project-store"), name = "改版") {
-    await call({ action: "create", name, goal: "旧目标", template_id: "general", chat_mode: "inline", story_url: "https://t/1" })
+    await call({ action: "create", name, goal: "旧目标", template_id: "general", bindings: BIND, story_url: "https://t/1" })
     return store.listProjects().find((p) => p.name === name)!
   }
 
@@ -472,7 +474,7 @@ describe("已有项目：看、改、归档", () => {
     const p = await newProject(call, store)
     const t = await call({ action: "get", project_id: p.id })
     for (const w of [`「改版」id=${p.id}`, "目标：旧目标", "模板：通用任务", "项目链接：https://t/1", "快捷操作："]) expect(t).toContain(w)
-    expect(await call({ action: "get", project_id: "nope" })).toContain("没有 id 为「nope」")
+    expect(await call({ action: "get", project_id: "nope" })).toContain("未找到项目")
     expect(await call({ action: "get" })).toContain("需要 project_id")
   })
 
@@ -487,7 +489,7 @@ describe("已有项目：看、改、归档", () => {
     expect(out).toContain("✅ 已更新项目「改版 v2」")
     expect(out).toContain("项目目录名不会跟着改")
     const after = store.getProject(p.id)!
-    expect(after).toMatchObject({ name: "改版 v2", goal: "新目标", worktreePath: p.worktreePath, sessionKey: p.sessionKey, groupId: p.groupId })
+    expect(after).toMatchObject({ name: "改版 v2", goal: "新目标", worktreePath: p.worktreePath, bindings: p.bindings, groupId: p.groupId })
     expect(after.storyUrl).toBeUndefined()
     expect(after.metadata).toEqual({ 负责人: "小王", 优先级: "高" })
     expect(await call({ action: "update", project_id: p.id })).toContain("没有要改的内容")
@@ -507,6 +509,50 @@ describe("已有项目：看、改、归档", () => {
     expect(await call({ action: "list" })).toContain("（已归档）")
     expect(await call({ action: "archive", project_id: p.id, archived: false })).toContain("已取消归档")
     expect(store.getProject(p.id)!.archivedAt).toBeUndefined()
+  })
+})
+
+describe("项目按消息通道隔离：只管接入了自己所在通道的项目", () => {
+  const mk = (store: typeof import("../src/shared/project-store"), name: string, channelId: string) =>
+    store.createProject({
+      name, goal: "", worktreePath: path.join(userData, name, "workspace"), groupIds: ["general"], groupId: "general",
+      bindings: [{ kind: "main", channelId }],
+    })
+
+  it("list 只列接入了调用者通道的；别的通道的项目 get / update / archive / bind / unbind / delete 一律按「未找到」处理，宿主不会被打扰", async () => {
+    const { call, store, requests } = await boot()
+    const mine = mk(store, "我的", FEISHU)
+    const theirs = mk(store, "别人的", "ch_other")
+    const list = await call({ action: "list" })
+    expect(list).toContain(mine.id)
+    expect(list).not.toContain(theirs.id)
+    expect(list).not.toContain("别人的")
+
+    for (const args of [
+      { action: "get" }, { action: "update", name: "x" }, { action: "archive", archived: true }, { action: "sync_steps" }, { action: "delete" },
+      { action: "bind", bindings: BIND }, { action: "unbind", bindings: BIND },
+    ]) {
+      const text = await call({ ...args, project_id: theirs.id })
+      expect(text, String(args.action)).toContain("未找到项目")
+    }
+    expect(requests).toEqual([])
+    expect(store.getProject(theirs.id)?.name).toBe("别人的")
+  })
+
+  it("项目同时接了多个通道：每个通道的调用者都管得到它", async () => {
+    const { call, store } = await boot()
+    const p = mk(store, "两边都有", "ch_other")
+    p.bindings = [{ kind: "main", channelId: "ch_other" }, { kind: "main", channelId: FEISHU }]
+    store.saveProject(p)
+    expect(await call({ action: "list" })).toContain(p.id)
+    expect(await call({ action: "get", project_id: p.id })).toContain(p.id)
+  })
+
+  it("没有接入任何通道的项目（比如老数据）：谁的 list 里都没有，只能在设置页处理", async () => {
+    const { call, store } = await boot()
+    const p = store.createProject({ name: "无主", goal: "", worktreePath: path.join(userData, "无主", "workspace"), groupIds: ["general"], groupId: "general" })
+    expect(await call({ action: "list" })).toContain("暂无项目")
+    expect(await call({ action: "get", project_id: p.id })).toContain("未找到项目")
   })
 })
 
@@ -554,7 +600,10 @@ describe("help 总览的「当前状态」跟着真实配置走", () => {
 
 describe("管理 MCP → 宿主：每个 action 发出的请求类型和参数形状", () => {
   it("snake_case 参数翻成驼峰；请求类型固定", async () => {
-    const { call, requests } = await boot()
+    const { call, requests, store } = await boot()
+    // 管项目的 action 只认接入了调用者所在通道的项目：先建一个真的
+    await call({ action: "create", name: "已有", template_id: "general", bindings: BIND })
+    const pid = store.listProjects()[0].id
     const sent = async (args: Record<string, unknown>) => {
       requests.length = 0
       await call(args)
@@ -585,19 +634,34 @@ describe("管理 MCP → 宿主：每个 action 发出的请求类型和参数�
       kind: "project.settings.set",
       payload: { settings: { worktreeRoot: "/w", gitPrinciples: "g", resetGitPrinciples: false, gitlabHost: "h", gitlabToken: "t", flowHubUrl: "u", flowHubToken: "ft", flowHubAuthor: "a" } },
     })
-    expect(await sent({ action: "update", project_id: "p", name: "n", goal: "g", story_url: "s", related_docs: "r", fields: { k: "v" } }))
-      .toEqual({ kind: "project.update", payload: { projectId: "p", update: { name: "n", goal: "g", storyUrl: "s", relatedDocs: "r", info: { k: "v" } } } })
-    expect(await sent({ action: "archive", project_id: "p", archived: true })).toEqual({ kind: "project.archive", payload: { projectId: "p", archived: true } })
-    expect(await sent({ action: "get", project_id: "p" })).toEqual({ kind: "project.get", payload: { projectId: "p" } })
-    expect(await sent({ action: "sync_steps", project_id: "p" })).toEqual({ kind: "project.sync-steps", payload: { projectId: "p" } })
+    expect(await sent({ action: "update", project_id: pid, name: "n", goal: "g", story_url: "s", related_docs: "r", fields: { k: "v" } }))
+      .toEqual({ kind: "project.update", payload: { projectId: pid, update: { name: "n", goal: "g", storyUrl: "s", relatedDocs: "r", info: { k: "v" } } } })
+    expect(await sent({ action: "archive", project_id: pid, archived: true })).toEqual({ kind: "project.archive", payload: { projectId: pid, archived: true } })
+    expect(await sent({ action: "get", project_id: pid })).toEqual({ kind: "project.get", payload: { projectId: pid } })
+    expect(await sent({ action: "sync_steps", project_id: pid })).toEqual({ kind: "project.sync-steps", payload: { projectId: pid } })
+    // 通道和接入：带上调用者所在的聊天；bindings 翻成驼峰，unbind 放一项
+    const chatKey = `${FEISHU}|ou_main`
+    expect(await sent({ action: "channels" })).toEqual({ kind: "project.channels", payload: { chatKey } })
+    expect(await sent({ action: "bind", project_id: pid, bindings: [{ channel_id: FEISHU, mode: "bind", group_chat_id: "oc_aa2192cfececee92d57dccd0b59980fd" }] }))
+      .toEqual({ kind: "project.bind", payload: { chatKey, projectId: pid, bindings: [{ channelId: FEISHU, mode: "bind", groupChatId: "oc_aa2192cfececee92d57dccd0b59980fd" }] } })
+    expect(await sent({ action: "unbind", project_id: pid, bindings: [{ channel_id: FEISHU, mode: "bind" }] }))
+      .toEqual({ kind: "project.unbind", payload: { chatKey, projectId: pid, binding: { channelId: FEISHU, mode: "bind" } } })
   })
 
   it("缺必要参数：在管理 MCP 这一层就报错，不打扰宿主", async () => {
-    const { call, requests } = await boot()
+    const { call, requests, store } = await boot()
+    await call({ action: "create", name: "已有", template_id: "general", bindings: BIND })
+    const pid = store.listProjects()[0].id
+    requests.length = 0
     for (const [args, hint] of [
       [{ action: "get" }, "project_id"],
       [{ action: "update" }, "project_id"],
-      [{ action: "archive", project_id: "p" }, "archived"],
+      [{ action: "archive", project_id: pid }, "archived"],
+      [{ action: "bind" }, "project_id"],
+      [{ action: "bind", project_id: pid }, "bindings"],
+      [{ action: "unbind", project_id: pid }, "bindings"],
+      [{ action: "unbind", project_id: pid, bindings: [{ channel_id: FEISHU, mode: "inline" }, { channel_id: FEISHU, mode: "bind" }] }, "只放一项"],
+      [{ action: "create", name: "n", template_id: "general" }, "bindings"],
       [{ action: "repo_save" }, "repo.repo_path"],
       [{ action: "repo_remove", repo: { repo_path: " " } }, "repo.repo_path"],
       [{ action: "template_save" }, "template"],

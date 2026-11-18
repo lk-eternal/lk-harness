@@ -1,5 +1,5 @@
 import * as path from "node:path"
-import { makeChatKey, parseChatKey } from "./channel-types.js"
+import { channelIdFromSessionKey, chatIdFromSessionKey, makeChatKey, parseChatKey } from "./channel-types.js"
 import type { FlowHubHubTrack } from "./flow-hub-types.js"
 import { GENERAL_NODE_GROUPS } from "./project-templates.js"
 
@@ -122,6 +122,30 @@ export interface ProjectAction {
   completedAt?: number
 }
 
+/**
+ * 项目接入的一个聊天入口。项目只有一份（目录、信息、成果共用），但可以接到多个通道和群：
+ * 每个入口各有一条独立的项目会话（会话键 = 聊天键::project_<项目id>），消息只进自己那条、回复只回自己的聊天，不合并。
+ */
+export interface ProjectBinding {
+  /** main=该通道的主聊天（应用内对话，或飞书 / 微信主用户的私聊）；group=项目专属群（群只属于这个项目） */
+  kind: "main" | "group"
+  channelId: string
+  /** group 才有：群的聊天键 ch_xxx|oc_yyy */
+  chatKey?: string
+  /**
+   * 这个入口上项目会话的会话键。group 可以不记（由群的聊天键推出来）；
+   * main 要记（通道的主聊天键只有建项或进入那一刻才知道），没有就是还没进入过。
+   */
+  sessionKey?: string
+}
+
+/** 旧版（项目只有一个入口）的绑定字段：只在读旧项目文件时用来迁移成 bindings，迁完不再出现在 Project 上 */
+export interface LegacyProjectBindingFields {
+  sessionKey?: string
+  notifyChatId?: string
+  groupChatId?: string
+}
+
 export interface Project {
   id: string
   name: string
@@ -160,10 +184,12 @@ export interface Project {
   lastArtifactAt?: number
   /** @deprecated 存量字段，读取时迁移到 lastArtifact* 后不再依赖 */
   actions?: ProjectAction[]
-  sessionKey?: string
-  notifyChatId?: string
-  /** 独立群模式：项目专属群 chatKey（ch_xxx|oc_yyy）；命中该群的消息强制路由到本项目 */
-  groupChatId?: string
+  /**
+   * 项目接入了哪些聊天入口（通道的主聊天、项目专属群）。绑了才看得到、才能进入和推进；
+   * 每个入口各有一条独立的项目会话，互不合并。没有任何入口的项目只在设置页里看得到。
+   * 旧版的 sessionKey / notifyChatId / groupChatId 读旧文件时迁移成这个，见 bindingsFromLegacy。
+   */
+  bindings?: ProjectBinding[]
   /** 项目级 KV 配置，AI 可通过 project_update 持久化（空字符串 value 表示删 key） */
   metadata?: Record<string, string>
   createdAt: number
@@ -187,21 +213,194 @@ export function projectSessionKey(chatKey: string, projectId: string): string {
   return `${chatKey}::project_${projectId}`
 }
 
-/** 当前 chat 是否命中项目的独立群（两边 chatKey / 裸 chatId 皆可） */
-export function projectGroupChatMatches(project: Pick<Project, "groupChatId">, chatKey?: string): boolean {
-  if (!project.groupChatId || !chatKey) return false
-  const raw = parseChatKey(chatKey).chatId
-  return project.groupChatId === chatKey || parseChatKey(project.groupChatId).chatId === raw
+// ── 项目接入点（bindings）：谁看得到、谁能进、会话键是什么 ─────────────────────────
+
+type BindingHolder = Pick<Project, "bindings">
+
+export function projectBindings(p: BindingHolder): ProjectBinding[] {
+  return Array.isArray(p.bindings) ? p.bindings : []
 }
 
 /**
- * 是否允许从该 chat 进入/推进项目：
- * - 无独立群：任意会话可进
- * - 有独立群：仅专属群内可进（私聊禁止，防串台）
+ * 两个聊天键是不是同一个聊天。两边都带通道就必须完全相同：飞书的 oc_ 群号在同一租户内是通用的，
+ * 两个机器人（两个通道）进了同一个群时，群号一样、通道不同，不能当成同一个入口。
+ * 有一边没有通道前缀（老版本的裸 chatId）才退回比群号本身。
  */
-export function canEnterProjectFromChat(project: Pick<Project, "groupChatId">, chatKey?: string): boolean {
-  if (!project.groupChatId) return true
-  return projectGroupChatMatches(project, chatKey)
+export function sameChatKey(a: string, b: string): boolean {
+  if (a === b) return true
+  const pa = parseChatKey(a)
+  const pb = parseChatKey(b)
+  if (pa.channelId && pb.channelId) return false
+  return pa.chatId === pb.chatId
+}
+
+/** 项目接入的专属群入口 */
+export function projectGroupBindings(p: BindingHolder): ProjectBinding[] {
+  return projectBindings(p).filter((b) => b.kind === "group" && !!b.chatKey)
+}
+
+/** 项目的主聊天入口（每个通道至多一个） */
+export function projectMainBindings(p: BindingHolder): ProjectBinding[] {
+  return projectBindings(p).filter((b) => b.kind === "main")
+}
+
+/** 这个聊天是不是项目的某个专属群 */
+export function projectGroupChatMatches(project: BindingHolder, chatKey?: string): boolean {
+  return !!projectGroupBindingFor(project, chatKey)
+}
+
+export function projectGroupBindingFor(project: BindingHolder, chatKey?: string): ProjectBinding | undefined {
+  if (!chatKey) return undefined
+  return projectGroupBindings(project).find((b) => sameChatKey(b.chatKey!, chatKey))
+}
+
+/** 项目接入了这个通道的哪个入口（主聊天或专属群）；没接入返回 undefined */
+export function projectBoundToChannel(project: BindingHolder, channelId?: string): boolean {
+  if (!channelId) return false
+  return projectBindings(project).some((b) => b.channelId === channelId)
+}
+
+/**
+ * 这个聊天对应项目的哪个入口：先看是不是项目的专属群，再看项目有没有接入这个聊天所在通道的主聊天。
+ * 调用方（/p、/c、应用里切会话）都只会带来主聊天或专属群，所以主聊天按通道认，不比聊天键——
+ * 通道换了主用户之后，项目不会因为聊天键变了就丢。
+ */
+export function projectBindingForChat(project: BindingHolder, chatKey?: string): ProjectBinding | undefined {
+  if (!chatKey) return undefined
+  const group = projectGroupBindingFor(project, chatKey)
+  if (group) return group
+  const channelId = parseChatKey(chatKey).channelId
+  if (!channelId) return undefined
+  return projectMainBindings(project).find((b) => b.channelId === channelId)
+}
+
+/**
+ * 是否允许从该 chat 进入/推进项目：这个聊天就是项目的专属群，或者项目接入了它所在通道的主聊天。
+ * 没接入的通道、别的项目的专属群都不行（防串台、防串租户）。
+ */
+export function canEnterProjectFromChat(project: BindingHolder, chatKey?: string): boolean {
+  return !!projectBindingForChat(project, chatKey)
+}
+
+/** 项目接入的通道（去重，按入口顺序） */
+export function projectChannelIds(project: BindingHolder): string[] {
+  const seen = new Set<string>()
+  for (const b of projectBindings(project)) if (b.channelId) seen.add(b.channelId)
+  return [...seen]
+}
+
+/**
+ * 从这个聊天进入项目时用的会话键：专属群用群自己的（记过的优先，老会话的历史不丢），
+ * 主聊天一律是「当前聊天键::project_<id>」。没接入这个聊天返回 undefined。
+ */
+export function projectSessionKeyFor(project: BindingHolder & { id: string }, chatKey?: string): string | undefined {
+  const b = projectBindingForChat(project, chatKey)
+  if (!b || !chatKey) return undefined
+  if (b.kind === "group") return b.sessionKey || projectSessionKey(b.chatKey!, project.id)
+  return projectSessionKey(chatKey, project.id)
+}
+
+/**
+ * 项目在某个通道上已知的会话键（不需要聊天键的场景用：定时任务投递、清理会话）。
+ * group 入口总能推出来；main 入口只有建项或进入过才记着，没有就返回 undefined。
+ * 同一通道既有 main 又有 group 时 main 优先。
+ */
+export function projectSessionKeyOfChannel(project: BindingHolder & { id: string }, channelId?: string): string | undefined {
+  if (!channelId) return undefined
+  const here = projectBindings(project).filter((b) => b.channelId === channelId)
+  const main = here.find((b) => b.kind === "main" && b.sessionKey)
+  if (main) return main.sessionKey
+  const group = here.find((b) => b.kind === "group" && b.chatKey)
+  return group ? (group.sessionKey || projectSessionKey(group.chatKey!, project.id)) : undefined
+}
+
+/** 项目所有入口上已知的会话键：删项目、归档要把它们都收拾掉 */
+export function projectSessionKeys(project: BindingHolder & { id: string }): string[] {
+  const out: string[] = []
+  for (const b of projectBindings(project)) {
+    const sk = b.kind === "group"
+      ? (b.chatKey ? (b.sessionKey || projectSessionKey(b.chatKey, project.id)) : undefined)
+      : b.sessionKey
+    if (sk && !out.includes(sk)) out.push(sk)
+  }
+  return out
+}
+
+/** 两条入口是不是同一个：主聊天按通道，专属群按聊天键 */
+export function sameProjectBinding(a: ProjectBinding, b: ProjectBinding): boolean {
+  if (a.kind !== b.kind || a.channelId !== b.channelId) return false
+  if (a.kind === "main") return true
+  return !!a.chatKey && !!b.chatKey && sameChatKey(a.chatKey, b.chatKey)
+}
+
+/**
+ * 给项目加一个入口（就地改 project.bindings，调用方负责保存）：已经有同一个入口就更新它（补上记录的会话键），没有就追加。
+ * 返回项目上这个入口的引用。
+ */
+export function addProjectBinding(project: { bindings?: ProjectBinding[] }, binding: ProjectBinding): ProjectBinding {
+  const list = project.bindings ?? (project.bindings = [])
+  const same = list.find((b) => sameProjectBinding(b, binding))
+  if (same) {
+    if (binding.sessionKey) same.sessionKey = binding.sessionKey
+    if (binding.chatKey && !same.chatKey) same.chatKey = binding.chatKey
+    return same
+  }
+  list.push({ ...binding })
+  return list[list.length - 1]
+}
+
+/** 去掉项目的一个入口（就地改）；没有这个入口返回 undefined，有就返回被去掉的那个 */
+export function removeProjectBinding(project: { bindings?: ProjectBinding[] }, match: ProjectBinding): ProjectBinding | undefined {
+  const list = project.bindings ?? []
+  const idx = list.findIndex((b) => sameProjectBinding(b, match))
+  if (idx < 0) return undefined
+  const [removed] = list.splice(idx, 1)
+  return removed
+}
+
+/**
+ * 旧版项目文件的绑定字段 → bindings（「存量只绑它现在所在的通道」）：
+ * - 有 groupChatId：只有这个专属群（旧语义里独立群项目私聊进不去）；
+ * - 否则按 sessionKey（没有就按 notifyChatId）所在的通道，绑那个通道的主聊天；
+ * - 老版本飞书会话键没有通道前缀，认不出通道，就一个入口也不给：它只在设置页里看得到，要用再去绑定。
+ *   例外是旧的裸群号：群里的消息路由靠它认群，所以群入口照样留着（通道记空）。
+ */
+export function bindingsFromLegacy(projectId: string, legacy: LegacyProjectBindingFields): ProjectBinding[] {
+  const group = (legacy.groupChatId ?? "").trim()
+  const sessionKey = (legacy.sessionKey ?? "").trim()
+  const notify = (legacy.notifyChatId ?? "").trim()
+  if (group) {
+    const parsed = parseChatKey(group)
+    const channelId = parsed.channelId
+      ?? (sessionKey ? parseChatKey(chatIdFromSessionKey(sessionKey)).channelId : undefined)
+      ?? (notify ? parseChatKey(notify).channelId : undefined)
+      ?? ""
+    const chatKey = parsed.channelId || !channelId ? group : makeChatKey(channelId, parsed.chatId)
+    const own = sessionKey && sameChatKey(chatIdFromSessionKey(sessionKey), chatKey) ? sessionKey : ""
+    return [{ kind: "group", channelId, chatKey, sessionKey: own || projectSessionKey(chatKey, projectId) }]
+  }
+  const ref = sessionKey || notify
+  const channelId = ref ? channelIdFromSessionKey(ref) : undefined
+  if (!channelId) return []
+  return [{ kind: "main", channelId, ...(sessionKey ? { sessionKey } : {}) }]
+}
+
+/**
+ * 写盘时顺手带上旧版字段（只写文件，不进 Project 类型）：万一回退到旧版本，项目还能认到它的会话和专属群。
+ * 有专属群取专属群，否则取第一个主聊天入口。读文件时只认 bindings，这几个字段会被丢掉。
+ */
+export function legacyMirrorOf(project: BindingHolder & { id: string }): LegacyProjectBindingFields {
+  const group = projectGroupBindings(project)[0]
+  if (group?.chatKey) {
+    return {
+      groupChatId: group.chatKey,
+      notifyChatId: group.chatKey,
+      sessionKey: group.sessionKey || projectSessionKey(group.chatKey, project.id),
+    }
+  }
+  const main = projectMainBindings(project).find((b) => b.sessionKey)
+  if (!main?.sessionKey) return {}
+  return { sessionKey: main.sessionKey, notifyChatId: chatIdFromSessionKey(main.sessionKey) }
 }
 
 const FEISHU_GROUP_CHAT_ID = /^oc_[a-z0-9]+$/i
@@ -222,6 +421,10 @@ export function parseExistingGroupChatBinding(
     rawChatId = parsed.chatId
     if (!FEISHU_GROUP_CHAT_ID.test(rawChatId)) {
       return { error: "群 chat_id 须以 oc_ 开头，示例：oc_aa2192cfececee92d57dccd0b59980fd" }
+    }
+    // 带别的通道前缀的群号不认：项目的专属群必须是它所在通道的群，不然别的通道的群里的人就能驱动这个项目
+    if (parsed.channelId && parsed.channelId !== channelId) {
+      return { error: "这个群属于别的消息通道，不能绑到当前通道上（项目只能绑自己所在通道的群）" }
     }
     chatKey = parsed.channelId ? raw : makeChatKey(channelId, rawChatId)
   } else {
@@ -281,8 +484,9 @@ export function decodeRepoPair(value: string): {
 } {
   const parts = (value || "").trim().split(REPO_PAIR_SEP)
   const rawPath = (parts[0] || "").trim()
-  // 远程地址原样保留（斜杠回填会毁掉 URL）；本地路径回填 Windows 分隔符
-  const pathPart = isRemoteRepoRef(rawPath) ? rawPath : rawPath.replace(/\//g, "\\")
+  // 远程地址原样保留（斜杠回填会毁掉 URL）；本地路径按当前系统还原分隔符：
+  // Windows 把 / 还原成 \，macOS / Linux 的 /Users/… 要原样保留（之前一律换成 \，mac 上的路径整个被毁掉，飞书建项目报「不是可用的仓库」）
+  const pathPart = !rawPath || isRemoteRepoRef(rawPath) ? rawPath : path.normalize(rawPath)
   if (parts.length < 2) return { path: pathPart, baseBranch: "main" }
   const baseBranch = (parts[1] || "").trim() || "main"
   const testBranch = (parts[2] || "").trim() || undefined

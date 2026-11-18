@@ -170,20 +170,20 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
     },
     manage_project: {
       summary: "管理项目和项目相关的全部配置（仅主用户）：建 / 查 / 改 / 归档 / 删项目，常用代码仓库，项目模板，项目存放位置、Git 基本原则、GitLab。用户用自然语言说就行，不用去设置页。",
-      notes: "AI 拿不准怎么做时先 action=help：里面有概念、建项目的完整流程、怎么引导新手用户、各项配置怎么做，不带 topic 时还会列出当前配了什么、还缺什么。GitLab Token 等密钥只显示打码，AI 不会回显。改模板只影响之后新建的项目（已建项目有自己的快捷操作副本，可用 sync_steps 同步）。\n创建流程：先 templates 看模板和必填项（要接代码再 repos），按用户的话整理参数，信息不够就问；创建前把内容发给用户确认，确认后再 create。create 必须指定 chat_mode（没有默认值，不给会报错），用户没说清楚就先问他：group 建飞书独立群并把用户拉入群，bind 绑定已有飞书群，inline 不建群、项目绑在当前聊天上；群模式只有飞书私聊能用，应用内和微信只能 inline。建完不会进入项目会话（当前对话不受影响）：inline 的项目用户需要时自己进入（应用里在项目列表点开，飞书/微信里发 /p use <项目 ID>），群里的项目到群里协作。应用内、飞书、微信的主用户私聊都可以用。",
+      notes: "AI 拿不准怎么做时先 action=help：里面有概念、建项目的完整流程、怎么引导新手用户、各项配置怎么做，不带 topic 时还会列出当前配了什么、还缺什么。GitLab Token 等密钥只显示打码，AI 不会回显。改模板只影响之后新建的项目（已建项目有自己的快捷操作副本，可用 sync_steps 同步）。\n创建流程：先 templates 看模板和必填项（要接代码再 repos），按用户的话整理参数，信息不够就问；创建前把内容发给用户确认，确认后再 create。create 必须指定 bindings（项目接入哪些消息通道、用什么方式，没有默认值，不给会报错）：先用 channels 看当前所在通道和可接入的通道，用户没说清楚就先问他；每项 {channel_id, mode}：inline 接该通道的主聊天（不建群），group 新建飞书独立群并把用户拉入群，bind 绑定已有飞书群（还要 group_chat_id）。一个项目可以同时接多个通道，每个通道各自一条独立会话；飞书 / 微信里只能接自己所在的通道，应用内对话里可以接任何通道。项目按消息通道隔离：只有接入了的通道里才看得到、管得了（list / get / update 等都只面对当前通道的项目），已建项目可用 bind / unbind 增减接入。建完不会进入项目会话（当前对话不受影响），逐个通道如实告诉用户结果：主聊天的项目用户需要时自己进入（应用里在项目列表点开，飞书/微信里发 /p use <项目 ID>），群里的项目到群里协作。应用内、飞书、微信的主用户私聊都可以用。",
       params: [
         {
           name: "action",
           required: true,
           type: "enum",
           enumValues: [
-            "help", "list", "get", "create", "update", "archive", "delete", "sync_steps",
+            "help", "list", "get", "create", "update", "archive", "delete", "sync_steps", "channels", "bind", "unbind",
             "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
           ],
-          description: "help：操作手册（先读）。list / get：列出项目 / 看一个项目。create：创建项目。update：改项目资料。archive：归档或取消归档。delete：删除项目（删除前须向用户确认）。sync_steps：把项目的快捷操作同步成模板最新版。templates：列出项目模板（给 template_id 看详情）。template_save / template_delete：新建或修改 / 删除模板。repos：列出常用代码仓库。repo_save / repo_remove：登记或修改 / 移除仓库。settings / settings_set：查看 / 修改项目设置。",
+          description: "help：操作手册（先读）。list / get：列出当前通道的项目 / 看一个项目（含它接入的聊天）。channels：看当前所在通道和可接入的通道（各自能用什么方式）。create：创建项目。bind / unbind：给项目补接入 / 取消接入某个通道上的入口。update：改项目资料。archive：归档或取消归档。delete：删除项目（删除前须向用户确认）。sync_steps：把项目的快捷操作同步成模板最新版。templates：列出项目模板（给 template_id 看详情）。template_save / template_delete：新建或修改 / 删除模板。repos：列出常用代码仓库。repo_save / repo_remove：登记或修改 / 移除仓库。settings / settings_set：查看 / 修改项目设置。",
         },
         { name: "topic", type: "enum", enumValues: ["overview", "create", "repos", "templates", "settings", "manage"], description: "help 可选：不给是总览（含建项目完整流程和当前状态），其余是各块细节" },
-        { name: "project_id", type: "string", description: "get / update / archive / sync_steps / delete 必填：项目 ID" },
+        { name: "project_id", type: "string", description: "get / update / archive / sync_steps / bind / unbind / delete 必填：项目 ID" },
         { name: "archived", type: "boolean", description: "archive 必填：true 归档，false 取消归档" },
         { name: "name", type: "string", description: "create 必填：项目名称；update：新名称" },
         { name: "template_id", type: "string", description: "create 必填：模板 ID（先用 templates 查）；template_save 修改 / template_delete / templates 看详情时也用它" },
@@ -199,8 +199,7 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "story_url", type: "string", description: "create 可选：项目链接" },
         { name: "related_docs", type: "string", description: "create 可选：相关文档" },
         { name: "folder", type: "string", description: "create 可选：用已有文件夹当项目目录（绝对路径），只有不接代码仓库的模板可用" },
-        { name: "chat_mode", type: "enum", enumValues: ["group", "bind", "inline"], description: "create 必填，没有默认值：group 建飞书独立群并拉用户入群，bind 绑定已有飞书群，inline 不建群、绑在当前聊天；应用内和微信只能 inline" },
-        { name: "existing_group_chat_id", type: "string", description: "chat_mode 为 bind 时必填：要绑定的飞书群 chat_id（oc_ 开头），机器人要已经在群里" },
+        { name: "bindings", type: "object[]", description: "create / bind 必填（没有默认值），unbind 放一项：项目接入的通道和方式，每项 { channel_id, mode: inline|group|bind, group_chat_id? }。inline 接该通道的主聊天（不建群），group 新建飞书独立群并拉用户入群，bind 绑定已有飞书群（要给 group_chat_id，oc_ 开头，机器人要已经在群里）；unbind 时 inline=主聊天，group / bind=专属群。先用 channels 看可选的通道；飞书 / 微信里只能接自己所在的通道，应用内对话里可以接任何通道" },
       ],
     },
     manage_workspace: {

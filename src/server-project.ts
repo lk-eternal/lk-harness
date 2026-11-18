@@ -6,8 +6,6 @@ import {
 
   getProject,
 
-  getCurrentProject,
-
   projectNodes,
 
   registerArtifact,
@@ -21,6 +19,17 @@ import { projectIdFromSessionKey } from "./shared/project-types.js"
 import { buildNodeActionPrompt } from "./shared/project-node-guides.js"
 
 
+
+/**
+ * 项目会话里的 AI 要操作哪个项目：显式 project_id，或 session_key 里的项目。
+ * 项目 MCP 不带调用者身份，也就没有「当前项目」可退回（当前项目按通道记，这里不知道是哪个通道）；
+ * 项目会话的提示词里每次都带着 project_id。
+ */
+function resolveToolProject(projectId?: string, sessionKey?: string) {
+  let id = projectId
+  if (!id && sessionKey) id = projectIdFromSessionKey(sessionKey)
+  return id ? getProject(id) : undefined
+}
 
 function txt(text: string) {
 
@@ -84,7 +93,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     {
 
-      project_id: z.string().optional().describe("项目 ID；缺省当前项目"),
+      project_id: z.string().optional().describe("项目 ID（会话提示词里给了；也可从 session_key 推断）"),
 
       session_key: z.string().optional(),
 
@@ -102,11 +111,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     async (args) => {
 
-      let id = args.project_id
-
-      if (!id && args.session_key) id = projectIdFromSessionKey(args.session_key)
-
-      const p = id ? getProject(id) : getCurrentProject()
+      const p = resolveToolProject(args.project_id, args.session_key)
 
       if (!p) return txt("❌ 未找到项目")
 
@@ -140,7 +145,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     {
 
-      project_id: z.string().optional().describe("项目 ID；缺省当前项目；也可从 session 推断"),
+      project_id: z.string().optional().describe("项目 ID（会话提示词里给了；也可从 session_key 推断）"),
 
       session_key: z.string().optional(),
 
@@ -148,11 +153,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     async ({ project_id, session_key }) => {
 
-      let id = project_id
-
-      if (!id && session_key) id = projectIdFromSessionKey(session_key)
-
-      const p = id ? getProject(id) : getCurrentProject()
+      const p = resolveToolProject(project_id, session_key)
 
       if (!p) return txt("❌ 未找到项目")
 
@@ -170,7 +171,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     {
 
-      project_id: z.string().optional().describe("项目 ID；缺省当前项目；也可从 session 推断"),
+      project_id: z.string().optional().describe("项目 ID（会话提示词里给了；也可从 session_key 推断）"),
 
       node_id: z.string().describe("节点 id（会话可用节点索引中的 id，原样使用）"),
 
@@ -180,11 +181,7 @@ export function registerProjectAgentTools(mcpServer: McpServer): void {
 
     async ({ project_id, node_id, session_key }) => {
 
-      let id = project_id
-
-      if (!id && session_key) id = projectIdFromSessionKey(session_key)
-
-      const p = id ? getProject(id) : getCurrentProject()
+      const p = resolveToolProject(project_id, session_key)
 
       if (!p) return txt("❌ 未找到项目")
 

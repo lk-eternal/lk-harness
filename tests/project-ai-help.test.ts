@@ -34,7 +34,9 @@ function keysOf(schema: any): string[] {
   // 剥掉 optional / describe 的包装
   for (let i = 0; i < 6 && t; i++) {
     if (t.shape) return Object.keys(t.shape)
-    if (t.unwrap) t = t.unwrap()
+    // 数组：看元素里的键（repos / bindings 的子项）
+    if (t.element) t = t.element
+    else if (t.unwrap) t = t.unwrap()
     else if (t._def?.innerType) t = t._def.innerType
     else if (t.def?.innerType) t = t.def.innerType
     else break
@@ -71,7 +73,7 @@ describe("总览讲清了新手上路需要的东西", () => {
   it("概念、完整建项目流程、用户说法对应的做法、对话方式、做不到的事，都在", () => {
     for (const w of [
       "项目模板", "流程组", "快捷操作", "常用代码仓库", "项目存放位置", "Git 基本原则",
-      "帮用户建项目：完整流程", "摸底", "send_question", "chat_mode", "确认", "create",
+      "帮用户建项目：完整流程", "摸底", "send_question", "bindings", "channels", "确认", "create",
       "用户说的话", "和用户说话的方式", "这些工具目前做不到",
     ]) expect(t).toContain(w)
   })
@@ -128,6 +130,21 @@ describe("手册和真实代码对得上", () => {
     expect(keysOf(shape.settings)).toEqual(expect.arrayContaining([
       "worktree_root", "git_principles", "reset_git_principles", "gitlab_host", "gitlab_token", "flow_hub_url", "flow_hub_token", "flow_hub_author",
     ]))
+  })
+
+  it("bindings 的子参数和动作：手册点到的 channel_id / mode / group_chat_id、channels / bind / unbind 都真实存在", () => {
+    const { shape } = manageProjectSchema()
+    expect(keysOf(shape.bindings)).toEqual(["channel_id", "mode", "group_chat_id"])
+    const actions = shape.action.options as string[]
+    for (const a of ["channels", "bind", "unbind"]) {
+      expect(actions).toContain(a)
+      expect(ALL).toContain(a)
+    }
+    // 建项时选的接入方式，手册要讲三种
+    for (const m of ["inline", "group", "bind"]) expect(text("create")).toContain(m)
+    // 不再有旧的 chat_mode 参数
+    expect(shape.chat_mode).toBeUndefined()
+    expect(shape.existing_group_chat_id).toBeUndefined()
   })
 
   it("手册里写的数字上限和代码一致", () => {

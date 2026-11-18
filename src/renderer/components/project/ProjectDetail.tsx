@@ -6,6 +6,7 @@ import {
   retargetInfo, sameIdList, splitInfo, type InfoForm, type LinkKey,
 } from "../../../shared/project-detail-form"
 import { usePanelSave } from "../usePanelSave"
+import ProjectBindings from "./ProjectBindings"
 import type { Group } from "./template-data"
 import {
   EditorFrame, FieldLabel, SaveButtons, Section, dangerBtn, dashedBtn, ghostBtn, inputBase, inputCls, linkBtn, useRegisterGuard,
@@ -349,6 +350,8 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
           </p>
         )}
       </Section>
+
+      <ProjectBindings item={item} ui={ui} onChanged={onChanged} />
 
       <Section title="位置">
         <dl className="space-y-2 rounded-lg border border-line-subtle bg-surface/50 px-3 py-2.5">

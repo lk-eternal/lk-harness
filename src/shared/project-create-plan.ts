@@ -12,7 +12,6 @@ import {
   type ProjectTemplateInfo,
   type ProjectView,
 } from "./project-app-types.js"
-import { channelIdFromSessionKey } from "./channel-types.js"
 import {
   cloneGroupPlain,
   fieldValuesToMetadata,
@@ -23,6 +22,8 @@ import {
 import {
   DEFAULT_NODE_GROUP_ID,
   normalizeWorkBranchMode,
+  projectBindings,
+  projectBoundToChannel,
   projectRootDir,
   type Project,
   type ProjectNodeGroupDef,
@@ -317,21 +318,17 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     dir: projectRootDir(p) || p.worktreePath || "",
     ...(p.worktreePath ? { worktreePath: p.worktreePath } : {}),
     metadata: { ...(p.metadata ?? {}) },
-    ...(p.groupChatId ? { groupChatId: p.groupChatId } : {}),
+    bindings: projectBindings(p).map((b) => ({
+      kind: b.kind,
+      channelId: b.channelId,
+      ...(b.chatKey ? { chatKey: b.chatKey } : {}),
+    })),
   }
 }
 
-/**
- * 项目归不归这个通道：按项目现在绑的会话（没有就看独立群、通知会话）所在的通道判断；
- * 从来没绑过任何会话的项目谁都可以认领。老版本飞书会话键没有通道前缀，认不出通道，一律算别人的。
- */
-export function isProjectOwnedBy(
-  p: Pick<Project, "sessionKey" | "groupChatId" | "notifyChatId">,
-  channelId: string,
-): boolean {
-  const ref = p.sessionKey || p.groupChatId || p.notifyChatId
-  if (!ref) return true
-  return channelIdFromSessionKey(ref) === channelId
+/** 项目是否接入了这个通道（主聊天或专属群）；没接入的通道看不到、也推进不了这个项目 */
+export function isProjectOwnedBy(p: Pick<Project, "bindings">, channelId: string): boolean {
+  return projectBoundToChannel(p, channelId)
 }
 
 export interface ProjectViewDeps {

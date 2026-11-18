@@ -8,11 +8,14 @@ import {
   createProject,
   deleteProject,
   getCurrentProject,
+  getCurrentProjectId,
   getProject,
   getProjectStoreDir,
   initProjectStore,
+  listProjectsForChat,
   listProjects,
   resolveProjectRef,
+  saveProject,
   setCurrentProjectId,
   registerArtifact,
   getProjectNewDraft,
@@ -27,10 +30,13 @@ import {
   type ProjectNewDraft,
 } from "../src/shared/project-store.js"
 import {
-  projectSessionKey,
   projectRootDir,
   canEnterProjectFromChat,
+  projectBindingForChat,
+  projectGroupBindings,
   projectGroupChatMatches,
+  projectMainBindings,
+  projectSessionKeyFor,
   parseExistingGroupChatBinding,
   normalizeProjectChatMode,
   normalizeWorkBranchMode,
@@ -39,7 +45,8 @@ import {
   type ProjectActionType,
   type ProjectChatMode,
 } from "../src/shared/project-types.js"
-import { isRepoInfoKey } from "../src/shared/project-repo-info.js"
+import type { ProjectBindingOutcome } from "../src/shared/project-app-types.js"
+import type { PlannedBinding } from "../src/shared/project-bindings.js"
 import { isUsableRepoRef, isRemoteRepoRef } from "./project-worktree"
 import { ensureProjectDir, prepareProjectWorkspace, projectsRootDir } from "./project-workspace"
 import { buildActionPrompt } from "./project-prompts"
@@ -49,37 +56,45 @@ import { clearAppChatRecords } from "./app-chat"
 import { removeNoFollow } from "../src/shared/safe-remove.js"
 import { buildEmptyProjectMenu } from "../src/shared/quick-start.js"
 import { pushUiLog } from "./ui-logger"
-import { leaveProjectSession, formatCurrentSessionBlock } from "./session-dispatcher"
-import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
+import { leaveProjectSession, formatCurrentSessionBlock, stopSessionAgent } from "./session-dispatcher"
+import { parseChatKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
+import {
+  bindExistingGroup,
+  bindingChannelFacts,
+  connectMainBinding,
+  createGroupBinding,
+  mainChatKeyOfChannel,
+  projectCleanupSessionKeys,
+  projectGroupName,
+  type GroupBindResult,
+} from "./project-bind"
 
-/** 当前 chat 是哪个独立群项目的专属群（有则返回该项目） */
+/** 当前 chat 是哪个项目的专属群（有则返回该项目） */
 function resolveBoundGroupProject(chatId?: string): Project | undefined {
-  if (!chatId) return undefined
-  return listProjects().find((p) => !p.archivedAt && projectGroupChatMatches(p, chatId))
+  return findProjectByGroupChat(chatId)
 }
 
-/** 独立群内优先按 groupChatId 解析项目；否则用全局 current 指针 */
+/** 当前 chat 在操作哪个项目：专属群里就是群的项目；主聊天里是它所在通道的「当前项目」 */
 function resolveProjectForChat(chatId?: string): Project | undefined {
-  return resolveBoundGroupProject(chatId) ?? getCurrentProject()
+  return resolveBoundGroupProject(chatId) ?? getCurrentProject(chatId)
 }
 
 /**
  * 当前 chat 能否进入/切换到该项目：
- * - 已在某独立群内：只能操作本群绑定项目（禁止切其它项目）
- * - 私聊/普通群：独立群项目不可进
+ * - 已在某专属群内：只能操作本群的项目（禁止切其它项目）
+ * - 主聊天：项目要接入了这个通道的主聊天；只接了专属群的项目在这里进不去（防串台）
  */
-function canOperateProjectInChat(project: Pick<Project, "id" | "groupChatId">, chatId?: string): boolean {
+function canOperateProjectInChat(project: Pick<Project, "id" | "bindings">, chatId?: string): boolean {
   const bound = resolveBoundGroupProject(chatId)
   if (bound) return bound.id === project.id
   return canEnterProjectFromChat(project, chatId)
 }
 
-const GROUP_ONLY_HINT = "该项目为独立群协作，请到专属群内进入与推进（私聊禁止，避免串台）"
+const GROUP_ONLY_HINT = "这个项目没有接入当前聊天：请到它接入的聊天（比如专属群）里进入与推进，或先在设置的项目管理里把它绑定到这个通道（避免串台）"
 const GROUP_LOCK_HINT = "当前为项目专属群，仅可协作本群项目，不能切换其它项目"
 
 function mergedProjectNodeIds(p?: Project): string[] {
-  const cur = p ?? getCurrentProject()
-  return projectNodes(cur ?? {}).map((n) => n.id)
+  return projectNodes(p ?? {}).map((n) => n.id)
 }
 
 function projectHasNode(p: Project | undefined, nodeId: string): boolean {
@@ -87,8 +102,8 @@ function projectHasNode(p: Project | undefined, nodeId: string): boolean {
   return projectNodes(p).some((n) => n.id === nodeId)
 }
 
-function projectHelpText(): string {
-  const nodeIds = mergedProjectNodeIds().join("|")
+function projectHelpText(chatId?: string): string {
+  const nodeIds = mergedProjectNodeIds(resolveProjectForChat(chatId)).join("|")
   return [
     "💡 /p 项目指令",
     "🔹 /p — 打开项目菜单",
@@ -138,9 +153,8 @@ function formatProjectCard(p: Project, index?: number): string {
 
 /** 节点推进按钮（建项卡 / 项目会话共用） */
 function projectNodeButtons(p?: Project): CommandButton[] {
-  const proj = p ?? getCurrentProject()
   const btns: CommandButton[] = []
-  for (const group of projectGroups(proj ?? {})) {
+  for (const group of projectGroups(p ?? {})) {
     for (const n of group.nodes) {
       btns.push({ label: n.label, cmd: `/p ${n.id}`, section: group.name })
     }
@@ -159,8 +173,8 @@ function projectButtonsCreate(p?: Project): CommandButton[] {
 /** 已进入项目会话后的操作卡；独立群模式不展示回主会话/退出（群内无主会话可回） */
 function projectButtons(p?: Project, chatId?: string): CommandButton[] {
   const base = projectButtonsCreate(p)
-  const proj = p ?? getCurrentProject()
-  if (proj?.groupChatId) {
+  // 在项目专属群里：群内没有主会话可回，也不能退出项目
+  if (p && projectGroupChatMatches(p, chatId)) {
     return [...base, { label: "帮助", cmd: "/p help", section: "其他" }]
   }
   return [
@@ -192,27 +206,16 @@ export async function enterProjectSession(
   const notes: string[] = []
   const dir = await ensureProjectDir(project)
   if (!dir.ok) return { ok: false, error: dir.error }
-  // 独立群：会话绑在群 chat；沿用会话：必须与当前进入的 chat/通道一致（防恢复数据绑错通道导致 active 被拒）
-  let sessionKey: string
-  if (project.groupChatId) {
-    sessionKey = project.sessionKey || projectSessionKey(project.groupChatId, project.id)
-  } else {
-    const expected = projectSessionKey(chatId, project.id)
-    const prev = project.sessionKey
-    const prevChat = prev ? chatIdFromSessionKey(prev) : ""
-    const prevCh = prev ? channelIdFromSessionKey(prev) : undefined
-    const enterCh = parseChatKey(chatId).channelId
-    const stale = !prev || prevChat !== chatId || (prevCh && enterCh && prevCh !== enterCh)
-    sessionKey = stale ? expected : prev
-    if (stale && prev && prev !== expected) {
-      notes.push(`🔧 已纠正会话绑定（原通道与当前不一致）`)
-    }
+  // 项目在每个入口上各有一条自己的会话：专属群用群的，主聊天用「当前聊天::project_id」。
+  // 会话键只由进入的这个聊天推出来，不会去动别的入口上的会话（也就没有抢会话、绑错通道的事）
+  const binding = projectBindingForChat(project, chatId)
+  const sessionKey = projectSessionKeyFor(project, chatId)
+  if (!binding || !sessionKey) return { ok: false, error: GROUP_ONLY_HINT }
+  // 记下这个入口的会话键：没进入过的主聊天入口第一次进入时补上，定时任务投递、删项目清会话都靠它
+  if (binding.sessionKey !== sessionKey) {
+    binding.sessionKey = sessionKey
+    saveProject(project)
   }
-  project.sessionKey = sessionKey
-  // 独立群通知/路由固定绑群，禁止被私聊进入改写
-  project.notifyChatId = project.groupChatId || chatId
-  const { saveProject } = await import("../src/shared/project-store.js")
-  saveProject(project)
   const bound = await syncActiveSession(port, chatId, sessionKey)
   if (!bound) {
     return { ok: false, error: `无法将当前会话切到项目（跨通道或路由拒绝）：${sessionKey}` }
@@ -252,203 +255,73 @@ interface NewProjectInput {
   repos?: { repoPath: string; baseBranch: string; testBranch?: string; developBranch?: string }[]
 }
 
-/** 飞书群描述上限 100 字：写项目目标；没写目标的写第一个代码仓库那行（目录 + 分支） */
-function projectGroupDescription(project: Project): string {
-  const goal = (project.goal || "").trim()
-  const repoLine = Object.entries(project.metadata ?? {}).find(([k, v]) => isRepoInfoKey(k) && v.trim())?.[1] ?? ""
-  return (goal || repoLine).slice(0, 100)
-}
-
-/** 独立群的群名 */
-function projectGroupName(project: Pick<Project, "name">): string {
-  return `📦 ${project.name}`
-}
-
-/**
- * 独立群模式：建项目专属群并把项目会话/通知绑定到群；失败由调用方回退当前会话模式。
- * keepCurrent：不清全局「当前项目」指针（AI 建项用——它不进项目会话，也不该动用户正在用的那个）。
- */
-async function setupProjectGroup(
-  port: number,
-  project: Project,
-  chatId: string,
-  operatorOpenId?: string,
-  keepCurrent = false,
-): Promise<{ ok: boolean; chatKey?: string; error?: string }> {
-  if (!operatorOpenId) return { ok: false, error: "缺少操作者 open_id（文本建项暂不支持独立群）" }
-  try {
-    const r = await httpPost(`http://127.0.0.1:${port}/create-project-group`, {
-      name: projectGroupName(project),
-      description: projectGroupDescription(project),
-      channelId: parseChatKey(chatId).channelId,
-      ownerOpenId: operatorOpenId,
-    }, 15000) as { ok?: boolean; chatKey?: string; error?: string } | null
-    if (!r?.ok || !r.chatKey) return { ok: false, error: r?.error || "建群失败" }
-    project.groupChatId = r.chatKey
-    project.notifyChatId = r.chatKey
-    project.sessionKey = projectSessionKey(r.chatKey, project.id)
-    const { saveProject } = await import("../src/shared/project-store.js")
-    saveProject(project)
-    // 群模式项目不抢占主会话的当前项目指针
-    if (!keepCurrent) setCurrentProjectId(null)
-    return { ok: true, chatKey: r.chatKey }
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  }
-}
-
-/** 绑定已有飞书群为项目专属群（用户需自行将机器人拉入群） */
-function bindProjectGroup(
-  project: Project,
-  operatorChatId: string,
-  existingInput: string,
-): { ok: boolean; chatKey?: string; rawChatId?: string; error?: string } {
-  const channelId = parseChatKey(operatorChatId).channelId
-  const parsed = parseExistingGroupChatBinding(existingInput, channelId || "")
-  if ("error" in parsed) return { ok: false, error: parsed.error }
-  const taken = findProjectByGroupChat(parsed.chatKey)
-  if (taken && taken.id !== project.id) {
-    return { ok: false, error: `该群已绑定项目「${taken.name}」(${taken.id})` }
-  }
-  project.groupChatId = parsed.chatKey
-  project.notifyChatId = parsed.chatKey
-  project.sessionKey = projectSessionKey(parsed.chatKey, project.id)
-  return { ok: true, chatKey: parsed.chatKey, rawChatId: parsed.rawChatId }
-}
-
-async function persistBoundProjectGroup(project: Project, keepCurrent = false): Promise<void> {
-  const { saveProject } = await import("../src/shared/project-store.js")
-  saveProject(project)
-  if (!keepCurrent) setCurrentProjectId(null)
-}
-
-/** 绑定已有群模式：写入 groupChatId 并通知群/私聊 */
-async function finishBindGroupModeCreate(
-  port: number,
-  messageId: string,
-  chatId: string,
-  project: Project,
-  existingGroupChatId: string,
-  extraNote?: string,
-): Promise<{ ok: true; rawChatId: string } | { ok: false; error: string }> {
-  const bound = bindProjectGroup(project, chatId, existingGroupChatId)
-  if (!bound.ok || !bound.chatKey || !bound.rawChatId) {
-    const error = bound.error || "绑定群失败"
-    pushUiLog("Electron", "WARN", `[Project] 绑定已有群失败: ${error}`)
-    return { ok: false, error }
-  }
-  await persistBoundProjectGroup(project)
-  const groupHint = "请确认已将机器人拉入该群，否则群内无法收发消息"
-  try {
-    await reportCommandResult(
-      port,
-      "",
-      true,
-      "",
-      bound.chatKey,
-      projectButtonsCreate(project),
-      { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
-    )
-  } catch (e) {
-    pushUiLog("Electron", "WARN", `[Project] 绑定群通知发送失败（可能机器人未入群）: ${e}`)
-  }
-  await leaveProjectSession(port, chatId)
-  await reportCommandResult(
-    port,
-    messageId,
-    true,
-    [
-      `✅ 项目「${project.name}」已创建`,
-      `🔗 已绑定群 \`${bound.rawChatId}\``,
-      `📣 ${groupHint}`,
-    ].join("\n"),
-    chatId,
-    [{ label: "项目菜单", cmd: "/p" }],
-  )
-  return { ok: true, rawChatId: bound.rawChatId }
-}
-
-/** 群模式建项收尾：项目卡发进群 + 主会话回执；失败时带回错误原因供回退提示 */
-async function finishGroupModeCreate(
-  port: number,
-  messageId: string,
-  chatId: string,
-  project: Project,
-  operatorOpenId?: string,
-  extraNote?: string,
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  const g = await setupProjectGroup(port, project, chatId, operatorOpenId)
-  if (!g.ok || !g.chatKey) {
-    const error = g.error || "建群失败"
-    pushUiLog("Electron", "WARN", `[Project] 独立群创建失败，回退当前会话: ${error}`)
-    return { ok: false, error }
-  }
-  await reportCommandResult(
-    port,
-    "",
-    true,
-    "",
-    g.chatKey,
-    projectButtonsCreate(project),
-    { cardTitle: projectCardTitle(project), sessionKey: project.sessionKey },
-  )
-  await leaveProjectSession(port, chatId)
-  await reportCommandResult(
-    port,
-    messageId,
-    true,
-    [
-      `✅ 项目「${project.name}」已创建`,
-      `📣 独立群「📦 ${project.name}」已建好并拉你入群，后续协作请到群里进行`,
-    ].join("\n"),
-    chatId,
-    [{ label: "项目菜单", cmd: "/p" }],
-  )
-  return { ok: true }
-}
-
-/**
- * AI 建项（管理 MCP 的 manage_project create）：把刚建好的项目接到飞书群上——建独立群并拉主用户入群（group），
- * 或绑定一个已有的群（bind）。和飞书表单建项（finishGroupModeCreate / finishBindGroupModeCreate）的区别：
- * 不离开当前会话、不动全局「当前项目」指针、不往私聊发回执（AI 自己向用户汇报）。
- * 失败时项目保持原来的绑定（调用者所在的聊天），由调用方把原因告诉 AI。
- */
-export async function attachProjectToGroupForAi(
-  port: number,
-  project: Project,
-  operatorChatKey: string,
-  target: { mode: "group"; ownerOpenId: string } | { mode: "bind"; existingGroupChatId: string },
-): Promise<
-  | { ok: true; chatKey: string; groupName?: string; rawChatId?: string }
-  | { ok: false; error: string }
-> {
-  let chatKey: string
-  let groupName: string | undefined
-  let rawChatId: string | undefined
-  if (target.mode === "group") {
-    const g = await setupProjectGroup(port, project, operatorChatKey, target.ownerOpenId, true)
-    if (!g.ok || !g.chatKey) return { ok: false, error: g.error || "建群失败" }
-    chatKey = g.chatKey
-    groupName = projectGroupName(project)
-    rawChatId = parseChatKey(g.chatKey).chatId
-  } else {
-    const bound = bindProjectGroup(project, operatorChatKey, target.existingGroupChatId)
-    if (!bound.ok || !bound.chatKey) return { ok: false, error: bound.error || "绑定群失败" }
-    try {
-      await persistBoundProjectGroup(project, true)
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
-    }
-    chatKey = bound.chatKey
-    rawChatId = bound.rawChatId
-  }
-  // 项目卡是尽力而为：reportCommandResult 自己吞掉发送错误、daemon 也不回送达结果，所以这里没法知道有没有发进群
-  // （比如绑定的群里机器人不在）。项目已经绑好，不因此算失败；绑群的提示里让 AI 提醒用户确认机器人在群里
-  await reportCommandResult(port, "", true, "", chatKey, projectButtonsCreate(project), {
+/** 项目卡发进新接入的群里（尽力而为：reportCommandResult 自己吞掉发送错误，机器人不在群里时发不进去也不算失败） */
+async function announceProjectInGroup(port: number, project: Project, groupChatKey: string): Promise<void> {
+  await reportCommandResult(port, "", true, "", groupChatKey, projectButtonsCreate(project), {
     cardTitle: projectCardTitle(project),
-    sessionKey: project.sessionKey,
+    sessionKey: projectSessionKeyFor(project, groupChatKey),
   })
-  return { ok: true, chatKey, groupName, rawChatId }
+}
+
+/**
+ * 把选好的接入点落到刚建好的项目上（主聊天 / 新建独立群 / 绑定已有群），新接入的群里发一张项目卡。
+ * 逐个做、互不影响：哪个失败就在它的结果里写原因，其余照常接上；项目要不要退回主聊天由调用方定。
+ * 不进入项目会话、不动「当前项目」。
+ */
+export async function attachPlannedBindings(
+  port: number | undefined,
+  project: Project,
+  items: PlannedBinding[],
+  opts?: { ownerOpenId?: string },
+): Promise<ProjectBindingOutcome[]> {
+  const out: ProjectBindingOutcome[] = []
+  for (const it of items) {
+    const base = { channelId: it.channel.id, channelName: it.channel.name, mode: it.mode }
+    if (it.mode === "inline") {
+      connectMainBinding(project, it.channel.id)
+      out.push({ ...base, ok: true })
+      continue
+    }
+    let r: GroupBindResult
+    if (it.mode === "group") {
+      r = port
+        ? await createGroupBinding(port, project, it.channel.id, opts?.ownerOpenId || it.channel.mainUserOpenId || "")
+        : { ok: false, error: "后台服务没有在运行" }
+    } else {
+      r = bindExistingGroup(project, it.channel.id, it.groupChatKey ?? "")
+    }
+    if (!r.ok) {
+      const what = it.mode === "group" ? "建独立群" : "绑定群"
+      pushUiLog("Project", "WARN", `[Bind] 项目 ${project.id} 在「${it.channel.name}」${what}失败: ${r.error}`)
+      out.push({ ...base, ok: false, warning: `${what}没成功：${r.error}` })
+      continue
+    }
+    if (port) await announceProjectInGroup(port, project, r.chatKey)
+    out.push({ ...base, ok: true, groupChatId: r.rawChatId, ...(r.groupName ? { groupName: r.groupName } : {}) })
+  }
+  return out
+}
+
+/** 飞书建项选了独立群 / 绑群并且接成了：私聊里回一句收尾，并回到主会话（项目只在群里协作） */
+async function replyGroupModeCreated(
+  port: number,
+  messageId: string,
+  chatId: string,
+  project: Project,
+  outcome: ProjectBindingOutcome,
+): Promise<void> {
+  await leaveProjectSession(port, chatId)
+  const lines = outcome.mode === "bind"
+    ? [
+      `✅ 项目「${project.name}」已创建`,
+      `🔗 已绑定群 \`${outcome.groupChatId ?? ""}\``,
+      "📣 请确认已将机器人拉入该群，否则群内无法收发消息",
+    ]
+    : [
+      `✅ 项目「${project.name}」已创建`,
+      `📣 独立群「${outcome.groupName ?? projectGroupName(project)}」已建好并拉你入群，后续协作请到群里进行`,
+    ]
+  await reportCommandResult(port, messageId, true, lines.join("\n"), chatId, [{ label: "项目菜单", cmd: "/p" }])
 }
 
 /**
@@ -510,39 +383,38 @@ async function finalizeNewProject(
       groupIds: draft.groupIds,
       groupId: draft.groupId,
       ...(Object.keys(ws.metadata).length ? { metadata: ws.metadata } : {}),
-      notifyChatId: chatId,
     })
     persisted = true
-    if (chatId) {
-      project.sessionKey = projectSessionKey(chatId, project.id)
-      const { saveProject } = await import("../src/shared/project-store.js")
-      saveProject(project)
-    }
     if (draft.chatKey) clearProjectNewDraft(draft.chatKey)
+    const channel = chatId ? bindingChannelFacts().find((c) => c.id === parseChatKey(chatId).channelId) : undefined
     let fallbackNote = ""
-    if (draft.chatMode === "bind" && chatId) {
-      if (!draft.existingGroupChatId?.trim()) {
-        await reportCommandResult(port, messageId, false, "❌ 绑定已有群时请填写群 chat_id（oc_…）", chatId)
+    // 独立群 / 绑定已有群：项目只接这个群（私聊里进不去，防串台）；没接成就退回当前聊天的主聊天
+    const mode = draft.chatMode ?? "group"
+    if (chatId && channel && mode !== "inline") {
+      let item: PlannedBinding = { channel, mode }
+      if (mode === "bind") {
+        const parsed = parseExistingGroupChatBinding(draft.existingGroupChatId ?? "", channel.id)
+        item = "error" in parsed
+          ? { channel, mode }
+          : { channel, mode, groupChatKey: parsed.chatKey, groupRawChatId: parsed.rawChatId }
+      }
+      const [outcome] = await attachPlannedBindings(port, project, [item], { ownerOpenId: draft.operatorOpenId })
+      if (outcome.ok) {
+        await replyGroupModeCreated(port, messageId, chatId, project, outcome)
         return
       }
-      const bindResult = await finishBindGroupModeCreate(port, messageId, chatId, project, draft.existingGroupChatId)
-      if (bindResult.ok) return
-      fallbackNote = `\n⚠️ 绑定已有群失败，已回退当前会话模式\n原因：${bindResult.error}`
-    } else if (draft.chatMode !== "inline" && chatId) {
-      const groupResult = await finishGroupModeCreate(port, messageId, chatId, project, draft.operatorOpenId)
-      if (groupResult.ok) return
-      fallbackNote = `\n⚠️ 独立群创建失败，已回退当前会话模式\n原因：${groupResult.error}`
+      fallbackNote = `⚠️ ${mode === "bind" ? "绑定已有群" : "独立群创建"}失败，已回退当前会话模式\n原因：${outcome.warning ?? ""}`
     }
+    if (chatId && channel) connectMainBinding(project, channel.id, chatId)
     if (chatId && canEnterProjectFromChat(project, chatId)) {
       const r = await enterProjectSession(port, chatId, project)
       if (!r.ok) {
         await reportCommandResult(port, messageId, false, projectDirUnavailableText(project, r.error || ""), chatId)
         return
       }
-      if (!project.groupChatId) setCurrentProjectId(project.id)
+      setCurrentProjectId(project.id, chatId)
     }
-    const note = fallbackNote ? fallbackNote.replace(/^\n/, "") : undefined
-    await replyProjectWorkspace(port, messageId, project, chatId, undefined, note)
+    await replyProjectWorkspace(port, messageId, project, chatId, undefined, fallbackNote || undefined)
   } catch (e: any) {
     if (!persisted) {
       // 项目没落盘：整个新建的项目目录（含克隆）一并收掉，不留孤儿
@@ -1095,14 +967,15 @@ export async function startProjectNode(
   const project = getProject(p.id) ?? p
   const dir = await ensureProjectDir(project)
   if (!dir.ok) return { ok: false, error: projectDirUnavailableText(project, dir.error), kind: "checkout" }
-  const sessionKey = project.groupChatId
-    ? (project.sessionKey || projectSessionKey(project.groupChatId, project.id))
-    : projectSessionKey(chatId, project.id)
-  project.sessionKey = sessionKey
-  project.notifyChatId = project.groupChatId || chatId
-  const { saveProject } = await import("../src/shared/project-store.js")
-  saveProject(project)
-  if (opts.touchCurrent && !project.groupChatId) setCurrentProjectId(project.id)
+  // 从哪个聊天推进，就用项目在这个聊天上的那条会话（每个入口各有一条，互不干扰）
+  const binding = projectBindingForChat(project, chatId)
+  const sessionKey = projectSessionKeyFor(project, chatId)
+  if (!binding || !sessionKey) return { ok: false, error: GROUP_ONLY_HINT, kind: "denied" }
+  if (binding.sessionKey !== sessionKey) {
+    binding.sessionKey = sessionKey
+    saveProject(project)
+  }
+  if (opts.touchCurrent && binding.kind === "main") setCurrentProjectId(project.id, chatId)
 
   const prompt = buildActionPrompt(project, type, undefined, { gitPrinciples: getConfig().gitPrinciples })
 
@@ -1146,7 +1019,7 @@ async function runAction(
     `🚀 已启动${r.label}\n项目：${r.project.name}`,
     chatId,
     undefined,
-    { patchMessageId, cardTitle: projectCardTitle(p), sessionKey: r.project.sessionKey },
+    { patchMessageId, cardTitle: projectCardTitle(p), sessionKey: r.sessionKey },
   )
 }
 
@@ -1163,8 +1036,10 @@ async function handleDeleteProjectCommand(
   // 选择/确认是瞬态卡：按钮点击来源时原卡推进；最终删除结果新发留痕
   const patchExtra = patchMessageId ? { patchMessageId } : undefined
 
+  // 只能删这个聊天看得到的项目（接入了当前通道的），别的通道的项目碰不到
+  const visible = listProjectsForChat(chatId)
   if (!token) {
-    const list = listProjects()
+    const list = visible
     if (!list.length) {
       await reportCommandResult(port, messageId, true, "📭 暂无项目", chatId, undefined, patchExtra)
       return
@@ -1185,7 +1060,7 @@ async function handleDeleteProjectCommand(
     await reportCommandResult(port, messageId, false, `❌ 确认删除必须使用项目 id（收到：${token}）`, chatId, undefined, patchExtra)
     return
   }
-  const target = confirmed ? getProject(token) : resolveProjectRef(token)
+  const target = confirmed ? visible.find((p) => p.id === token) : resolveProjectRef(token, visible)
   if (!target) {
     await reportCommandResult(
       port,
@@ -1223,12 +1098,11 @@ async function handleDeleteProjectCommand(
     return
   }
 
-  const wasCurrent = getCurrentProject()?.id === target.id
   const deletedName = target.name
   const deletedId = target.id
+  // 停在这个项目上的聊天（含当前这个）挪回主会话、每个入口的会话清掉，都在 executeProjectDelete 里做
   await executeProjectDelete(deletedId)
   void archiveProjectGroup(port, target)
-  if (wasCurrent && chatId) await leaveProjectSession(port, chatId)
   await reportCommandResult(
     port,
     messageId,
@@ -1240,15 +1114,16 @@ async function handleDeleteProjectCommand(
   )
 }
 
-/** 独立群模式项目删除后：群改名归档（不解散，聊天记录留档） */
-export async function archiveProjectGroup(port: number, project: Project): Promise<void> {
-  if (!project.groupChatId) return
-  try {
-    await httpPost(`http://127.0.0.1:${port}/archive-project-group`, {
-      chatKey: project.groupChatId,
-      name: `【已归档】${project.name}`.slice(0, 60),
-    }, 10000)
-  } catch { /* 尽力归档 */ }
+/** 项目删除后：它接入的每个专属群都改名归档（不解散，聊天记录留档） */
+export async function archiveProjectGroup(port: number, project: Pick<Project, "name" | "bindings">): Promise<void> {
+  for (const g of projectGroupBindings(project)) {
+    try {
+      await httpPost(`http://127.0.0.1:${port}/archive-project-group`, {
+        chatKey: g.chatKey,
+        name: `【已归档】${project.name}`.slice(0, 60),
+      }, 10000)
+    } catch { /* 尽力归档 */ }
+  }
 }
 
 /** 删除项目：元数据软删进 trash；项目目录整包移入系统回收站（只动项目目录，用户自己的代码仓库不碰）。目录被其他项目引用时只删记录。 */
@@ -1302,10 +1177,20 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
       }
     }
   }
-  // 项目会话由项目派生：项目没了，路由登记和应用内聊天记录不清的话会留下删不掉的幽灵会话
-  const sk = target.sessionKey
-  if (sk) {
-    const lock = readLockFile()
+  // 项目在每个入口上都有一条会话，会话由项目派生：项目没了，每一条的 Agent、路由登记、应用内聊天记录都要一起清，
+  // 否则会留下删不掉的幽灵会话（比如在飞书里删了项目，应用里还留着一个找不到项目的会话）
+  const lock = readLockFile()
+  // 停在这个项目上的主聊天（飞书私聊、应用内对话）：先把它们的活跃会话挪回主会话，不然下一条消息还往已删除的项目会话里投
+  if (lock?.port) {
+    const onProject = new Set<string>()
+    for (const b of projectMainBindings(target)) {
+      const chatKey = mainChatKeyOfChannel(b.channelId)
+      if (chatKey && getCurrentProjectId(chatKey) === target.id) onProject.add(chatKey)
+    }
+    for (const chatKey of onProject) await leaveProjectSession(lock.port, chatKey)
+  }
+  for (const sk of projectCleanupSessionKeys(target)) {
+    await stopSessionAgent(sk)
     if (lock?.port) await purgeSessionRouting(lock.port, sk)
     const ch = channelIdFromSessionKey(sk)
     if (ch && getChannel(ch)?.type === "app") await clearAppChatRecords({ sessionKey: sk })
@@ -1323,7 +1208,7 @@ async function replyProjectWorkspace(
   patchMessageId?: string,
   headerNote?: string,
 ): Promise<void> {
-  const sk = p.sessionKey || (chatId ? projectSessionKey(chatId, p.id) : undefined)
+  const sk = projectSessionKeyFor(p, chatId)
   const base = projectCardTitle(p)
   const cardTitle = headerNote && base
     ? { title: base.title, subtitle: headerNote }
@@ -1343,13 +1228,14 @@ async function replyProjectWorkspace(
 async function replyProjectMenu(port: number, messageId: string, chatId?: string, patchMessageId?: string): Promise<void> {
   const bound = resolveBoundGroupProject(chatId)
   if (bound) {
-    const sk = bound.sessionKey || projectSessionKey(bound.groupChatId || chatId!, bound.id)
-    if (chatId) await syncActiveSession(port, chatId, sk)
+    const sk = projectSessionKeyFor(bound, chatId)
+    if (chatId && sk) await syncActiveSession(port, chatId, sk)
     await replyProjectWorkspace(port, messageId, bound, chatId, patchMessageId)
     return
   }
 
-  const list = listProjects()
+  // 只列接入了当前通道的项目：别的通道的项目这里看不到
+  const list = listProjectsForChat(chatId)
   const cur = resolveProjectForChat(chatId)
   if (list.length === 0) {
     // 第一次用的人最需要知道「项目是什么、怎么建」，而不是一串子指令（子指令在「指令说明」里）
@@ -1360,9 +1246,7 @@ async function replyProjectMenu(port: number, messageId: string, chatId?: string
   const lines = list.map((p, i) => {
     const mark = cur?.id === p.id ? "（当前）" : ""
     const st = p.archivedAt ? " · 已归档" : ""
-    const mode = p.groupChatId
-      ? (canOperateProjectInChat(p, chatId) ? " · 独立群（本群）" : " · 独立群（仅群内）")
-      : ""
+    const mode = canOperateProjectInChat(p, chatId) ? "" : " · 仅群内"
     return `#${i + 1} 📦 ${p.name}${mark}${st}${mode}`
   })
   const head = cur
@@ -1383,7 +1267,7 @@ async function replyProjectMenu(port: number, messageId: string, chatId?: string
     }))
   if (cur && canOperateProjectInChat(cur, chatId)) {
     btns.push({ label: "项目详细信息", cmd: "/p info", section: "其他" })
-    if (!cur.groupChatId) {
+    if (!projectGroupChatMatches(cur, chatId)) {
       btns.push({ label: "回主会话", cmd: "/c main", section: "其他" })
       btns.push({ label: "退出项目", cmd: "/p leave", section: "其他" })
     }
@@ -1420,10 +1304,10 @@ export async function handleFeishuProjectCommand(
       await replyProjectWorkspace(port, messageId, bound, chatId, patchMessageId)
       return
     }
-    const cur = getCurrentProject()
+    const cur = getCurrentProject(chatId)
     if (cur && chatId && canOperateProjectInChat(cur, chatId)) {
       const active = await getCurrentActiveSession(port, chatId)
-      const projSk = cur.sessionKey || projectSessionKey(chatId, cur.id)
+      const projSk = projectSessionKeyFor(cur, chatId)
       if (active === projSk) {
         await replyProjectWorkspace(port, messageId, cur, chatId, patchMessageId)
         return
@@ -1435,7 +1319,7 @@ export async function handleFeishuProjectCommand(
 
   const sub = low(parts[1])
   if (sub === "help" || sub === "-h" || sub === "--help") {
-    await reportCommandResult(port, messageId, true, projectHelpText(), chatId, undefined, { patchMessageId })
+    await reportCommandResult(port, messageId, true, projectHelpText(chatId), chatId, undefined, { patchMessageId })
     return
   }
 
@@ -1460,7 +1344,8 @@ export async function handleFeishuProjectCommand(
   }
 
   if (sub === "use") {
-    const target = resolveProjectRef(parts[2])
+    // 序号 / id / 名字只在这个聊天看得到的项目里找：别的通道的项目，知道 id 也进不去
+    const target = resolveProjectRef(parts[2], listProjectsForChat(chatId), resolveProjectForChat(chatId))
     if (!target) {
       await reportCommandResult(port, messageId, false, "💡 用法：/p use <序号|id>", chatId)
       return
@@ -1474,19 +1359,19 @@ export async function handleFeishuProjectCommand(
     if (chatId) {
       const r = await enterProjectSession(port, chatId, target)
       if (!r.ok) {
-        const isolation = (r.error || "").includes("独立群")
+        const isolation = r.error === GROUP_ONLY_HINT || r.error === GROUP_LOCK_HINT
         await reportCommandResult(port, messageId, false, isolation ? `❌ ${r.error}` : projectDirUnavailableText(target, r.error || ""), chatId, isolation ? undefined : [
           { label: `重试进入 ${target.name}`, cmd: `/p use ${target.id}` },
         ], {
           cardTitle: projectCardTitle(target),
-          sessionKey: target.sessionKey || (chatId ? projectSessionKey(chatId, target.id) : undefined),
+          sessionKey: projectSessionKeyFor(target, chatId),
         })
         return
       }
       enterNotes = r.notes || []
     }
-    // 独立群不抢占全局 current 指针（防私聊/其它入口误用）
-    if (!target.groupChatId) setCurrentProjectId(target.id)
+    // 当前项目只记在通道的主聊天上；在专属群里进入不碰它（store 里群聊键不会被记）
+    setCurrentProjectId(target.id, chatId)
     await replyProjectWorkspace(
       port, messageId, target, chatId, patchMessageId,
       enterNotes.length ? enterNotes.join("\n") : undefined,
@@ -1618,7 +1503,7 @@ export async function handleFeishuProjectCommand(
     return
   }
 
-  await reportCommandResult(port, messageId, false, `😅 未知指令: ${parts[1]}\n\n${projectHelpText()}`, chatId)
+  await reportCommandResult(port, messageId, false, `😅 未知指令: ${parts[1]}\n\n${projectHelpText(chatId)}`, chatId)
 }
 
 export async function handleProjectSyncSignal(payload: {

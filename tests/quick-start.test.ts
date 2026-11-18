@@ -279,12 +279,25 @@ describe("/p 没有项目时（真实指令处理）", () => {
     const { store, commands } = await boot()
     store.createProject({
       name: "已有的", goal: "", worktreePath: path.join(userData, "ws", "workspace"), groupIds: ["general"], groupId: "general",
+      bindings: [{ kind: "main", channelId: "ch_fs" }],
     })
     await commands.handleFeishuProjectCommand(port, "m1", "/p", CHAT)
     const body = results()[0].body
     expect(body.message).toContain("📦 项目菜单")
     expect(body.message).toContain("已有的")
     expect(body.message).not.toContain("还没有项目")
+  })
+
+  it("别的通道的项目不算：这个通道里 /p 还是空状态（集中部署时不会看到别人的项目）", async () => {
+    const { store, commands } = await boot()
+    store.createProject({
+      name: "别人的", goal: "", worktreePath: path.join(userData, "ws", "workspace"), groupIds: ["general"], groupId: "general",
+      bindings: [{ kind: "main", channelId: "ch_other" }],
+    })
+    await commands.handleFeishuProjectCommand(port, "m1", "/p", CHAT)
+    const empty = buildEmptyProjectMenu()
+    expect(results()[0].body).toMatchObject({ message: empty.text })
+    expect(results()[0].body.message).not.toContain("别人的")
   })
 })
 
