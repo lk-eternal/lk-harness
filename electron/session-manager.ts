@@ -37,6 +37,7 @@ import {
   isSessionAgentRunning,
   previousActiveSessionMap,
   rememberP2pNames,
+  resetSessionConversation,
   stopSessionAgent,
 } from "./session-dispatcher"
 
@@ -167,10 +168,8 @@ export async function resetManagedSession(sessionKey: string): Promise<ManagerOp
   try {
     const found = await findManageable(sessionKey)
     if (!found.ok) return found
-    const key = found.session.sessionKey
-    const stopped = isSessionAgentRunning(key)
-    if (stopped) await stopSessionAgent(key)
-    resetAllSessionContext(key)
+    // 和 /reset 同一条路：已投递给旧 Agent 的消息一并丢掉，否则调度器当它掉线，拉起新 Agent 把旧消息重投一遍
+    const { stopped } = await resetSessionConversation(found.session.sessionKey)
     return { ok: true, stopped }
   } catch (e) {
     return { ok: false, error: errorText(e) }

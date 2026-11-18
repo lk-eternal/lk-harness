@@ -34,6 +34,7 @@ import {
 } from "./agent-engine"
 import type { InterruptTurnResult } from "./agent-engine/types"
 import { interruptRunningEngine } from "./send-queued-now"
+import { resetSessionFlow, type ResetSessionResult } from "./reset-session"
 import { cleanupWorkspaceDir } from "./workspace-injector"
 import { pushChannelRuntimeToDaemon } from "./workspace-switch"
 import { shouldIncludeAdminMcp } from "../src/shared/harness-mcp-store.js"
@@ -476,6 +477,22 @@ export async function deleteQueueMessage(fileId: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * 重置会话：丢掉已投递给旧 Agent 的消息 → 停 Agent → 清上下文。顺序和为什么要丢，见 reset-session.ts。
+ * 所有「重置」入口（/reset 指令、AI 的 manage_agent reset、会话管理页）都走这一个，别各自拼停止 + 清上下文。
+ */
+export function resetSessionConversation(sessionKey: string): Promise<ResetSessionResult> {
+  return resetSessionFlow(sessionKey, {
+    getQueue: getQueueMessages,
+    deleteMessage: deleteQueueMessage,
+    normalizeKey: normalizeSessionKey,
+    isRunning: isSessionAgentRunning,
+    stopAgent: stopSessionAgent,
+    resetContext: resetAllSessionContext,
+    log: (level, msg) => broadcastLog(`[Reset] ${msg}`, level),
+  })
 }
 
 // ── 准入：别人的会话还能不能进来 ─────────────────────────────

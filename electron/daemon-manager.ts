@@ -33,7 +33,6 @@ import {
   getAgentEngine,
   activeAgentSessionCount,
   handleAgentPollPhase,
-  resetAllSessionContext,
   clearAgentFailStreaks,
   switchAgentSessionModel,
   switchAgentSessionProvider,
@@ -111,6 +110,7 @@ import {
   formatCurrentSessionBlock, currentResourceIdForSession, scheduleContextForSession,
   enforceChannelAccess,
   applyChannelPolicyChanges,
+  resetSessionConversation,
 } from "./session-dispatcher"
 import { resolveSessionWorkspaceDir } from "../src/shared/session-workspace.js"
 import {
@@ -1520,11 +1520,9 @@ async function checkAndExecutePendingCommands(): Promise<void> {
         case "/r":
         case "/reset": {
           const sessionKey = await resolveEffectiveSessionKey(claimed.chatId, claimed.chatType, lock.port)
-          if (sessionKey && isSessionAgentRunning(sessionKey)) {
-            await stopSessionAgent(sessionKey)
-          }
-          // SDK / LLM 上下文重置：丢弃 resume 映射，下条消息全新会话
-          if (sessionKey) resetAllSessionContext(sessionKey)
+          // 停 Agent、丢上下文（丢弃 resume 映射，下条消息全新会话），并丢掉已投递给旧 Agent 的消息：
+          // 不丢的话调度器会当它掉线、拉起新 Agent 重投，「重置」本身也被重投，一直循环
+          if (sessionKey) await resetSessionConversation(sessionKey)
           const wsDir = resolveResetWorkspaceDir(sessionKey, claimed.chatId, claimed.chatType)
           const cmdChannelId = claimed.chatId ? parseChatKey(claimed.chatId).channelId : undefined
           if (wsDir && cmdChannelId) setMainChatIdForScope(mainChatScopeKey(cmdChannelId, wsDir), "")
