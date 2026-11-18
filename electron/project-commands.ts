@@ -47,6 +47,7 @@ import { syncArtifactToFeishu } from "./project-feishu-sync"
 import { httpPost, syncActiveSession, enqueueToSession, getCurrentActiveSession, purgeSessionRouting, readLockFile } from "./daemon-client"
 import { clearAppChatRecords } from "./app-chat"
 import { removeNoFollow } from "../src/shared/safe-remove.js"
+import { buildEmptyProjectMenu } from "../src/shared/quick-start.js"
 import { pushUiLog } from "./ui-logger"
 import { leaveProjectSession, formatCurrentSessionBlock } from "./session-dispatcher"
 import { parseChatKey, chatIdFromSessionKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
@@ -1351,10 +1352,9 @@ async function replyProjectMenu(port: number, messageId: string, chatId?: string
   const list = listProjects()
   const cur = resolveProjectForChat(chatId)
   if (list.length === 0) {
-    await reportCommandResult(port, messageId, true, `${projectHelpText()}\n\n📭 暂无项目`, chatId, [
-      { label: "新建项目", cmd: "/p new" },
-      { label: "配置工作区", cmd: "/p setup" },
-    ], { cardTitle: { title: "项目", subtitle: "菜单" }, patchMessageId })
+    // 第一次用的人最需要知道「项目是什么、怎么建」，而不是一串子指令（子指令在「指令说明」里）
+    const empty = buildEmptyProjectMenu()
+    await reportCommandResult(port, messageId, true, empty.text, chatId, empty.buttons, { cardTitle: empty.title, patchMessageId })
     return
   }
   const lines = list.map((p, i) => {

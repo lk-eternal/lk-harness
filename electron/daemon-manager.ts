@@ -61,6 +61,8 @@ import {
 } from "./mcp-manager"
 import { FileCommand, reportCommandResult, handleFeishuModelCommand, handleFeishuMcpCommand, handleFeishuTaskCommand, type TaskRunFn } from "./command-handler"
 import { handleFeishuProjectCommand, handleProjectSyncSignal, fillProjectNewFromText, handleProjectNewSubmit, replySetupHub, executeProjectDelete, archiveProjectGroup } from "./project-commands"
+import { sendWelcomeCard } from "./quick-start-card"
+import { buildHelpBodyForAdmin, buildHelpButtons } from "../src/shared/quick-start.js"
 import { isGitRepoRoot } from "./project-worktree"
 import { getDefaultNodeGuide } from "./project-prompts"
 import {
@@ -797,6 +799,9 @@ export async function startDaemon(): Promise<{ ok: boolean; error?: string }> {
               if (!fillOnly) {
                 resolveBindWaiter(channelId, chatId)
                 BrowserWindow.getAllWindows().forEach((w) => w.webContents.send("bind:result", { ok: true, value: chatId, channelId }))
+                // 绑定成功顺手发一张「快速上手」卡：新用户不知道能干什么、怎么建项目，这是第一次能告诉他的时机
+                const welcomePort = cachedPort ?? readLockFile()?.port
+                if (welcomePort) void sendWelcomeCard(welcomePort, channelId, chatId)
               }
             }
           } catch { /* ignore */ }
@@ -1544,30 +1549,11 @@ async function checkAndExecutePendingCommands(): Promise<void> {
 
         case "/h":
         case "/help": {
-          // 帮助分组：当前对话 / 排队 / 协作 / 系统
-          const ctx = [
-            { label: "📊 状态", cmd: "/s", section: "▶ 当前对话" },
-            { label: "⏹ 停止", cmd: "/x", section: "▶ 当前对话" },
-            { label: "🔄 清空上下文", cmd: "/r", section: "▶ 当前对话" },
-            { label: "🧠 切换模型", cmd: "/m", section: "▶ 当前对话" },
-          ]
-          const queue = [
-            { label: "📋 查看排队", cmd: "/ls", section: "▶ 排队中" },
-            { label: "🧹 清空排队", cmd: "/cl", section: "▶ 排队中" },
-          ]
-          const orch = [
-            { label: "💬 会话", cmd: "/c", section: "▶ 协作" },
-            { label: "⏰ 任务", cmd: "/t", section: "▶ 协作" },
-            { label: "📦 项目", cmd: "/p", section: "▶ 协作" },
-          ]
-          const infra = [
-            { label: "🧩 MCP", cmd: "/mc", section: "▶ 系统" },
-            { label: "♻️ 重启应用", cmd: "/rr", section: "▶ 系统" },
-          ]
-          const helpBtns = isAdmin
-            ? [...ctx, ...queue, ...orch, ...infra]
-            : ctx.filter((b) => ["/s", "/x", "/r"].includes(b.cmd))
-          const body = "💡 点下面按钮或直接发送指令；有下级选项的会先说明用法"
+          // 帮助分组：当前对话 / 排队 / 协作 / 系统（按钮和主用户正文在 shared/quick-start，和欢迎卡共用一份说法）
+          const helpBtns = buildHelpButtons(isAdmin)
+          const body = isAdmin
+            ? buildHelpBodyForAdmin()
+            : "💡 点下面按钮或直接发送指令；有下级选项的会先说明用法"
           await reportCommandResult(lock.port, claimed!.messageId, true, body, claimed!.chatId, helpBtns, {
             cardTitle: { title: "帮助", subtitle: "指令" },
             patchMessageId: patchTarget,
