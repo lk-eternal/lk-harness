@@ -15,7 +15,7 @@ import { SdkAppendStore } from "./sdk-append-store"
 import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 import type { VisitorLimits } from "../src/shared/visitor-limits.js"
-import { getAgentResource } from "./config-store"
+import { getAgentResource, getConfig } from "./config-store"
 import { notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
 import {
   type StreamAgg,
@@ -1369,7 +1369,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
           const { buildProjectSessionPrompt } = await import("./project-prompts")
           const proj = getProject(pid)
           if (proj) {
-            effectiveTask = buildProjectSessionPrompt(proj)
+            effectiveTask = buildProjectSessionPrompt(proj, { gitPrinciples: getConfig().gitPrinciples })
             pushUiLog("SDK", "INFO", `[${sessionKey}] 全新项目会话，已重新注入项目上下文（${proj.name}）`)
           }
         } catch (e: unknown) {
