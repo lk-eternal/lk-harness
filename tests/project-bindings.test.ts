@@ -266,7 +266,7 @@ describe("建项 / 补接入时能选什么、选得对不对", () => {
 
   it("各通道能用的方式：应用内只有 inline；微信只有 inline；飞书看有没有主用户、有没有 open_id；bind 飞书永远可以", () => {
     expect(channelBindingModes(channels[0])).toEqual({ modes: ["inline"] })
-    expect(channelBindingModes(channels[3])).toMatchObject({ modes: ["inline"], note: expect.stringContaining("微信不能建群") })
+    expect(channelBindingModes(channels[3])).toEqual({ modes: ["inline"] })
     expect(channelBindingModes(channels[1])).toEqual({ modes: ["inline", "group", "bind"] })
     expect(channelBindingModes(channels[2])).toMatchObject({ modes: ["inline", "bind"], note: expect.stringContaining("open_id") })
     expect(channelBindingModes(ch(FS, "feishu", { mainUserChatId: "", mainUserOpenId: "ou" })))
@@ -325,14 +325,14 @@ describe("建项 / 补接入时能选什么、选得对不对", () => {
     expect(plan([{ channelId: FS, mode: "inline" }], undefined).ok).toBe(false)
   })
 
-  it("通道不支持的方式：给出原因（微信不能建群、没有 open_id 不能建群、没绑主用户不能接主聊天、停用的通道什么都不行）", () => {
+  it("通道不支持的方式：给出原因和这个通道能用什么（微信只能 inline、没有 open_id 不能建群、没绑主用户不能接主聊天、停用的通道什么都不行）", () => {
     const deny = (choices: unknown, invoker: string, hint: string, list = channels) => {
       const r = plan(choices, invoker, list)
       expect(r.ok, hint).toBe(false)
       expect(!r.ok && r.error, hint).toContain(hint)
     }
     deny([{ channelId: APP, mode: "group" }], APP, "不能用 group")
-    deny([{ channelId: WX, mode: "bind", groupChatId: GROUP }], WX, "微信不能建群")
+    deny([{ channelId: WX, mode: "bind", groupChatId: GROUP }], WX, "这个通道能用：inline")
     deny([{ channelId: FS2, mode: "group" }], FS2, "open_id")
     deny([{ channelId: FS, mode: "inline" }], APP, "还没绑定主用户", [channels[0], ch(FS, "feishu", { mainUserChatId: "" })])
     deny([{ channelId: FS, mode: "inline" }], APP, "已停用", [channels[0], ch(FS, "feishu", { enabled: false })])

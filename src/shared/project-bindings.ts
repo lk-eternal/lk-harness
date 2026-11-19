@@ -33,13 +33,16 @@ function hasMainUser(c: BindingChannelFacts): boolean {
   return c.mainUserEnabled !== false && !!c.mainUserChatId?.trim()
 }
 
-/** 这个通道上能用哪几种方式，以及受限的原因 */
+/**
+ * 这个通道上能用哪几种方式，以及暂时不能用的原因。
+ * note 只写用户自己能处理的原因（没绑主用户、没记到飞书身份、通道停用）；通道本身固定的限制（微信不能建群）由 modes 体现，不写成文字。
+ */
 export function channelBindingModes(c: BindingChannelFacts): { modes: ProjectChatMode[]; note?: string } {
   if (!c.enabled) return { modes: [], note: "这个通道已停用" }
   if (c.type === "app") return { modes: ["inline"] }
   if (c.type === "wechat") {
     return hasMainUser(c)
-      ? { modes: ["inline"], note: "微信不能建群或绑群，只能接主聊天" }
+      ? { modes: ["inline"] }
       : { modes: [], note: "这个微信通道还没绑定主用户，没有人能在里面用项目" }
   }
   const modes: ProjectChatMode[] = []
@@ -126,7 +129,9 @@ export function planBindingChoices(
     }
     const { modes, note } = channelBindingModes(channel)
     if (!modes.includes(mode)) {
-      return { ok: false, error: `通道「${channel.name}」不能用 ${mode}（${BINDING_MODE_LABEL[mode]}）：${note || "这个通道不支持"}` }
+      const usable = modes.length ? `这个通道能用：${modes.join(" / ")}` : ""
+      const reason = [note, usable].filter(Boolean).join("；")
+      return { ok: false, error: `通道「${channel.name}」不能用 ${mode}（${BINDING_MODE_LABEL[mode]}）：${reason}` }
     }
     let groupChatKey: string | undefined
     let groupRawChatId: string | undefined

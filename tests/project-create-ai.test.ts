@@ -498,7 +498,7 @@ describe("AI 建项：bindings 必须明确指定，没有默认值", () => {
     }
     await deny(APP_CHAT, [{ channelId: APP, mode: "group" }], "不能用 group")
     await deny(APP_CHAT, [{ channelId: WECHAT, mode: "bind", groupChatId: EXISTING_GROUP_ID }], "不能用 bind")
-    await deny(WX_CHAT, [{ channelId: WECHAT, mode: "group" }], "微信不能建群")
+    await deny(WX_CHAT, [{ channelId: WECHAT, mode: "group" }], "这个通道能用：inline")
     await deny(FS_CHAT, [{ channelId: FEISHU, mode: "group" }], "open_id")
     await deny(APP_CHAT, [inlineOn(APP), inlineOn(APP)], "选重了")
 
