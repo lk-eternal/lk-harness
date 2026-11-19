@@ -92,9 +92,14 @@ function isOpenQuestion(item: AppChatItem): item is AppChatQuestionItem {
   return item.kind === "question" && !item.answered && !item.closedNote;
 }
 
-/** 还没交给 Agent 的问题：没选的，和已选但在等其余问题的 */
+/** 还没交给 Agent 的问题：没选的，和已选但在等这一轮结束、或等其余问题的 */
 function isUndeliveredQuestion(item: AppChatItem): item is AppChatQuestionItem {
   return item.kind === "question" && !item.closedNote && (!item.answered || item.held === true);
+}
+
+/** 同一轮问的、还没交给 Agent 的问题：一起选完、一起交出 */
+function undeliveredOfRound(items: readonly AppChatItem[], round: string | undefined): AppChatQuestionItem[] {
+  return items.filter((i): i is AppChatQuestionItem => isUndeliveredQuestion(i) && i.round === round);
 }
 
 function withoutHeld(item: AppChatQuestionItem): AppChatQuestionItem {
@@ -104,10 +109,16 @@ function withoutHeld(item: AppChatQuestionItem): AppChatQuestionItem {
 }
 
 /**
- * answerQuestion 的结果。deliver 有值 = 这一组问题全选完了，要把这段文本交给 Agent；
- * 没有 = 先记下这个选择，还在等其余问题。
+ * answerQuestion 的结果。deliver 有值 = 这一组问题全选完、且这一轮已结束，要把这段文本交给 Agent；
+ * 没有 = 先记下这个选择，还在等其余问题或这一轮结束。
  */
 export type AnswerQuestionResult = { ok: false } | { ok: true; deliver?: string };
+
+/** 一组选完、等到这一轮结束才交出的答案：text 交给 Agent，anchorId 是这组里一道题的 messageId，用来把消息路由回原会话 */
+export interface ReadyAnswers {
+  text: string;
+  anchorId: string;
+}
 
 /** 路径比较用的规整形式：绝对化、统一大小写（Windows / macOS 默认大小写不敏感，和 referencesPath 一致） */
 function pathKey(p: string): string {
@@ -167,6 +178,8 @@ export class AppChat {
   constructor(
     private readonly rootDir: string,
     private readonly emit: (event: AppChatEvent) => void,
+    /** 题目所属的那一轮是否已结束。没接轮次记录时（单独使用、测试）题目一律算已结束 */
+    private readonly isRoundEnded: (sessionKey: string, round: string | undefined) => boolean = () => true,
   ) {}
 
   private channelDir(channelId: string): string {
@@ -428,21 +441,26 @@ export class AppChat {
     });
   }
 
-  /** 返回问题的 messageId，调用方据此登记消息路由 */
-  addQuestion(sessionKey: string, text: string, options: string[], multi = false): string {
+  /**
+   * 返回问题的 messageId，调用方据此登记消息路由。
+   * round 是问这道题时 Agent 所在的那一轮；不传 = 不参与轮次（选完就交，用户打字随时可关）。
+   */
+  addQuestion(sessionKey: string, text: string, options: string[], multi = false, round?: string): string {
     const messageId = `app_q_${randomUUID()}`;
     this.upsert(this.entry(sessionKey), {
       kind: "question", id: messageId, ts: Date.now(), messageId, text, options,
       ...(multi ? { multi: true } : {}),
+      ...(round ? { round } : {}),
     });
     return messageId;
   }
 
   /**
-   * 选中一个选项。同一会话里还有没选的问题时，这个选择先记下（held）、不交给 Agent，
-   * 等全部选完才一次交出去；选完之前可以改选。问题不存在、已交出或已关闭返回 ok:false。
+   * 选中一个选项：只记下，选完之前、这一轮结束之前都可以改选。
+   * 同一轮问的题全部选完、且这一轮已结束，才把这一组一次交出去（返回的 deliver）；否则先留着（held）。
+   * 问题不存在、已交出或已关闭返回 ok:false。
    *
-   * 「同一组」就是这个会话里所有还没交出的问题：用户发消息会关掉没选的问题（并先交出已选的），
+   * 不同轮的题各是各的一组：用户打字会关掉已结束那一轮没选的题（并先交出已选的），
    * 所以不会有很久以前的残留问题把新一轮的答案卡住。
    * 交出的永远是带题干的问题和回答（一题也是），否则 Agent 对不上哪个答案属于哪个问题。
    */
@@ -454,29 +472,54 @@ export class AppChat {
     if (hit.multi && !option.trim()) return { ok: false };
     this.upsert(entry, { ...hit, answered: option, held: true });
 
-    const group = entry.items.filter(isUndeliveredQuestion);
-    if (group.some((q) => !q.answered)) return { ok: true };
-
-    for (const q of group) this.upsert(entry, withoutHeld(q));
-    return { ok: true, deliver: formatQuestionBatchSummary(group) };
+    const deliver = this.takeGroupIfReady(sessionKey, entry, undeliveredOfRound(entry.items, hit.round));
+    return deliver === undefined ? { ok: true } : { ok: true, deliver };
   }
 
   /**
-   * 用户没有把问题选完、而是直接发了消息：已选但还没交出的答案不能丢，取出来先交给 Agent。
+   * Agent 进入等待（一轮结束）后调用：把已经选完、之前只是等这一轮结束的各组答案取出来。
+   * 每组一条，由调用方投递给 Agent。
+   */
+  takeReadyAnswers(sessionKey: string): ReadyAnswers[] {
+    const entry = this.entry(sessionKey);
+    const rounds = new Set(entry.items.filter(isUndeliveredQuestion).map((q) => q.round));
+    const ready: ReadyAnswers[] = [];
+    for (const round of rounds) {
+      const group = undeliveredOfRound(entry.items, round);
+      const text = this.takeGroupIfReady(sessionKey, entry, group);
+      if (text !== undefined) ready.push({ text, anchorId: group[0].messageId });
+    }
+    return ready;
+  }
+
+  /** 这一组全选完、且所属那一轮已结束：解除 held 并返回要交给 Agent 的文本；否则什么都不动 */
+  private takeGroupIfReady(sessionKey: string, entry: SessionEntry, group: AppChatQuestionItem[]): string | undefined {
+    if (group.length === 0 || group.some((q) => !q.answered)) return undefined;
+    if (!this.isRoundEnded(sessionKey, group[0].round)) return undefined;
+    for (const q of group) this.upsert(entry, withoutHeld(q));
+    return formatQuestionBatchSummary(group);
+  }
+
+  /**
+   * 用户没有把问题选完、而是直接打字发了消息：已选但还没交出的答案不能丢，取出来先交给 Agent。
+   * 只处理所属那一轮已结束的题；那一轮还在跑的题不动（用户可能还没看到这一轮后面发的题）。
    * 返回带题干的汇总文本；没有这样的答案返回 undefined。要在 closeOpenQuestions 之前调用。
    */
   releaseHeldAnswers(sessionKey: string): string | undefined {
     const entry = this.entry(sessionKey);
-    const held = entry.items.filter((i): i is AppChatQuestionItem => i.kind === "question" && i.held === true && !i.closedNote);
+    const held = entry.items.filter(
+      (i): i is AppChatQuestionItem => i.kind === "question" && i.held === true && !i.closedNote && this.isRoundEnded(sessionKey, i.round),
+    );
     if (held.length === 0) return undefined;
     for (const q of held) this.upsert(entry, withoutHeld(q));
     return formatQuestionBatchSummary(held);
   }
 
+  /** 用户打字替代了没选的题：只关所属那一轮已结束的，那一轮还在跑的题不动 */
   closeOpenQuestions(sessionKey: string, note: string): void {
     const entry = this.entry(sessionKey);
     for (const item of [...entry.items]) {
-      if (isOpenQuestion(item)) this.upsert(entry, { ...item, closedNote: note });
+      if (isOpenQuestion(item) && this.isRoundEnded(sessionKey, item.round)) this.upsert(entry, { ...item, closedNote: note });
     }
   }
 

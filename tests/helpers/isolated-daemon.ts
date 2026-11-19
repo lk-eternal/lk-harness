@@ -58,6 +58,11 @@ export interface IsolatedDaemon {
   get(p: string): Promise<any>
   /** 模拟 Agent 非阻塞领取这个会话的消息 */
   poll(): Promise<{ messages?: Array<{ text: string }> }>
+  /**
+   * 模拟 Agent 说完这一轮、进入阻塞 poll：有消息立即返回；没有就挂着，等够 waitMs 放弃（返回空）。
+   * 进入阻塞 poll 就是「这一轮结束」——点选的答案要等到这时才会交给 Agent。
+   */
+  waitPoll(waitMs?: number): Promise<{ messages?: Array<{ text: string }> }>
   history(): Promise<ChatItem[]>
   users(): Promise<ChatItem[]>
   /** 暂存区里（标着排队）的用户消息文本 */
@@ -157,6 +162,17 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
     base, dataDir, wsDir, homeDir, sessionKey, post, get, history, users, findFile, stop,
     leading: leading.map(({ id, wsDir: dir, sessionKey: key }) => ({ id, wsDir: dir, sessionKey: key })),
     poll: async () => (await fetch(`${base}/api/poll-message?sessionKey=${encodeURIComponent(sessionKey)}&wait=false`)).json(),
+    waitPoll: async (waitMs = 500) => {
+      const abort = new AbortController()
+      const timer = setTimeout(() => abort.abort(), waitMs)
+      try {
+        return await (await fetch(`${base}/api/poll-message?sessionKey=${encodeURIComponent(sessionKey)}`, { signal: abort.signal })).json()
+      } catch {
+        return {}
+      } finally {
+        clearTimeout(timer)
+      }
+    },
     queuedOf: async () => (await users()).filter((i) => i.queued).map((i) => i.text ?? ""),
     card: (action, extra = {}) =>
       post("/api/agent-stream-card", { session_key: sessionKey, action, segments: [{ type: "reply", text: "处理中" }], ...extra }),

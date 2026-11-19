@@ -3,13 +3,13 @@
  *
  * 流式卡的状态（有哪些题、各题答没答）只在 daemon 内存里，重启就没了；登记（cardQuestionMap）倒是存盘并恢复的。
  * 过去的行为：
- *   1. 新消息送达时，登记里的流式卡题目只被摘掉登记，飞书上那张卡的选项一直开着；
+ *   1. 用户打字关题时，登记里的流式卡题目只被摘掉登记，飞书上那张卡的选项一直开着；
  *   2. 点这张旧卡上的选项，走的是「整卡换成一行已选择」的老路——卡上的思考、工具、正文全没了，
  *      还往队列塞一条答案，Agent 收到后把新卡上还没答的题顺手关了。
  * 现在：登记里带卡号和各题快照，重启后关题、点选都只就地改这几道题的组件，卡上别的内容不动；
  * 认不出的（旧版本存下的登记、已经关了的）点了只提示已过期。
  *
- * 直接驱动 daemon 里真实的 closeOpenQuestionsForSession / handleCardAction，
+ * 直接驱动 daemon 里真实的 expireOpenCardQuestionsForSession / handleCardAction，
  * 通道里挂假的飞书发送器抓每一次对卡片的写操作，队列是真实的文件队列（临时目录）。
  */
 import * as fs from "node:fs"
@@ -27,7 +27,7 @@ const h = vi.hoisted(() => {
 })
 
 import {
-  agentStreamCards, buildCardSegmentsFromPayload, cardQuestionMap, channels, closeOpenQuestionsForSession,
+  agentStreamCards, buildCardSegmentsFromPayload, cardQuestionMap, channels, expireOpenCardQuestionsForSession,
   handleCardAction, rememberStreamCardQuestion,
 } from "../src/daemon.js"
 import { clearAllQueueMessages, getQueueMessages, initFileQueue } from "../src/file-queue.js"
@@ -37,7 +37,7 @@ type El = Record<string, any>
 const CH = "ch_restart_test"
 const CHAT = `${CH}|oc_restart_test`
 const SESSION = `${CHAT}::D:\\ws\\restart-test`
-const NOTE = "已有新消息，问题已关闭"
+const NOTE = "问题已关闭"
 
 const SINGLE = { blockId: "q_single", text: "状态怎么样？", options: ["正常", "异常"] }
 const MULTI = { blockId: "q_multi", text: "给哪些人开？", options: ["开发", "测试", "运维"], multi: true }
@@ -122,10 +122,10 @@ afterEach(() => {
   channels.delete(CH)
 })
 
-describe("重启后新消息送达：把卡上还开着的题关掉", () => {
+describe("用户打字（那一轮已结束，重启后常见）：把卡上还开着的题关掉", () => {
   it("每道开着的题各换成一个「已关闭」的组件（没有按钮、表单、勾选框），别的内容一概不碰，登记摘掉", async () => {
     const { messageId, cardId } = seedRestored([SINGLE, MULTI])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
 
     expect(replaced()).toHaveLength(2)
     expect(replaced().map((c) => c[0])).toEqual([cardId, cardId])
@@ -152,7 +152,7 @@ describe("重启后新消息送达：把卡上还开着的题关掉", () => {
 
   it("同一张卡上连着写，sequence 严格递增（飞书会拒掉重复的 sequence）", async () => {
     seedRestored([SINGLE, MULTI])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     const [a, b] = replaced().map((c) => c[3])
     expect(b).toBeGreaterThan(a)
     // 不能小于重启前运行中用的计数器（从 0 起，到不了秒级时间戳这个量级）
@@ -161,20 +161,20 @@ describe("重启后新消息送达：把卡上还开着的题关掉", () => {
 
   it("已经答过的题不动，只关还开着的", async () => {
     seedRestored([{ ...SINGLE, answered: "正常" }, MULTI])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(replaced().map((c) => c[1])).toEqual([elementIdOf("q_multi")])
   })
 
   it("题都已经答完 / 关掉：不发任何请求，登记照样摘掉", async () => {
     const { messageId } = seedRestored([{ ...SINGLE, answered: "正常" }, { ...MULTI, closedNote: "老的" }])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(sender.replaceCardElement).not.toHaveBeenCalled()
     expect(cardQuestionMap.has(messageId)).toBe(false)
   })
 
   it("旧版本存下的登记（没有卡号和快照）：没法改卡，只摘登记，不报错、不乱发请求", async () => {
     const { messageId } = seedRestored([SINGLE], { cardId: undefined, blocks: undefined })
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(sender.replaceCardElement).not.toHaveBeenCalled()
     expect(sender.patchCard).not.toHaveBeenCalled()
     expect(cardQuestionMap.has(messageId)).toBe(false)
@@ -183,23 +183,23 @@ describe("重启后新消息送达：把卡上还开着的题关掉", () => {
   it("改卡失败：登记也摘掉，之后点这张卡只会提示已过期", async () => {
     sender.replaceCardElement.mockResolvedValueOnce(false)
     const { messageId } = seedRestored([SINGLE])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(cardQuestionMap.has(messageId)).toBe(false)
     const r = await pick(messageId, "q_single", "正常")
     expect(r.toast).toMatchObject({ type: "warning" })
     expect(queued()).toEqual([])
   })
 
-  it("两路同时关（用户直接发消息 + Agent 领取投递）：每道题只改一次", async () => {
+  it("用户连发两条消息、两路同时关：每道题只改一次", async () => {
     seedRestored([SINGLE, MULTI])
-    await Promise.all([closeOpenQuestionsForSession(SESSION, NOTE), closeOpenQuestionsForSession(SESSION, NOTE)])
+    await Promise.all([expireOpenCardQuestionsForSession(SESSION, NOTE), expireOpenCardQuestionsForSession(SESSION, NOTE)])
     expect(replaced()).toHaveLength(2)
   })
 
   it("只关本会话的卡，别的会话的登记不动", async () => {
     const mine = seedRestored([SINGLE])
     const other = seedRestored([MULTI], { sessionKey: `${CHAT}::D:\\ws\\other-session` })
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(cardQuestionMap.has(mine.messageId)).toBe(false)
     expect(cardQuestionMap.has(other.messageId)).toBe(true)
     expect(replaced().map((c) => c[0])).toEqual([mine.cardId])
@@ -210,7 +210,7 @@ describe("重启后点旧卡上的选项（卡上的题已经被关掉了）", (
   it("只提示已过期：不刷卡、不入队，新卡上的题不受牵连", async () => {
     // 过程和线上一样：重启 → 用户发新消息，旧卡的题被关 → Agent 发出带题的新卡 → 用户点了旧卡
     const old = seedRestored([SINGLE])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     seedLiveCard([{ blockId: "q_new", text: "新的问题", options: ["甲", "乙"] }])
     sender.replaceCardElement.mockClear()
 
@@ -360,7 +360,7 @@ describe("登记里的题目快照跟着活卡走", () => {
     // 重启：内存里的卡没了，登记还在
     agentStreamCards.delete(SESSION)
     sender.replaceCardElement.mockClear()
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(replaced().map((c) => c[1])).toEqual([elementIdOf("q_multi")])
   })
 
@@ -369,7 +369,7 @@ describe("登记里的题目快照跟着活卡走", () => {
     const restored = JSON.parse(JSON.stringify(Object.fromEntries(cardQuestionMap)))
     cardQuestionMap.clear()
     cardQuestionMap.set(messageId, restored[messageId])
-    await closeOpenQuestionsForSession(SESSION, NOTE)
+    await expireOpenCardQuestionsForSession(SESSION, NOTE)
     expect(replaced().map((c) => c[0])).toEqual([cardId, cardId])
   })
 })

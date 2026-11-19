@@ -20,13 +20,13 @@ describe("QuestionCard 的几种状态", () => {
     const html = render({})
     expect(buttonCount(html)).toBe(3)
     expect(disabledCount(html)).toBe(0)
-    expect(html).not.toContain("一起发给 Agent")
+    expect(html).not.toContain("一起提交")
   })
 
-  it("已选、在等其余问题（held）：选项仍能点（可以改选），并提示还没发给 Agent", () => {
+  it("已选、答案还在等（held：等 AI 说完 / 等其余问题）：选项仍能点（可以改选），并提示还没交给 Agent", () => {
     const html = render({ answered: "B", held: true })
     expect(disabledCount(html)).toBe(0)
-    expect(html).toContain("一起发给 Agent")
+    expect(html).toContain("等 AI 说完、问题都选完后一起提交")
     // 选中的那个有对勾
     expect(html).toContain("lucide-check")
   })
@@ -35,7 +35,7 @@ describe("QuestionCard 的几种状态", () => {
     const html = render({ answered: "B" })
     expect(buttonCount(html)).toBe(3)
     expect(disabledCount(html)).toBe(3)
-    expect(html).not.toContain("一起发给 Agent")
+    expect(html).not.toContain("一起提交")
   })
 
   it("旧记录没有 held 字段，等同已交给 Agent", () => {
@@ -51,6 +51,6 @@ describe("QuestionCard 的几种状态", () => {
   it("选了、等其余问题的期间被关闭：锁定，且不再提示等待", () => {
     const html = render({ answered: "A", held: true, closedNote: "问题已关闭" })
     expect(disabledCount(html)).toBe(3)
-    expect(html).not.toContain("一起发给 Agent")
+    expect(html).not.toContain("一起提交")
   })
 })

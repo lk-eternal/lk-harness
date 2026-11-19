@@ -2,7 +2,8 @@
  * 端到端（真实 daemon 进程 + 真实 HTTP 接口）：应用内的点选提问。
  *
  * 线上的问题：Agent 一次发了多个问题，用户点了其中一个，回答就直接发给了 Agent，
- * 其余问题还没选。正确的行为是全部选完才一次发给 Agent（和飞书的流式卡一致）。
+ * 其余问题还没选。正确的行为是：点选只记下答案，问这些题的那一轮结束（Agent 进入等待）、
+ * 且这一轮的题都选完，才一次发给 Agent（和飞书的流式卡一致）。
  *
  * 用 `npm run test:e2e` 运行；不在默认的 `npm test` 里。
  */
@@ -37,12 +38,18 @@ const pick = (questionId: string, option: string) =>
 const questions = async (): Promise<ChatItem[]> => (await d.history()).filter((i) => i.kind === "question")
 const questionOf = async (id: string) => (await questions()).find((q) => q.id === id)!
 
-/** Agent 领取到的消息文本（领取后确认已处理，否则下一次领取会把它重投） */
+/**
+ * Agent 说完这一轮、进入等待，领取到的消息文本（领取后确认已处理，否则下一次领取会把它重投）。
+ * 进入等待 = 这一轮结束：选完的答案此时才交给 Agent。
+ */
 const polled = async () => {
-  const texts = ((await d.poll()).messages ?? []).map((m) => m.text)
+  const texts = ((await d.waitPoll()).messages ?? []).map((m) => m.text)
   await d.post("/api/confirm-claimed", { session_key: d.sessionKey })
   return texts
 }
+
+/** Agent 还在这一轮里干活，顺手看一眼队列（非阻塞领取，不算这一轮结束） */
+const peeked = async () => ((await d.poll()).messages ?? []).map((m) => m.text)
 
 describe("多个问题：全选完才发给 Agent", () => {
   it("选前两个时 Agent 什么也收不到；选完最后一个才收到一条带题干的汇总", async () => {
@@ -77,7 +84,7 @@ describe("多个问题：全选完才发给 Agent", () => {
     expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n回答：不要"])
   })
 
-  it("只有一个问题时点了就发，内容也是带题干的问题和回答", async () => {
+  it("只有一个问题时选完就发（等这一轮结束），内容也是带题干的问题和回答", async () => {
     const q1 = await ask("要不要继续？", ["是", "否"])
     expect((await pick(q1, "是")).ok).toBe(true)
     expect(await polled()).toEqual(["问题 1：要不要继续？\n回答：是"])
@@ -164,5 +171,44 @@ describe("问题没选完就直接发消息", () => {
     await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "/s" })
     expect(await questionOf(q1)).toMatchObject({ answered: "是", held: true })
     expect((await questionOf(q2)).closedNote).toBeUndefined()
+  })
+})
+
+describe("点选要等问这些题的那一轮结束", () => {
+  it("这一轮还在跑：选完也不交给 Agent；Agent 说完进入等待才收到", async () => {
+    const q1 = await ask("用哪个库？", ["A", "B"])
+    expect((await pick(q1, "B")).ok).toBe(true)
+
+    expect(await peeked()).toEqual([])
+    expect(await questionOf(q1)).toMatchObject({ answered: "B", held: true })
+
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B"])
+    expect((await questionOf(q1)).held).toBeUndefined()
+  })
+
+  it("第一题选了，Agent 又发了第二题才说完：第二题没选，不能拿着第一题的结论先跑", async () => {
+    const q1 = await ask("用哪个库？", ["A", "B"])
+    await pick(q1, "B")
+    const q2 = await ask("要不要加测试？", ["要", "不要"])
+
+    expect(await polled()).toEqual([])
+    expect(await questionOf(q1)).toMatchObject({ answered: "B", held: true })
+
+    expect((await pick(q2, "要")).ok).toBe(true)
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n回答：要"])
+  })
+
+  it("这一轮还在跑时用户打字：题不关、已选的不动；这一轮结束后选完最后一题照常交出", async () => {
+    const q1 = await ask("用哪个库？", ["A", "B"])
+    const q2 = await ask("要不要加测试？", ["要", "不要"])
+    await pick(q1, "A")
+
+    expect((await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "先聊点别的" })).ok).toBe(true)
+    expect(await questionOf(q1)).toMatchObject({ answered: "A", held: true })
+    expect((await questionOf(q2)).closedNote).toBeUndefined()
+
+    expect(await polled()).toEqual(["先聊点别的"])
+    expect((await pick(q2, "要")).ok).toBe(true)
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n回答：要"])
   })
 })

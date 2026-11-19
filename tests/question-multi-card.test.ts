@@ -274,10 +274,10 @@ describe("应用内多选题卡片", () => {
     expect(html).not.toContain("提交")
   })
 
-  it("已提交、在等其余问题（held）：已选的项打勾，仍可改勾，并提示还没发给 Agent", () => {
+  it("已提交、答案还在等（held：等 AI 说完 / 等其余问题）：已选的项打勾，仍可改勾，并提示还没交给 Agent", () => {
     const html = render({ answered: "SUB_CHILD、SUB_ADULT", held: true })
     expect(checked(html)).toBe(2)
-    expect(html).toContain("一起发给 Agent")
+    expect(html).toContain("等 AI 说完、问题都选完后一起提交")
     expect(html).toContain("更新选择")
     // 3 个选项仍可点；勾选没变，「更新选择」不可点
     expect(disabled(html)).toBe(1)

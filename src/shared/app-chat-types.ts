@@ -76,10 +76,12 @@ export interface AppChatQuestionItem extends AppChatItemBase {
   /** 用户选的选项（多选题是勾选项连成的答案） */
   answered?: string;
   /**
-   * 已选，但还没交给 Agent：同一轮有多个问题时，要全部选完才一起交出去。
+   * 已选，但还没交给 Agent：问这道题的那一轮结束、且这一轮的题都选完，才一起交出去。
    * 此时可以改选；交出去之后清掉这个标记，选择才锁定。没有这个字段的旧记录一律视为已交出。
    */
   held?: boolean;
+  /** 问这道题时 Agent 所在的那一轮（见 question-round）。旧记录没有，视为这一轮早已结束 */
+  round?: string;
   closedNote?: string;
 }
 

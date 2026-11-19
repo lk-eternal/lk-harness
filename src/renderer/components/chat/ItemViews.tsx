@@ -112,9 +112,12 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
   )
 }
 
+/** 已选、但答案还在等：AI 这一轮没说完，或这一轮的问题还有没选的 */
+const WAITING_ANSWER_HINT = "已选择，等 AI 说完、问题都选完后一起提交；也可以直接发消息说明"
+
 /**
  * 多选题：先勾选（只在本地记着草稿），点「提交」才作答。答案是勾选项按题目顺序连成的一条，
- * 和单选一样走 onAnswer；同一轮还有别的问题没选完时（waiting），已提交的答案可以改勾后重新提交。
+ * 和单选一样走 onAnswer；答案还没交给 Agent 时（waiting：等 AI 说完、或同一轮还有别的问题没选完），已提交的答案可以改勾后重新提交。
  */
 function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
   item: AppChatQuestionItem
@@ -169,7 +172,7 @@ function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
             {waiting ? "更新选择" : "提交"}{draft.length > 0 ? `（${draft.length}）` : ""}
           </button>
           <span className="text-xs text-fg-muted">
-            {waiting ? "已选择，等其余问题都选完后一起发给 Agent；也可以直接发消息说明" : "可多选，选好后点提交"}
+            {waiting ? WAITING_ANSWER_HINT : "可多选，选好后点提交"}
           </span>
         </div>
       )}
@@ -179,7 +182,7 @@ function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
 }
 
 export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; onAnswer: (questionId: string, option: string) => void }) {
-  // 同一轮有多个问题时，选了还不会发给 Agent（要全部选完才一起发）：这期间可以改选，发出去或被关闭之后才锁定
+  // 选了还不会交给 Agent（要等 AI 这一轮说完、且这一轮的问题都选完才一起提交）：这期间可以改选，交出去或被关闭之后才锁定
   const waiting = !!item.answered && item.held === true && !item.closedNote
   const locked = (!!item.answered && !waiting) || !!item.closedNote
   if (item.multi) return <MultiQuestionCard item={item} onAnswer={onAnswer} waiting={waiting} locked={locked} />
@@ -210,7 +213,7 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
           )
         })}
       </div>
-      {waiting && <p className="mt-2 text-xs text-fg-muted">已选择，等其余问题都选完后一起发给 Agent；也可以直接发消息说明</p>}
+      {waiting && <p className="mt-2 text-xs text-fg-muted">{WAITING_ANSWER_HINT}</p>}
       {item.closedNote && !item.answered && <p className="mt-2 text-xs text-fg-muted">{item.closedNote}</p>}
     </div>
   )
