@@ -10,6 +10,7 @@ import {
   parseRemoteRepoInput, picksOf, repoItemsFromOptions, upsertPickedRepo,
   type RepoPickItem,
 } from "../shared/project-repo-picker"
+import { splitTextLinks } from "../shared/text-links"
 import { WORK_BRANCH_MODES, type WorkBranchMode } from "../shared/work-branch-mode"
 import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { formatTimeAgo } from "../renderer/time-ago"
@@ -403,7 +404,17 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
 
 // ── 项目栏（输入框上方）和项目信息 ──────────────────────────────────────────
 
-const isHttpUrl = (s: string) => /^https?:\/\//i.test(s.trim())
+/** 自由文字里的网址变成可点的链接（手机端没有应用内预览，交给系统浏览器打开） */
+function LinkedText({ text }: { text: string }) {
+  return (
+    <>
+      {splitTextLinks(text).map((p, i) => (p.kind === "link"
+        ? <a key={i} href={p.url} target="_blank" rel="noopener noreferrer" className="text-accent">{p.url}</a>
+        : p.text))}
+    </>
+  )
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="px-4 py-2.5">
@@ -459,7 +470,7 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
 
         <div className="min-h-0 flex-1 divide-y divide-line-subtle overflow-y-auto border-t border-line-subtle">
           {view.goal && (
-            <Section title="目标"><p className="whitespace-pre-wrap break-words text-[13px] text-fg-2">{view.goal}</p></Section>
+            <Section title="目标"><p className="whitespace-pre-wrap break-words text-[13px] text-fg-2"><LinkedText text={view.goal} /></p></Section>
           )}
 
           {view.info.length > 0 && (
@@ -468,7 +479,7 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
                 {view.info.map((i) => (
                   <div key={i.key} className="contents">
                     <dt className="text-fg-muted">{i.key}</dt>
-                    <dd className="whitespace-pre-wrap break-words text-fg-2">{i.value}</dd>
+                    <dd className="whitespace-pre-wrap break-words text-fg-2"><LinkedText text={i.value} /></dd>
                   </div>
                 ))}
               </dl>
@@ -477,10 +488,8 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
 
           {(view.storyUrl || view.relatedDocs) && (
             <Section title="链接和资料">
-              {view.storyUrl && (isHttpUrl(view.storyUrl)
-                ? <a href={view.storyUrl} target="_blank" rel="noopener noreferrer" className="block break-all text-[13px] text-accent">{view.storyUrl}</a>
-                : <p className="break-all text-[13px] text-fg-2">{view.storyUrl}</p>)}
-              {view.relatedDocs && <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-fg-2">{view.relatedDocs}</p>}
+              {view.storyUrl && <p className="break-all text-[13px] text-fg-2"><LinkedText text={view.storyUrl} /></p>}
+              {view.relatedDocs && <p className="mt-0.5 whitespace-pre-wrap break-words text-[13px] text-fg-2"><LinkedText text={view.relatedDocs} /></p>}
             </Section>
           )}
 

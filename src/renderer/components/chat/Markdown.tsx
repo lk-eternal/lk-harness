@@ -59,7 +59,7 @@ export function CodeBlock({ children }: { children?: ReactNode }) {
  * 只放行 http(s)：Agent 输出不可信，file:/自定义协议链接一律不可点。
  * 在应用内的预览面板里打开，还是交给系统浏览器（由主进程处理 target=_blank），按预览设置决定，按住 Ctrl/⌘ 点则反过来。
  */
-export function SafeLink({ href, children }: { href?: string; children?: ReactNode }) {
+export function SafeLink({ href, className, children }: { href?: string; className?: string; children?: ReactNode }) {
   const preview = usePreview()
   if (href && /^https?:\/\//i.test(href)) {
     return (
@@ -67,6 +67,7 @@ export function SafeLink({ href, children }: { href?: string; children?: ReactNo
         href={href}
         target="_blank"
         rel="noreferrer noopener"
+        className={className}
         onClick={(e) => {
           if (!opensInApp({ available: preview.available, mode: preview.linkMode, modifierHeld: e.ctrlKey || e.metaKey })) return
           e.preventDefault()

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, RefreshCw, Trash2 } from "lucide-react"
 import { projectDeleteConfirmText, type ProjectView } from "../../../shared/project-app-types"
+import { splitTextLinks } from "../../../shared/text-links"
 import useOutsideClose from "../../hooks/useOutsideClose"
 import { formatTimeAgo } from "../../time-ago"
+import { SafeLink } from "../chat/Markdown"
 import { usePreview } from "../preview/PreviewContext"
 
 interface Props {
@@ -24,7 +26,16 @@ interface Props {
   onError: (message: string) => void
 }
 
-const isHttpUrl = (s: string) => /^https?:\/\//i.test(s.trim())
+/** 自由文字里的网址变成可点的链接；点法和对话里的链接一致（按「链接打开方式」设置，按住 Ctrl/⌘ 反过来） */
+function LinkedText({ text }: { text: string }) {
+  return (
+    <>
+      {splitTextLinks(text).map((p, i) => (p.kind === "link"
+        ? <SafeLink key={i} href={p.url} className="text-accent hover:underline">{p.url}</SafeLink>
+        : p.text))}
+    </>
+  )
+}
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -127,11 +138,6 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
     }
   }
 
-  const openLink = (url: string) => {
-    if (preview.available) preview.openUrl(url)
-    else window.open(url, "_blank", "noopener")
-  }
-
   const art = view.artifact
 
   return (
@@ -151,7 +157,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
           </div>
 
           {view.goal && (
-            <Section title="目标"><p className="whitespace-pre-wrap text-[12.5px] text-fg-2">{view.goal}</p></Section>
+            <Section title="目标"><p className="whitespace-pre-wrap text-[12.5px] text-fg-2"><LinkedText text={view.goal} /></p></Section>
           )}
 
           {view.info.length > 0 && (
@@ -160,7 +166,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
                 {view.info.map((i) => (
                   <div key={i.key} className="contents">
                     <dt className="text-fg-muted">{i.key}</dt>
-                    <dd className="whitespace-pre-wrap break-words text-fg-2">{i.value}</dd>
+                    <dd className="whitespace-pre-wrap break-words text-fg-2"><LinkedText text={i.value} /></dd>
                   </div>
                 ))}
               </dl>
@@ -169,10 +175,8 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
 
           {(view.storyUrl || view.relatedDocs) && (
             <Section title="链接和资料">
-              {view.storyUrl && (isHttpUrl(view.storyUrl)
-                ? <a href={view.storyUrl} onClick={(e) => { e.preventDefault(); openLink(view.storyUrl!) }} className="block truncate text-[12.5px] text-accent hover:underline" title={view.storyUrl}>{view.storyUrl}</a>
-                : <p className="truncate text-[12.5px] text-fg-2" title={view.storyUrl}>{view.storyUrl}</p>)}
-              {view.relatedDocs && <p className="mt-0.5 whitespace-pre-wrap break-words text-[12.5px] text-fg-2">{view.relatedDocs}</p>}
+              {view.storyUrl && <p className="truncate text-[12.5px] text-fg-2" title={view.storyUrl}><LinkedText text={view.storyUrl} /></p>}
+              {view.relatedDocs && <p className="mt-0.5 whitespace-pre-wrap break-words text-[12.5px] text-fg-2"><LinkedText text={view.relatedDocs} /></p>}
             </Section>
           )}
 
