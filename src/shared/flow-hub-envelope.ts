@@ -7,10 +7,21 @@ import type {
 } from "./flow-hub-types.js"
 import { computeGroupContentHash, computeNodeContentHash } from "./flow-hub-hash.js"
 import { parseNodeGroupExport } from "./project-store.js"
+import { normalizeFieldDefs } from "./project-templates.js"
 import { normalizeWorkBranchMode, type ProjectNodeDef, type ProjectNodeGroupDef } from "./project-types.js"
 
 export function ensureHubId<T extends { hubId?: string }>(item: T): T & { hubId: string } {
   return { ...item, hubId: item.hubId?.trim() || randomUUID() }
+}
+
+/** 模板说明和建项要填的信息：空的不写，没填这两项的模板内容和哈希保持原样 */
+function templateInfoOf(src: { description?: unknown; fields?: unknown }): Pick<FlowHubGroupBody, "description" | "fields"> {
+  const description = typeof src.description === "string" ? src.description.trim() : ""
+  const fields = normalizeFieldDefs(src.fields)
+  return {
+    ...(description ? { description } : {}),
+    ...(fields ? { fields } : {}),
+  }
 }
 
 export function buildGroupEnvelope(opts: {
@@ -88,6 +99,7 @@ export function parseGroupEnvelope(raw: unknown): FlowHubGroupEnvelope | null {
     name: env.group.name.trim(),
     ...(env.group.workspace === "plain" || env.group.workspace === "worktree" ? { workspace: env.group.workspace } : {}),
     ...(normalizeWorkBranchMode(env.group.branchMode) !== "new" ? { branchMode: normalizeWorkBranchMode(env.group.branchMode) } : {}),
+    ...templateInfoOf(env.group),
     nodes: env.group.nodes
       .filter((n) => n?.id?.trim() && n?.label?.trim())
       .map((n) => ({
@@ -133,15 +145,8 @@ export function parseNodeEnvelope(raw: unknown): FlowHubNodeEnvelope | null {
 }
 
 function legacyGroupToEnvelope(group: ProjectNodeGroupDef): FlowHubGroupEnvelope {
-  const body: FlowHubGroupBody = {
-    id: group.id,
-    name: group.name,
-    ...(group.workspace ? { workspace: group.workspace } : {}),
-    ...(group.branchMode ? { branchMode: group.branchMode } : {}),
-    nodes: group.nodes.map((n) => nodeDefToPayload(n)),
-  }
   return buildGroupEnvelope({
-    group: body,
+    group: groupDefToBody(group),
     hubId: randomUUID(),
     hubRevision: 1,
     author: "",
@@ -163,6 +168,7 @@ export function groupDefToBody(g: ProjectNodeGroupDef): FlowHubGroupBody {
     name: g.name,
     ...(g.workspace ? { workspace: g.workspace } : {}),
     ...(g.branchMode ? { branchMode: g.branchMode } : {}),
+    ...templateInfoOf(g),
     nodes: g.nodes.map((n) => nodeDefToPayload(n)),
   }
 }
@@ -173,6 +179,8 @@ export function envelopeToGroupDef(env: FlowHubGroupEnvelope): ProjectNodeGroupD
     name: env.group.name,
     ...(env.group.workspace ? { workspace: env.group.workspace } : {}),
     ...(env.group.branchMode ? { branchMode: env.group.branchMode } : {}),
+    ...(env.group.description ? { description: env.group.description } : {}),
+    ...(env.group.fields?.length ? { fields: env.group.fields.map((f) => ({ ...f })) } : {}),
     nodes: env.group.nodes.map((n) => ({
       id: n.id,
       label: n.label,
