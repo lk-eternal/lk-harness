@@ -58,7 +58,7 @@ describe("多个问题：全选完才发给 Agent", () => {
     expect(await polled()).toEqual([])
 
     expect((await pick(q3, "明天")).ok).toBe(true)
-    expect(await polled()).toEqual(["【点选汇总】\n1. 用哪个库？ → B\n2. 要不要加测试？ → 要\n3. 什么时候发？ → 明天"])
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n回答：要\n\n问题 3：什么时候发？\n回答：明天"])
 
     // 交出之后全部锁定、没有「等待」标记，再点会被拒绝
     for (const q of await questions()) expect(q.held).toBeUndefined()
@@ -74,13 +74,13 @@ describe("多个问题：全选完才发给 Agent", () => {
     await pick(q1, "B")
     expect(await questionOf(q1)).toMatchObject({ answered: "B", held: true })
     await pick(q2, "不要")
-    expect(await polled()).toEqual(["【点选汇总】\n1. 用哪个库？ → B\n2. 要不要加测试？ → 不要"])
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n回答：不要"])
   })
 
-  it("只有一个问题时点了就发，内容就是选项本身（和之前一致）", async () => {
+  it("只有一个问题时点了就发，内容也是带题干的问题和回答", async () => {
     const q1 = await ask("要不要继续？", ["是", "否"])
     expect((await pick(q1, "是")).ok).toBe(true)
-    expect(await polled()).toEqual(["是"])
+    expect(await polled()).toEqual(["问题 1：要不要继续？\n回答：是"])
     expect(await questionOf(q1)).toMatchObject({ answered: "是" })
     expect((await questionOf(q1)).held).toBeUndefined()
   })
@@ -88,14 +88,14 @@ describe("多个问题：全选完才发给 Agent", () => {
   it("交出过的问题不会拖累下一轮：下一轮的问题照样按组发", async () => {
     const q1 = await ask("第一轮", ["是", "否"])
     await pick(q1, "是")
-    expect(await polled()).toEqual(["是"])
+    expect(await polled()).toEqual(["问题 1：第一轮\n回答：是"])
 
     const q2 = await ask("第二轮 A", ["是", "否"])
     const q3 = await ask("第二轮 B", ["是", "否"])
     await pick(q2, "是")
     expect(await polled()).toEqual([])
     await pick(q3, "否")
-    expect(await polled()).toEqual(["【点选汇总】\n1. 第二轮 A → 是\n2. 第二轮 B → 否"])
+    expect(await polled()).toEqual(["问题 1：第二轮 A\n回答：是\n\n问题 2：第二轮 B\n回答：否"])
   })
 })
 
@@ -105,7 +105,7 @@ describe("多选题（multi_select）", () => {
     expect(await questionOf(q)).toMatchObject({ multi: true, options: ["SUB_CHILD", "SUB_TEEN", "SUB_ADULT", "SUB_ALL"] })
 
     expect((await pick(q, "SUB_CHILD、SUB_ADULT")).ok).toBe(true)
-    expect(await polled()).toEqual(["SUB_CHILD、SUB_ADULT"])
+    expect(await polled()).toEqual(["问题 1：给哪些人开？\n回答：SUB_CHILD、SUB_ADULT"])
     expect(await questionOf(q)).toMatchObject({ answered: "SUB_CHILD、SUB_ADULT" })
     // 交出之后锁定
     expect((await pick(q, "SUB_ALL")).ok).toBe(false)
@@ -125,7 +125,7 @@ describe("多选题（multi_select）", () => {
     expect(await polled()).toEqual([])
     expect(await questionOf(multi)).toMatchObject({ answered: "SUB_TEEN、SUB_ADULT", held: true })
     expect((await pick(single, "要")).ok).toBe(true)
-    expect(await polled()).toEqual(["【点选汇总】\n1. 给哪些人开？ → SUB_TEEN、SUB_ADULT\n2. 要不要加测试？ → 要"])
+    expect(await polled()).toEqual(["问题 1：给哪些人开？\n回答：SUB_TEEN、SUB_ADULT\n\n问题 2：要不要加测试？\n回答：要"])
   })
 })
 
@@ -141,7 +141,7 @@ describe("问题没选完就直接发消息", () => {
     expect((await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "第二个问题我想先聊聊" })).ok).toBe(true)
 
     expect(await polled()).toEqual([
-      "【点选汇总】\n1. 用哪个库？ → A\n2. 什么时候发？ → 今天",
+      "问题 1：用哪个库？\n回答：A\n\n问题 2：什么时候发？\n回答：今天",
       "第二个问题我想先聊聊",
     ])
     expect(await questionOf(q1)).toMatchObject({ answered: "A" })

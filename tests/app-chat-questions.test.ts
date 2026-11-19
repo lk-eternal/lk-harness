@@ -27,9 +27,9 @@ const ask = (text: string, options = ["是", "否"], session = SESSION) => chat.
 const question = (id: string, session = SESSION) => chat.list(session).find((i) => i.id === id) as AppChatQuestionItem
 
 describe("只有一个问题", () => {
-  it("选完立刻交出选项本身（和之前一致），问题锁定", () => {
+  it("选完立刻交出带题干的问题和回答，问题锁定", () => {
     const q1 = ask("要不要继续？")
-    expect(chat.answerQuestion(SESSION, q1, "是")).toEqual({ ok: true, deliver: "是" })
+    expect(chat.answerQuestion(SESSION, q1, "是")).toEqual({ ok: true, deliver: "问题 1：要不要继续？\n回答：是" })
     expect(question(q1)).toMatchObject({ answered: "是" })
     expect(question(q1).held).toBeUndefined()
   })
@@ -49,7 +49,7 @@ describe("只有一个问题", () => {
 })
 
 describe("同一轮有多个问题：全选完才交出", () => {
-  it("没选完不交出，只记下选择；最后一个选完一次交出带题干的汇总", () => {
+  it("没选完不交出，只记下选择；最后一个选完一次交出带题干的问题和回答", () => {
     const q1 = ask("用哪个库？", ["A", "B"])
     const q2 = ask("要不要加测试？", ["要", "不要"])
     const q3 = ask("什么时候发？", ["今天", "明天"])
@@ -62,7 +62,7 @@ describe("同一轮有多个问题：全选完才交出", () => {
     const last = chat.answerQuestion(SESSION, q3, "明天")
     expect(last).toEqual({
       ok: true,
-      deliver: "【点选汇总】\n1. 用哪个库？ → B\n2. 要不要加测试？ → 要\n3. 什么时候发？ → 明天",
+      deliver: "问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n回答：要\n\n问题 3：什么时候发？\n回答：明天",
     })
     // 交出后全部锁定，不再带「等待」标记
     for (const id of [q1, q2, q3]) expect(question(id).held).toBeUndefined()
@@ -76,7 +76,7 @@ describe("同一轮有多个问题：全选完才交出", () => {
     chat.answerQuestion(SESSION, q3, "是")
     chat.answerQuestion(SESSION, q1, "否")
     const last = chat.answerQuestion(SESSION, q2, "是")
-    expect(last).toEqual({ ok: true, deliver: "【点选汇总】\n1. 第一题 → 否\n2. 第二题 → 是\n3. 第三题 → 是" })
+    expect(last).toEqual({ ok: true, deliver: "问题 1：第一题\n回答：否\n\n问题 2：第二题\n回答：是\n\n问题 3：第三题\n回答：是" })
   })
 
   it("选完之前可以改选，汇总用最终的选择", () => {
@@ -86,7 +86,7 @@ describe("同一轮有多个问题：全选完才交出", () => {
     chat.answerQuestion(SESSION, q1, "B")
     expect(question(q1)).toMatchObject({ answered: "B", held: true })
     const last = chat.answerQuestion(SESSION, q2, "是")
-    expect(last).toEqual({ ok: true, deliver: "【点选汇总】\n1. 第一题 → B\n2. 第二题 → 是" })
+    expect(last).toEqual({ ok: true, deliver: "问题 1：第一题\n回答：B\n\n问题 2：第二题\n回答：是" })
   })
 
   it("选择变化会推给界面（带 held 标记），否则界面看不到「已选、等其余」", () => {
@@ -106,23 +106,23 @@ describe("同一轮有多个问题：全选完才交出", () => {
     const q3 = ask("新问题二")
     expect(chat.answerQuestion(SESSION, q1, "是")).toEqual({ ok: false })
     expect(chat.answerQuestion(SESSION, q2, "是")).toEqual({ ok: true })
-    expect(chat.answerQuestion(SESSION, q3, "否")).toEqual({ ok: true, deliver: "【点选汇总】\n1. 新问题一 → 是\n2. 新问题二 → 否" })
+    expect(chat.answerQuestion(SESSION, q3, "否")).toEqual({ ok: true, deliver: "问题 1：新问题一\n回答：是\n\n问题 2：新问题二\n回答：否" })
   })
 
   it("交出过的问题不会混进下一组", () => {
     const q1 = ask("第一轮")
-    expect(chat.answerQuestion(SESSION, q1, "是")).toMatchObject({ deliver: "是" })
+    expect(chat.answerQuestion(SESSION, q1, "是")).toMatchObject({ deliver: "问题 1：第一轮\n回答：是" })
     const q2 = ask("第二轮 A")
     const q3 = ask("第二轮 B")
     chat.answerQuestion(SESSION, q2, "是")
-    expect(chat.answerQuestion(SESSION, q3, "否")).toEqual({ ok: true, deliver: "【点选汇总】\n1. 第二轮 A → 是\n2. 第二轮 B → 否" })
+    expect(chat.answerQuestion(SESSION, q3, "否")).toEqual({ ok: true, deliver: "问题 1：第二轮 A\n回答：是\n\n问题 2：第二轮 B\n回答：否" })
   })
 
   it("不同会话的问题互不影响", () => {
     const a1 = ask("A 会话的问题", ["是", "否"], SESSION)
     ask("A 会话的另一个问题", ["是", "否"], SESSION)
     const b1 = ask("B 会话的问题", ["是", "否"], OTHER_SESSION)
-    expect(chat.answerQuestion(OTHER_SESSION, b1, "是")).toEqual({ ok: true, deliver: "是" })
+    expect(chat.answerQuestion(OTHER_SESSION, b1, "是")).toEqual({ ok: true, deliver: "问题 1：B 会话的问题\n回答：是" })
     expect(chat.answerQuestion(SESSION, a1, "是")).toEqual({ ok: true })
   })
 })
@@ -135,7 +135,7 @@ describe("问题没选完就直接发消息", () => {
     chat.answerQuestion(SESSION, q1, "是")
     chat.answerQuestion(SESSION, q3, "否")
 
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("【点选汇总】\n1. 第一题 → 是\n2. 第三题 → 否")
+    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：第一题\n回答：是\n\n问题 2：第三题\n回答：否")
     chat.closeOpenQuestions(SESSION, "问题已关闭")
 
     expect(question(q1)).toMatchObject({ answered: "是" })
@@ -151,7 +151,7 @@ describe("问题没选完就直接发消息", () => {
     const q1 = ask("用哪个库？", ["A", "B"])
     ask("第二题")
     chat.answerQuestion(SESSION, q1, "A")
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("【点选汇总】\n1. 用哪个库？ → A")
+    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：用哪个库？\n回答：A")
   })
 
   it("没有已选未交出的答案时什么也不返回", () => {
@@ -169,7 +169,7 @@ describe("问题没选完就直接发消息", () => {
     ask("B 的第二题", ["是", "否"], OTHER_SESSION)
     chat.answerQuestion(SESSION, a1, "是")
     chat.answerQuestion(OTHER_SESSION, b1, "否")
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("【点选汇总】\n1. A 的第一题 → 是")
+    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：A 的第一题\n回答：是")
     expect(question(b1, OTHER_SESSION).held).toBe(true)
   })
 })
@@ -184,7 +184,7 @@ describe("落盘", () => {
     const reloaded = new AppChat(dir, () => {})
     const items = reloaded.list(SESSION)
     expect(items.find((i) => i.id === q1)).toMatchObject({ answered: "是", held: true })
-    expect(reloaded.answerQuestion(SESSION, q2, "否")).toEqual({ ok: true, deliver: "【点选汇总】\n1. 第一题 → 是\n2. 第二题 → 否" })
+    expect(reloaded.answerQuestion(SESSION, q2, "否")).toEqual({ ok: true, deliver: "问题 1：第一题\n回答：是\n\n问题 2：第二题\n回答：否" })
   })
 
   it("旧版本留下的已作答记录（没有 held 字段）视为已交出，不会被拉进新的一组", () => {
@@ -193,6 +193,6 @@ describe("落盘", () => {
     chat.flush()
     const reloaded = new AppChat(dir, () => {})
     const q2 = reloaded.addQuestion(SESSION, "新问题", ["是", "否"])
-    expect(reloaded.answerQuestion(SESSION, q2, "否")).toEqual({ ok: true, deliver: "否" })
+    expect(reloaded.answerQuestion(SESSION, q2, "否")).toEqual({ ok: true, deliver: "问题 1：新问题\n回答：否" })
   })
 })

@@ -273,7 +273,7 @@ describe("重启后、还没发新消息，直接点旧卡上的选项", () => {
     const { messageId } = seedRestored([SINGLE])
     const r = await pick(messageId, "q_single", "正常")
     expect(r.toast.content).toContain("已全部选择")
-    expect(queued()).toEqual(["【点选汇总】\n1. 状态怎么样？ → 正常"])
+    expect(queued()).toEqual(["问题 1：状态怎么样？\n回答：正常"])
     expect(cardQuestionMap.has(messageId)).toBe(false)
   })
 
@@ -288,7 +288,7 @@ describe("重启后、还没发新消息，直接点旧卡上的选项", () => {
     const form = Object.fromEntries(MULTI.options.map((o, i) => [checkerFieldName(prefix, i), String(o !== "运维")]))
     const second = await act(messageId, { kind: "question_submit", sk: SESSION, blockId: "q_multi" }, form)
     expect(second.toast.content).toContain("已全部选择")
-    expect(queued()).toEqual(["【点选汇总】\n1. 状态怎么样？ → 异常\n2. 给哪些人开？ → 开发、测试"])
+    expect(queued()).toEqual(["问题 1：状态怎么样？\n回答：异常\n\n问题 2：给哪些人开？\n回答：开发、测试"])
     expect(cardQuestionMap.has(messageId)).toBe(false)
     expect(replaced().map((c) => c[1])).toEqual([elementIdOf("q_single"), elementIdOf("q_multi")])
     expect(sender.updateStreamingCard).not.toHaveBeenCalled()
@@ -316,7 +316,7 @@ describe("重启后、还没发新消息，直接点旧卡上的选项", () => {
 
     const again = await pick(messageId, "q_single", "正常")
     expect(again.toast).toMatchObject({ type: "success" })
-    expect(queued()).toEqual(["【点选汇总】\n1. 状态怎么样？ → 正常"])
+    expect(queued()).toEqual(["问题 1：状态怎么样？\n回答：正常"])
   })
 
   it("已答过的题再点：只提示已过期，不重复改卡、不重复交给 Agent", async () => {
@@ -371,5 +371,22 @@ describe("登记里的题目快照跟着活卡走", () => {
     cardQuestionMap.set(messageId, restored[messageId])
     await closeOpenQuestionsForSession(SESSION, NOTE)
     expect(replaced().map((c) => c[0])).toEqual([cardId, cardId])
+  })
+})
+
+describe("独立问题卡（不在流式卡里）：单题也交带题干的问题和回答", () => {
+  it("登记里有题干：答案前带上题干", async () => {
+    const messageId = `om_solo_${++seq}`
+    cardQuestionMap.set(messageId, { text: "状态怎么样？", options: ["正常", "异常"], sessionKey: SESSION, chatKey: CHAT, createdAt: Date.now() })
+    const r = await act(messageId, { kind: "question", opt: "异常", sk: SESSION })
+    expect(r.toast).toMatchObject({ type: "success" })
+    expect(queued()).toEqual(["问题 1：状态怎么样？\n回答：异常"])
+    expect(cardQuestionMap.has(messageId)).toBe(false)
+  })
+
+  it("登记里找不到这张卡：问题位置写明题干未登记，答案照常交出", async () => {
+    const r = await act(`om_solo_${++seq}`, { kind: "question", opt: "正常", sk: SESSION })
+    expect(r.toast).toMatchObject({ type: "success" })
+    expect(queued()).toEqual(["问题 1：（题干未登记）\n回答：正常"])
   })
 })

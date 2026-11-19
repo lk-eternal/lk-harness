@@ -36,7 +36,7 @@ describe("应用内多选题", () => {
     const q = chat.addQuestion(SESSION, "给哪些人开？", OPTIONS, true)
     const answer = joinChoices(OPTIONS, ["SUB_ADULT", "SUB_CHILD"])
     expect(answer).toBe("SUB_CHILD、SUB_ADULT")
-    expect(chat.answerQuestion(SESSION, q, answer)).toEqual({ ok: true, deliver: "SUB_CHILD、SUB_ADULT" })
+    expect(chat.answerQuestion(SESSION, q, answer)).toEqual({ ok: true, deliver: "问题 1：给哪些人开？\n回答：SUB_CHILD、SUB_ADULT" })
     expect(question(q)).toMatchObject({ multi: true, answered: "SUB_CHILD、SUB_ADULT" })
     expect(question(q).held).toBeUndefined()
   })
@@ -60,7 +60,7 @@ describe("应用内多选题", () => {
 
     expect(chat.answerQuestion(SESSION, single, "要")).toEqual({
       ok: true,
-      deliver: "【点选汇总】\n1. 给哪些人开？ → SUB_CHILD、SUB_ALL\n2. 要不要加测试？ → 要",
+      deliver: "问题 1：给哪些人开？\n回答：SUB_CHILD、SUB_ALL\n\n问题 2：要不要加测试？\n回答：要",
     })
     expect(question(multi).held).toBeUndefined()
   })

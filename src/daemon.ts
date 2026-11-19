@@ -3411,7 +3411,8 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       cardQuestionMap.delete(evt.messageId);
       scheduleCardQuestionSave();
     }
-    pushMessage(opt, internalId, chatKey, chatType, evt.operatorOpenId, evt.messageId, { senderType: "user" });
+    const answerText = formatQuestionBatchSummary([{ text: entry?.text ?? "（题干未登记）", answered: opt }]);
+    pushMessage(answerText, internalId, chatKey, chatType, evt.operatorOpenId, evt.messageId, { senderType: "user" });
 
     const body = entry?.displayBody ?? questionDisplayBody(entry?.text ?? "问题");
     const title = entry?.title;

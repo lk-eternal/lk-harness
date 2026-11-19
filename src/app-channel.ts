@@ -444,7 +444,7 @@ export class AppChat {
    *
    * 「同一组」就是这个会话里所有还没交出的问题：用户发消息会关掉没选的问题（并先交出已选的），
    * 所以不会有很久以前的残留问题把新一轮的答案卡住。
-   * 只有一个问题时交出的是选项本身（和之前一致）；多个问题交出的是带题干的汇总，否则 Agent 对不上哪个答案属于哪个问题。
+   * 交出的永远是带题干的问题和回答（一题也是），否则 Agent 对不上哪个答案属于哪个问题。
    */
   answerQuestion(sessionKey: string, messageId: string, option: string): AnswerQuestionResult {
     const entry = this.entry(sessionKey);
@@ -458,7 +458,7 @@ export class AppChat {
     if (group.some((q) => !q.answered)) return { ok: true };
 
     for (const q of group) this.upsert(entry, withoutHeld(q));
-    return { ok: true, deliver: group.length === 1 ? option : formatQuestionBatchSummary(group) };
+    return { ok: true, deliver: formatQuestionBatchSummary(group) };
   }
 
   /**
