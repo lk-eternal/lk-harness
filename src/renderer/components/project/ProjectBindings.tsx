@@ -147,15 +147,17 @@ export default function ProjectBindings({ item, ui, onChanged }: Props) {
             >
               {addable.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </select>
-            <select
-              value={effectiveMode}
-              disabled={busy}
-              onChange={(e) => setMode(e.target.value as ProjectChatMode)}
-              aria-label="接入方式"
-              className={smallInputCls}
-            >
-              {pickedModes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
-            </select>
+            {pickedModes.length > 1 && (
+              <select
+                value={effectiveMode}
+                disabled={busy}
+                onChange={(e) => setMode(e.target.value as ProjectChatMode)}
+                aria-label="接入方式"
+                className={smallInputCls}
+              >
+                {pickedModes.map((m) => <option key={m} value={m}>{MODE_LABEL[m]}</option>)}
+              </select>
+            )}
           </div>
           {effectiveMode === "bind" && (
             <input

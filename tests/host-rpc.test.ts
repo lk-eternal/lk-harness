@@ -256,7 +256,7 @@ describe("manage_project 的 templates / repos / create", () => {
   const INLINE_FS = [{ channel_id: "ch_fs", mode: "inline" }]
   const CREATED = {
     ok: true as const, projectId: "abc123def456", name: "Q4 调研", dir: "D:\\projects\\q4", templateName: "调研",
-    bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "inline" as const }],
+    bindings: [{ channelId: "ch_fs", channelName: "飞书", channelType: "feishu" as const, ok: true, mode: "inline" as const }],
   }
 
   it("工具说明讲清几件事：先查通道和模板、建前要用户确认、建完不进入会话、bindings 必须指定、通道之间隔离", () => {
@@ -370,8 +370,8 @@ describe("manage_project 的 templates / repos / create", () => {
       result: {
         ...CREATED,
         bindings: [
-          { channelId: "ch_app", channelName: "应用内", ok: true, mode: "inline" },
-          { channelId: "ch_fs", channelName: "飞书", ok: true, mode: "group", groupName: "📦 Q4 调研", groupChatId: "oc_new" },
+          { channelId: "ch_app", channelName: "应用内", channelType: "app", ok: true, mode: "inline" },
+          { channelId: "ch_fs", channelName: "飞书", channelType: "feishu", ok: true, mode: "group", groupName: "📦 Q4 调研", groupChatId: "oc_new" },
         ],
       },
     }))
@@ -383,7 +383,8 @@ describe("manage_project 的 templates / repos / create", () => {
       chatKey: "ch_app|app_main",
       bindings: [{ channelId: "ch_app", mode: "inline" }, { channelId: "ch_fs", mode: "group" }],
     })
-    expect(text).toContain("「应用内」接了主聊天")
+    expect(text).toContain("「应用内」接入了应用内对话")
+    expect(text).not.toContain("不建群")
     expect(text).toContain("「飞书」新建了飞书独立群「📦 Q4 调研」")
   })
 
@@ -515,7 +516,7 @@ describe("formatChannels：告诉 AI 当前在哪、能接哪些通道、各自�
 
 describe("formatCreated：按项目接入的每个通道，告诉 AI 接下来怎么跟用户说", () => {
   const base = { ok: true as const, projectId: "pid1", name: "改版", dir: "D:\\p\\改版", templateName: "开发" }
-  const inline = { channelId: "ch_fs", channelName: "飞书", ok: true, mode: "inline" as const }
+  const inline = { channelId: "ch_fs", channelName: "飞书", channelType: "feishu" as const, ok: true, mode: "inline" as const }
 
   it("inline：没建群，项目 ID 给用户，可以 /p use 进入；没有进入会话", () => {
     const t = formatCreated({ ...base, bindings: [inline] })
@@ -529,14 +530,14 @@ describe("formatCreated：按项目接入的每个通道，告诉 AI 接下来�
   })
 
   it("group：说明建了群、用户是群主、群里的项目只能在群里进入和推进", () => {
-    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "group", groupName: "📦 改版", groupChatId: "oc_new" }] })
+    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", channelType: "feishu", ok: true, mode: "group", groupName: "📦 改版", groupChatId: "oc_new" }] })
     expect(t).toContain("「飞书」新建了飞书独立群「📦 改版」")
     expect(t).toContain("群主")
     expect(t).toContain("群里的项目只能在群里进入和推进")
   })
 
   it("bind：说明绑了哪个群，提醒确认机器人在群里；不声称项目卡一定送达", () => {
-    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", ok: true, mode: "bind", groupChatId: "oc_exist" }] })
+    const t = formatCreated({ ...base, bindings: [{ channelId: "ch_fs", channelName: "飞书", channelType: "feishu", ok: true, mode: "bind", groupChatId: "oc_exist" }] })
     expect(t).toContain("「飞书」绑定了飞书群 oc_exist")
     expect(t).toContain("机器人不在群里的话发不进去")
     expect(t).toContain("群里的项目只能在群里进入和推进")
@@ -546,8 +547,8 @@ describe("formatCreated：按项目接入的每个通道，告诉 AI 接下来�
     const t = formatCreated({
       ...base,
       bindings: [
-        { channelId: "ch_app", channelName: "应用内", ok: true, mode: "inline" },
-        { channelId: "ch_fs", channelName: "飞书", ok: false, mode: "group", warning: "建独立群没成功：无权限" },
+        { channelId: "ch_app", channelName: "应用内", channelType: "app", ok: true, mode: "inline" },
+        { channelId: "ch_fs", channelName: "飞书", channelType: "feishu", ok: false, mode: "group", warning: "建独立群没成功：无权限" },
       ],
       warning: "「飞书」建独立群没成功：无权限。项目已经建好，其余接入照常。",
     })
@@ -564,8 +565,8 @@ describe("formatBound / formatUnbound", () => {
     const t = formatBound({
       ok: true, projectId: "p1", name: "改版",
       bindings: [
-        { channelId: "ch_wx", channelName: "微信", ok: true, mode: "inline" },
-        { channelId: "ch_fs", channelName: "飞书", ok: false, mode: "bind", warning: "绑定群没成功：该群已绑定项目「甲」(x)" },
+        { channelId: "ch_wx", channelName: "微信", channelType: "wechat", ok: true, mode: "inline" },
+        { channelId: "ch_fs", channelName: "飞书", channelType: "feishu", ok: false, mode: "bind", warning: "绑定群没成功：该群已绑定项目「甲」(x)" },
       ],
       warning: "「飞书」绑定群没成功。其余接入已生效，请如实告诉用户",
     })

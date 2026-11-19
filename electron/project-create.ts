@@ -304,7 +304,7 @@ export async function createProjectForAi(
     let fallback = false
     if (!outcomes.some((o) => o.ok)) {
       connectMainBinding(p, where.channelId, where.chatKey)
-      outcomes.push({ channelId: where.channelId, channelName: where.channelName, ok: true, mode: "inline" })
+      outcomes.push({ channelId: where.channelId, channelName: where.channelName, channelType: where.channelType, ok: true, mode: "inline" })
       fallback = true
     }
     const warning = failed.length

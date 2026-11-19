@@ -502,7 +502,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                         {o.name}
                         <span className="ml-1.5 text-[11px] font-normal text-fg-faint">{CHANNEL_TYPE_LABEL[o.type] ?? o.type}{o.current ? "（当前）" : ""}</span>
                       </span>
-                      {pick.on && o.modes.length > 0 && (
+                      {pick.on && o.modes.length > 1 && (
                         <select
                           value={pick.mode}
                           disabled={busy}

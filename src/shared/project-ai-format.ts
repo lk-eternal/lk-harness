@@ -107,6 +107,9 @@ export function formatBindingOutcome(o: ProjectBindingOutcome): string {
   if (o.mode === "bind") {
     return `✅「${o.channelName}」绑定了飞书群 ${o.groupChatId ?? ""}，已向群里发项目卡片（机器人不在群里的话发不进去，请提醒用户确认机器人已经在群里）；群里的项目只能在群里进入和推进`
   }
+  if (o.channelType === "app") {
+    return `✅「${o.channelName}」接入了应用内对话：用户需要时在应用里的项目列表点开项目进入`
+  }
   return `✅「${o.channelName}」接了主聊天（不建群）：需要时在那里进入——应用里在项目列表点开，飞书 / 微信里发 /p use <项目 ID>`
 }
 

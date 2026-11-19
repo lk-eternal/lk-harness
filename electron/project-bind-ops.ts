@@ -41,7 +41,7 @@ export async function bindProjectChoices(
   const skipped: ProjectBindingOutcome[] = []
   const todo: PlannedBinding[] = []
   for (const it of planned.items) {
-    const base = { channelId: it.channel.id, channelName: it.channel.name, mode: it.mode }
+    const base = { channelId: it.channel.id, channelName: it.channel.name, channelType: it.channel.type, mode: it.mode }
     if (it.mode === "inline" && projectMainBindings(project).some((b) => b.channelId === it.channel.id)) {
       skipped.push({ ...base, ok: true })
     } else if (it.mode === "group" && projectGroupBindings(project).some((b) => b.channelId === it.channel.id)) {

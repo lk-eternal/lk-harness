@@ -166,6 +166,8 @@ export interface ProjectCreateResult {
 export interface ProjectBindingOutcome {
   channelId: string
   channelName: string
+  /** 通道类型：应用内对话里没有「建群」这回事，告诉 AI 的结果文案不同 */
+  channelType: ChannelType
   /** 接成了没有（没成功的原因在 warning） */
   ok: boolean
   /** 要求的方式：inline=主聊天，group=新建的独立群，bind=绑定的已有群 */

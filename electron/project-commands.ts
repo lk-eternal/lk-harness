@@ -276,7 +276,7 @@ export async function attachPlannedBindings(
 ): Promise<ProjectBindingOutcome[]> {
   const out: ProjectBindingOutcome[] = []
   for (const it of items) {
-    const base = { channelId: it.channel.id, channelName: it.channel.name, mode: it.mode }
+    const base = { channelId: it.channel.id, channelName: it.channel.name, channelType: it.channel.type, mode: it.mode }
     if (it.mode === "inline") {
       connectMainBinding(project, it.channel.id)
       out.push({ ...base, ok: true })
