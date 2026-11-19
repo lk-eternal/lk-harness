@@ -4,12 +4,14 @@ import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/ap
 import { previewTypeOf } from "../shared/preview-kinds"
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
+import StickyUserMessage from "../renderer/components/chat/StickyUserMessage"
 import { useKeepScrollOnPrepend } from "../renderer/hooks/useKeepScrollOnPrepend"
 import { MessageTime, NoticePill, QuestionCard } from "../renderer/components/chat/ItemViews"
 import Markdown, { CopyButton } from "../renderer/components/chat/Markdown"
 import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { fetchMobileImageDataUrl, requestMobileFileDownloadUrl } from "./api"
 import { useBackToClose } from "./back-stack"
+import { followBottomAfterScroll } from "./follow-bottom"
 import { MobilePreviewProvider } from "./MobilePreview"
 import { useFileDownload } from "./use-file-download"
 
@@ -87,9 +89,9 @@ function MobileUserBubble({
   sessionKey: string
 }) {
   return (
-    <div className="flex max-w-[86%] flex-col items-end gap-1.5 self-end">
+    <div data-user-item={item.id} className="flex max-w-[86%] flex-col items-end gap-1.5 self-end">
       {item.images && item.images.length > 0 && (
-        <div className="flex flex-wrap justify-end gap-1.5">
+        <div data-user-flash className="flex flex-wrap justify-end gap-1.5 rounded-xl">
           {item.images.map((p) => (
             <MobileRemoteImage
               key={p}
@@ -103,7 +105,7 @@ function MobileUserBubble({
         </div>
       )}
       {item.text && (
-        <div className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-[14px] leading-relaxed text-white shadow-sm">
+        <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-[14px] leading-relaxed text-white shadow-sm">
           {item.text}
         </div>
       )}
@@ -209,6 +211,8 @@ function MobileItemListBody({
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const stickRef = useRef(true)
+  /** 上一次滚动停在哪，用来判断这次是往上还是往下滚 */
+  const lastTopRef = useRef(0)
   const [showScrollBottom, setShowScrollBottom] = useState(false)
 
   const scrollToBottom = (smooth = false) => {
@@ -224,7 +228,8 @@ function MobileItemListBody({
     if (!el) return
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
     const nearBottom = dist < 72
-    stickRef.current = nearBottom
+    stickRef.current = followBottomAfterScroll(stickRef.current, el.scrollTop < lastTopRef.current, nearBottom)
+    lastTopRef.current = el.scrollTop
     setShowScrollBottom(!nearBottom && items.length > 0)
   }
 
@@ -376,6 +381,8 @@ function MobileItemListBody({
           </div>
         )}
       </div>
+
+      <StickyUserMessage scrollRef={containerRef} items={items} onBeforeJump={() => { stickRef.current = false }} />
 
       {showScrollBottom && (
         <button

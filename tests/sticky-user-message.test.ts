@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import ChatItemList from "../src/renderer/components/chat/ChatItemList"
 import { UserBubble } from "../src/renderer/components/chat/ItemViews"
-import { lastIndexAbove, userMessagePreview } from "../src/renderer/components/chat/StickyUserMessage"
+import { alignToColumn, lastIndexAbove, userMessagePreview } from "../src/renderer/components/chat/StickyUserMessage"
+import MobileItemList from "../src/mobile/MobileItems"
 import type { AppChatItem, AppChatUserItem } from "../src/shared/app-chat-types"
 
 const bottomsOf = (bottoms: number[]) => (i: number) => bottoms[i]
@@ -71,6 +72,47 @@ describe("userMessagePreview：浮条里的一行预览", () => {
     const line = userMessagePreview({ text: "日志".repeat(500) })
     expect(line).toHaveLength(200)
     expect(line).toBe("日志".repeat(100))
+  })
+})
+
+describe("alignToColumn：浮条量出气泡所在那一列的位置", () => {
+  it("桌面：竖向滚动条占 6px，列居中封顶 → 浮条让开滚动条，左右留白等于列两侧的空隙", () => {
+    // 滚动区 900 宽（含 6px 滚动条）、两侧内边距 24、列 768 居中
+    expect(alignToColumn({ left: 0, right: 900 }, { offsetWidth: 900, clientWidth: 894 }, { left: 63, right: 831 })).toEqual({ gutter: 6, left: 63, right: 63 })
+  })
+
+  it("手机：滚动条不占宽，列贴着 14px 的内边距", () => {
+    expect(alignToColumn({ left: 0, right: 390 }, { offsetWidth: 390, clientWidth: 390 }, { left: 14, right: 376 })).toEqual({ gutter: 0, left: 14, right: 14 })
+  })
+
+  it("滚动区自己不在屏幕最左边（左边有侧栏）：量的是相对滚动区的距离", () => {
+    expect(alignToColumn({ left: 260, right: 1160 }, { offsetWidth: 900, clientWidth: 894 }, { left: 323, right: 1091 })).toEqual({ gutter: 6, left: 63, right: 63 })
+  })
+})
+
+describe("手机端接线：同一个浮条挂在 MobileItemList 上", () => {
+  const user = (id: string, text: string, images?: string[]): AppChatUserItem => ({ kind: "user", id, ts: 1, text, images })
+  const render = (items: AppChatItem[]) => renderToStaticMarkup(createElement(MobileItemList, {
+    items, loading: false, busy: false, hasMore: false, loadingEarlier: false, onLoadEarlier: () => {},
+    sessionKey: "chan::demo", baseUrl: "http://x", token: "t", onAnswer: () => {}, onCommand: () => {},
+  }))
+
+  it("每条用户消息都带标记，浮条默认隐藏且不可聚焦", () => {
+    const html = render([user("u1", "第一问"), { kind: "text", id: "t1", ts: 2, text: "回答" }, user("u2", "第二问")])
+    expect(html).toContain('data-user-item="u1"')
+    expect(html).toContain('data-user-item="u2"')
+    expect(html).toMatch(/<div aria-hidden="true" style="background:linear-gradient[^>]*class="[^"]*\binvisible\b/)
+    expect(html).toMatch(/<button type="button" tabindex="-1" title="回到这条消息"/)
+  })
+
+  it("点浮条回去时闪的是文字气泡和图片组，不是外层（外层还包着时间行）", () => {
+    const textOnly = render([user("u1", "你好")])
+    expect(textOnly.match(/data-user-flash/g)).toHaveLength(1)
+    expect(textOnly).toMatch(/<div data-user-flash="true" class="[^"]*">\s*你好\s*<\/div>/)
+    expect(textOnly.match(/<div [^>]*data-user-item[^>]*>/)?.[0]).not.toContain("data-user-flash")
+
+    expect(render([user("u1", "看图", ["D:/a.png", "D:/b.png"])]).match(/data-user-flash/g)).toHaveLength(2)
+    expect(render([user("u1", "", ["D:/a.png"])]).match(/data-user-flash/g)).toHaveLength(1)
   })
 })
 

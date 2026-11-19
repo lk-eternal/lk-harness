@@ -43,6 +43,23 @@ export function userMessagePreview(item: Pick<AppChatUserItem, "text">): string 
   return line || "[图片]"
 }
 
+/** 浮条对齐列表里气泡所在的那一列：gutter 是竖向滚动条占的宽度，left / right 是那一列离滚动区内容区两侧的距离 */
+export interface ChipLayout {
+  gutter: number
+  left: number
+  right: number
+}
+
+/** 从实际布局量出 ChipLayout，不依赖列表自己的留白和最大宽度；手机和桌面的列表样式不同，都对得上 */
+export function alignToColumn(
+  scrollBox: { left: number; right: number },
+  scroll: { offsetWidth: number; clientWidth: number },
+  columnBox: { left: number; right: number },
+): ChipLayout {
+  const gutter = scroll.offsetWidth - scroll.clientWidth
+  return { gutter, left: columnBox.left - scrollBox.left, right: scrollBox.right - gutter - columnBox.right }
+}
+
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
 interface Props {
@@ -67,6 +84,7 @@ interface Shown {
  */
 export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Props) {
   const [shown, setShown] = useState<Shown | null>(null)
+  const [layout, setLayout] = useState<ChipLayout>({ gutter: 0, left: 0, right: 0 })
   const chipRef = useRef<HTMLButtonElement>(null)
   /** 容器里所有用户消息，按文档顺序，也就是时间顺序 */
   const bubblesRef = useRef<HTMLElement[]>([])
@@ -80,8 +98,14 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
   const sync = useCallback(() => {
     const scroll = scrollRef.current
     if (!scroll) return
+    const box = scroll.getBoundingClientRect()
+    const column = scroll.firstElementChild
+    if (column) {
+      const next = alignToColumn(box, scroll, column.getBoundingClientRect())
+      setLayout((prev) => (prev.gutter === next.gutter && prev.left === next.left && prev.right === next.right ? prev : next))
+    }
     const bubbles = bubblesRef.current
-    const limit = scroll.getBoundingClientRect().top + DOCK_HEIGHT
+    const limit = box.top + DOCK_HEIGHT
     const index = lastIndexAbove(bubbles.length, (i) => bubbles[i].getBoundingClientRect().bottom, limit)
     if (index < 0) {
       shownElRef.current = null
@@ -108,8 +132,10 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
     const scroll = scrollRef.current
     if (!scroll) return
     scroll.addEventListener("scroll", sync, { passive: true })
-    // 内容尺寸变了（流式输出、图片加载完、窗口缩放导致换行），上方消息的位置可能跟着变，但不一定有 scroll 事件
+    // 内容尺寸变了（流式输出、图片加载完、窗口缩放导致换行），上方消息的位置可能跟着变，但不一定有 scroll 事件。
+    // 滚动容器也要看：列宽封顶居中时，窗口变宽只挪列的位置、列本身尺寸不变，浮条要跟着重新对齐
     const observer = new ResizeObserver(sync)
+    observer.observe(scroll)
     if (scroll.firstElementChild) observer.observe(scroll.firstElementChild)
     return () => {
       scroll.removeEventListener("scroll", sync)
@@ -145,14 +171,19 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
   const visible = shown?.visible === true
 
   // 气泡那一行用页面底色垫着，下沿 22px 渐变到透明：滚上去的内容是被淡出的，不是被一块实色边挡住。
-  // 整块不拦截鼠标，只有气泡本身可点；right-1.5 让开对话列表的竖向滚动条（index.css 里是 6px 宽）。
+  // 整块不拦截鼠标，只有气泡本身可点；右边让开竖向滚动条，左右留白对齐气泡所在的那一列（都是量出来的，见 alignToColumn）。
   return (
     <div
       aria-hidden={!visible}
-      style={{ background: "linear-gradient(to bottom, var(--color-page) 0, var(--color-page) calc(100% - 22px), transparent 100%)" }}
-      className={`pointer-events-none absolute left-0 right-1.5 top-0 px-6 pb-7 pt-2.5 transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${visible ? "" : "invisible -translate-y-1.5 opacity-0"}`}
+      style={{
+        background: "linear-gradient(to bottom, var(--color-page) 0, var(--color-page) calc(100% - 22px), transparent 100%)",
+        right: layout.gutter,
+        paddingLeft: layout.left,
+        paddingRight: layout.right,
+      }}
+      className={`pointer-events-none absolute left-0 top-0 pb-7 pt-2.5 transition-[opacity,transform,visibility] duration-200 ease-out motion-reduce:transition-none ${visible ? "" : "invisible -translate-y-1.5 opacity-0"}`}
     >
-      <div className="mx-auto flex max-w-3xl justify-end">
+      <div className="flex justify-end">
         <button
           ref={chipRef}
           type="button"
