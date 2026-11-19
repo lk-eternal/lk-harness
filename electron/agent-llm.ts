@@ -62,9 +62,7 @@ import {
   postStreamCard,
   scheduleFlushStreamCard,
   sealAllThinking,
-  sealLastThinking,
   sealRunningTools,
-  shouldOmitFromStreamCard,
 } from "./stream-card"
 
 export interface LlmLaunchOptions {
@@ -404,15 +402,6 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
     const summary = toolSummaryFromArgs(event.args)
     pushUiLog("LLM", "INFO", `[${session.sessionKey}] [tool] ${event.toolName}: running${summary ? ` · ${summary}` : ""}`)
     if (!stream || stream.finished || isToolStreamSilenced(session)) return
-    if (shouldOmitFromStreamCard(event.toolName, summary, event.args)) {
-      if (event.toolName && !/poll-message/i.test(summary)) {
-        stream.gateOpen = true
-        sealLastThinking(stream)
-        stream.forceNewThinking = true
-        scheduleFlushStreamCard(session, true)
-      }
-      return
-    }
     stream.gateOpen = true
     enqueueTool(stream, {
       call_id: event.toolCallId,
@@ -429,7 +418,6 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
     const summary = typeof event.result === "string" ? event.result.slice(0, 120) : toolSummaryFromArgs(event.result)
     pushUiLog("LLM", "INFO", `[${session.sessionKey}] [tool] ${event.toolName}: ${event.isError ? "error" : "completed"}${summary ? ` · ${summary}` : ""}`)
     if (!stream || stream.finished || isToolStreamSilenced(session)) return
-    if (shouldOmitFromStreamCard(event.toolName, summary, event.result)) return
     enqueueTool(stream, {
       call_id: event.toolCallId,
       name: event.toolName,

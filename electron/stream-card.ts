@@ -40,7 +40,6 @@ export interface StreamAgg {
   inflight: Promise<void>
   finished: boolean
   gateOpen: boolean
-  forceNewThinking: boolean
   /** 断线挂起：刷帧但不 finish，Resume 后续写同卡 */
   suspended?: boolean
   bornAt: number
@@ -98,8 +97,6 @@ const TOOL_ARG_SUMMARY_KEYS = [
   "toolName", "tool_name", "serverName", "server",
 ]
 const TOOL_SUMMARY_MAX = 120
-const OUTBOUND_MCP_RE = /^(?:send_(?:text|question|image|file)|project_\w+)$/i
-const MEDIA_MCP_RE = /^send_(?:file|image)$/i
 
 /** 流式卡承载输出的通道类型：飞书（卡片）与应用内对话（界面分段）；微信没有 */
 function carriesStreamCard(ch: { type: string } | undefined): boolean {
@@ -158,7 +155,6 @@ export function newStreamAgg(gateOpen = false): StreamAgg {
     inflight: Promise.resolve(),
     finished: false,
     gateOpen,
-    forceNewThinking: false,
     suspended: false,
     bornAt: Date.now(),
   }
@@ -214,13 +210,6 @@ export function sealRunningTools(agg: StreamAgg): void {
 export function enqueueThinking(stream: StreamAgg, text: string): void {
   if (!text) return
   dropEmptyTail(stream)
-  if (stream.forceNewThinking) {
-    stream.forceNewThinking = false
-    sealLastThinking(stream)
-    stream.segments.push({ type: "thinking", text, startedAt: Date.now() })
-    stream.dirty = true
-    return
-  }
   const last = stream.segments[stream.segments.length - 1]
   if (last?.type === "thinking" && last.ms == null) {
     last.text += text
@@ -357,48 +346,6 @@ function resolveToolDisplayName(name: string, args: unknown): string {
 
 function mcpToolName(args: unknown): string {
   return mcpCallPayload(args).tool ?? ""
-}
-
-function shellCommandText(args: unknown): string {
-  if (!args || typeof args !== "object") return ""
-  const rec = args as Record<string, unknown>
-  for (const key of ["command", "cmd", "script", "code", "input"]) {
-    const v = rec[key]
-    if (typeof v === "string" && v.trim()) return v
-  }
-  return ""
-}
-
-function isPollMessageInvocation(name: string, summary: string, args?: unknown): boolean {
-  const cmd = shellCommandText(args)
-  if (cmd && /poll-message/i.test(cmd)) return true
-  if (mcpToolName(args)) return false
-  return /poll-message/i.test(summary)
-}
-
-export function shouldOmitFromStreamCard(name: string, summary: string, args?: unknown): boolean {
-  const mcp = mcpToolName(args)
-  if (mcp) return OUTBOUND_MCP_RE.test(mcp)
-  if (OUTBOUND_MCP_RE.test(name.trim())) return true
-  if (isPollMessageInvocation(name, summary, args)) return true
-  const cmd = shellCommandText(args)
-  return !!cmd && /\/api\/send-(?:text|question|image|file)/i.test(cmd)
-}
-
-export function isMediaSendInvocation(name: string, summary: string, args?: unknown): boolean {
-  const mcp = mcpToolName(args)
-  if (mcp) return MEDIA_MCP_RE.test(mcp)
-  if (MEDIA_MCP_RE.test(name.trim())) return true
-  const cmd = shellCommandText(args)
-  return !!cmd && /\/api\/send-(?:file|image)/i.test(cmd)
-}
-
-export function isSendQuestionInvocation(name: string, summary: string, args?: unknown): boolean {
-  const mcp = mcpToolName(args)
-  if (mcp) return /^send_question$/i.test(mcp)
-  if (/^send_question$/i.test(name.trim())) return true
-  const cmd = shellCommandText(args)
-  return !!cmd && /\/api\/send-question/i.test(cmd)
 }
 
 function isTodoUpdateInvocation(name: string): boolean {

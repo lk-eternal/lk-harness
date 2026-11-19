@@ -29,7 +29,6 @@ import {
   flushStreamCard,
   isFeishuChannel,
   shouldUseFeishuStreamAgg,
-  isMediaSendInvocation,
   isShowThinkingEnabled,
   isTodoUpdateInvocation,
   needsOrphanCardFinish,
@@ -37,9 +36,7 @@ import {
   postStreamCard,
   scheduleFlushStreamCard,
   sealAllThinking,
-  sealLastThinking,
   sealRunningTools,
-  shouldOmitFromStreamCard,
   summarizeToolArgs,
 } from "./stream-card"
 import {
@@ -765,32 +762,12 @@ function handleSdkEvent(session: SdkSessionAgent, event: SDKMessage): void {
     case "tool_call": {
       flushSdkLog(session)
       const summary = event.status === "running" ? summarizeToolArgs(event.args) : ""
-      const detectSummary = summary || summarizeToolArgs(event.args) || ""
       pushUiLog("SDK", "INFO", `[${session.sessionKey}] [tool] ${event.name}: ${event.status}${summary ? ` · ${summary}` : ""}`)
       if (stream && !stream.finished) {
         if (isTodoUpdateInvocation(event.name)) {
           stream.gateOpen = true
           applyTodoUpdate(session, stream, event.args)
           scheduleFlushStreamCard(session, true)
-          break
-        }
-        if (shouldOmitFromStreamCard(event.name, detectSummary, event.args)) {
-          if (isMediaSendInvocation(event.name, detectSummary, event.args)) {
-            // 媒体走独立消息，与正文正交：running/completed/error 都只封思考态，
-            // 整卡不 finish、不换 bornAt，后续正文续写同一张卡（整轮单卡）。
-            stream.gateOpen = true
-            sealLastThinking(stream)
-            stream.forceNewThinking = true
-            scheduleFlushStreamCard(session, true)
-            break
-          }
-          // send_question 等协议工具不进卡，但要封住思考态，让后续内容另起一段
-          if (event.status === "running") {
-            stream.gateOpen = true
-            sealLastThinking(stream)
-            stream.forceNewThinking = true
-            scheduleFlushStreamCard(session, true)
-          }
           break
         }
         stream.gateOpen = true
