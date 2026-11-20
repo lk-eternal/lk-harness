@@ -58,6 +58,20 @@ export function sdkRunsLimitExceeded(runs: number, bytes: number): boolean {
   return runs >= LEDGER_MAX_SDK_RUNS || bytes >= LEDGER_MAX_BYTES
 }
 
+/** 滚动前最后两个来回开始提醒：SDK 一个来回 = 1 次 run，LLM 一个来回 = 2 条正文消息 */
+const LEDGER_WARN_SDK_RUNS_LEFT = 2
+const LEDGER_WARN_LLM_TURNS_LEFT = 4
+/** 体积数不出还剩几个来回，用到八成就算快滚动 */
+const LEDGER_WARN_BYTES = LEDGER_MAX_BYTES * 0.8
+
+/** 账本快到滚动线：此刻开始的回合里，AI 还来得及把关键信息记下来。count 的口径同 ledgerLimitExceeded / sdkRunsLimitExceeded */
+export function ledgerNearRollover(runtime: "sdk" | "llm", count: number, bytes: number): boolean {
+  const warnAt = runtime === "llm"
+    ? LEDGER_MAX_TURNS - LEDGER_WARN_LLM_TURNS_LEFT
+    : LEDGER_MAX_SDK_RUNS - LEDGER_WARN_SDK_RUNS_LEFT
+  return count >= warnAt || bytes >= LEDGER_WARN_BYTES
+}
+
 export async function measureLedger(opts: {
   runtime: "sdk" | "llm"
   sessionKey: string
@@ -78,6 +92,18 @@ export async function measureLedger(opts: {
     turns: countSdkRuns(storeDir),
     bytes: dirByteSize(storeDir),
   }
+}
+
+/** 回合开始前量一次账本：快滚动了返回 true。只量不动，账本滚动后计数归零，自然回到 false */
+export async function isSessionLedgerNearRollover(opts: {
+  runtime: "sdk" | "llm"
+  sessionKey: string
+  workspaceDir?: string
+  userDataDir?: string
+}): Promise<boolean> {
+  const userDataDir = opts.userDataDir ?? app.getPath("userData")
+  const { turns, bytes } = await measureLedger({ ...opts, userDataDir })
+  return ledgerNearRollover(opts.runtime, turns, bytes)
 }
 
 /** 回合结束后检查 SDK/LLM 账本；超限则 stash mirror、清账本、丢 resume */

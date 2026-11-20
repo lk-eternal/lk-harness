@@ -24,6 +24,10 @@ export const MEMORY_PROMPT_SECTION = [
   "- 收到 `memory` 时，它是你之前记的；和用户最新说的冲突，以用户为准。",
 ].join("\n")
 
+/** 会话快滚动时 `[本轮投递]` 里的 notice：只给挂了记忆工具的会话 */
+export const MEMORY_ROLLOVER_NOTICE =
+  "本会话的对话快到保留上限，很快会换成新会话，更早的内容和工具返回会丢掉。还没记进 memory 的关键决定、结论、待办，现在用 memory_save 记下；已经记过的不用重复。"
+
 export interface SessionMemoryEntry {
   key: string
   content: string

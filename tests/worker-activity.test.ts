@@ -41,7 +41,10 @@ vi.mock("../electron/prompt-assembler", () => ({
 vi.mock("../electron/carryover", () => ({ appendMirrorTurns: vi.fn(), replyTexts: vi.fn(() => []) }))
 vi.mock("../electron/ui-logger", () => ({ pushUiLog: vi.fn() }))
 vi.mock("../electron/stream-card", () => ({ rebaseUnensuredQueue: vi.fn(), isFeishuStreamEnabled: () => false }))
-vi.mock("../electron/session-retention", () => ({ rolloverSessionLedgerIfNeeded: async () => false }))
+vi.mock("../electron/session-retention", () => ({
+  rolloverSessionLedgerIfNeeded: async () => false,
+  isSessionLedgerNearRollover: async () => false,
+}))
 
 import { listSdkWorkerPhases, startSdkWorkerLoop, stopSdkWorker } from "../electron/sdk-session-worker"
 import { listLlmWorkerPhases, startLlmWorkerLoop, stopLlmWorker } from "../electron/llm-session-worker"

@@ -10,7 +10,7 @@ import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
 import { shouldMountMemoryMcp, shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
-import { MEMORY_PROMPT_SECTION, memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
+import { MEMORY_PROMPT_SECTION, MEMORY_ROLLOVER_NOTICE, memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
 import { buildVisitorPromptSection, visitorLimitsKey, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
@@ -263,7 +263,7 @@ export function hashSystemPrompt(text: string): string {
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
+  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string; ledgerNearLimit?: boolean },
 ): string {
   const chunks: string[] = []
   chunks.push(...assembleProtocolBlocks(ctx))
@@ -276,6 +276,7 @@ export function assembleSdkWorkerTurnPrompt(
     firstTurn: opts?.firstTurn,
     taskMessage: opts?.taskMessage,
     historyTurns: opts?.historyTurns,
+    ledgerNearLimit: opts?.ledgerNearLimit,
   }))
   return chunks.join("\n")
 }
@@ -310,7 +311,7 @@ function firstTurnMemory(ctx: PromptAssemblyContext): Record<string, string> | u
 export function assembleTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
+  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; ledgerNearLimit?: boolean },
 ): string {
   const history = (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map((t) => ({
     sender_type: t.role,
@@ -337,5 +338,6 @@ export function assembleTurnPrompt(
   if (opts?.taskMessage?.trim()) payload.task = opts.taskMessage.trim()
   const nodeProtocol = projectNodeReminder(ctx.sessionKey, messages)
   if (nodeProtocol) payload.node_protocol = nodeProtocol
+  if (opts?.ledgerNearLimit && ctxIncludeMemory(ctx)) payload.notice = MEMORY_ROLLOVER_NOTICE
   return `[本轮投递]\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``
 }
