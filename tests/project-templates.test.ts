@@ -6,7 +6,6 @@ import {
   mergeGroupFields,
   missingRequiredFields,
   normalizeFieldDefs,
-  snapshotGroups,
 } from "../src/shared/project-templates.js"
 import {
   DEFAULT_NODE_GROUPS,
@@ -106,7 +105,7 @@ describe("字段与副本工具", () => {
     expect(mergeGroupFields([a, b])[1].required).toBeUndefined()
   })
 
-  it("snapshotGroups：深拷贝，不带中心库跟踪字段，只固化用户改过的提示词", () => {
+  it("cloneGroupPlain：深拷贝，不带中心库跟踪字段，只带自定义过的提示词（空白的不带）", () => {
     const src: ProjectNodeGroupDef = {
       id: "g", name: "G", workspace: "plain", description: "d",
       hubId: "h1", hubRevision: 3, hubContentHash: "x", localRevision: 1,
@@ -117,7 +116,7 @@ describe("字段与副本工具", () => {
         { id: "n3", label: "三" },
       ],
     }
-    const [snap] = snapshotGroups([src])
+    const snap = cloneGroupPlain(src)
     expect(snap).toEqual({
       id: "g", name: "G", workspace: "plain", description: "d",
       fields: [{ label: "对象" }],

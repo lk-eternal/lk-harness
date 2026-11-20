@@ -109,7 +109,7 @@ const SETTINGS = `# 全局设置（settings / settings_set）
 - 用户要配共享空间，通常是同事给了一个仓库地址和 Token：问清地址和 Token，各自 settings_set。配完说一声：模板的上传 / 下载目前要用户在 设置 → 项目 里操作。
 - 密钥处理：用户发来后直接写入，回复里不要重复原文；提醒他这条消息会留在聊天记录里。`
 
-const MANAGE = `# 管理已有项目（list / get / update / archive / delete / sync_steps / channels / bind / unbind）
+const MANAGE = `# 管理已有项目（list / get / update / archive / delete / channels / bind / unbind）
 
 - 项目按消息通道隔离：只有接入了某个通道（主聊天或专属群）的项目，那个通道里的人和你才看得到、管得了。集中部署时，不同通道的人互相看不到对方的项目。
 - list：你所在通道下的项目和 ID；get + project_id：一个项目的完整资料（目标、模板、目录、接入的聊天、项目信息、快捷操作）。
@@ -118,7 +118,6 @@ const MANAGE = `# 管理已有项目（list / get / update / archive / delete / 
 - unbind + project_id + bindings（放一项 { channel_id, mode, group_chat_id? }，inline=主聊天，group / bind=专属群）：取消项目在那里的接入，那条会话（含应用内的聊天记录）会一并清理，群本身不改名、不解散。项目至少要留一个接入，取消前先问用户。
 - update + project_id：改 name、goal、story_url、related_docs，以及 fields（项目信息，键值，合并写入；值为空字符串 = 删掉这一项，仓库和分支也记在项目信息里）。只给要改的项。改名不会改项目目录名。
 - archive + project_id + archived=true/false：归档 / 取消归档。做完了想留着成果的项目建议归档，不要删；归档后不再认领飞书专属群，会话和成果都还在。
-- sync_steps + project_id：把项目的快捷操作同步成模板最新版（只对有自己快捷操作副本的项目有意义）。
 - delete + project_id：不可恢复地删除项目（项目目录含克隆的代码副本移到回收站，用户自己的仓库和远程分支不动）。删之前一定先问用户，并说清会发生什么；用户只是「做完了」时优先建议归档。
 - 用户怎么进入项目：应用里在项目列表点开；飞书 / 微信里发 /p use 项目ID；绑了群的项目只能在群里进入和推进。`
 

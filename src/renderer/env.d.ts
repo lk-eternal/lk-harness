@@ -347,7 +347,6 @@ declare global {
     unbindProject(projectId: string, choice: ProjectBindingChoiceType): Promise<ProjectUnbindResultType>
     getProjectView(projectId: string, channelId: string): Promise<ProjectViewType | null>
     runProjectStep(channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResultType>
-    syncProjectSteps(projectId: string): Promise<ProjectActionResultType>
     listQuickModels(): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }>
     forgetQuickModel(model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }>
     stopAllSessionAgents(): Promise<{ ok: boolean }>

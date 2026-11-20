@@ -13,7 +13,6 @@ import {
   type ProjectView,
 } from "./project-app-types.js"
 import {
-  cloneGroupPlain,
   fieldValuesToMetadata,
   mergeGroupFields,
   missingRequiredFields,
@@ -202,34 +201,9 @@ export function checkExternalFolder(
   return { ok: true, dir }
 }
 
-function normalizedGroups(groups: ProjectNodeGroupDef[]): ProjectNodeGroupDef[] {
-  return groups.map(cloneGroupPlain)
-}
-
-/**
- * 按全局模板刷新项目副本：副本里每个组，全局还有同 id 的就换成最新的，全局已删掉的保留原样。
- * 步骤和字段随模板走，项目里的 metadata 值不动。
- */
-export function syncedSnapshot(
-  snapshot: ProjectNodeGroupDef[],
-  globals: ProjectNodeGroupDef[],
-): ProjectNodeGroupDef[] {
-  return snapshot.map((s) => {
-    const g = globals.find((x) => x.id === s.id)
-    return cloneGroupPlain(g ?? s)
-  })
-}
-
-/** 项目副本和全局模板不一致（有可同步的内容） */
-export function snapshotDiffers(snapshot: ProjectNodeGroupDef[], globals: ProjectNodeGroupDef[]): boolean {
-  return JSON.stringify(normalizedGroups(snapshot)) !== JSON.stringify(syncedSnapshot(snapshot, globals))
-}
-
 export interface ProjectListItemDeps {
   /** 项目实际使用的流程组 */
   groups: ProjectNodeGroupDef[]
-  /** 全局流程组，判断能否同步 */
-  globals: ProjectNodeGroupDef[]
 }
 
 /** 项目绑定的模板 id（去重，只留全局还存在的；一个都没有就回落默认模板）。和 project-store 的 projectGroupIds 同一条规则，只是模板表由调用方给 */
@@ -292,8 +266,6 @@ export function buildProjectListItem(p: Project, deps: ProjectListItemDeps): Pro
     groupNames: deps.groups.map((g) => g.name),
     fields: mergeGroupFields(deps.groups).map((f) => ({ ...f })),
     actions,
-    hasGroupSnapshot: !!p.groupSnapshot?.length,
-    canSyncSteps: !!p.groupSnapshot?.length && snapshotDiffers(p.groupSnapshot, deps.globals),
     externalWorkspace: p.externalWorkspace === true,
     isCode: projectHasRepoInfo(p),
     dir: projectRootDir(p) || p.worktreePath || "",
@@ -317,8 +289,6 @@ export interface ProjectViewDeps {
   channelId: string
   /** 项目实际使用的流程组 */
   groups: ProjectNodeGroupDef[]
-  /** 全局流程组，判断能否同步 */
-  globals: ProjectNodeGroupDef[]
   fileExists: (p: string) => boolean
 }
 
@@ -360,6 +330,5 @@ export function buildProjectView(p: Project, deps: ProjectViewDeps): ProjectView
     externalDir: p.externalWorkspace === true,
     ...(artifact ? { artifact } : {}),
     ownedHere: isProjectOwnedBy(p, deps.channelId),
-    canSyncSteps: !!p.groupSnapshot?.length && snapshotDiffers(p.groupSnapshot, deps.globals),
   }
 }

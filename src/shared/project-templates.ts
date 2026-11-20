@@ -110,7 +110,7 @@ export function normalizeFieldDefs(raw: unknown): ProjectFieldDef[] | undefined 
   return out.length ? out : undefined
 }
 
-/** 深拷贝一个流程组，不带中心库跟踪字段（hubId 等只属于全局流程组，项目副本不该继承） */
+/** 深拷贝一个流程组，不带中心库跟踪字段（hubId 等只属于全局流程组） */
 export function cloneGroupPlain(g: ProjectNodeGroupDef): ProjectNodeGroupDef {
   return {
     id: g.id,
@@ -122,15 +122,10 @@ export function cloneGroupPlain(g: ProjectNodeGroupDef): ProjectNodeGroupDef {
     nodes: g.nodes.map((n) => ({
       id: n.id,
       label: n.label,
-      // 只固化用户改过的提示词；没改的继续跟随代码里的默认提示词，应用升级后自然变好
+      // 只带自定义过的提示词；没写的继续跟随代码里的默认提示词，应用升级后自然变好
       ...(n.prompt?.trim() ? { prompt: n.prompt } : {}),
     })),
   }
-}
-
-/** 建项时复制所选流程组做项目副本（此后与全局模板脱钩） */
-export function snapshotGroups(groups: ProjectNodeGroupDef[]): ProjectNodeGroupDef[] {
-  return groups.map(cloneGroupPlain)
 }
 
 /** 表单填的值 → 写进 metadata 的键值：只收模板声明过的字段，去首尾空白，空值不写 */

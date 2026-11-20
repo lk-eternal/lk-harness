@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, setMobileProjectArchived, syncMobileProjectSteps,
+  runMobileProjectStep, setMobileProjectArchived,
   type MobileChatTab, type RouteStatus,
 } from "../src/mobile/api"
 import { SessionDrawer } from "../src/mobile/MobileModals"
@@ -59,22 +59,20 @@ describe("手机端项目接口：请求长什么样", () => {
     expect(sent(calls[1])).toEqual({ channelId: "ch_app", input })
   })
 
-  it("读模板、读项目信息、点步骤、同步、删除：各走各的接口，该带通道的都带通道", async () => {
-    const calls = stubFetch(json({ ok: true, templates: [] }), json({ ok: true }), json({ ok: true }), json({ ok: true }), json({ ok: true }))
+  it("读模板、读项目信息、点步骤、删除：各走各的接口，该带通道的都带通道", async () => {
+    const calls = stubFetch(json({ ok: true, templates: [] }), json({ ok: true }), json({ ok: true }), json({ ok: true }))
     await fetchMobileProjectTemplates(BASE, TOKEN)
     await fetchMobileProjectView(BASE, TOKEN, "ch_app", "p1")
     await runMobileProjectStep(BASE, TOKEN, "ch_app", "p1", "n2")
-    await syncMobileProjectSteps(BASE, TOKEN, "p1")
     await deleteMobileProject(BASE, TOKEN, "ch_app", "p1")
     expect(calls.map((c) => c.url.replace("http://192.168.1.5:19529", ""))).toEqual([
       "/api/mobile/project-templates", "/api/mobile/project-view", "/api/mobile/project-run-step",
-      "/api/mobile/project-sync-steps", "/api/mobile/project-delete",
+      "/api/mobile/project-delete",
     ])
     expect(sent(calls[1])).toEqual({ channelId: "ch_app", projectId: "p1" })
     expect(sent(calls[2])).toEqual({ channelId: "ch_app", projectId: "p1", nodeId: "n2" })
-    expect(sent(calls[3])).toEqual({ projectId: "p1" })
     // 删除要带通道：电脑端据此判断项目归不归这个通道，不归的（飞书里建的）拒绝
-    expect(sent(calls[4])).toEqual({ channelId: "ch_app", projectId: "p1" })
+    expect(sent(calls[3])).toEqual({ channelId: "ch_app", projectId: "p1" })
   })
 
   it("归档 / 取消归档：POST project-archive，带通道、项目和要归档还是取消", async () => {

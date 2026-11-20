@@ -473,10 +473,6 @@ export async function runMobileProjectStep(baseUrl: string, token: string, chann
   return projectError(await callApi<ProjectActionResult>(baseUrl, token, "/api/mobile/project-run-step", { channelId, projectId, nodeId }))
 }
 
-export async function syncMobileProjectSteps(baseUrl: string, token: string, projectId: string): Promise<ProjectActionResult> {
-  return projectError(await callApi<ProjectActionResult>(baseUrl, token, "/api/mobile/project-sync-steps", { projectId }))
-}
-
 export async function deleteMobileProject(baseUrl: string, token: string, channelId: string, projectId: string): Promise<{ ok: boolean; name?: string; error?: string }> {
   return projectError(await callApi(baseUrl, token, "/api/mobile/project-delete", { channelId, projectId }))
 }

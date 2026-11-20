@@ -277,10 +277,12 @@ describe("manage_project 的 templates / repos / create", () => {
     })
     expect(ok.success).toBe(true)
     for (const action of [
-      "help", "list", "get", "create", "update", "archive", "delete", "sync_steps", "channels", "bind", "unbind",
+      "help", "list", "get", "create", "update", "archive", "delete", "channels", "bind", "unbind",
       "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
     ]) expect(tool.inputSchema.safeParse({ action }).success).toBe(true)
     expect(tool.inputSchema.safeParse({ action: "rename" }).success).toBe(false)
+    // 项目一律实时读模板，没有「同步步骤」这个操作了
+    expect(tool.inputSchema.safeParse({ action: "sync_steps" }).success).toBe(false)
     // 管理类的新参数：repo / template / settings 是对象，topic / work_branch 是枚举
     expect(tool.inputSchema.safeParse({
       action: "template_save", template_id: "t",

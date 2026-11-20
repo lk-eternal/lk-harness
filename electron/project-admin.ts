@@ -56,7 +56,6 @@ import {
   saveProject,
 } from "../src/shared/project-store.js"
 import type { Project, ProjectFieldDef, WorkBranchMode } from "../src/shared/project-types.js"
-import type { ProjectActionResult } from "../src/shared/project-app-types.js"
 
 type Obj = Record<string, unknown>
 const obj = (v: unknown): Obj => (v && typeof v === "object" && !Array.isArray(v) ? (v as Obj) : {})
@@ -261,7 +260,7 @@ function projectOf(payload: unknown): { ok: true; project: Project } | { ok: fal
 export function getProjectDetail(payload: unknown): AdminOutcome {
   const r = projectOf(payload)
   if (!r.ok) return r
-  const item = buildProjectListItem(r.project, { groups: projectGroups(r.project), globals: getNodeGroups() })
+  const item = buildProjectListItem(r.project, { groups: projectGroups(r.project) })
   return { ok: true, message: formatProjectDetail(item, (id) => getChannel(id)?.name ?? id) }
 }
 
@@ -284,10 +283,9 @@ export function updateProjectInfo(payload: unknown): AdminOutcome {
   return { ok: true, message: [`✅ 已更新项目「${plan.project.name}」(${plan.project.id})：`, ...plan.changed.map((c) => `- ${c}`)].join("\n") }
 }
 
-/** 归档 / 同步步骤要走 project-create 里的实现（和界面同一份）；那边反过来引用这个文件，所以靠注入避免循环引用 */
+/** 归档要走 project-create 里的实现（和界面同一份）；那边反过来引用这个文件，所以靠注入避免循环引用 */
 export interface ProjectAdminDeps {
   setArchived: (projectId: string, archived: boolean) => { ok: boolean; name?: string; error?: string }
-  syncSteps: (projectId: string) => ProjectActionResult
 }
 
 export function createProjectAdminHandlers(deps: ProjectAdminDeps): Record<string, (payload: unknown) => unknown | Promise<unknown>> {
@@ -315,13 +313,6 @@ export function createProjectAdminHandlers(deps: ProjectAdminDeps): Record<strin
           ? `✅ 已归档项目「${r.project.name}」：会话、聊天记录和成果都还在，只是收进「已归档」，不再认领飞书专属群。想恢复用 archived=false。`
           : `✅ 已取消归档项目「${r.project.name}」。`,
       }
-    },
-    "project.sync-steps": (payload): AdminOutcome => {
-      const r = projectOf(payload)
-      if (!r.ok) return r
-      const out = deps.syncSteps(r.project.id)
-      if (!out.ok) return fail(out.error ?? "同步失败")
-      return { ok: true, message: `✅ 已把项目「${r.project.name}」的快捷操作同步成模板最新版。` }
     },
   }
 }

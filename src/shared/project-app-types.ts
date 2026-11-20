@@ -248,11 +248,9 @@ export interface ProjectView {
   artifact?: { path: string; name: string; summary?: string; at?: number; exists: boolean }
   /**
    * 项目接入了当前这个通道：只有接入了的通道才能看到项目、推进项目；
-   * 没接入的通道里（比如设置页里看别的通道的项目）步骤、同步、删除都只读。
+   * 没接入的通道里（比如设置页里看别的通道的项目）步骤、删除都只读。
    */
   ownedHere: boolean
-  /** 模板的步骤和项目副本不一致，可以同步 */
-  canSyncSteps: boolean
 }
 
 /**
@@ -277,9 +275,6 @@ export interface ProjectListItem {
   fields: ProjectFieldDef[]
   /** 项目里的快捷操作 */
   actions: { id: string; label: string }[]
-  hasGroupSnapshot: boolean
-  /** 项目的快捷操作副本和全局模板不一致，可以同步 */
-  canSyncSteps: boolean
   externalWorkspace: boolean
   /** 项目信息里记了代码仓库；叫 isCode 是沿用老名字 */
   isCode: boolean

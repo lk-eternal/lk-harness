@@ -21,7 +21,6 @@ import {
   listProjectTemplates,
   runProjectStepFromApp,
   setProjectArchivedByUser,
-  syncProjectSteps,
 } from "./project-create"
 import { parseGatewayCreateInput } from "../src/shared/project-create-plan.js"
 import { withLegacyProjectStatus } from "../src/shared/project-app-types.js"
@@ -617,10 +616,6 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
     case "/api/mobile/project-run-step": {
       sendJson(res, 200, await runProjectStepFromApp(String(body.channelId ?? ""), String(body.projectId ?? ""), String(body.nodeId ?? "")))
-      return
-    }
-    case "/api/mobile/project-sync-steps": {
-      sendJson(res, 200, syncProjectSteps(String(body.projectId ?? "")))
       return
     }
     case "/api/mobile/project-delete": {

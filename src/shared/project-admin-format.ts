@@ -148,6 +148,6 @@ export function formatProjectDetail(p: ProjectListItem, channelName?: (channelId
   const info = Object.entries(p.metadata ?? {})
   lines.push(info.length ? "项目信息：" : "项目信息：无")
   for (const [k, v] of info) lines.push(`  - ${k}：${v}`)
-  lines.push(`快捷操作：${p.actions.map((a) => a.label).join("、") || "无"}${p.canSyncSteps ? "（和模板最新版不一致，可以 sync_steps 同步）" : ""}`)
+  lines.push(`快捷操作：${p.actions.map((a) => a.label).join("、") || "无"}`)
   return lines.join("\n")
 }

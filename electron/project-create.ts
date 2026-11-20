@@ -50,7 +50,6 @@ import {
   isProjectOwnedBy,
   parseGatewayCreateInput,
   planProjectCreate,
-  syncedSnapshot,
   templateInfos,
 } from "../src/shared/project-create-plan.js"
 import { parseBindingChoices, planBindingChoices, projectChannelOptions } from "../src/shared/project-bindings.js"
@@ -63,7 +62,6 @@ import {
   listProjects,
   projectGroups,
   projectNodes,
-  saveProject,
   setProjectArchived,
 } from "../src/shared/project-store.js"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience, type ChannelType } from "../src/shared/channel-types.js"
@@ -334,7 +332,7 @@ function strOf(v: unknown): string | undefined {
  */
 export const projectHostRpcHandlers: Record<string, (payload: unknown) => unknown | Promise<unknown>> = {
   // 设置 / 常用仓库 / 模板 / 已有项目的查看和修改（manage_project 的其余 action），实现见 project-admin.ts
-  ...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser, syncSteps: syncProjectSteps }),
+  ...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser }),
   "project.templates": () => listProjectTemplates(),
   "project.repos": () => listProjectRepoOptions(),
   "project.channels": (payload): AiProjectChannelsResult => {
@@ -412,10 +410,9 @@ export async function unbindProjectFromSettings(projectId: string, choice: Proje
 /** 设置页项目列表：每个项目的完整资料（字段、快捷操作取自项目实际在用的模板） */
 export function listProjectItems(): ProjectListItem[] {
   ensureStore()
-  const globals = getNodeGroups()
   // 已归档的排在后面（稳定排序，各自保持最近更新在前）
   return listProjects()
-    .map((p) => buildProjectListItem(p, { groups: projectGroups(p), globals }))
+    .map((p) => buildProjectListItem(p, { groups: projectGroups(p) }))
     .sort((a, b) => Number(a.archived) - Number(b.archived))
 }
 
@@ -427,7 +424,6 @@ export function getProjectView(projectId: string, channelId: string): ProjectVie
   return buildProjectView(p, {
     channelId,
     groups: projectGroups(p),
-    globals: getNodeGroups(),
     fileExists: (f) => fs.existsSync(f),
   })
 }
@@ -509,15 +505,4 @@ function releaseArchivedProject(project: Pick<Project, "id" | "bindings">): void
   const lock = readLockFile()
   if (!lock?.port) return
   void releaseProjectRoutes(lock.port, project).catch(() => { /* best-effort */ })
-}
-
-/** 把项目步骤同步成最新模板（只对有自己步骤副本的项目有意义） */
-export function syncProjectSteps(projectId: string): ProjectActionResult {
-  ensureStore()
-  const p = getProject(String(projectId || "").trim())
-  if (!p) return { ok: false, error: "项目不存在" }
-  if (!p.groupSnapshot?.length) return { ok: false, error: "这个项目的快捷操作本来就跟着模板走，不用同步" }
-  p.groupSnapshot = syncedSnapshot(p.groupSnapshot, getNodeGroups())
-  saveProject(p)
-  return { ok: true }
 }

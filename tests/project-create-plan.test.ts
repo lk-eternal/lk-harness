@@ -23,11 +23,8 @@ import {
   normalizeProjectName,
   parseGatewayCreateInput,
   planProjectCreate,
-  snapshotDiffers,
-  syncedSnapshot,
   templateInfos,
 } from "../src/shared/project-create-plan.js"
-import { snapshotGroups } from "../src/shared/project-templates.js"
 import {
   DEFAULT_NODE_GROUPS,
   projectIdFromSessionKey,
@@ -274,38 +271,6 @@ describe("checkExternalFolder", () => {
   })
 })
 
-describe("项目步骤副本同步", () => {
-  it("全局模板改了才算有差异；同步后和全局一致", () => {
-    const globals = groups()
-    const snap = snapshotGroups([globals.find((g) => g.id === "writing")!])
-    expect(snapshotDiffers(snap, globals)).toBe(false)
-
-    const changed = globals.map((g) => g.id === "writing"
-      ? { ...g, nodes: [...g.nodes, { id: "extra", label: "多一步" }] }
-      : g)
-    expect(snapshotDiffers(snap, changed)).toBe(true)
-    const synced = syncedSnapshot(snap, changed)
-    expect(synced[0].nodes.map((n) => n.id)).toContain("extra")
-    expect(snapshotDiffers(synced, changed)).toBe(false)
-  })
-
-  it("全局已经删掉的模板，副本里保留原样，不算差异", () => {
-    const globals = groups()
-    const snap = snapshotGroups([globals.find((g) => g.id === "event")!])
-    const without = globals.filter((g) => g.id !== "event")
-    expect(snapshotDiffers(snap, without)).toBe(false)
-    expect(syncedSnapshot(snap, without)[0].nodes).toHaveLength(4)
-  })
-
-  it("项目里的步骤改过自己的提示词，同步会被全局版本覆盖（同步就是以模板为准）", () => {
-    const globals = groups()
-    const snap = snapshotGroups([globals.find((g) => g.id === "general")!])
-    snap[0].nodes[0].prompt = "项目里单独写的"
-    expect(snapshotDiffers(snap, globals)).toBe(true)
-    expect(syncedSnapshot(snap, globals)[0].nodes[0].prompt).toBeUndefined()
-  })
-})
-
 describe("buildProjectView", () => {
   const base = path.resolve(path.sep, "work", "p1")
   const project = (extra: Partial<Project> = {}): Project => ({
@@ -317,7 +282,7 @@ describe("buildProjectView", () => {
   it("步骤按模板顺序、多模板去重；项目信息逐条列出", () => {
     const gs = groups().filter((g) => g.id === "general" || g.id === "report")
     const v = buildProjectView(project({ metadata: { 汇报对象: "老板", 汇报周期: "每周五" }, storyUrl: "https://x", relatedDocs: "文档A" }), {
-      channelId: CH, groups: gs, globals: groups(), fileExists: () => true,
+      channelId: CH, groups: gs, fileExists: () => true,
     })
     expect(v.steps.map((s) => s.id)).toEqual(["clarify", "breakdown", "execute", "recap", "collect-progress", "draft-report", "next-plan"])
     expect(v.steps[0].group).toBe("通用任务")
@@ -326,11 +291,11 @@ describe("buildProjectView", () => {
     expect(v.isCode).toBe(false)
     expect(v.storyUrl).toBe("https://x")
     expect(v.relatedDocs).toBe("文档A")
-    expect(v.canSyncSteps).toBe(false)
+    expect(v).not.toHaveProperty("canSyncSteps")
   })
 
   it("普通项目的目录是项目根目录；外部文件夹项目的目录就是文件夹本身", () => {
-    const opts = { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true }
+    const opts = { channelId: CH, groups: groups(), fileExists: () => true }
     expect(buildProjectView(project(), opts).dir).toBe(base)
     const folder = path.resolve(path.sep, "Users", "me", "周报")
     const ext = buildProjectView(project({ worktreePath: folder, externalWorkspace: true }), opts)
@@ -340,7 +305,7 @@ describe("buildProjectView", () => {
 
   it("最近成果：相对路径落到项目目录下，并标出文件在不在", () => {
     const rel = path.join(".lk-harness", "artifacts", "周报.md")
-    const opts = (exists: boolean) => ({ channelId: CH, groups: groups(), globals: groups(), fileExists: () => exists })
+    const opts = (exists: boolean) => ({ channelId: CH, groups: groups(), fileExists: () => exists })
     const p = project({ lastArtifactPath: rel, lastArtifactSummary: "本周周报", lastArtifactAt: 5 })
     const v = buildProjectView(p, opts(true))
     expect(v.artifact).toEqual({
@@ -350,23 +315,17 @@ describe("buildProjectView", () => {
     expect(buildProjectView(project(), opts(true)).artifact).toBeUndefined()
   })
 
-  it("项目信息里记了代码仓库才标 isCode；视图里没有分支字段；有副本且和全局不同才可同步", () => {
+  it("项目信息里记了代码仓库才标 isCode；视图里没有分支字段", () => {
     const dev = project({ metadata: { 代码仓库: "D:\\repos\\shop（工作分支 feature/x；基线分支 main）" } })
-    const v = buildProjectView(dev, { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true })
+    const v = buildProjectView(dev, { channelId: CH, groups: groups(), fileExists: () => true })
     expect(v.isCode).toBe(true)
     expect(v).not.toHaveProperty("featureBranch")
-    const plain = buildProjectView(project({ metadata: { 客户: "A" } }), { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true })
+    const plain = buildProjectView(project({ metadata: { 客户: "A" } }), { channelId: CH, groups: groups(), fileExists: () => true })
     expect(plain.isCode).toBe(false)
-
-    const snap = snapshotGroups([groups().find((g) => g.id === "report")!])
-    const globals = groups().map((g) => g.id === "report" ? { ...g, name: "周报月报（新）" } : g)
-    const withSnap = project({ groupSnapshot: snap })
-    expect(buildProjectView(withSnap, { channelId: CH, groups: snap, globals, fileExists: () => true }).canSyncSteps).toBe(true)
-    expect(buildProjectView(withSnap, { channelId: CH, groups: snap, globals: groups(), fileExists: () => true }).canSyncSteps).toBe(false)
   })
 
   it("有归档时间才是已归档；视图里没有项目状态", () => {
-    const opts = { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true }
+    const opts = { channelId: CH, groups: groups(), fileExists: () => true }
     const live = buildProjectView(project(), opts)
     expect(live.archived).toBe(false)
     expect(live).not.toHaveProperty("status")
@@ -374,7 +333,7 @@ describe("buildProjectView", () => {
   })
 
   it("项目归不归当前通道：看项目有没有接入这个通道（主聊天或专属群都算）", () => {
-    const opts = { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true }
+    const opts = { channelId: CH, groups: groups(), fileExists: () => true }
     expect(buildProjectView(project({ bindings: [{ kind: "main", channelId: CH }] }), opts).ownedHere).toBe(true)
     expect(buildProjectView(project({ bindings: [{ kind: "group", channelId: CH, chatKey: `${CH}|oc_x` }] }), opts).ownedHere).toBe(true)
     expect(buildProjectView(project({ bindings: [{ kind: "main", channelId: "ch_fs" }] }), opts).ownedHere).toBe(false)
@@ -527,7 +486,7 @@ describe("withLegacyProjectStatus（旧版手机 App 要读的 status）", () =>
       worktreePath: path.resolve(path.sep, "work", "p1", "workspace"),
       groupIds: ["report"], groupId: "report", createdAt: 1, updatedAt: 2, ...extra,
     },
-    { channelId: CH, groups: groups(), globals: groups(), fileExists: () => true },
+    { channelId: CH, groups: groups(), fileExists: () => true },
   )
   // 1.4.0 手机 App 里项目信息的标签逻辑（原样抄来）：不是 "active" 就挂标签
   const oldAppBadge = (view: { status?: string }): string | null =>

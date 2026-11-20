@@ -80,7 +80,7 @@ import {
 import { exportConfigBundle, importConfigBundle, inspectConfigBundle, getLocalConfigSectionStats, type ConfigSection } from "./config-backup"
 import { initProjectStore, getProject, getCurrentProject, listProjects, findProjectByGroupChat, getNodeGroups, saveNodeGroups, saveProject, parseNodeGroupExport, resolveUniqueNodeGroupId, setCurrentProjectId } from "../src/shared/project-store.js"
 import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
-import { bindProjectFromSettings, createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectChannelOptions, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectHostRpcHandlers, projectsRootDir, runProjectStepFromApp, syncProjectSteps, unbindProjectFromSettings } from "./project-create"
+import { bindProjectFromSettings, createProjectFromApp, deleteProjectByUser, setProjectArchivedByUser, getProjectView, inspectProjectRepo, listProjectChannelOptions, listProjectItems, listProjectRepoOptions, listProjectTemplates, projectHostRpcHandlers, projectsRootDir, runProjectStepFromApp, unbindProjectFromSettings } from "./project-create"
 import { createHostRpcDispatcher } from "./host-rpc"
 import { HOST_RPC_PREFIX } from "../src/shared/host-rpc.js"
 import type { ProjectBindingChoice, ProjectCreateInput } from "../src/shared/project-app-types.js"
@@ -2095,7 +2095,6 @@ export function initDaemonManager(): void {
   ipcMain.handle("project:view", (_e, projectId: string, channelId: string) => getProjectView(projectId, channelId))
   ipcMain.handle("project:run-step", (_e, channelId: string, projectId: string, nodeId: string) =>
     runProjectStepFromApp(String(channelId || ""), projectId, String(nodeId || "")))
-  ipcMain.handle("project:sync-steps", (_e, projectId: string) => syncProjectSteps(projectId))
   ipcMain.handle("session:list-quick-models", () => {
     initSessionModelStore(app.getPath("userData"))
   initProjectStore(app.getPath("userData"))

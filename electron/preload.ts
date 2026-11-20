@@ -333,7 +333,6 @@ const api = {
     ipcRenderer.invoke("project:view", projectId, channelId),
   runProjectStep: (channelId: string, projectId: string, nodeId: string): Promise<ProjectActionResult> =>
     ipcRenderer.invoke("project:run-step", channelId, projectId, nodeId),
-  syncProjectSteps: (projectId: string): Promise<ProjectActionResult> => ipcRenderer.invoke("project:sync-steps", projectId),
   listQuickModels: (): Promise<{ ok: boolean; models: { model: string; modelParams?: string; label?: string; resourceId?: string }[] }> =>
     ipcRenderer.invoke("session:list-quick-models"),
   forgetQuickModel: (model: string, modelParams?: string, resourceId?: string): Promise<{ ok: boolean }> =>

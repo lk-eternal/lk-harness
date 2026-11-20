@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, RefreshCw, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, Trash2 } from "lucide-react"
 import { projectDeleteConfirmText, type ProjectView } from "../../../shared/project-app-types"
 import { splitTextLinks } from "../../../shared/text-links"
 import useOutsideClose from "../../hooks/useOutsideClose"
@@ -56,7 +56,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
   const [view, setView] = useState<ProjectView | null>(null)
   const [open, setOpen] = useState(false)
   const [starting, setStarting] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"sync" | "delete" | "archive" | null>(null)
+  const [busy, setBusy] = useState<"delete" | "archive" | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const seqRef = useRef(0)
 
@@ -93,18 +93,6 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
       onError(e instanceof Error ? e.message : String(e))
     } finally {
       setStarting(null)
-    }
-  }
-
-  const syncSteps = async () => {
-    if (busy) return
-    setBusy("sync")
-    try {
-      const r = await window.electronAPI.syncProjectSteps(projectId)
-      if (!r.ok) onError(r.error ?? "同步失败")
-      await reload()
-    } finally {
-      setBusy(null)
     }
   }
 
@@ -212,15 +200,6 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
 
           {view.ownedHere && (
             <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-              {view.canSyncSteps && (
-                <button
-                  type="button"
-                  onClick={() => void syncSteps()}
-                  disabled={!!busy}
-                  title="模板后来改过了，这个项目的快捷操作还是创建时的版本；同步后换成最新的"
-                  className="inline-flex items-center gap-1 rounded border border-line px-2 py-1 text-[12px] text-fg-3 transition hover:bg-raised/50 disabled:opacity-50"
-                >{busy === "sync" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}同步最新模板</button>
-              )}
               <button
                 type="button"
                 onClick={() => void toggleArchive()}

@@ -366,7 +366,7 @@ describe("归档项目", () => {
   })
 })
 
-describe("同步步骤和项目信息", () => {
+describe("项目信息面板和模板列表", () => {
   it("全局模板改了，已建项目的步骤立即跟上，不用同步", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(APP, { name: "周报", templateId: "report" })
@@ -379,17 +379,11 @@ describe("同步步骤和项目信息", () => {
 
     const view = create.getProjectView(r.projectId!, APP)!
     expect(view.steps.map((s) => s.id)).toContain("extra")
-    expect(view.canSyncSteps).toBe(false)
+    expect(view).not.toHaveProperty("canSyncSteps")
   })
 
-  it("没有步骤副本的老项目：不用同步；项目不存在：报错", async () => {
-    const { store, create } = await boot()
-    const old = store.createProject({
-      name: "老项目", goal: "",
-      worktreePath: path.join(userData, "old", "workspace"), groupIds: ["develop"], groupId: "develop",
-    })
-    expect(create.syncProjectSteps(old.id).ok).toBe(false)
-    expect(create.syncProjectSteps("000000000000").ok).toBe(false)
+  it("项目不存在：看不到信息面板", async () => {
+    const { create } = await boot()
     expect(create.getProjectView("000000000000", APP)).toBeNull()
   })
 

@@ -1,7 +1,6 @@
 import * as path from "node:path"
 import { describe, expect, it } from "vitest"
 import { buildProjectListItem, changeProjectGroups, templateUsage } from "../src/shared/project-create-plan.js"
-import { snapshotGroups } from "../src/shared/project-templates.js"
 import { DEFAULT_NODE_GROUPS, DEFAULT_NODE_GROUP_ID, type Project, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
 
 const globals = (): ProjectNodeGroupDef[] => structuredClone(DEFAULT_NODE_GROUPS)
@@ -16,14 +15,14 @@ const project = (extra: Partial<Project> = {}): Project => ({
 
 describe("buildProjectListItem（设置页项目详情的数据）", () => {
   it("字段取自项目实际在用的模板：通用任务没有要填的信息，调研有", () => {
-    const general = buildProjectListItem(project(), { groups: pick("general"), globals: globals() })
+    const general = buildProjectListItem(project(), { groups: pick("general") })
     expect(general.fields).toEqual([])
-    const research = buildProjectListItem(project({ groupIds: ["research"], groupId: "research" }), { groups: pick("research"), globals: globals() })
+    const research = buildProjectListItem(project({ groupIds: ["research"], groupId: "research" }), { groups: pick("research") })
     expect(research.fields.map((f) => f.label)).toContain("交付形式")
   })
 
   it("多个模板：字段合并、快捷操作按 id 去重，模板名和 id 按顺序给出", () => {
-    const item = buildProjectListItem(project({ groupIds: ["general", "report"] }), { groups: pick("general", "report"), globals: globals() })
+    const item = buildProjectListItem(project({ groupIds: ["general", "report"] }), { groups: pick("general", "report") })
     expect(item.groupIds).toEqual(["general", "report"])
     expect(item.groupNames).toEqual(["通用任务", "周报月报"])
     expect(item.groupId).toBe("general")
@@ -34,14 +33,14 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
   })
 
   it("接入的聊天：每个入口的类型、通道、群聊天键带出（会话键不外传）；没接入任何通道就是空列表", () => {
-    const none = buildProjectListItem(project(), { groups: pick("general"), globals: globals() })
+    const none = buildProjectListItem(project(), { groups: pick("general") })
     expect(none.bindings).toEqual([])
     const item = buildProjectListItem(project({
       bindings: [
         { kind: "main", channelId: "ch_app", sessionKey: "ch_app|app_main::project_abc123def456" },
         { kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_g1", sessionKey: "ch_fs|oc_g1::project_abc123def456" },
       ],
-    }), { groups: pick("general"), globals: globals() })
+    }), { groups: pick("general") })
     expect(item.bindings).toEqual([
       { kind: "main", channelId: "ch_app" },
       { kind: "group", channelId: "ch_fs", chatKey: "ch_fs|oc_g1" },
@@ -51,43 +50,42 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
   it("项目里填过的资料原样带出（包括模板里没有的），不会被字段表过滤掉", () => {
     const item = buildProjectListItem(
       project({ metadata: { 汇报对象: "老板", 临时备注: "别忘了" } }),
-      { groups: pick("report"), globals: globals() },
+      { groups: pick("report") },
     )
     expect(item.metadata).toEqual({ 汇报对象: "老板", 临时备注: "别忘了" })
   })
 
   it("链接字段没填就不带出来；填了才带（详情页据此决定显示不显示）", () => {
-    const empty = buildProjectListItem(project(), { groups: pick("general"), globals: globals() })
+    const empty = buildProjectListItem(project(), { groups: pick("general") })
     for (const k of ["storyUrl", "relatedDocs", "productDocUrl", "techDocUrl"] as const) expect(empty).not.toHaveProperty(k)
-    const filled = buildProjectListItem(project({ storyUrl: "https://x", techDocUrl: "https://t" }), { groups: pick("general"), globals: globals() })
+    const filled = buildProjectListItem(project({ storyUrl: "https://x", techDocUrl: "https://t" }), { groups: pick("general") })
     expect(filled.storyUrl).toBe("https://x")
     expect(filled.techDocUrl).toBe("https://t")
     expect(filled).not.toHaveProperty("productDocUrl")
   })
 
   it("项目信息里没记代码仓库 isCode 为 false，记了为 true；不再有分支、仓库路径这类专门的字段；目录是项目根目录", () => {
-    expect(buildProjectListItem(project(), { groups: pick("general"), globals: globals() }).isCode).toBe(false)
-    expect(buildProjectListItem(project({ metadata: { 客户: "A" } }), { groups: pick("general"), globals: globals() }).isCode).toBe(false)
-    const dev = buildProjectListItem(project({ metadata: { 代码仓库: "/r（工作分支 feature/x）" } }), { groups: pick("develop"), globals: globals() })
+    expect(buildProjectListItem(project(), { groups: pick("general") }).isCode).toBe(false)
+    expect(buildProjectListItem(project({ metadata: { 客户: "A" } }), { groups: pick("general") }).isCode).toBe(false)
+    const dev = buildProjectListItem(project({ metadata: { 代码仓库: "/r（工作分支 feature/x）" } }), { groups: pick("develop") })
     expect(dev.isCode).toBe(true)
     expect(dev).not.toHaveProperty("featureBranch")
     expect(dev).not.toHaveProperty("repoPaths")
-    expect(buildProjectListItem(project(), { groups: pick("general"), globals: globals() }).dir).toBe(base)
+    expect(buildProjectListItem(project(), { groups: pick("general") }).dir).toBe(base)
   })
 
-  it("能不能同步模板：有副本且和全局不同才行", () => {
-    const snap = snapshotGroups(pick("report"))
-    const changed = globals().map((g) => g.id === "report" ? { ...g, name: "周报月报（新）" } : g)
-    const p = project({ groupSnapshot: snap, groupIds: ["report"], groupId: "report" })
-    expect(buildProjectListItem(p, { groups: snap, globals: changed }).canSyncSteps).toBe(true)
-    expect(buildProjectListItem(p, { groups: snap, globals: globals() }).canSyncSteps).toBe(false)
-    expect(buildProjectListItem(p, { groups: snap, globals: globals() }).hasGroupSnapshot).toBe(true)
-    // 没副本：永远没有可同步的
-    expect(buildProjectListItem(project(), { groups: pick("general"), globals: changed }).canSyncSteps).toBe(false)
+  it("项目一律实时读模板：资料里没有「模板副本 / 可同步」这类字段，模板名和快捷操作随传进来的模板走", () => {
+    const item = buildProjectListItem(project({ groupIds: ["report"], groupId: "report" }), { groups: pick("report") })
+    expect(item).not.toHaveProperty("hasGroupSnapshot")
+    expect(item).not.toHaveProperty("canSyncSteps")
+    const renamed = pick("report").map((g) => ({ ...g, name: "周报月报（新）", nodes: [...g.nodes, { id: "extra", label: "多一步" }] }))
+    const after = buildProjectListItem(project({ groupIds: ["report"], groupId: "report" }), { groups: renamed })
+    expect(after.groupNames).toEqual(["周报月报（新）"])
+    expect(after.actions.map((a) => a.id)).toContain("extra")
   })
 
   it("有归档时间才是已归档；没有任何「进行中 / 已暂停」这类状态字段", () => {
-    const opts = { groups: pick("general"), globals: globals() }
+    const opts = { groups: pick("general") }
     const live = buildProjectListItem(project(), opts)
     expect(live.archived).toBe(false)
     expect(live).not.toHaveProperty("status")

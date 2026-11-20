@@ -173,7 +173,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       "- repos：列出常用代码仓库（路径、基线分支、测试 / 开发分支、是否克隆）。",
       "- create：创建项目。用户让你建项目、又不想自己填表时用。流程：先 templates 看模板和必填项（要接代码再 repos），把用户的话整理成参数；信息不够就问用户，不要猜；创建前把整理好的内容（名称、模板、各项信息、仓库和分支、文件夹）发给用户确认（send_question），确认后才调用。会建项目目录、按设置克隆仓库，可能要一会儿。建完不会进入项目会话（当前对话不受影响）。必须指定 bindings（项目接入哪些通道、用什么方式），没有默认值：先用 channels 看有哪些通道和各自能用的方式，用户没说清楚就问他（send_question），确认内容里要写明每个通道选了什么。bindings 每项是 {channel_id, mode, group_chat_id?}：mode=inline 接该通道的主聊天（不建群）；group 新建飞书独立群并把用户拉入群；bind 绑定已有的飞书群（还要给 group_chat_id）；一个项目可以同时接多个通道，每个通道各自一条独立会话。飞书 / 微信里的调用者只能接自己所在的通道，应用内对话里可以接任何通道。建完把每个通道的结果如实告诉用户（失败的原因要说）：inline 项目他需要时自己进入，群里的项目到群里协作。",
       "- bind：给已有项目补接入（project_id + bindings，写法同 create）；unbind：取消项目在某个通道上的接入（project_id + bindings 里放一项 {channel_id, mode, group_chat_id?}：inline=主聊天，group / bind=专属群）。项目至少要留一个接入。取消会把那条会话一并清掉，先向用户确认。",
-      "- update：改项目资料（project_id；只给要改的：name / goal / story_url / related_docs / fields=项目信息键值，空字符串删掉该项）。archive：归档 / 取消归档（project_id + archived）。sync_steps：把项目的快捷操作同步成模板最新版。",
+      "- update：改项目资料（project_id；只给要改的：name / goal / story_url / related_docs / fields=项目信息键值，空字符串删掉该项）。archive：归档 / 取消归档（project_id + archived）。",
       "- repo_save：登记或修改常用代码仓库（repo={repo_path, base_branch?, test_branch?, develop_branch?, clone?}）；repo_remove：移除（repo={repo_path}）。",
       "- template_save：新建（不给 template_id）或修改项目模板（template；改动立即对所有在用它的项目生效）；template_delete：删除模板（template_id）。新建 / 修改前先 help topic=templates。",
       "- settings：看项目设置现状（项目存放位置、Git 基本原则、GitLab、共享空间；密钥只显示打码）；settings_set：修改（settings；只给要改的）。用户发来的 Token 直接写入，回复里不要重复原文。",
@@ -181,11 +181,11 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
     ].join("\n"),
     {
       action: z.enum([
-        "help", "list", "get", "create", "update", "archive", "delete", "sync_steps", "channels", "bind", "unbind",
+        "help", "list", "get", "create", "update", "archive", "delete", "channels", "bind", "unbind",
         "templates", "template_save", "template_delete", "repos", "repo_save", "repo_remove", "settings", "settings_set",
-      ]).describe("操作：help=操作手册（先读）, list=列出你所在通道的项目, get=项目详情, channels=看当前通道和可接入的通道, create=创建项目, bind=给项目补接入, unbind=取消接入, update=改项目资料, archive=归档/取消归档, delete=删除项目, sync_steps=同步快捷操作, templates=查看模板, template_save=新建/修改模板, template_delete=删除模板, repos=列出常用仓库, repo_save=登记/修改仓库, repo_remove=移除仓库, settings=查看项目设置, settings_set=修改项目设置"),
+      ]).describe("操作：help=操作手册（先读）, list=列出你所在通道的项目, get=项目详情, channels=看当前通道和可接入的通道, create=创建项目, bind=给项目补接入, unbind=取消接入, update=改项目资料, archive=归档/取消归档, delete=删除项目, templates=查看模板, template_save=新建/修改模板, template_delete=删除模板, repos=列出常用仓库, repo_save=登记/修改仓库, repo_remove=移除仓库, settings=查看项目设置, settings_set=修改项目设置"),
       topic: z.enum(PROJECT_HELP_TOPICS).optional().describe("help 时可选：不给=总览（含建项目完整流程和当前状态）；create / repos / templates / settings / manage=各块细节"),
-      project_id: z.string().optional().describe("项目 ID（get / update / archive / sync_steps / bind / unbind / delete 时必填）"),
+      project_id: z.string().optional().describe("项目 ID（get / update / archive / bind / unbind / delete 时必填）"),
       archived: z.boolean().optional().describe("archive 必填：true=归档, false=取消归档"),
       name: z.string().optional().describe("项目名称（create 必填；update 时是新名称）"),
       goal: z.string().optional().describe("项目目标，一两句话（create 可选；update 时是新目标）"),
@@ -299,7 +299,6 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
         if (archived === undefined) return txt("❌ archive 需要 archived：true=归档，false=取消归档");
         return txt(await callAdmin("project.archive", { projectId: project_id, archived }));
       }
-      if (action === "sync_steps") return txt(needProject() ?? await callAdmin("project.sync-steps", { projectId: project_id }));
       if (action === "channels" || action === "bind" || action === "unbind") {
         const invoker = getMcpInvokerSessionKey();
         if (!invoker) return txt("❌ 无法确定你所在的会话，不能查看或修改项目接入的通道");

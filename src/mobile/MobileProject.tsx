@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
-import { Archive, ArchiveRestore, Download, Eye, FileText, FolderKanban, GitBranch, Info, Loader2, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { Archive, ArchiveRestore, Download, Eye, FileText, FolderKanban, GitBranch, Info, Loader2, Plus, Trash2, X } from "lucide-react"
 import { previewTypeOf } from "../shared/preview-kinds"
 import {
   PROJECT_NAME_MAX, PROJECT_REPOS_MAX, PROJECT_TEXT_MAX, projectDeleteConfirmText, repoPicksProblem, sortTemplatesForPicker,
@@ -16,7 +16,7 @@ import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { formatTimeAgo } from "../renderer/time-ago"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, setMobileProjectArchived, syncMobileProjectSteps,
+  runMobileProjectStep, setMobileProjectArchived,
 } from "./api"
 import { useBackToClose } from "./back-stack"
 import { MobilePreviewProvider } from "./MobilePreview"
@@ -424,15 +424,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, busy, onSync, onArchive, onDelete }: {
+function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, busy, onArchive, onDelete }: {
   open: boolean
   onClose: () => void
   view: ProjectView
   baseUrl: string
   token: string
   sessionKey: string
-  busy: "sync" | "delete" | "archive" | null
-  onSync: () => void
+  busy: "delete" | "archive" | null
   /** 归档 / 取消归档（看 view.archived） */
   onArchive: () => void
   onDelete: () => void
@@ -534,14 +533,6 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
 
           {view.ownedHere && (
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5">
-              {view.canSyncSteps && (
-                <button
-                  type="button"
-                  onClick={onSync}
-                  disabled={!!busy}
-                  className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1.5 text-xs text-fg-2 transition active:bg-raised disabled:opacity-50"
-                >{busy === "sync" ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}同步最新模板</button>
-              )}
               <button
                 type="button"
                 onClick={onArchive}
@@ -586,7 +577,7 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
   const [view, setView] = useState<ProjectView | null>(null)
   const [infoOpen, setInfoOpen] = useState(false)
   const [starting, setStarting] = useState<string | null>(null)
-  const [busy, setBusy] = useState<"sync" | "delete" | "archive" | null>(null)
+  const [busy, setBusy] = useState<"delete" | "archive" | null>(null)
   const seqRef = useRef(0)
 
   const reload = useCallback(async () => {
@@ -615,18 +606,6 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
       onError(e instanceof Error ? e.message : String(e))
     } finally {
       setStarting(null)
-    }
-  }
-
-  const syncSteps = async () => {
-    if (busy) return
-    setBusy("sync")
-    try {
-      const r = await syncMobileProjectSteps(baseUrl, token, projectId)
-      if (!r.ok) onError(r.error ?? "同步失败")
-      await reload()
-    } finally {
-      setBusy(null)
     }
   }
 
@@ -698,7 +677,6 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
           token={token}
           sessionKey={sessionKey}
           busy={busy}
-          onSync={() => void syncSteps()}
           onArchive={() => void toggleArchive()}
           onDelete={() => void removeProject()}
         />,

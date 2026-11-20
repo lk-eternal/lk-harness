@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { Archive, ArchiveRestore, ChevronRight, Copy, FolderOpen, Plus, RefreshCw, Trash2, X } from "lucide-react"
+import { Archive, ArchiveRestore, ChevronRight, Copy, FolderOpen, Plus, Trash2, X } from "lucide-react"
 import { PROJECT_NAME_MAX, PROJECT_TEXT_MAX, projectDeleteConfirmText, type ProjectListItem } from "../../../shared/project-app-types"
 import {
   INFO_KEY_MAX, LINK_FIELDS, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow,
@@ -9,7 +9,7 @@ import { usePanelSave } from "../usePanelSave"
 import ProjectBindings from "./ProjectBindings"
 import type { Group } from "./template-data"
 import {
-  EditorFrame, FieldLabel, SaveButtons, Section, dangerBtn, dashedBtn, ghostBtn, inputBase, inputCls, linkBtn, useRegisterGuard,
+  EditorFrame, FieldLabel, SaveButtons, Section, dangerBtn, dashedBtn, inputBase, inputCls, linkBtn, useRegisterGuard,
   type RegisterGuard,
 } from "./project-ui"
 
@@ -147,12 +147,6 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
     if (dirty && !(await save())) return
     const r = await window.electronAPI.setProjectArchived(item.id, next)
     if (!r.ok) { void ui.showAlert(next ? "归档失败" : "取消归档失败", r.error ?? "操作失败"); return }
-    await onChanged()
-  }
-
-  const sync = async () => {
-    const r = await window.electronAPI.syncProjectSteps(item.id)
-    if (!r.ok) { void ui.showAlert("同步失败", r.error ?? "同步失败"); return }
     await onChanged()
   }
 
@@ -337,18 +331,10 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
               查看「{groups.find((g) => g.id === draft.groupIds[0])?.name}」模板<ChevronRight size={12} />
             </button>
           )}
-          {item.canSyncSteps && (
-            <button type="button" disabled={dirty} onClick={() => void sync()} title={dirty ? "先保存修改再同步" : undefined} className={`${ghostBtn} inline-flex items-center gap-1 px-2 py-1`}>
-              <RefreshCw size={12} />同步模板的最新改动
-            </button>
-          )}
         </div>
-        {item.hasGroupSnapshot && (
-          <p className="text-[11px] leading-relaxed text-fg-muted">
-            这个项目有自己的一份快捷操作副本，模板之后的改动不会自动带过来；{item.canSyncSteps ? "模板已经有新改动，可以点上面的按钮同步。" : "现在和模板是一致的。"}
-            换模板会按所选模板重新复制。
-          </p>
-        )}
+        <p className="text-[11px] leading-relaxed text-fg-muted">
+          项目的快捷操作和要填的信息都来自所选模板，模板改了立即生效。
+        </p>
       </Section>
 
       <ProjectBindings item={item} ui={ui} onChanged={onChanged} />

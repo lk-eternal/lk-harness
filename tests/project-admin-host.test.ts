@@ -437,15 +437,6 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(store.projectNodes(store.getProject(id)!).map((n) => n.label)).toEqual(["新版第一步", "收尾"])
   })
 
-  it("sync_steps：项目都实时读模板，没有可同步的；缺 project_id / 项目不存在照常提示", async () => {
-    const { call, store } = await boot()
-    await call({ action: "create", name: "调研A", template_id: "research", bindings: BIND })
-    const id = store.listProjects().find((x) => x.name === "调研A")!.id
-    expect(await call({ action: "sync_steps", project_id: id })).toContain("本来就跟着模板走")
-    expect(await call({ action: "sync_steps" })).toContain("需要 project_id")
-    expect(await call({ action: "sync_steps", project_id: "nope" })).toContain("未找到项目")
-  })
-
   it("删除模板：自定义的能删；还有项目在用的不能删（不管哪个入口建的、归档的也算）；至少留一个", async () => {
     const { call, store } = await boot()
     await call({ action: "template_save", template: { name: "临时模板" } })
@@ -540,7 +531,7 @@ describe("项目按消息通道隔离：只管接入了自己所在通道的项�
     expect(list).not.toContain("别人的")
 
     for (const args of [
-      { action: "get" }, { action: "update", name: "x" }, { action: "archive", archived: true }, { action: "sync_steps" }, { action: "delete" },
+      { action: "get" }, { action: "update", name: "x" }, { action: "archive", archived: true }, { action: "delete" },
       { action: "bind", bindings: BIND }, { action: "unbind", bindings: BIND },
     ]) {
       const text = await call({ ...args, project_id: theirs.id })
@@ -649,7 +640,6 @@ describe("管理 MCP → 宿主：每个 action 发出的请求类型和参数�
       .toEqual({ kind: "project.update", payload: { projectId: pid, update: { name: "n", goal: "g", storyUrl: "s", relatedDocs: "r", info: { k: "v" } } } })
     expect(await sent({ action: "archive", project_id: pid, archived: true })).toEqual({ kind: "project.archive", payload: { projectId: pid, archived: true } })
     expect(await sent({ action: "get", project_id: pid })).toEqual({ kind: "project.get", payload: { projectId: pid } })
-    expect(await sent({ action: "sync_steps", project_id: pid })).toEqual({ kind: "project.sync-steps", payload: { projectId: pid } })
     // 通道和接入：带上调用者所在的聊天；bindings 翻成驼峰，unbind 放一项
     const chatKey = `${FEISHU}|ou_main`
     expect(await sent({ action: "channels" })).toEqual({ kind: "project.channels", payload: { chatKey } })
@@ -692,7 +682,7 @@ describe("接线（读源码守住只有真实应用跑得到的部分）", () =
 
   it("宿主处理函数都注册进了 projectHostRpcHandlers；管理 MCP 用到的请求类型宿主都认得", () => {
     const create = read("electron", "project-create.ts")
-    expect(create).toContain("...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser, syncSteps: syncProjectSteps })")
+    expect(create).toContain("...createProjectAdminHandlers({ setArchived: setProjectArchivedByUser })")
     const kinds = [...read("src", "server-admin.ts").matchAll(/"(project\.[a-z.-]+)"/g)].map((m) => m[1])
     const admin = read("electron", "project-admin.ts")
     for (const k of new Set(kinds)) {
