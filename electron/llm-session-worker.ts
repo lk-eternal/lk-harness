@@ -16,7 +16,8 @@ import {
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
-import { isFeishuStreamEnabled } from "./stream-card"
+import { classifyAgentFailure, type AgentFailureKind } from "./agent-failure"
+import { reportAgentFailure } from "./agent-failure-notice"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { assembleTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { pushUiLog } from "./ui-logger"
@@ -165,14 +166,16 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   const { sessionKey } = session
   let errored = false
   let errorDetail: string | undefined
-  let networkFail = false
-  let permanentFail = false
+  let failureKind: AgentFailureKind | undefined
+  /** 正在处理的这批消息：worker 出错退出时，失败提示要回复其中的最后一条 */
+  let inFlight: PollMessage[] = []
 
   try {
     while (!abort.signal.aborted) {
       // 刚收完一个回合才记一笔（poll 挂起到点后的 continue 不算动静，否则长连接会话每次超时都会刷新）
       if (state.phase === "processing") noteAgentActivity()
       state.phase = "listening"
+      inFlight = []
 
       let pollResult
       try {
@@ -212,6 +215,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       } catch { /* best-effort */ }
 
       state.phase = "processing"
+      inFlight = fresh
       noteAgentActivity()
       const prompt = assembleTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
@@ -231,29 +235,27 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         const msg = turnResult.error ?? "unknown"
         pushUiLog("LLM", "WARN", `[${sessionKey}] Pi 回合失败: ${msg}`)
         if (!turnResult.resumable || turnResult.fatal) {
-          // fatal：通道已换 Agent 资源，这批消息不标已处理，退出后由新引擎重新拉起
+          // fatal：通道已换 Agent 资源，这批消息不标已处理，退出后由新引擎重新拉起；
+          // 那是用户自己的操作，不算故障，不提示
           errored = true
           errorDetail = turnResult.error
-          networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(msg)
-          permanentFail = !networkFail && /401|403|api key|quota|rate limit/i.test(msg)
+          failureKind = classifyAgentFailure(msg)
+          if (turnResult.fatal) inFlight = []
           break
         }
         // 回合已结束（模型/网关报错）：这批消息不能重放，但 worker 也不必陪葬
         // 认领与内存标记一体：否则 daemon 把这批 .claimed 重投，worker 重启后内存里的
         // processedMessageIds 没了就会再跑一次同样的失败回合（同一错误在卡片上出现两遍）
         await markMessagesProcessed(session, sessionKey, fresh)
-        // 流式卡片已会把 Pi 的 errorMessage 渲染进卡片，再发一条 hostSendText 会被合并进同一张卡导致重影
-        if (!isFeishuStreamEnabled(sessionKey)) {
-          try {
-            await hostSendText(
-              `⚠️ 本回合失败：${msg}\n（会话仍在线，可直接继续发送）`,
-              sessionKey,
-              fresh.map((m) => m.messageId).filter(Boolean).pop(),
-            )
-          } catch (e: unknown) {
-            pushUiLog("LLM", "ERROR", `[${sessionKey}] 失败回执投递异常: ${e instanceof Error ? e.message : String(e)}`)
-          }
-        }
+        // 提示是对用户消息的独立回复，不并进流式卡（卡片里照旧有 Pi 的原始报错），所以各通道都发
+        await reportAgentFailure(sessionKey, {
+          kind: classifyAgentFailure(msg),
+          detail: msg,
+          retry: "resend",
+          replyToMessageId: fresh.map((m) => m.messageId).filter(Boolean).pop(),
+        })
+        // 提示算这一轮的出站：不 touch 的话，非流式通道下 Daemon 会把这一轮当成没有回复
+        try { await hostTouchSessionReply(sessionKey) } catch { /* best-effort */ }
         continue
       }
 
@@ -319,7 +321,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
     if (!abort.signal.aborted) {
       errored = true
       errorDetail = e instanceof Error ? e.message : String(e)
-      networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(errorDetail)
+      failureKind = classifyAgentFailure(errorDetail)
     }
   } finally {
     noteAgentActivity()
@@ -331,7 +333,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       pushUiLog("LLM", "WARN", `[${sessionKey}] worker unregister 失败: ${e instanceof Error ? e.message : String(e)}`)
     }
     try {
-      onLlmWorkerFinished(sessionKey, errored, { network: networkFail, permanent: permanentFail, errorDetail })
+      onLlmWorkerFinished(sessionKey, errored, {
+        kind: failureKind,
+        errorDetail,
+        replyToMessageId: inFlight.map((m) => m.messageId).filter(Boolean).pop(),
+      })
     } catch (e: unknown) {
       pushUiLog("LLM", "WARN", `[${sessionKey}] worker finished 回调失败: ${e instanceof Error ? e.message : String(e)}`)
     }

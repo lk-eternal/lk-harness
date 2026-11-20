@@ -53,7 +53,7 @@ describe("停止 SDK worker", () => {
     mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "你好", messageId: "m1" }] })
     let endTurn: () => void = () => undefined
     mocks.executeSdkTurn.mockImplementation(() => new Promise((resolve) => {
-      endTurn = () => resolve({ ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false })
+      endTurn = () => resolve({ ok: false, errorDetail: "aborted" })
     }))
     // 与真实 SDK 一致：卡在工具里时事件流不会自己结束，只有 cancel 才会
     const run: FakeRun = { cancel: vi.fn(async () => { endTurn() }) }

@@ -3,6 +3,8 @@ import type { AgentSession, AgentSessionEvent } from "@mariozechner/pi-coding-ag
 import { complete, type Model, type Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
 import { readLockFile, httpPost, notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
+import { failureBackoffMs, type AgentFailureKind } from "./agent-failure"
+import { clearAllFailureNotices, clearFailureNotices, reportAgentFailure } from "./agent-failure-notice"
 import { broadcastLog, pushUiLog, broadcastSessionStatus } from "./ui-logger"
 import type { ChatType, LaunchMeta } from "./agent-session-types"
 import type { AgentResource } from "../src/shared/channel-types"
@@ -134,10 +136,9 @@ let idleHandler: ((sessionKey: string) => void) | null = null
 const llmFailStreak = new Map<string, {
   count: number
   lastFailAt: number
-  network?: boolean
-  permanent?: boolean
+  /** 最近一次失败的类别：决定要不要退避（见 failureBackoffMs） */
+  kind: AgentFailureKind
 }>()
-const PERMANENT_FAIL_BACKOFF_MS = [5_000, 10_000, 30_000, 60_000, 300_000]
 const lastFailLogSignature = new Map<string, string>()
 const FAIL_LOG_FOLD_EVERY = 10
 
@@ -148,19 +149,19 @@ export function setLlmIdleHandler(fn: (sessionKey: string) => void): void {
 export function clearLlmFailStreak(sessionKey: string): void {
   llmFailStreak.delete(sessionKey)
   lastFailLogSignature.delete(sessionKey)
+  clearFailureNotices(sessionKey)
 }
 
 export function clearAllLlmFailStreaks(): void {
   llmFailStreak.clear()
   lastFailLogSignature.clear()
+  clearAllFailureNotices()
 }
 
 export function llmFailCooldownRemaining(sessionKey: string): number {
   const st = llmFailStreak.get(sessionKey)
-  if (!st?.permanent) return 0
-  const idx = Math.min(st.count - 1, PERMANENT_FAIL_BACKOFF_MS.length - 1)
-  const wait = PERMANENT_FAIL_BACKOFF_MS[Math.max(idx, 0)]
-  return Math.max(0, st.lastFailAt + wait - Date.now())
+  if (!st) return 0
+  return Math.max(0, st.lastFailAt + failureBackoffMs(st.kind, st.count) - Date.now())
 }
 
 function shouldLogRepeatedFailure(sessionKey: string, errorDetail: string | undefined, count: number): boolean {
@@ -173,14 +174,13 @@ function shouldLogRepeatedFailure(sessionKey: string, errorDetail: string | unde
 function scheduleLlmIdle(
   sessionKey: string,
   errored: boolean,
-  opts?: { network?: boolean; silent?: boolean; permanent?: boolean },
+  opts?: { kind?: AgentFailureKind; silent?: boolean },
 ): void {
   if (errored) {
-    const st = llmFailStreak.get(sessionKey) ?? { count: 0, lastFailAt: 0, network: false }
+    const st = llmFailStreak.get(sessionKey) ?? { count: 0, lastFailAt: 0, kind: "other" }
     st.count += 1
     st.lastFailAt = Date.now()
-    st.network = !!opts?.network
-    st.permanent = !!opts?.permanent
+    st.kind = opts?.kind ?? "other"
     llmFailStreak.set(sessionKey, st)
     if (!opts?.silent) {
       const waitMs = llmFailCooldownRemaining(sessionKey)
@@ -282,12 +282,6 @@ function formatLlmError(e: unknown, agentErr?: string): string {
   if (agentErr?.trim()) return agentErr.trim()
   if (e instanceof Error) return e.message
   return String(e)
-}
-
-function classifyLlmFailure(errorDetail: string): { networkFail: boolean; permanentFail: boolean } {
-  const networkFail = /fetch failed|ECONNRESET|socket hang up|timeout|network|unauthenticated/i.test(errorDetail)
-  const permanentFail = !networkFail && /invalid[_ ]api[_ ]key|api key not valid|401|403|forbidden|quota|rate limit|insufficient|model .*not (found|available)/i.test(errorDetail)
-  return { networkFail, permanentFail }
 }
 
 function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
@@ -539,10 +533,11 @@ export async function unregisterLlmSession(session: LlmSession, aborted: boolean
 export function onLlmWorkerFinished(
   sessionKey: string,
   errored: boolean,
-  opts?: { network?: boolean; permanent?: boolean; errorDetail?: string },
+  opts?: { kind?: AgentFailureKind; errorDetail?: string; replyToMessageId?: string },
 ): void {
   if (errored) {
-    scheduleLlmIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
+    const kind = opts?.kind ?? "other"
+    scheduleLlmIdle(sessionKey, true, { kind, silent: true })
     const st = llmFailStreak.get(sessionKey)
     const waitMs = llmFailCooldownRemaining(sessionKey)
     const retryTip = waitMs > 0 ? `→ ${Math.round(waitMs / 1000)}s 后重试` : "→ 立即重试"
@@ -551,6 +546,12 @@ export function onLlmWorkerFinished(
         `[${sessionKey}] worker 异常结束×${st?.count ?? 1} ${retryTip} | ${opts?.errorDetail || "unknown"}`)
     }
     broadcastLog(`[LLM] 会话 ${sessionKey} worker 异常: ${opts?.errorDetail}`, "ERROR")
+    void reportAgentFailure(sessionKey, {
+      kind,
+      detail: opts?.errorDetail,
+      retry: "auto",
+      replyToMessageId: opts?.replyToMessageId,
+    })
   } else {
     pushUiLog("LLM", "INFO", `[${sessionKey}] worker 已退出`)
     scheduleLlmIdle(sessionKey, false)
