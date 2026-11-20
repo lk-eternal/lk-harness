@@ -17,6 +17,8 @@ import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harne
 import type { VisitorLimits } from "../src/shared/visitor-limits.js"
 import { getAgentResource, getConfig } from "./config-store"
 import { notifySessionLaunched as notifyDaemonSessionLaunched } from "./daemon-client"
+import { classifyAgentFailure, failureBackoffMs, type AgentFailureKind } from "./agent-failure"
+import { clearAllFailureNotices, clearFailureNotices, reportAgentFailure } from "./agent-failure-notice"
 import {
   type StreamAgg,
   type StreamCardHost,
@@ -246,13 +248,9 @@ let sdkIdleHandler: ((sessionKey: string) => void) | null = null
 const sdkFailStreak = new Map<string, {
   count: number
   lastFailAt: number
-  network?: boolean
-  /** 鉴权/配额类永久错误：重试再多也不会自愈，必须退避否则死循环刷屏 */
-  permanent?: boolean
+  /** 最近一次失败的类别：决定要不要退避（见 failureBackoffMs） */
+  kind: AgentFailureKind
 }>()
-
-/** 永久性错误退避阶梯（毫秒）：5s → 10s → 30s → 1min → 5min 封顶 */
-const PERMANENT_FAIL_BACKOFF_MS = [5_000, 10_000, 30_000, 60_000, 300_000]
 
 /** 同一错误文本连续重复时的日志折叠：只打第 1 次及每 10 次 */
 const lastFailLogSignature = new Map<string, string>()
@@ -273,11 +271,13 @@ export function setSdkIdleHandler(fn: (sessionKey: string) => void): void {
 export function clearSdkFailStreak(sessionKey: string): void {
   sdkFailStreak.delete(sessionKey)
   lastFailLogSignature.delete(sessionKey)
+  clearFailureNotices(sessionKey)
 }
 
 export function clearAllSdkFailStreaks(): void {
   sdkFailStreak.clear()
   lastFailLogSignature.clear()
+  clearAllFailureNotices()
 }
 
 // SDK socket 深处的网络错误只会抛到主进程全局兜底，无法关联到具体 run；
@@ -303,10 +303,8 @@ function recentGlobalErrorHint(withinMs: number): string {
  */
 export function sdkFailCooldownRemaining(sessionKey: string): number {
   const st = sdkFailStreak.get(sessionKey)
-  if (!st?.permanent) return 0
-  const idx = Math.min(st.count - 1, PERMANENT_FAIL_BACKOFF_MS.length - 1)
-  const wait = PERMANENT_FAIL_BACKOFF_MS[Math.max(idx, 0)]
-  return Math.max(0, st.lastFailAt + wait - Date.now())
+  if (!st) return 0
+  return Math.max(0, st.lastFailAt + failureBackoffMs(st.kind, st.count) - Date.now())
 }
 
 /** pack/异常退出后 force 重发偶发挂死；超时后丢 resume，下次全新会话 */
@@ -391,13 +389,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   })
 }
 
-function scheduleSdkIdle(sessionKey: string, errored: boolean, opts?: { network?: boolean; silent?: boolean; permanent?: boolean }): void {
+function scheduleSdkIdle(sessionKey: string, errored: boolean, opts?: { kind?: AgentFailureKind; silent?: boolean }): void {
   if (errored) {
-    const st = sdkFailStreak.get(sessionKey) ?? { count: 0, lastFailAt: 0, network: false }
+    const st = sdkFailStreak.get(sessionKey) ?? { count: 0, lastFailAt: 0, kind: "other" }
     st.count += 1
     st.lastFailAt = Date.now()
-    st.network = !!opts?.network
-    st.permanent = !!opts?.permanent
+    st.kind = opts?.kind ?? "other"
     sdkFailStreak.set(sessionKey, st)
     if (!opts?.silent) {
       const waitMs = sdkFailCooldownRemaining(sessionKey)
@@ -921,8 +918,8 @@ export interface SdkLaunchOptions {
 export interface SdkTurnResult {
   ok: boolean
   errorDetail?: string
-  networkFail: boolean
-  permanentFail: boolean
+  /** 失败时的类别；成功或被停止时为空 */
+  failureKind?: AgentFailureKind
 }
 
 /** run 生命周期托管：回合结束后保留 agent 与 session，供 worker 下一轮继续 */
@@ -936,31 +933,35 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): Promise<SdkTurnR
     if (session.abortController.signal.aborted) {
       session.run = null
       pushUiLog("SDK", "INFO", `[${sessionKey}] Agent 已中止（用户停止或 daemon 关闭）`)
-      return { ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false }
+      return { ok: false, errorDetail: "aborted" }
     }
     let errorDetail: string | undefined
-    let networkFail = false
-    let permanentFail = false
+    let failureKind: AgentFailureKind | undefined
     if (run.status === "error") {
       const wr = await run.wait().catch((e: unknown) => e)
       let detail: string
+      // 参与分类的只有报错文字：耗时、运行编号、模型名里碰巧出现的数字不算
+      let reason: string
       if (wr instanceof Error) {
         detail = `${wr.constructor.name}: ${wr.message}${(wr as Error & { cause?: unknown }).cause ? ` cause=${String((wr as Error & { cause?: unknown }).cause)}` : ""}`
+        reason = detail
       } else if (wr && typeof wr === "object") {
         const o = wr as Record<string, unknown>
         detail = JSON.stringify({
           status: o.status, result: o.result, error: o.error, message: o.message,
           durationMs: o.durationMs, id: o.id, model: o.model,
         })
+        reason = JSON.stringify({ result: o.result, error: o.error, message: o.message })
       } else {
         detail = String(wr)
+        reason = detail
       }
       const last = session.lastStatus
       const lastStr = last ? `lastStatus=${last.status}${last.message ? ` msg=${last.message}` : ""} ` : ""
       const netHint = recentGlobalErrorHint(120_000)
-      errorDetail = `${lastStr}${detail}${netHint ? ` | net=${netHint}` : ""}`.slice(0, 500)
-      networkFail = /API key exchange|exchange_user_api_key|fetch failed|unauthenticated|ECONNRESET|socket hang up|GOAWAY|疑似底层网络/i.test(errorDetail)
-      permanentFail = !networkFail && /invalid[_ ]api[_ ]key|api key not valid|401|403|forbidden|quota|rate limit|insufficient|model .*not (found|available)/i.test(errorDetail)
+      const netStr = netHint ? ` | net=${netHint}` : ""
+      errorDetail = `${lastStr}${detail}${netStr}`.slice(0, 500)
+      failureKind = classifyAgentFailure(`${lastStr}${reason}${netStr}`)
     }
 
     lastRunResults.set(sessionKey, {
@@ -991,7 +992,7 @@ function startRunLifecycle(session: SdkSessionAgent, run: Run): Promise<SdkTurnR
       const { hostTouchSessionReply } = await import("./poll-host.js")
       void hostTouchSessionReply(sessionKey).catch(() => {})
     }
-    return { ok: !errored, errorDetail, networkFail, permanentFail }
+    return { ok: !errored, errorDetail, failureKind }
   })
 }
 
@@ -1048,7 +1049,7 @@ async function sendSdkPrompt(session: SdkSessionAgent, prompt: string): Promise<
 
 export async function executeSdkTurn(session: SdkSessionAgent, prompt: string): Promise<SdkTurnResult> {
   if (session.abortController.signal.aborted) {
-    return { ok: false, errorDetail: "aborted", networkFail: false, permanentFail: false }
+    return { ok: false, errorDetail: "aborted" }
   }
   openStreamForSdkTurn(session)
   pushUiLog("SDK", "INFO", `[${session.sessionKey}] worker 回合 Prompt:\n${prompt}`)
@@ -1082,7 +1083,7 @@ export async function unregisterSdkSessionForWorker(session: SdkSessionAgent, ab
 export function onSdkWorkerFinished(
   sessionKey: string,
   errored: boolean,
-  opts?: { network?: boolean; permanent?: boolean; errorDetail?: string },
+  opts?: { kind?: AgentFailureKind; errorDetail?: string; replyToMessageId?: string },
 ): void {
   // 新 launch / 新 worker 已接替时，旧 worker 的 finally 不应再触发调度
   if (pendingLaunches.has(sessionKey)) return
@@ -1093,7 +1094,8 @@ export function onSdkWorkerFinished(
     if (isSdkWorkerActive(sessionKey)) return
   } catch { /* worker 未加载 */ }
   if (errored) {
-    scheduleSdkIdle(sessionKey, true, { network: opts?.network, silent: true, permanent: opts?.permanent })
+    const kind = opts?.kind ?? "other"
+    scheduleSdkIdle(sessionKey, true, { kind, silent: true })
     const st = sdkFailStreak.get(sessionKey)
     const waitMs = sdkFailCooldownRemaining(sessionKey)
     const retryTip = waitMs > 0 ? `→ ${Math.round(waitMs / 1000)}s 后重试` : "→ 立即重试"
@@ -1102,6 +1104,12 @@ export function onSdkWorkerFinished(
         `[${sessionKey}] worker 异常结束×${st?.count ?? 1} ${retryTip} | ${opts?.errorDetail || "unknown"}`)
     }
     broadcastLog(`[SDK] 会话 ${sessionKey} worker 异常: ${opts?.errorDetail}`, "ERROR")
+    void reportAgentFailure(sessionKey, {
+      kind,
+      detail: opts?.errorDetail,
+      retry: "auto",
+      replyToMessageId: opts?.replyToMessageId,
+    })
   } else {
     pushUiLog("SDK", "INFO", `[${sessionKey}] worker 已退出`)
     scheduleSdkIdle(sessionKey, false)

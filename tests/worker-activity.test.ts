@@ -34,6 +34,7 @@ vi.mock("../electron/poll-host", () => ({
   hostSendText: vi.fn(async () => undefined),
   markMessagesProcessed: vi.fn(async () => undefined),
 }))
+vi.mock("../electron/agent-failure-notice", () => ({ reportAgentFailure: vi.fn(async () => undefined) }))
 vi.mock("../electron/prompt-assembler", () => ({
   assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt"),
   assembleTurnPrompt: vi.fn(() => "prompt"),
@@ -116,7 +117,7 @@ describe("SDK worker 记 Agent 的动静", () => {
 
   it("回合失败、worker 直接退出：退出时也记一笔，不会留下「刚才还在忙」的空档", async () => {
     m.hostBlockingPoll.mockResolvedValueOnce(oneMessage)
-    m.executeSdkTurn.mockResolvedValue({ ok: false, errorDetail: "boom", networkFail: false, permanentFail: false })
+    m.executeSdkTurn.mockResolvedValue({ ok: false, errorDetail: "boom", failureKind: "other" })
     start(session())
 
     await vi.waitFor(() => expect(listSdkWorkerPhases()).toEqual([]))
