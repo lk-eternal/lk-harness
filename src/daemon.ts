@@ -110,6 +110,8 @@ import { registerProjectAgentTools } from "./server-project.js";
 import { registerScheduleTools, type ScheduleApi } from "./server-schedule.js";
 import { registerMemoryTools } from "./server-memory.js";
 import { aiScheduleStateFile, readAiScheduleRuns, writeAiScheduleRuns } from "./shared/ai-schedule-state.js";
+import { readAliveAt, readTaskRuns, recordTaskRun, settleTaskRun, taskRunLogFile, touchAlive } from "./shared/task-run-log.js";
+import type { TaskRunKind, TaskRunRecord } from "./shared/task-run-log-rules.js";
 import { registerDiffTools } from "./server-diff.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
 import {
@@ -4543,6 +4545,7 @@ function startHttpServer(): Promise<number> {
           if (!task) { json(res, { ok: false, error: "任务不存在" }); return; }
           const nowStr = new Date().toLocaleString("zh-CN");
           const r = enqueueScheduledTaskMessage(task, `[定时任务: ${task.name}] (手动触发: ${nowStr})\n\n${task.content}`);
+          noteTaskEnqueued(task, Date.now(), r, true);
           json(res, r);
           return;
         }
@@ -6227,6 +6230,68 @@ function removeLockFile(): void {
 /** 一次运行 = 任务消息入队 → AI 提交结果(send_result) → 这批消息确认处理完时对账 */
 const taskRuns = new TaskRunTracker();
 
+// ── 运行记录：设置页「上次什么时候跑、结果怎样」 ──────────────────
+// 到点留一条短记录（规则在 shared/task-run-log-rules.ts，文件读写在 shared/task-run-log.ts）。
+// 记录只是辅助信息，写不进去只记日志，不挡任务触发；任务文件不动（改了会触发调度器重载）。
+
+const TASK_RUN_LOG_FILE = taskRunLogFile(APP_DATA_DIR || ".");
+
+/** 独立任务这一轮在运行记录里的触发点：AI 提交结果 / 这一轮做完时，要回头把「已触发」改成最终结果 */
+const taskRunLogAt = new Map<string, number>();
+
+function writeRunLog(write: () => void): void {
+  try {
+    write();
+  } catch (e: unknown) {
+    log("WARN", `定时任务运行记录写入失败: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+function noteTaskRun(task: ScheduledTask, rec: TaskRunRecord): void {
+  writeRunLog(() => recordTaskRun(TASK_RUN_LOG_FILE, task.id, rec));
+}
+
+/** at = noteTaskRun 记下的触发点；没有（daemon 重启后接不上这一轮）就不改。from 给了就只改当前还是这个状态的 */
+function settleTaskRunLog(
+  taskId: string,
+  at: number | undefined,
+  patch: { kind: TaskRunKind; detail?: string },
+  from?: TaskRunKind,
+): void {
+  if (at === undefined) return;
+  writeRunLog(() => settleTaskRun(TASK_RUN_LOG_FILE, taskId, at, patch, from));
+}
+
+/** 任务入队的结果记一笔。独立任务的结果要等这一轮做完才知道，先记「已触发」并留下触发点 */
+function noteTaskEnqueued(task: ScheduledTask, at: number, r: { ok: boolean; error?: string }, manual = false): void {
+  const flags = manual ? { manual: true as const } : {};
+  if (!r.ok) {
+    noteTaskRun(task, { at, kind: "undelivered", detail: r.error, ...flags });
+    return;
+  }
+  noteTaskRun(task, { at, kind: "triggered", ...flags });
+  if (task.independent !== false) taskRunLogAt.set(task.id, at);
+}
+
+/** 调度器发现错过的触发点：合并成一条（再多也只一条），上个进程退出前刚触发过的点不算 */
+function noteTaskMissed(task: ScheduledTask, slots: number[]): void {
+  const known = new Set((readTaskRuns(TASK_RUN_LOG_FILE)[task.id] ?? []).map((r) => r.at));
+  const missed = slots.filter((slot) => !known.has(slot));
+  if (missed.length === 0) return;
+  noteTaskRun(task, { at: missed[missed.length - 1], kind: "missed", count: missed.length, detail: "电脑休眠、关机或应用没开" });
+}
+
+/** 记下「现在还活着」（下次启动找错过的触发点用），顺带清掉已删除任务的记录。任务文件读不出来就只记时间 */
+function touchTaskRunAlive(): void {
+  let liveTaskIds: Set<string> | undefined;
+  try {
+    liveTaskIds = new Set(readTasks().map((t) => t.id));
+  } catch {
+    liveTaskIds = undefined;
+  }
+  writeRunLog(() => touchAlive(TASK_RUN_LOG_FILE, Date.now(), liveTaskIds));
+}
+
 /** 所属通道没填 = 第一个可用通道（与设置页「默认」一致）；拼出站 chatKey 必须有明确通道 id */
 function withResolvedChannel(task: ScheduledTask): ScheduledTask {
   if (task.channelId?.trim()) return task;
@@ -6412,15 +6477,18 @@ async function submitTaskResult(
   }
   if (quiet) {
     taskRuns.submitted(task.id, true);
+    settleTaskRunLog(task.id, taskRunLogAt.get(task.id), { kind: "quiet" });
     log("INFO", `定时任务「${task.name}」本次无需通知（quiet）`);
     return { ok: true, message: "已记录：这次没有需要通知的内容。任务到此结束。" };
   }
   const r = await deliverTaskText(task, text, "result");
   if (!r.ok) {
+    settleTaskRunLog(task.id, taskRunLogAt.get(task.id), { kind: "undelivered", detail: r.error });
     log("WARN", `定时任务「${task.name}」结果投递失败: ${r.error}`);
     return { ok: false, message: `[send_failed] ${r.error}` };
   }
   taskRuns.submitted(task.id, false);
+  settleTaskRunLog(task.id, taskRunLogAt.get(task.id), { kind: "reported", detail: r.where });
   log("INFO", `定时任务「${task.name}」已提交结果 → ${r.where} len=${text.length}${resolveTaskNotify(task) === "none" ? ` 内容: ${text.slice(0, 120)}` : ""}`);
   return { ok: true, message: `结果已处理 → ${r.where}。任务到此结束，不要再发别的。` };
 }
@@ -6438,14 +6506,22 @@ function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
   if (!doneIds.some((id) => id.startsWith(`internal_${task.id}_`))) return;
   const hasPending = getFileQueueMessages(sessionKey).some((v) => v.status === "pending");
   const outcome = taskRuns.finished(task.id, hasPending);
+  const runAt = taskRunLogAt.get(task.id);
+  if (!hasPending) taskRunLogAt.delete(task.id);
   if (outcome !== "missing") return;
   if (!shouldNoticeMissingResult(task)) {
     log("INFO", `定时任务「${task.name}」运行结束，没有提交结果（视为无需汇报）`);
+    settleTaskRunLog(task.id, runAt, { kind: "quiet" }, "triggered");
     return;
   }
   log("WARN", `定时任务「${task.name}」运行结束但没有提交结果（未调用 ${TASK_RESULT_TOOL}）`);
+  settleTaskRunLog(task.id, runAt, { kind: "no-result", detail: "已给你发了一条提示" }, "triggered");
   deliverTaskText(task, TASK_MISSING_RESULT_BODY, "notice")
-    .then((r) => { if (!r.ok) log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`); })
+    .then((r) => {
+      if (r.ok) return;
+      log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`);
+      settleTaskRunLog(task.id, runAt, { kind: "undelivered", detail: r.error }, "no-result");
+    })
     .catch((e: unknown) => log("WARN", `定时任务「${task.name}」兜底提示异常: ${e instanceof Error ? e.message : String(e)}`));
 }
 
@@ -6498,9 +6574,9 @@ function removeAiTasks(ids: string[]): boolean {
 }
 
 /** 调度器触发入口：用户的任务原样入队；AI 排程先过关卡 */
-function fireScheduledTask(task: ScheduledTask, content: string): void {
+function fireScheduledTask(task: ScheduledTask, content: string, fireAt: number): void {
   if (!isAiTask(task)) {
-    enqueueScheduledTaskMessage(task, content);
+    noteTaskEnqueued(task, fireAt, enqueueScheduledTaskMessage(task, content));
     return;
   }
   const runs = readAiRuns();
@@ -6509,30 +6585,35 @@ function fireScheduledTask(task: ScheduledTask, content: string): void {
     if (!isAiTaskBusy(task) && removeAiTasks([task.id])) log("INFO", `AI 排程「${task.name}」${decision.retire}，已作废并清理`);
     return;
   }
+  const skip = (reason: string) => {
+    log("INFO", `AI 排程「${task.name}」本次跳过: ${reason}`);
+    noteTaskRun(task, { at: fireAt, kind: "skipped", detail: reason });
+  };
   if (task.independent === false || resolveTaskNotify(task) === "agent") {
     const target = resolveTaskAgentTarget(task);
     if (!target.ok) {
       if (target.retire) {
         if (!isAiTaskBusy(task) && removeAiTasks([task.id])) log("INFO", `AI 排程「${task.name}」目标已失效（${target.error}），已作废并清理`);
       } else {
-        log("INFO", `AI 排程「${task.name}」本次跳过: ${target.error}`);
+        skip(target.error);
       }
       return;
     }
     // 提醒还没被会话处理掉就不再叠一条（会话忙 / 挂起时避免提醒堆积）
     if (task.independent === false && getFileQueueMessages(target.sessionKey).some((v) => v.messageId?.startsWith(`internal_${task.id}_`))) {
-      log("INFO", `AI 排程「${task.name}」本次跳过: 上一条提醒还在会话队列里没处理`);
+      skip("上一条提醒还在会话队列里没处理");
       return;
     }
   }
   if (isAiTaskBusy(task)) {
-    log("INFO", `AI 排程「${task.name}」本次跳过: 上一次运行还没结束`);
+    skip("上一次运行还没结束");
     return;
   }
   const message = task.independent === false
     ? formatAiSelfReminder(task, task.content, { run: decision.run, maxRuns: task.maxRuns })
     : content;
   const r = enqueueScheduledTaskMessage(task, message);
+  noteTaskEnqueued(task, fireAt, r);
   if (r.ok) {
     runs[task.id] = decision.run;
     writeAiRuns(runs);
@@ -6748,9 +6829,12 @@ export async function daemonMain(): Promise<void> {
   log("INFO", "MCP 服务已就绪 (/mcp-task + /mcp-interactive + /mcp-admin + /mcp-project)");
 
   setDaemonSchedulerLogger((msg) => { log("INFO", msg); });
-  startDaemonScheduledTasks((task, content) => {
-    fireScheduledTask(task, content);
-  });
+  startDaemonScheduledTasks(
+    (task, content, fireAt) => { fireScheduledTask(task, content, fireAt); },
+    { lastAliveAt: readAliveAt(TASK_RUN_LOG_FILE), onMissed: noteTaskMissed },
+  );
+  touchTaskRunAlive();
+  setInterval(touchTaskRunAlive, 60_000).unref();
   setInterval(sweepAiTasks, 60_000).unref();
 
   log("INFO", `Daemon 就绪 ✓ port=${daemonPort}`);

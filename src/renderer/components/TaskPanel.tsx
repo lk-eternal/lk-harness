@@ -18,6 +18,14 @@ import {
   type TaskDeliveryCheckEnv,
   type TaskDeliveryLabels,
 } from "../../shared/task-delivery"
+import { describeLastRun, describeRun, runTone, type TaskRunLog, type TaskRunTone } from "../../shared/task-run-log-rules"
+
+const RUN_TONE_CLASS: Record<TaskRunTone, string> = {
+  ok: "text-success",
+  muted: "text-fg-muted",
+  warn: "text-warning",
+  bad: "text-danger",
+}
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
 
@@ -47,6 +55,7 @@ export default function TaskPanel() {
   const [agentResources, setAgentResources] = useState<AgentResource[]>([])
   const [projects, setProjects] = useState<ProjectOption[]>([])
   const [taskStatuses, setTaskStatuses] = useState<Record<string, { running: boolean }>>({})
+  const [taskRuns, setTaskRuns] = useState<TaskRunLog>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ScheduledTask | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
@@ -60,16 +69,18 @@ export default function TaskPanel() {
   const cronPreviewReq = useRef(0)
 
   const reload = useCallback(async () => {
-    const [list, cfg, statuses, projectList] = await Promise.all([
+    const [list, cfg, statuses, runs, projectList] = await Promise.all([
       window.electronAPI.getScheduledTasks(),
       window.electronAPI.getConfig(),
       window.electronAPI.getScheduledTaskStatus(),
+      window.electronAPI.getScheduledTaskRuns(),
       window.electronAPI.listProjects().catch(() => []),
     ])
     setTasks(list)
     setTaskChannels(cfg.channels ?? [])
     setAgentResources(cfg.agentResources ?? [])
     setTaskStatuses(statuses)
+    setTaskRuns(runs)
     setProjects(projectList.map((p) => ({ id: p.id, name: p.name, archived: p.archived })))
     setTasksReady(true)
   }, [])
@@ -279,6 +290,9 @@ export default function TaskPanel() {
     </select>
   )
 
+  const now = Date.now()
+  const draftRuns = draft ? (taskRuns[draft.id] ?? []) : []
+
   const listRef = useRef<HTMLDivElement>(null)
   useScrollActiveIntoView(listRef, selectedId, tasks.length)
   useOpenFirstOnce(tasksReady, tasks, selectedId !== null || draft !== null, (t) => openDraft(t, false))
@@ -296,6 +310,7 @@ export default function TaskPanel() {
             {tasks.map((t) => {
               const active = selectedId === t.id
               const isRunning = !!taskStatuses[t.id]?.running
+              const lastRun = taskRuns[t.id]?.[0]
               return (
                 <button
                   key={t.id}
@@ -306,6 +321,7 @@ export default function TaskPanel() {
                 >
                   <span className={`truncate text-xs font-medium ${t.enabled ? "" : "line-through opacity-60"}`}>{isAiTask(t) ? "🤖 " : ""}{t.name || "未命名"}</span>
                   <span className="truncate font-mono text-[10px] text-fg-faint">{t.cron}</span>
+                  {lastRun && <span className={`truncate text-[10px] ${RUN_TONE_CLASS[runTone(lastRun.kind)]}`}>{describeLastRun(taskRuns[t.id], now)}</span>}
                   {isRunning && <span className="mt-0.5 text-[10px] text-success">运行中</span>}
                 </button>
               )
@@ -343,6 +359,20 @@ export default function TaskPanel() {
                     )}
                   </div>
                 </div>
+                {!isNew && (
+                  <div className="rounded-lg border border-line-subtle bg-surface/80 px-3 py-2">
+                    <p className="text-xs font-medium text-fg-muted">最近运行</p>
+                    {draftRuns.length === 0 ? (
+                      <p className="mt-1 text-xs text-fg-faint">还没有记录，到点触发后会显示在这里</p>
+                    ) : (
+                      <ul className="mt-1.5 space-y-0.5 text-[11px]">
+                        {draftRuns.slice(0, 8).map((r, i) => (
+                          <li key={`${r.at}-${i}`} className={RUN_TONE_CLASS[runTone(r.kind)]}>{describeRun(r, now)}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
                 <div><label className="mb-1 block text-xs text-fg-muted">{independent ? "任务内容（给独立 Agent 的指令）" : "消息内容（发给 Agent 会话）"}</label>
                   <textarea value={draft.content} readOnly={ai} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder={independent ? "要独立 Agent 去做的事，做完让它提交结果…" : "要发送给 Agent 会话的消息..."} /></div>
 

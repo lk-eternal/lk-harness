@@ -72,7 +72,7 @@ function firstTurnRunning(): { end: (r?: Record<string, unknown>) => void } {
   mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "第一条", messageId: "m1" }] })
   const handle: { end: (r?: Record<string, unknown>) => void } = { end: () => undefined }
   mocks.executeSdkTurn.mockImplementationOnce(() => new Promise((resolve) => {
-    handle.end = (r) => resolve({ ok: true, networkFail: false, permanentFail: false, ...r })
+    handle.end = (r) => resolve({ ok: true, ...r })
   }))
   return handle
 }
@@ -102,7 +102,7 @@ describe("软打断：只取消当前这一轮，Agent 不退出", () => {
   it("取消 → 回合收口 → 卡封成已打断 → 确认旧消息 → 才去领排队的消息，全程是同一个 worker、同一个会话", async () => {
     const turn = firstTurnRunning()
     thenQueued([{ text: "排队的", messageId: "m2" }])
-    mocks.executeSdkTurn.mockImplementationOnce(async () => { mocks.order.push("turn2"); return { ok: true, networkFail: false, permanentFail: false } })
+    mocks.executeSdkTurn.mockImplementationOnce(async () => { mocks.order.push("turn2"); return { ok: true } })
     const session = fakeSession("s-int-1", () => turn.end())
 
     start(session)

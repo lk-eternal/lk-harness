@@ -75,7 +75,7 @@ function firstTurnRunning(): { end: (r?: Record<string, unknown>) => void } {
   mocks.hostNonBlockingPoll.mockResolvedValue({ messages: [{ text: "第一条", messageId: "m1" }] })
   const handle: { end: (r?: Record<string, unknown>) => void } = { end: () => undefined }
   mocks.executeSdkTurn.mockImplementationOnce(() => new Promise((resolve) => {
-    handle.end = (r) => resolve({ ok: true, networkFail: false, permanentFail: false, ...r })
+    handle.end = (r) => resolve({ ok: true, ...r })
   }))
   return handle
 }
@@ -104,7 +104,7 @@ describe("名单只随第一轮交付", () => {
   it("第一轮把名单文本交给提示词组装；第二轮（队列里的消息）不再带", async () => {
     const turn = firstTurnRunning()
     thenQueued([{ text: "排队的", messageId: "m2" }])
-    mocks.executeSdkTurn.mockImplementationOnce(async () => ({ ok: true, networkFail: false, permanentFail: false }))
+    mocks.executeSdkTurn.mockImplementationOnce(async () => ({ ok: true }))
     const session = fakeSession("s-cat-1")
 
     start(session, CATALOG)
@@ -121,7 +121,7 @@ describe("名单只随第一轮交付", () => {
   it("不带名单启动（名单没变 / 没有 Skill）：每一轮都不带，会话上的指纹原样保留", async () => {
     const turn = firstTurnRunning()
     thenQueued([{ text: "排队的", messageId: "m2" }])
-    mocks.executeSdkTurn.mockImplementationOnce(async () => ({ ok: true, networkFail: false, permanentFail: false }))
+    mocks.executeSdkTurn.mockImplementationOnce(async () => ({ ok: true }))
     const session = fakeSession("s-cat-2")
     session.skillsHash = "hash-old"
 

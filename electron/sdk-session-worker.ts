@@ -18,6 +18,7 @@ import { assembleSdkWorkerTurnPrompt, type HistoryTurn, type PromptAssemblyConte
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
 import { noteAgentActivity } from "./agent-activity"
+import { classifyAgentFailure, type AgentFailureKind } from "./agent-failure"
 import type { InterruptTurnResult } from "./agent-engine/types"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
@@ -217,14 +218,16 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   const { sessionKey } = session
   let errored = false
   let errorDetail: string | undefined
-  let networkFail = false
-  let permanentFail = false
+  let failureKind: AgentFailureKind | undefined
+  /** 正在处理的这批消息：worker 出错退出时，失败提示要回复其中的最后一条 */
+  let inFlight: PollMessage[] = []
 
   try {
     while (!abort.signal.aborted && !session.abortController.signal.aborted) {
       // 刚收完一个回合才记一笔（poll 挂起到点后的 continue 不算动静，否则长连接会话每次超时都会刷新）
       if (state.phase === "processing") noteAgentActivity()
       state.phase = "listening"
+      inFlight = []
       flushTurnEndWaiters(state)
 
       let pollResult
@@ -268,6 +271,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       } catch { /* 提醒只是锦上添花：量不出来这一轮就不提醒，不能挡住回合 */ }
 
       state.phase = "processing"
+      inFlight = fresh
       noteAgentActivity()
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
         firstTurn: state.firstTurn,
@@ -304,8 +308,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       if (!turnResult.ok && !interrupted) {
         errored = true
         errorDetail = turnResult.errorDetail
-        networkFail = turnResult.networkFail
-        permanentFail = turnResult.permanentFail
+        failureKind = turnResult.failureKind
         pushUiLog("SDK", "WARN", `[${sessionKey}] SDK 回合失败: ${errorDetail ?? "unknown"}`)
         if (session.streamAgg?.ensured) {
           void hostTouchSessionReply(sessionKey).catch(() => {})
@@ -352,7 +355,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
     if (!abort.signal.aborted && !session.abortController.signal.aborted) {
       errored = true
       errorDetail = e instanceof Error ? e.message : String(e)
-      networkFail = /fetch failed|ECONNRESET|timeout|network/i.test(errorDetail)
+      failureKind = classifyAgentFailure(errorDetail)
     }
   } finally {
     noteAgentActivity()
@@ -364,7 +367,11 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       pushUiLog("SDK", "WARN", `[${sessionKey}] worker unregister 失败: ${e instanceof Error ? e.message : String(e)}`)
     }
     try {
-      onSdkWorkerFinished(sessionKey, errored, { network: networkFail, permanent: permanentFail, errorDetail })
+      onSdkWorkerFinished(sessionKey, errored, {
+        kind: failureKind,
+        errorDetail,
+        replyToMessageId: inFlight.map((m) => m.messageId).filter(Boolean).pop(),
+      })
     } catch (e: unknown) {
       pushUiLog("SDK", "WARN", `[${sessionKey}] worker finished 回调失败: ${e instanceof Error ? e.message : String(e)}`)
     }

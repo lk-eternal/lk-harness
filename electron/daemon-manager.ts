@@ -19,6 +19,7 @@ import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns,
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../src/shared/ai-schedule-state.js"
+import { readTaskRuns, taskRunLogFile } from "../src/shared/task-run-log.js"
 import { buildSessionSchedules, removeUserTask } from "../src/shared/session-schedule-build.js"
 import { resetChangedTaskModelOverrides } from "../src/shared/task-model-reset.js"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
@@ -2271,6 +2272,9 @@ export function initDaemonManager(): void {
   })
 
   ipcMain.handle("scheduled-tasks:get-status", () => getIndependentTaskStatuses())
+
+  // 每个任务最近的运行记录（daemon 写、这里只读），设置页显示「上次什么时候跑、结果怎样」
+  ipcMain.handle("scheduled-tasks:get-runs", () => readTaskRuns(taskRunLogFile(app.getPath("userData"))))
 
   // 对话页「这个会话的定时」：绑定到该会话的任务（AI 给自己排的 + 设置页里投给它的），连同下次触发时间一起算好
   ipcMain.handle("scheduled-tasks:for-session", (_, sessionKey: string) => {
