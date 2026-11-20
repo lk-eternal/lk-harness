@@ -1,7 +1,7 @@
 name: Build & Release
 
 # 只在打 tag 发版时打包（Windows / macOS / Linux 安装包 + APK）。
-# PR 和直接推 main 的检查在 ci.yml 里，只跑测试和类型检查，不打包。
+# 推 main 和开 PR 不触发任何流水线；测试和类型检查在下面打包前跑（三个系统各一遍）。
 on:
   push:
     tags: ['v*']
