@@ -238,6 +238,7 @@ declare global {
     loginLarkCli(): Promise<{ ok: boolean; error?: string }>
     /** 带 query.limit 只给最近一页（返回 hasMore），query.before* 往前翻页；不带 query 是整段历史 */
     appChatHistory(sessionKey: string, query?: HistoryQueryType): Promise<AppChatResultType>
+    appChatSearch(sessionKey: string, query: string): Promise<AppChatResultType>
     appChatSend(payload: AppChatSendPayloadType): Promise<AppChatResultType>
     appChatClear(target: { sessionKey?: string; channelId?: string }): Promise<AppChatResultType>
     appChatDeleteSession(sessionKey: string): Promise<AppChatResultType>

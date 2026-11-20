@@ -14,6 +14,7 @@ import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
 import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
+import { searchChatItems } from "./shared/app-chat-search.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { QuestionRounds, mayAnswerQuestion } from "./shared/question-round.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
@@ -5196,7 +5197,7 @@ function dropQueuedAppItems(sessionKey: string, messageIds: string[]): void {
 
 async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> {
   const body = JSON.parse(await readBody(req)) as {
-    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string; messageId?: string; path?: string;
+    sessionKey?: string; sessionKeys?: string[]; channelId?: string; text?: string; images?: string[]; questionId?: string; option?: string; messageId?: string; path?: string; query?: string;
   };
   const sessionKey = normalizeSessionKey(body.sessionKey);
 
@@ -5233,6 +5234,12 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
     if (appChat.hasQueued(sessionKey)) appChat.reconcileQueued(sessionKey, listPendingMessageIds(sessionKey));
     const page = pageChatHistory(appChat.list(sessionKey), parseHistoryQuery(body));
     json(res, { ok: true, items: page.items, hasMore: page.hasMore });
+    return true;
+  }
+
+  // 在完整历史里搜（界面只加载了最近一页）：命中只带定位用的 id 和一小段文字
+  if (pathname === "/api/app-chat/search") {
+    json(res, { ok: true, ...searchChatItems(appChat.list(sessionKey), typeof body.query === "string" ? body.query : "") });
     return true;
   }
 

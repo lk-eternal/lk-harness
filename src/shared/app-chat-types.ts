@@ -3,6 +3,7 @@
 import { normalizeSessionKey, workspaceDirFromSessionKey } from "./channel-types.js";
 import { isTempChatWorkspace } from "./temp-workspace.js";
 import { projectIdOfSessionKey } from "./project-app-types.js";
+import type { ChatSearchHit } from "./app-chat-search.js";
 
 export interface AppChatTool {
   name: string;
@@ -168,6 +169,10 @@ export interface AppChatResult {
   items?: AppChatItem[];
   /** 历史分页：返回的这一页之前还有更早的记录（见 app-chat-history-page.ts）；整段历史时没有这个字段 */
   hasMore?: boolean;
+  /** search：命中，最新的在前（见 app-chat-search.ts） */
+  hits?: ChatSearchHit[];
+  /** search：命中多于上限，只给了最新的那些 */
+  capped?: boolean;
   /** references-path：这个路径是不是出现在该会话的记录里 */
   owned?: boolean;
   bytes?: number;

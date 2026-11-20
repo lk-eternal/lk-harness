@@ -178,6 +178,7 @@ const api = {
   installToolboxTool: (key: "larkCli" | "meegle"): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:install", key),
   loginLarkCli: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("toolbox:login-lark"),
   appChatHistory: (sessionKey: string, query?: HistoryQuery): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:history", sessionKey, query),
+  appChatSearch: (sessionKey: string, query: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:search", sessionKey, query),
   appChatSend: (payload: AppChatSendPayload): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:send", payload),
   appChatClear: (target: { sessionKey?: string; channelId?: string }): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:clear", target),
   appChatDeleteSession: (sessionKey: string): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:delete-session", sessionKey),

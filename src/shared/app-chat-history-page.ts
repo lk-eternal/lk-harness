@@ -21,6 +21,11 @@ export interface HistoryQuery {
   /** 取这条之前的记录；与 beforeTs 一起给，id 找不到（被移除了）时按 ts 定位 */
   beforeId?: string;
   beforeTs?: number;
+  /**
+   * 这一页至少要取到这一条：它在游标之前、又超出一页时，页往前延伸到它（不受条数和体积上限限制）。
+   * 搜索结果点到还没加载的旧记录时，一次取到它，已加载的部分仍是接到最新的一整段，不用一页页翻。
+   */
+  reachId?: string;
 }
 
 export interface HistoryPage {
@@ -44,6 +49,7 @@ export function parseHistoryQuery(raw: unknown): HistoryQuery {
   }
   if (typeof src.beforeId === "string" && src.beforeId) query.beforeId = src.beforeId;
   if (typeof src.beforeTs === "number" && Number.isFinite(src.beforeTs)) query.beforeTs = src.beforeTs;
+  if (typeof src.reachId === "string" && src.reachId) query.reachId = src.reachId;
   return query;
 }
 
@@ -59,7 +65,7 @@ function endBeforeCursor(all: readonly AppChatItem[], query: HistoryQuery): numb
   return at >= 0 ? at : all.length;
 }
 
-/** 从完整历史里切出一页：游标之前（缺省是末尾）的最近若干条，条数和体积都有上限，一页至少一条 */
+/** 从完整历史里切出一页：游标之前（缺省是末尾）的最近若干条，条数和体积都有上限，一页至少一条；reachId 要取的那条例外 */
 export function pageChatHistory(all: readonly AppChatItem[], query: HistoryQuery = {}): HistoryPage {
   if (query.limit === undefined) return { items: [...all], hasMore: false };
   const end = endBeforeCursor(all, query);
@@ -71,6 +77,8 @@ export function pageChatHistory(all: readonly AppChatItem[], query: HistoryQuery
     chars += size;
     start--;
   }
+  const reach = query.reachId === undefined ? -1 : all.findIndex((it) => it.id === query.reachId);
+  if (reach >= 0 && reach < start) start = reach;
   return { items: all.slice(start, end), hasMore: start > 0 };
 }
 

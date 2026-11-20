@@ -104,7 +104,59 @@ describe("pageChatHistory：切出一页", () => {
   })
 })
 
+describe("pageChatHistory：reachId 取到指定的旧记录", () => {
+  const all = range(1, 50)
+
+  it("要取的那条超出一页：页往前延伸到它，一直到末尾，没有断档", () => {
+    const page = pageChatHistory(all, { limit: 10, reachId: "u5" })
+    expect(ids(page.items)).toEqual(ids(range(5, 50)))
+    expect(page.hasMore).toBe(true)
+  })
+
+  it("接在已加载的一段后面取：从它的游标往前，一直延伸到要取的那条，不含游标", () => {
+    const page = pageChatHistory(all, { limit: 10, beforeId: "u41", beforeTs: 41000, reachId: "u12" })
+    expect(ids(page.items)).toEqual(ids(range(12, 40)))
+    expect(page.hasMore).toBe(true)
+  })
+
+  it("要取的就是最早的一条：取到头，没有更多", () => {
+    const page = pageChatHistory(all, { limit: 10, reachId: "u1" })
+    expect(page.items).toHaveLength(50)
+    expect(page.hasMore).toBe(false)
+  })
+
+  it("要取的那条本来就在这一页里：和不带 reachId 一样", () => {
+    expect(pageChatHistory(all, { limit: 10, reachId: "u45" })).toEqual(pageChatHistory(all, { limit: 10 }))
+  })
+
+  it("要取的那条在游标之后（已经加载了）：不影响这一页", () => {
+    const page = pageChatHistory(all, { limit: 5, beforeId: "u30", beforeTs: 30000, reachId: "u40" })
+    expect(ids(page.items)).toEqual(ids(range(25, 29)))
+  })
+
+  it("要取的那条不存在（被移除了）：当没给", () => {
+    expect(pageChatHistory(all, { limit: 10, reachId: "gone" })).toEqual(pageChatHistory(all, { limit: 10 }))
+  })
+
+  it("体积上限也拦不住：用户点名要的那条一定取到", () => {
+    const heavy = [user(1), bigCard(2, HISTORY_PAGE_MAX_CHARS), bigCard(3, HISTORY_PAGE_MAX_CHARS), user(4)]
+    const page = pageChatHistory(heavy, { limit: 30, reachId: "u1" })
+    expect(ids(page.items)).toEqual(["u1", "a2", "a3", "u4"])
+    expect(page.hasMore).toBe(false)
+  })
+
+  it("不带 limit 是整段历史，reachId 不起作用", () => {
+    expect(pageChatHistory(all, { reachId: "u5" }).items).toHaveLength(50)
+  })
+})
+
 describe("parseHistoryQuery：请求体不可信", () => {
+  it("reachId 是非空字符串才取，其它类型当没给", () => {
+    expect(parseHistoryQuery({ limit: 30, reachId: "u5" })).toEqual({ limit: 30, reachId: "u5" })
+    expect(parseHistoryQuery({ reachId: "" })).toEqual({})
+    expect(parseHistoryQuery({ reachId: 5 })).toEqual({})
+  })
+
   it("合法字段原样取，limit 取整", () => {
     expect(parseHistoryQuery({ limit: 30.9, beforeId: "u1", beforeTs: 5 })).toEqual({ limit: 30, beforeId: "u1", beforeTs: 5 })
   })

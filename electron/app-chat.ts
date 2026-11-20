@@ -313,6 +313,7 @@ async function openFile(file: string): Promise<{ ok: boolean; error?: string }> 
 
 export function initAppChat(): void {
   ipcMain.handle("app-chat:history", (_e, sessionKey: string, query?: HistoryQuery) => callAppChatDaemon("history", { sessionKey, ...parseHistoryQuery(query) }))
+  ipcMain.handle("app-chat:search", (_e, sessionKey: string, query: string) => callAppChatDaemon("search", { sessionKey, query }))
   ipcMain.handle("app-chat:send", (_e, payload: AppChatSendPayload) => sendAppChatMessage(payload))
   ipcMain.handle("app-chat:clear", (_e, target: { sessionKey?: string; channelId?: string }) => clearAppChatRecords(target))
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
