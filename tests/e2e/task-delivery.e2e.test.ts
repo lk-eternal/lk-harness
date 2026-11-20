@@ -15,7 +15,7 @@ import { aiScheduleStateFile, readAiScheduleRuns } from "../../src/shared/ai-sch
 import { readTaskRuns, taskRunLogFile } from "../../src/shared/task-run-log"
 import { initProjectStore, saveProject } from "../../src/shared/project-store"
 import { projectSessionKey } from "../../src/shared/project-types"
-import { ensureSessionEntry, purgeSessionEntry, sessionEntryDir } from "../../src/shared/session-entry-paths"
+import { ensureSessionEntry, globalRoutingPath, purgeSessionEntry, sessionEntryDir } from "../../src/shared/session-entry-paths"
 import { startIsolatedDaemon, waitFor, sleep, type IsolatedDaemon } from "../helpers/isolated-daemon"
 
 let d: IsolatedDaemon
@@ -259,6 +259,36 @@ describe("send_result：独立任务交付结果", () => {
     expect(await sendResult("r-twice", { text: "第二次" })).toContain("结果已处理")
     // 同一次运行没结束就再提交仍然被拒
     expect(await sendResult("r-twice", { text: "第二次补充" })).toContain("已经提交过")
+  })
+})
+
+// ── 出站目标：只是投递地址，不是会话 ─────────────────────────────────
+
+describe("独立任务的出站目标（聊天）", () => {
+  const MAIN_CHAT = "ch_test|app_main"
+  const routedSessions = (): Record<string, string> => {
+    const file = globalRoutingPath(d.dataDir)
+    if (!fs.existsSync(file)) return {}
+    return (JSON.parse(fs.readFileSync(file, "utf8")) as { sessionToChat?: Record<string, string> }).sessionToChat ?? {}
+  }
+
+  it("触发后路由表只记「任务 → 聊天」，聊天键本身不登记成会话（否则侧边栏多出一个叫聊天键的空会话）", async () => {
+    writeTasks([task("o-route", { notify: "im" })])
+    await trigger("o-route")
+    expect(await waitFor(() => routedSessions()["o-route"] === MAIN_CHAT)).toBe(true)
+    expect(Object.keys(routedSessions())).not.toContain(MAIN_CHAT)
+  })
+
+  it("任务会话照样能发图片和文件：出站校验认通道里的聊天键，不靠路由表登记", async () => {
+    writeTasks([task("o-send", { notify: "im" })])
+    await trigger("o-send")
+    const file = path.join(d.dataDir, "o-send-report.txt")
+    const image = path.join(d.dataDir, "o-send-chart.png")
+    fs.writeFileSync(file, "报告")
+    fs.writeFileSync(image, Buffer.from("89504e47", "hex"))
+    expect(await mcp("/mcp-task", "o-send", "send_file", { file_path: file })).toContain("文件已发送")
+    expect(await mcp("/mcp-task", "o-send", "send_image", { image_path: image })).toContain("图片已发送")
+    expect(await waitFor(() => chatHas("o-send-report.txt"))).toBe(true)
   })
 })
 

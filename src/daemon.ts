@@ -6394,7 +6394,6 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
     return fail("跳过: 找不到结果发送目标（发送通道不存在，或没填聊天 ID 且该通道未绑定主用户）");
   }
   if (outboundChatKey) {
-    rememberSessionKey(outboundChatKey);
     log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
     sessionToChatMap.set(task.id, outboundChatKey);
   } else {
