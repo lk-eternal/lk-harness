@@ -12,6 +12,7 @@ import * as path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { configDir } from "../../src/shared/data-paths"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../../src/shared/ai-schedule-state"
+import { readTaskRuns, taskRunLogFile } from "../../src/shared/task-run-log"
 import { initProjectStore, saveProject } from "../../src/shared/project-store"
 import { projectSessionKey } from "../../src/shared/project-types"
 import { ensureSessionEntry, purgeSessionEntry, sessionEntryDir } from "../../src/shared/session-entry-paths"
@@ -318,6 +319,87 @@ describe("兜底提示：独立任务跑完却没有提交结果", () => {
     await runTurn("f-quiet", { quiet: true })
     await sleep(800)
     expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+})
+
+// ── 运行记录 ─────────────────────────────────────────────────────────
+
+describe("运行记录：设置页「上次什么时候跑、结果怎样」", () => {
+  const runsOf = (id: string) => readTaskRuns(taskRunLogFile(d.dataDir))[id] ?? []
+
+  it("非独立运行：投进会话就是终点，记「已触发」，标明是手动触发", async () => {
+    writeTasks([task("l-inject", { independent: false })])
+    await trigger("l-inject")
+    expect(runsOf("l-inject")).toMatchObject([{ kind: "triggered", manual: true }])
+  })
+
+  it("没投递出去：记「没送出去」和原因", async () => {
+    addProject("l-arch", true)
+    writeTasks([task("l-fail", { independent: false, targetProjectId: "l-arch" })])
+    await trigger("l-fail")
+    const [rec] = runsOf("l-fail")
+    expect(rec.kind).toBe("undelivered")
+    expect(rec.detail).toContain("已归档")
+  })
+
+  it("独立运行：先记「已触发」，AI 提交结果后同一条改成「已汇报」，不多出一条", async () => {
+    writeTasks([task("l-ok", { notify: "agent" })])
+    await trigger("l-ok")
+    expect(runsOf("l-ok").map((r) => r.kind)).toEqual(["triggered"])
+    await sendResult("l-ok", { text: "结论" })
+    expect(runsOf("l-ok")).toMatchObject([{ kind: "reported", manual: true }])
+  })
+
+  it("quiet 提交：记「无需汇报」", async () => {
+    writeTasks([task("l-quiet", { notify: "agent" })])
+    await trigger("l-quiet")
+    await sendResult("l-quiet", { quiet: true })
+    expect(runsOf("l-quiet").map((r) => r.kind)).toEqual(["quiet"])
+  })
+
+  it("跑完没提交结果：通知到 IM 记「没提交结果」，通知到 Agent 视为「无需汇报」", async () => {
+    writeTasks([task("l-im", { notify: "im" }), task("l-agent", { notify: "agent" })])
+    for (const id of ["l-im", "l-agent"]) {
+      await trigger(id)
+      expect((await pollKey(id)).length).toBeGreaterThan(0)
+      await confirm(id)
+    }
+    expect(await waitFor(() => runsOf("l-im")[0]?.kind === "no-result")).toBe(true)
+    expect(runsOf("l-agent").map((r) => r.kind)).toEqual(["quiet"])
+  })
+
+  it("结果送不出去：记「没送出去」，之后跑完没提交也不会被改成别的", async () => {
+    addProject("l-pause")
+    writeTasks([task("l-lost", { notify: "agent", targetProjectId: "l-pause" })])
+    await trigger("l-lost")
+    addProject("l-pause", true)
+    expect(await sendResult("l-lost", { text: "x" })).toContain("[send_failed]")
+    expect(runsOf("l-lost")[0]).toMatchObject({ kind: "undelivered" })
+    expect(runsOf("l-lost")[0].detail).toContain("已归档")
+
+    expect((await pollKey("l-lost")).length).toBeGreaterThan(0)
+    await confirm("l-lost")
+    await sleep(500)
+    expect(runsOf("l-lost").map((r) => r.kind)).toEqual(["undelivered"])
+  })
+
+  it("发不出去之后 AI 重试成功：改成「已汇报」", async () => {
+    addProject("l-retry")
+    writeTasks([task("l-retry-task", { notify: "agent", targetProjectId: "l-retry" })])
+    await trigger("l-retry-task")
+    addProject("l-retry", true)
+    await sendResult("l-retry-task", { text: "x" })
+    addProject("l-retry")
+    await sendResult("l-retry-task", { text: "恢复后重试" })
+    expect(runsOf("l-retry-task").map((r) => r.kind)).toEqual(["reported"])
+  })
+
+  it("运行记录文件不进任务文件：任务文件内容不被改动", async () => {
+    writeTasks([task("l-file", { independent: false })])
+    const before = fs.readFileSync(tasksFile(), "utf8")
+    await trigger("l-file")
+    expect(fs.readFileSync(tasksFile(), "utf8")).toBe(before)
+    expect(fs.existsSync(taskRunLogFile(d.dataDir))).toBe(true)
   })
 })
 

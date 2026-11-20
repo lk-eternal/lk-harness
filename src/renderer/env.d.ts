@@ -2,6 +2,7 @@ import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusI
 import type { RuleScope as RuleScopeType } from "../shared/rule-scope"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
 import type { SessionScheduleItem as SessionScheduleItemType } from "../shared/session-schedule"
+import type { TaskRunLog as TaskRunLogType } from "../shared/task-run-log-rules"
 import type {
   ChannelImpactClearResult as ChannelImpactClearResultType,
   ChannelImpactPreviewResult as ChannelImpactPreviewResultType,
@@ -367,6 +368,7 @@ declare global {
     triggerScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
     cancelAiScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
     getScheduledTaskStatus(): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>>
+    getScheduledTaskRuns(): Promise<TaskRunLogType>
     getSessionSchedules(sessionKey: string): Promise<SessionScheduleItemType[]>
     deleteScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void

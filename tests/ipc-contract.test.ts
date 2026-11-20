@@ -54,6 +54,18 @@ describe("IPC 接线", () => {
     }
   })
 
+  it("定时任务运行记录：读取方法在 preload / 主进程 / 界面类型里都有，且调的是 scheduled-tasks:get-runs", () => {
+    const envDts = read("src/renderer/env.d.ts")
+    expect(envDts, "env.d.ts 缺 getScheduledTaskRuns").toMatch(/\bgetScheduledTaskRuns\(/)
+    expect(handled.has("scheduled-tasks:get-runs"), "主进程没注册 scheduled-tasks:get-runs").toBe(true)
+    const start = preload.indexOf("\n  getScheduledTaskRuns: ")
+    expect(start, "preload 缺 getScheduledTaskRuns").toBeGreaterThan(-1)
+    const rest = preload.slice(start + 1)
+    const next = rest.slice(1).search(/\n  \w+: /)
+    const block = next < 0 ? rest : rest.slice(0, next + 1)
+    expect([...block.matchAll(/ipcRenderer\.invoke\("([^"]+)"/g)].map((m) => m[1])).toEqual(["scheduled-tasks:get-runs"])
+  })
+
   it("会话管理页的 9 个通道：preload 和主进程一一对应", () => {
     const pre = invoked.filter((c) => c.startsWith("session-manager:")).sort()
     const main = [...handled].filter((c) => c.startsWith("session-manager:")).sort()

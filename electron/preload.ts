@@ -8,6 +8,7 @@ import type { InspectRepoResult, ProjectActionResult, ProjectBindingChoice, Proj
 import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
+import type { TaskRunLog } from "../src/shared/task-run-log-rules"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
 import type { ChannelImpactClearResult, ChannelImpactPreviewResult, ChannelImpactStopResult } from "../src/shared/channel-model-impact"
 import type { MobileServerStatus } from "./mobile-server"
@@ -364,6 +365,8 @@ const api = {
     ipcRenderer.invoke("scheduled-tasks:cancel-ai", taskId),
   getScheduledTaskStatus: (): Promise<Record<string, { running: boolean; pid?: number; startedAt?: number }>> =>
     ipcRenderer.invoke("scheduled-tasks:get-status"),
+  getScheduledTaskRuns: (): Promise<TaskRunLog> =>
+    ipcRenderer.invoke("scheduled-tasks:get-runs"),
   getSessionSchedules: (sessionKey: string): Promise<SessionScheduleItem[]> =>
     ipcRenderer.invoke("scheduled-tasks:for-session", sessionKey),
   deleteScheduledTask: (taskId: string): Promise<{ ok: boolean; error?: string }> =>
