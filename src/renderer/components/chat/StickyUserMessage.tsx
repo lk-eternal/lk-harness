@@ -1,21 +1,11 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react"
 import { ArrowUp } from "lucide-react"
 import type { AppChatItem, AppChatUserItem } from "../../../shared/app-chat-types"
+import { DOCK_HEIGHT, prefersReducedMotion, scrollToItem } from "./item-jump"
 
-/** 浮条实色部分的高度（px）：消息的底边进到这个区域，就算「已滚出屏幕上沿」 */
-const DOCK_HEIGHT = 46
-/** 点浮条回到原消息时，消息上沿离浮条下沿留的空隙（px） */
-const JUMP_GAP = 12
 /** 浮条里最多放多少字：一行本来就放不下，整段粘贴的日志不必整段塞进 DOM */
 const PREVIEW_MAX_CHARS = 200
 const SWAP_MS = 200
-const FLASH_MS = 900
-
-/** 光圈沿着被闪的那块自己的圆角扩散，所以这里不写 borderRadius */
-const FLASH_FRAMES: Keyframe[] = [
-  { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.55)" },
-  { boxShadow: "0 0 0 10px rgba(37, 99, 235, 0)" },
-]
 
 /**
  * 在自上而下排列的一组元素里，找最后一个底边落在 limit 及以上的下标；没有返回 -1。
@@ -60,14 +50,14 @@ export function alignToColumn(
   return { gutter, left: columnBox.left - scrollBox.left, right: scrollBox.right - gutter - columnBox.right }
 }
 
-const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
-
 interface Props {
   /** 对话列表的滚动容器；里面的用户消息带 data-user-item 标记 */
   scrollRef: RefObject<HTMLElement | null>
   items: AppChatItem[]
   /** 点浮条、列表要离开底部之前：让「贴底跟随」先松手，否则流式输出会把平滑滚动拽回去 */
   onBeforeJump: () => void
+  /** 顶部这块地方被别的东西占了（搜索条）：浮条先让出来，不画 */
+  suppressed?: boolean
 }
 
 interface Shown {
@@ -82,7 +72,7 @@ interface Shown {
  * 往上翻时一条接一条地换，翻到最开头（上方没有我发的消息了）就淡出。
  * 状态放在这个组件里而不是列表里：换条不应该让整个对话列表重渲染。
  */
-export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Props) {
+export default function StickyUserMessage({ scrollRef, items, onBeforeJump, suppressed }: Props) {
   const [shown, setShown] = useState<Shown | null>(null)
   const [layout, setLayout] = useState<ChipLayout>({ gutter: 0, left: 0, right: 0 })
   const chipRef = useRef<HTMLButtonElement>(null)
@@ -158,17 +148,11 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump }: Pr
     const scroll = scrollRef.current
     const el = shownElRef.current
     if (!scroll || !el) return
-    const reduced = prefersReducedMotion()
     onBeforeJump()
-    scroll.scrollTo({
-      top: scroll.scrollTop + el.getBoundingClientRect().top - scroll.getBoundingClientRect().top - DOCK_HEIGHT - JUMP_GAP,
-      behavior: reduced ? "auto" : "smooth",
-    })
-    // 只闪图片组和文字气泡（带 data-user-flash 的块），不闪外层：外层还包着下面的时间行
-    if (!reduced) el.querySelectorAll("[data-user-flash]").forEach((block) => block.animate(FLASH_FRAMES, { duration: FLASH_MS, easing: "ease-out" }))
+    scrollToItem(scroll, el)
   }
 
-  const visible = shown?.visible === true
+  const visible = shown?.visible === true && !suppressed
 
   // 气泡那一行用页面底色垫着，下沿 22px 渐变到透明：滚上去的内容是被淡出的，不是被一块实色边挡住。
   // 整块不拦截鼠标，只有气泡本身可点；右边让开竖向滚动条，左右留白对齐气泡所在的那一列（都是量出来的，见 alignToColumn）。

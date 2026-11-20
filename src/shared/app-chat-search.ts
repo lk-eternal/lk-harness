@@ -32,6 +32,40 @@ export function searchTokens(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(Boolean);
 }
 
+export interface HighlightPart {
+  text: string;
+  hit: boolean;
+}
+
+/**
+ * 把一段文字按搜索词切成「命中 / 没命中」的片段，给界面高亮用。
+ * tokens 来自 searchTokens（不含空串）；重叠或首尾相接的命中并成一段。
+ */
+export function highlightParts(text: string, tokens: readonly string[]): HighlightPart[] {
+  const lower = text.toLowerCase();
+  const found: Array<[number, number]> = [];
+  for (const token of tokens) {
+    for (let at = lower.indexOf(token); at >= 0; at = lower.indexOf(token, at + token.length)) found.push([at, at + token.length]);
+  }
+  found.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const [start, end] of found) {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+
+  const parts: HighlightPart[] = [];
+  let pos = 0;
+  for (const [start, end] of merged) {
+    if (start > pos) parts.push({ text: text.slice(pos, start), hit: false });
+    parts.push({ text: text.slice(start, end), hit: true });
+    pos = end;
+  }
+  if (pos < text.length) parts.push({ text: text.slice(pos), hit: false });
+  return parts;
+}
+
 /** 一条记录里搜哪些文字；不搜的类型返回 undefined */
 function searchable(item: AppChatItem): { kind: ChatSearchKind; text: string } | undefined {
   switch (item.kind) {

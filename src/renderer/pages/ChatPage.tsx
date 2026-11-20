@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Archive, ArchiveRestore, Check, ChevronRight, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Smartphone, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, Check, ChevronRight, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Search, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -30,6 +30,7 @@ import SidebarShell from "../components/chat/SidebarShell"
 import { useScrollActiveIntoView } from "../components/panel-scroll"
 import { usePinnedSessions } from "../components/chat/pinned-sessions"
 import useOutsideClose from "../hooks/useOutsideClose"
+import { useFindShortcut } from "../hooks/useFindShortcut"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../../shared/deleted-sessions"
 import { canSwitchBranch, sharedSessionCount } from "../../shared/git-branch"
@@ -278,7 +279,16 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   }, [actionError])
 
   const preview = usePreviewController(selected)
-  const { items: allItems, loading, error: historyError, hasMore, loadingEarlier, loadEarlier } = useAppChatItems(selected)
+  const { items: allItems, loading, error: historyError, hasMore, loadingEarlier, loadEarlier, loadUntil } = useAppChatItems(selected)
+  // 搜索条开在哪个会话上：切到别的会话它就自然不在了，不用另外去关
+  const [searchSession, setSearchSession] = useState<string | null>(null)
+  const [searchFocusTick, setSearchFocusTick] = useState(0)
+  const searchOpen = !!selected && searchSession === selected
+  const openSearch = () => {
+    setSearchSession(selected)
+    setSearchFocusTick((n) => n + 1)
+  }
+  useFindShortcut(active && !!selected, openSearch)
   /** 排队中的消息（Agent 还没收到）只在输入框上方的暂存区出现，投递后才进聊天流 */
   const items = useMemo(() => chatStreamItems(allItems), [allItems])
   const queuedItems = useMemo(() => allItems.filter(isQueuedUserItem), [allItems])
@@ -761,6 +771,12 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   </div>
                   <button
                     type="button"
+                    onClick={() => (searchOpen ? setSearchSession(null) : openSearch())}
+                    title="搜索聊天记录（Ctrl+F）"
+                    className={`rounded p-1 transition hover:bg-raised hover:text-fg-soft ${searchOpen ? "bg-raised text-accent" : "text-fg-muted"}`}
+                  ><Search size={15} /></button>
+                  <button
+                    type="button"
                     onClick={preview.togglePanel}
                     title={preview.state.tabs.length === 0 ? "打开内置浏览器" : preview.state.open ? "收起预览面板" : "展开预览面板"}
                     className={`relative rounded p-1 transition hover:bg-raised hover:text-fg-soft ${preview.state.open ? "bg-raised text-accent" : "text-fg-muted"}`}
@@ -788,7 +804,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   </div>
                 </div>
 
-                <ChatItemList key={selected} items={items} loading={loading} hasMore={hasMore} loadingEarlier={loadingEarlier} onLoadEarlier={() => void loadEarlier()} busy={busy} workspaceName={dirName(workspaceDir)} projectName={projectId ? tab.label : undefined} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} />
+                <ChatItemList key={selected} items={items} loading={loading} hasMore={hasMore} loadingEarlier={loadingEarlier} onLoadEarlier={() => void loadEarlier()} busy={busy} workspaceName={dirName(workspaceDir)} projectName={projectId ? tab.label : undefined} onAnswer={(q, o) => void answer(q, o)} onCommand={(c) => void send(c)} search={{ open: searchOpen, focusTick: searchFocusTick, sessionKey: selected, onClose: () => setSearchSession(null), onLoadUntil: loadUntil }} />
                 {(actionError || historyError) && <p className="shrink-0 px-6 pb-1 text-center text-xs text-danger">{actionError || historyError}</p>}
                 <Composer
                   draftKey={composerDraftKey(selected)}

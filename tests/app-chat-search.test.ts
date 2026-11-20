@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { SEARCH_MAX_HITS, searchChatItems, searchTokens } from "../src/shared/app-chat-search"
+import { SEARCH_MAX_HITS, highlightParts, searchChatItems, searchTokens } from "../src/shared/app-chat-search"
 import type { AppChatItem } from "../src/shared/app-chat-types"
 
 const user = (n: number, text: string, extra: Partial<AppChatItem> = {}): AppChatItem =>
@@ -111,6 +111,42 @@ describe("searchChatItems：片段", () => {
     const text = `${"甲".repeat(300)}词一${"乙".repeat(300)}词二`
     const snippet = searchChatItems([user(1, text)], "词一 词二").hits[0].snippet
     expect(snippet).toContain("词一")
+  })
+})
+
+describe("highlightParts：按搜索词切出命中的片段", () => {
+  const tokens = (query: string) => searchTokens(query)
+  const compact = (text: string, query: string) => highlightParts(text, tokens(query)).map((p) => (p.hit ? `[${p.text}]` : p.text)).join("")
+
+  it("命中的词前后各是一段，拼起来正好是原文", () => {
+    expect(highlightParts("今天部署了测试环境", tokens("部署"))).toEqual([
+      { text: "今天", hit: false }, { text: "部署", hit: true }, { text: "了测试环境", hit: false },
+    ])
+  })
+
+  it("同一个词出现多次都标出来；不分大小写，片段保持原文的大小写", () => {
+    expect(compact("Redis 和 redis", "REDIS")).toBe("[Redis] 和 [redis]")
+  })
+
+  it("多个词各自标出，不要求相邻", () => {
+    expect(compact("苹果和香蕉", "香蕉 苹果")).toBe("[苹果]和[香蕉]")
+  })
+
+  it("词重叠、首尾相接的并成一段，不重复输出文字", () => {
+    expect(compact("abcdef", "abcd cdef")).toBe("[abcdef]")
+    expect(compact("abcdef", "abc bcd")).toBe("[abcd]ef")
+    expect(compact("abcdef", "abcdef cd")).toBe("[abcdef]")
+    expect(compact("abcdef", "abc def")).toBe("[abcdef]")
+  })
+
+  it("没有命中、没有词：整段是没命中的一个片段；空文字没有片段", () => {
+    expect(highlightParts("你好", tokens("没有"))).toEqual([{ text: "你好", hit: false }])
+    expect(highlightParts("你好", [])).toEqual([{ text: "你好", hit: false }])
+    expect(highlightParts("", tokens("a"))).toEqual([])
+  })
+
+  it("词在开头或结尾：不产生空片段", () => {
+    expect(compact("词一中间词二", "词一 词二")).toBe("[词一]中间[词二]")
   })
 })
 

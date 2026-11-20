@@ -17,6 +17,8 @@ export interface AppChatItemsState {
   loadingEarlier: boolean
   /** 往前再加载一页；加载期间或没有更早的记录时什么都不做 */
   loadEarlier: () => Promise<void>
+  /** 往前一直加载到这条记录（搜索定位用）；取到了返回 true，它已经不在了、或正在加载别的页返回 false */
+  loadUntil: (itemId: string) => Promise<boolean>
 }
 
 /**
@@ -111,23 +113,28 @@ export function useAppChatItems(sessionKey: string | null): AppChatItemsState {
     }
   }, [sessionKey])
 
-  const loadEarlier = useCallback(async () => {
+  /** 从窗口起点往前取一页（带 reachId 就一直取到那条）；没取到返回 undefined */
+  const loadBefore = useCallback(async (reachId?: string): Promise<AppChatItem[] | undefined> => {
     const cursor = cursorRef.current
-    if (!sessionKey || !cursor || !hasMoreRef.current || loadingEarlierRef.current) return
+    if (!sessionKey || !cursor || !hasMoreRef.current || loadingEarlierRef.current) return undefined
     const generation = generationRef.current
     loadingEarlierRef.current = true
     setLoadingEarlier(true)
-    const r = await window.electronAPI.appChatHistory(sessionKey, { limit: HISTORY_PAGE_LIMIT, beforeId: cursor.id, beforeTs: cursor.ts })
-    if (generation !== generationRef.current) return
+    const r = await window.electronAPI.appChatHistory(sessionKey, { limit: HISTORY_PAGE_LIMIT, beforeId: cursor.id, beforeTs: cursor.ts, reachId })
+    if (generation !== generationRef.current) return undefined
     loadingEarlierRef.current = false
     setLoadingEarlier(false)
-    if (!r.ok) { setError(r.error ?? "读取更早的消息失败"); return }
+    if (!r.ok) { setError(r.error ?? "读取更早的消息失败"); return undefined }
     const page = r.items ?? []
     cursorRef.current = historyCursorOf(page) ?? cursor
     setHasMore(!!r.hasMore)
     setError("")
     setItems((prev) => upsertItems(prev, page))
+    return page
   }, [sessionKey])
 
-  return { items, loading, error, hasMore, loadingEarlier, loadEarlier }
+  const loadEarlier = useCallback(async () => { await loadBefore() }, [loadBefore])
+  const loadUntil = useCallback(async (itemId: string) => (await loadBefore(itemId))?.some((it) => it.id === itemId) ?? false, [loadBefore])
+
+  return { items, loading, error, hasMore, loadingEarlier, loadEarlier, loadUntil }
 }

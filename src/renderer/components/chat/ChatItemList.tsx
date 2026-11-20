@@ -1,10 +1,12 @@
-import { useRef } from "react"
+import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react"
 import { ArrowDown, Loader2, MessageCircle } from "lucide-react"
 import type { AppChatItem } from "../../../shared/app-chat-types"
 import { useKeepScrollOnPrepend } from "../../hooks/useKeepScrollOnPrepend"
 import { useStickToBottom } from "../../hooks/useStickToBottom"
 import AssistantTurn from "./AssistantTurn"
+import ChatSearch from "./ChatSearch"
 import { FileCard, LocalImage, NoticePill, QuestionCard, UserBubble } from "./ItemViews"
+import { scrollToItem } from "./item-jump"
 import Markdown from "./Markdown"
 import StickyUserMessage from "./StickyUserMessage"
 
@@ -23,6 +25,31 @@ interface Props {
   projectName?: string
   onAnswer: (questionId: string, option: string) => void
   onCommand: (cmd: string) => void
+  /** 搜索：open 时在顶部显示搜索条；点命中时，还没加载的旧记录由 onLoadUntil 先加载进来 */
+  search?: {
+    open: boolean
+    focusTick: number
+    sessionKey: string
+    onClose: () => void
+    onLoadUntil: (itemId: string) => Promise<boolean>
+  }
+}
+
+function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Props["onCommand"]): ReactNode {
+  switch (it.kind) {
+    case "user": return <UserBubble item={it} />
+    case "assistant": return <AssistantTurn item={it} />
+    case "text": return <Markdown text={it.text} />
+    case "question": return <QuestionCard item={it} onAnswer={onAnswer} />
+    case "image": return <LocalImage path={it.path} className="max-h-72 max-w-sm self-start" />
+    case "file": return <FileCard item={it} />
+    case "notice": return <NoticePill item={it} onCommand={onCommand} />
+    default: {
+      // 新增消息类型漏渲染时在这里编译报错，而不是悄悄丢消息
+      const unhandled: never = it
+      return unhandled
+    }
+  }
 }
 
 function EmptyChat({ workspaceName, projectName }: { workspaceName?: string; projectName?: string }) {
@@ -50,7 +77,7 @@ function EmptyChat({ workspaceName, projectName }: { workspaceName?: string; pro
   )
 }
 
-export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, projectName, onAnswer, onCommand }: Props) {
+export default function ChatItemList({ items, loading, hasMore, loadingEarlier, onLoadEarlier, busy, workspaceName, projectName, onAnswer, onCommand, search }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const { sentinelRef, atBottom, stickRef, scrollToBottom } = useStickToBottom(scrollRef, [items])
   const waiting = busy && items.length > 0 && items[items.length - 1].kind === "user"
@@ -60,6 +87,35 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
   const loadEarlier = () => {
     keepScroll()
     onLoadEarlier()
+  }
+
+  /** 搜索定位到一条旧记录、它还没加载时：加载进来之后，等它渲染出来再滚过去 */
+  const pendingLocateRef = useRef<string | null>(null)
+  /** 把记录滚到视野里并闪一下；它还没渲染出来（没加载）返回 false */
+  const jumpTo = useCallback((id: string): boolean => {
+    const scroll = scrollRef.current
+    const el = scroll?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`)
+    if (!scroll || !el) return false
+    scrollToItem(scroll, el)
+    return true
+  }, [])
+  // 声明在 useKeepScrollOnPrepend 之后：同一次提交里先保住原来的位置，再滚到目标
+  useLayoutEffect(() => {
+    const id = pendingLocateRef.current
+    if (id && jumpTo(id)) pendingLocateRef.current = null
+  }, [items, jumpTo])
+
+  const locate = async (id: string): Promise<boolean> => {
+    // 贴底跟随先松手，否则流式输出会把滚动拽回底部
+    stickRef.current = false
+    pendingLocateRef.current = null
+    if (jumpTo(id)) return true
+    if (!search) return false
+    pendingLocateRef.current = id
+    keepScroll()
+    const loaded = await search.onLoadUntil(id)
+    if (!loaded) pendingLocateRef.current = null
+    return loaded
   }
 
   return (
@@ -79,27 +135,16 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
               {loadingEarlier ? "加载中…" : "加载更早的消息"}
             </button>
           )}
-          {items.map((it) => {
-            switch (it.kind) {
-              case "user": return <UserBubble key={it.id} item={it} />
-              case "assistant": return <AssistantTurn key={it.id} item={it} />
-              case "text": return <Markdown key={it.id} text={it.text} />
-              case "question": return <QuestionCard key={it.id} item={it} onAnswer={onAnswer} />
-              case "image": return <LocalImage key={it.id} path={it.path} className="max-h-72 max-w-sm self-start" />
-              case "file": return <FileCard key={it.id} item={it} />
-              case "notice": return <NoticePill key={it.id} item={it} onCommand={onCommand} />
-              default: {
-                // 新增消息类型漏渲染时在这里编译报错，而不是悄悄丢消息
-                const unhandled: never = it
-                return unhandled
-              }
-            }
-          })}
+          {/* 每条记录套一个定位锚点（搜索定位靠它找）；flex-col 让里面的 self-end / max-w 百分比和直接放在列里时一致 */}
+          {items.map((it) => (
+            <div key={it.id} data-item-id={it.id} className="flex flex-col">{renderItem(it, onAnswer, onCommand)}</div>
+          ))}
           {waiting && <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}
           <div ref={sentinelRef} />
         </div>
       </div>
-      <StickyUserMessage scrollRef={scrollRef} items={items} onBeforeJump={() => { stickRef.current = false }} />
+      <StickyUserMessage scrollRef={scrollRef} items={items} onBeforeJump={() => { stickRef.current = false }} suppressed={search?.open} />
+      {search?.open && <ChatSearch sessionKey={search.sessionKey} focusTick={search.focusTick} onLocate={locate} onClose={search.onClose} />}
       {!atBottom && (
         <button
           type="button"
