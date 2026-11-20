@@ -191,8 +191,8 @@ export default function ProjectsTab({ jump, onJumpConsumed }: Props) {
       if (gs.length <= 1) { void showAlert("无法删除", "至少保留 1 个项目模板。"); return }
       const usage = await window.electronAPI.getProjectNodeGroupUsage().catch(() => ({} as Record<string, number>))
       const count = usage[groupId] ?? 0
-      if (count > 0) { void showAlert("无法删除", `还有 ${count} 个老项目在用这个模板，先处理那些项目再删。`); return }
-      if (!(await showConfirm("删除项目模板", `确定删除「${g.name}」？里面的 ${g.nodes.length} 个快捷操作会一起删除。已经建好的项目不受影响。`))) return
+      if (count > 0) { void showAlert("无法删除", `还有 ${count} 个项目在用这个模板，先处理那些项目再删。`); return }
+      if (!(await showConfirm("删除项目模板", `确定删除「${g.name}」？里面的 ${g.nodes.length} 个快捷操作会一起删除。`))) return
       await persist(gs.filter((x) => x.id !== groupId))
       setSel({ kind: "templates-home" })
     },

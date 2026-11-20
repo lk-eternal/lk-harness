@@ -175,7 +175,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       "- bind：给已有项目补接入（project_id + bindings，写法同 create）；unbind：取消项目在某个通道上的接入（project_id + bindings 里放一项 {channel_id, mode, group_chat_id?}：inline=主聊天，group / bind=专属群）。项目至少要留一个接入。取消会把那条会话一并清掉，先向用户确认。",
       "- update：改项目资料（project_id；只给要改的：name / goal / story_url / related_docs / fields=项目信息键值，空字符串删掉该项）。archive：归档 / 取消归档（project_id + archived）。sync_steps：把项目的快捷操作同步成模板最新版。",
       "- repo_save：登记或修改常用代码仓库（repo={repo_path, base_branch?, test_branch?, develop_branch?, clone?}）；repo_remove：移除（repo={repo_path}）。",
-      "- template_save：新建（不给 template_id）或修改项目模板（template；改动只影响之后新建的项目）；template_delete：删除模板（template_id）。新建 / 修改前先 help topic=templates。",
+      "- template_save：新建（不给 template_id）或修改项目模板（template；改动立即对所有在用它的项目生效）；template_delete：删除模板（template_id）。新建 / 修改前先 help topic=templates。",
       "- settings：看项目设置现状（项目存放位置、Git 基本原则、GitLab、共享空间；密钥只显示打码）；settings_set：修改（settings；只给要改的）。用户发来的 Token 直接写入，回复里不要重复原文。",
       "- delete：删除项目（宿主连带移除项目目录；不动用户自己的代码仓库与远程分支，删除前必须先向用户确认）。",
     ].join("\n"),

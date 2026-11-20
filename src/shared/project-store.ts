@@ -346,14 +346,10 @@ export function projectGroupIds(p: Pick<Project, "groupIds" | "groupId">): strin
   return valid.length ? valid : [DEFAULT_NODE_GROUP_ID]
 }
 
-type ProjectGroupRef = Pick<Project, "groupIds" | "groupId" | "groupSnapshot">
+type ProjectGroupRef = Pick<Project, "groupIds" | "groupId">
 
-/**
- * 项目实际使用的流程组：建项时复制了模板副本就只认副本（不随全局模板变），
- * 没有副本的存量项目照旧实时读全局流程组。
- */
+/** 项目实际使用的流程组：按绑定的模板 id 实时读全局模板，改模板立即对所有项目生效 */
 export function projectGroups(p: ProjectGroupRef): ProjectNodeGroupDef[] {
-  if (p.groupSnapshot?.length) return p.groupSnapshot
   return projectGroupIds(p).map((id) => resolveNodeGroup(id))
 }
 
@@ -411,8 +407,8 @@ function writeJson(filePath: string, data: unknown): void {
  * 旧版有 status（进行中 / 已暂停 / 已完成）：「已完成」按已归档读，其余当普通项目；读出来之后不再带这个字段，下次保存时从文件里消失。
  */
 function normalizeProject(raw: Project & LegacyProjectBindingFields & { status?: unknown; watchBugs?: unknown }): Project {
-  // status 是旧版的三态；watchBugs 是旧版「自动盯缺陷」的开关（功能已去掉）：老项目文件里留着的都不要了，下次保存时一并清掉
-  const { status, watchBugs, sessionKey: legacySessionKey, notifyChatId: legacyNotify, groupChatId: legacyGroup, ...legacyRest } = raw
+  // status 是旧版的三态；watchBugs 是旧版「自动盯缺陷」的开关（功能已去掉）；groupSnapshot 是旧版建项时复制的模板副本（现在一律实时读模板）：老项目文件里留着的都不要了，下次保存时一并清掉
+  const { status, watchBugs, groupSnapshot, sessionKey: legacySessionKey, notifyChatId: legacyNotify, groupChatId: legacyGroup, ...legacyRest } = raw
   // 旧版的仓库、分支字段折进项目信息（见 project-repo-info.ts）：读出来就是新形状，下次保存时旧字段从文件里消失
   const rest = migrateLegacyRepoFields(legacyRest)
   const p: Project = { ...rest }
@@ -661,7 +657,6 @@ export function createProject(input: Omit<Project, "id" | "archivedAt" | "create
     worktreePath: input.worktreePath,
     groupIds,
     groupId: groupIds[0],
-    ...(input.groupSnapshot?.length ? { groupSnapshot: input.groupSnapshot } : {}),
     ...(input.externalWorkspace ? { externalWorkspace: true } : {}),
     ...(input.metadata && Object.keys(input.metadata).length ? { metadata: input.metadata } : {}),
     lastArtifactPath: input.lastArtifactPath,

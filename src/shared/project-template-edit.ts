@@ -99,7 +99,7 @@ export function buildNewTemplate(
 
 /**
  * 把编辑后的草稿合并回已有模板：动名称、说明、要填的信息、接不接代码仓库和工作分支；
- * id、快捷操作、共享空间的跟踪信息都不动。已经建好的项目有自己的模板副本，不受影响。
+ * id、快捷操作、共享空间的跟踪信息都不动。已经建好的项目实时读模板，保存后立即生效。
  */
 export function applyTemplateEdit(g: ProjectNodeGroupDef, d: TemplateDraft): ProjectNodeGroupDef {
   const { description: _d, fields: _f, branchMode: _b, ...rest } = g

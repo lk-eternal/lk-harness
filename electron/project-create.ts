@@ -66,7 +66,6 @@ import {
   saveProject,
   setProjectArchived,
 } from "../src/shared/project-store.js"
-import { snapshotGroups } from "../src/shared/project-templates.js"
 import { APP_CHANNEL_CHAT_ID, makeChatKey, parseChatKey, resolveChannelAudience, type ChannelType } from "../src/shared/channel-types.js"
 import { canEnterProjectFromChat, projectRootDir, projectSessionKeyFor, type Project } from "../src/shared/project-types.js"
 
@@ -131,7 +130,7 @@ function prepareFolderWorkspace(folder: string): FolderWorkspace {
 }
 
 /**
- * 建项核心：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘（带模板副本）。
+ * 建项核心：校验 → 准备目录（用已有文件夹，或新建目录并按需克隆仓库）→ 落盘。
  * 建出来的项目还没有接入任何聊天（谁都看不到它）：调用方接着用 attachPlannedBindings 把它接到选好的通道上。
  * 不进入项目会话：应用里点「新建」（createProjectFromApp）在接入之后接着进入；AI 建项（createProjectForAi）不进，不打断当前对话。
  */
@@ -176,7 +175,6 @@ async function createProjectCore(
       worktreePath: cwd,
       groupIds: [plan.group.id],
       groupId: plan.group.id,
-      groupSnapshot: snapshotGroups([plan.group]),
       ...(external ? { externalWorkspace: true } : {}),
       metadata: { ...plan.metadata, ...repoInfo },
     })

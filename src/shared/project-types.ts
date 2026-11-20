@@ -165,8 +165,8 @@ export interface Project {
   /** 绑定的流程组 id 列表（多选）；缺省回落 groupId 或默认组 */
   groupIds?: string[]
   /**
-   * 建项时从模板复制来的流程组副本（含步骤和提示词）。有它就只认它，不再随全局模板变；
-   * 缺省的存量项目继续实时读全局流程组。
+   * @deprecated 旧版建项时复制的模板副本。项目现在一律按 groupIds 实时读模板，改模板立即生效；
+   * 读文件时丢掉这个字段（见 normalizeProject），下次保存时从文件里消失。
    */
   groupSnapshot?: ProjectNodeGroupDef[]
   /** worktreePath 是用户自己选的已有文件夹：删项目时只解绑，不删它，也不删它的上级目录 */

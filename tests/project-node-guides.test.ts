@@ -3,8 +3,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { buildNodeActionPrompt } from "../src/shared/project-node-guides.js"
-import { createProject, initProjectStore, resolveNodeGroup, saveNodeGroups, getNodeGroups } from "../src/shared/project-store.js"
-import { snapshotGroups } from "../src/shared/project-templates.js"
+import { createProject, initProjectStore, saveNodeGroups, getNodeGroups } from "../src/shared/project-store.js"
 import { buildActionPrompt, buildProjectSessionPrompt } from "../electron/project-prompts.js"
 import { DEFAULT_GIT_PRINCIPLES } from "../src/shared/project-git-principles.js"
 import type { Project } from "../src/shared/project-types.js"
@@ -46,28 +45,25 @@ describe("项目提示词：接了代码仓库的项目与普通项目分开", (
     expect(text).not.toMatch(/分支|MR|飞书|feature|git |Git/)
   })
 
-  it("项目副本里用户改过的步骤要求优先；没改的步骤跟随代码里的默认提示词", () => {
-    const snap = snapshotGroups([resolveNodeGroup("writing")])
-    snap[0].nodes.find((n) => n.id === "draft")!.prompt = "只写 300 字，别展开"
-    const p = plain(["writing"], { groupSnapshot: snap })
+  it("全局模板里改了步骤要求，已建项目立即用上；没改的步骤跟随代码里的默认提示词", () => {
+    const p = plain(["writing"])
+    expect(buildNodeActionPrompt(p, "draft", "t")).toContain("按已确认的大纲")
+
+    saveNodeGroups(getNodeGroups().map((g) => g.id === "writing"
+      ? { ...g, nodes: g.nodes.map((n) => n.id === "draft" ? { ...n, prompt: "只写 300 字，别展开" } : n) }
+      : g))
 
     const draft = buildNodeActionPrompt(p, "draft", "t")
     expect(draft).toContain("只写 300 字，别展开")
     expect(draft).not.toContain("按已确认的大纲")
-
     expect(buildNodeActionPrompt(p, "outline", "t")).toContain("拟大纲")
-
-    // 改全局模板里的 draft 不影响这个项目（它有自己的副本）
-    saveNodeGroups(getNodeGroups().map((g) => g.id === "writing"
-      ? { ...g, nodes: g.nodes.map((n) => n.id === "draft" ? { ...n, prompt: "全局改的" } : n) }
-      : g))
-    expect(buildNodeActionPrompt(p, "draft", "t")).toContain("只写 300 字，别展开")
   })
 
-  it("项目副本里的步骤改名后，标题用副本里的名字", () => {
-    const snap = snapshotGroups([resolveNodeGroup("general")])
-    snap[0].nodes[0].label = "先聊清楚"
-    const p = plain(["general"], { groupSnapshot: snap })
+  it("全局模板里的步骤改名后，已建项目的步骤标题立即用新名字", () => {
+    const p = plain(["general"])
+    saveNodeGroups(getNodeGroups().map((g) => g.id === "general"
+      ? { ...g, nodes: g.nodes.map((n) => n.id === "clarify" ? { ...n, label: "先聊清楚" } : n) }
+      : g))
     expect(buildNodeActionPrompt(p, "clarify", "t")).toContain("[PROJECT_ACTION] 先聊清楚步骤")
   })
 

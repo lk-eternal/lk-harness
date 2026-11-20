@@ -257,7 +257,7 @@ export interface ProjectView {
 
 /**
  * 设置页「项目」里一个项目的完整资料（项目列表和详情用）。
- * fields / actions 取自项目实际在用的模板（有副本用副本），详情页据此决定要展示哪些字段，不再写死。
+ * fields / actions 取自项目实际在用的模板，详情页据此决定要展示哪些字段，不再写死。
  */
 export interface ProjectListItem {
   id: string

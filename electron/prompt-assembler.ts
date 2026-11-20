@@ -4,7 +4,7 @@ import { app } from "electron"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
 import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience, resolveChannelScene } from "../src/shared/channel-types.js"
-import { projectIdFromSessionKey, type ProjectNodeGroupDef } from "../src/shared/project-types.js"
+import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
@@ -289,7 +289,7 @@ function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessa
   if (!pid) return undefined
   if (messages.some((m) => (m.text ?? "").trimStart().startsWith("[PROJECT_ACTION]"))) return undefined
   if (!messages.some((m) => (m.text ?? "").trim())) return undefined
-  let proj: { id: string; groupId?: string; groupIds?: string[]; groupSnapshot?: ProjectNodeGroupDef[] } | undefined
+  let proj: { id: string; groupId?: string; groupIds?: string[] } | undefined
   try { proj = getProject(pid) ?? undefined } catch { return undefined }
   if (!proj) return undefined
   const nodes = projectNodes(proj).map((n) => ({ id: n.id, label: n.label }))

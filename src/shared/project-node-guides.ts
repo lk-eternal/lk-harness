@@ -330,7 +330,7 @@ export function getNodeGuideLines(id: string, customPrompt: string | undefined, 
 
 /** 节点任务提示词全文组装（按钮与 project_get_node 同源；真值住下层） */
 export function buildNodeActionPrompt(
-  p: Pick<Project, "id" | "name" | "groupId" | "groupIds" | "groupSnapshot" | "metadata">,
+  p: Pick<Project, "id" | "name" | "groupId" | "groupIds" | "metadata">,
   nodeId: string,
   origin: string,
   /** gitReminder=false：设置里把「Git 基本原则」清空了，不要再提它（缺省按项目里有没有记代码仓库决定） */

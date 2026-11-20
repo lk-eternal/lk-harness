@@ -42,7 +42,6 @@ import {
   DEFAULT_NODE_GROUP_ID,
   projectGroupChatMatches,
 } from "../src/shared/project-types.js"
-import { snapshotGroups } from "../src/shared/project-templates.js"
 import { parseChatKey } from "../src/shared/channel-types.js"
 
 describe("project-store", () => {
@@ -612,7 +611,7 @@ describe("project-store", () => {
     expect(p.metadata).toBeUndefined()
   })
 
-  describe("通用模板与项目自己的流程副本", () => {
+  describe("通用模板与项目的流程组", () => {
     const plainInput = {
       name: "调研", goal: "g",
       worktreePath: "/w/ws",
@@ -665,47 +664,61 @@ describe("project-store", () => {
       expect(parsed?.fields).toHaveLength(2)
     })
 
-    it("项目有流程副本时只认副本，改全局组不影响它；没副本的存量项目实时读全局组", () => {
-      const snapshot = snapshotGroups([resolveNodeGroup("research")])
-      const withSnap = createProject({ ...plainInput, groupIds: ["research"], groupSnapshot: snapshot })
-      const live = createProject({ ...plainInput, name: "存量", worktreePath: "/w/ws2", groupIds: ["research"] })
+    it("项目一律实时读全局模板：改全局组，已建项目立即跟着变", () => {
+      const p = createProject({ ...plainInput, groupIds: ["research"] })
+      expect(projectNodeLabelOf(getProject(p.id)!, "scope")).toBe("界定问题")
 
-      const groups = getNodeGroups().map((g) =>
-        g.id === "research" ? { ...g, nodes: [{ id: "scope", label: "全局改名了" }] } : g)
-      saveNodeGroups(groups)
+      saveNodeGroups(getNodeGroups().map((g) =>
+        g.id === "research" ? { ...g, nodes: [{ id: "scope", label: "全局改名了" }] } : g))
 
-      expect(projectNodes(getProject(withSnap.id)!).map((n) => n.id)).toEqual(["scope", "gather", "analyze", "write-report"])
-      expect(projectNodeLabelOf(getProject(withSnap.id)!, "scope")).toBe("界定问题")
-      expect(projectNodes(getProject(live.id)!).map((n) => n.id)).toEqual(["scope"])
-      expect(projectNodeLabelOf(getProject(live.id)!, "scope")).toBe("全局改名了")
+      expect(projectNodes(getProject(p.id)!).map((n) => n.id)).toEqual(["scope"])
+      expect(projectNodeLabelOf(getProject(p.id)!, "scope")).toBe("全局改名了")
+    })
+
+    it("旧版项目文件里的模板副本读出来就丢掉，项目改为实时读模板；下次保存时从文件里消失", () => {
+      const file = path.join(dir, "projects", "aaaabbbbcccc.json")
+      fs.mkdirSync(path.dirname(file), { recursive: true })
+      fs.writeFileSync(file, JSON.stringify({
+        ...plainInput, id: "aaaabbbbcccc", groupIds: ["research"], groupId: "research", createdAt: 1, updatedAt: 2,
+        groupSnapshot: [{ id: "research", name: "旧副本", nodes: [{ id: "scope", label: "副本里的旧名字" }] }],
+      }), "utf-8")
+
+      const p = getProject("aaaabbbbcccc")!
+      expect("groupSnapshot" in p).toBe(false)
+      expect("groupSnapshot" in listProjects()[0]).toBe(false)
+      expect(projectNodeLabelOf(p, "scope")).toBe("界定问题")
+
+      saveProject(p)
+      expect(JSON.parse(fs.readFileSync(file, "utf-8"))).not.toHaveProperty("groupSnapshot")
     })
 
     it("多个流程组的步骤按顺序合并、同 id 只留第一个，找不到的步骤回落全局找", () => {
       const p = { groupIds: ["general", "research"] }
       expect(projectGroups(p).map((g) => g.id)).toEqual(["general", "research"])
-      const custom = { groupSnapshot: [
+      saveNodeGroups([
+        ...getNodeGroups(),
         { id: "x", name: "X", nodes: [{ id: "s1", label: "一" }, { id: "s2", label: "二" }] },
         { id: "y", name: "Y", nodes: [{ id: "s2", label: "重复" }, { id: "s3", label: "三" }] },
-      ] }
+      ])
+      const custom = { groupIds: ["x", "y"] }
       expect(projectNodes(custom).map((n) => `${n.id}:${n.label}`)).toEqual(["s1:一", "s2:二", "s3:三"])
-      // 副本里已经没有的步骤（历史产物来自旧步骤）回落全局找
+      // 项目的模板里没有的步骤（历史产物来自旧步骤）回落全局找
       expect(projectNodeOf(custom, "build")?.label).toBe("实现")
       expect(projectNodeOf(custom, "no-such")).toBeUndefined()
     })
 
-    it("createProject 透传流程副本、外部目录标记和 metadata；不带就不写这些字段", () => {
-      const snapshot = snapshotGroups([resolveNodeGroup("writing")])
+    it("createProject 透传外部目录标记和 metadata；不带就不写这些字段；不再写模板副本", () => {
       const p = createProject({
-        ...plainInput, groupIds: ["writing"], groupSnapshot: snapshot,
+        ...plainInput, groupIds: ["writing"],
         externalWorkspace: true, metadata: { 读者: "老板" },
       })
       const got = getProject(p.id)!
-      expect(got.groupSnapshot?.[0].id).toBe("writing")
+      expect(got.groupIds).toEqual(["writing"])
+      expect("groupSnapshot" in got).toBe(false)
       expect(got.externalWorkspace).toBe(true)
       expect(got.metadata).toEqual({ 读者: "老板" })
 
       const bare = getProject(createProject({ ...plainInput, name: "b", worktreePath: "/w/b" }).id)!
-      expect("groupSnapshot" in bare).toBe(false)
       expect("externalWorkspace" in bare).toBe(false)
       expect("metadata" in bare).toBe(false)
     })

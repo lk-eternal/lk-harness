@@ -459,7 +459,7 @@ export type TemplateDeletePlan =
   | { ok: true; groups: ProjectNodeGroupDef[]; removed: ProjectNodeGroupDef }
   | Fail
 
-/** 删模板的规则和设置页一致：至少留一个；还有老项目（没有自己的快捷操作副本）在用的不能删 */
+/** 删模板的规则和设置页一致：至少留一个；还有项目在用的不能删（项目实时读模板，删了会退回默认模板；归档的项目也算） */
 export function planTemplateDelete(
   templateId: string,
   groups: readonly ProjectNodeGroupDef[],
@@ -470,7 +470,7 @@ export function planTemplateDelete(
   if (!target) return fail(`没有 id 为「${id}」的模板（先用 templates 查看）`)
   if (groups.length <= 1) return fail("至少要保留 1 个项目模板")
   const count = usage[id] ?? 0
-  if (count > 0) return fail(`还有 ${count} 个老项目在用「${target.name}」，先处理那些项目（归档、删除，或让它们改用别的模板）再删`)
+  if (count > 0) return fail(`还有 ${count} 个项目在用「${target.name}」，先处理那些项目（删除，或让它们改用别的模板）再删`)
   return { ok: true, groups: groups.filter((g) => g.id !== id), removed: target }
 }
 
@@ -483,8 +483,8 @@ export interface TemplateDetail {
   workBranch: WorkBranchMode
   fields: ProjectFieldDef[]
   actions: { id: string; label: string; customPrompt?: string; defaultPrompt?: string }[]
-  /** 还有几个老项目（没有自己的快捷操作副本）直接跟着这个模板走 */
-  usedByOldProjects: number
+  /** 有几个项目在用这个模板：改模板会立刻影响它们，也不能删 */
+  usedByProjects: number
 }
 
 export function buildTemplateDetail(g: ProjectNodeGroupDef, usage: Record<string, number>): TemplateDetail {
@@ -505,7 +505,7 @@ export function buildTemplateDetail(g: ProjectNodeGroupDef, usage: Record<string
         ...(def ? { defaultPrompt: def } : {}),
       }
     }),
-    usedByOldProjects: usage[g.id] ?? 0,
+    usedByProjects: usage[g.id] ?? 0,
   }
 }
 

@@ -92,7 +92,7 @@ export function formatTemplateDetail(d: TemplateDetail, actionId?: string): stri
   } else {
     lines.push("建项时要填的信息：无")
   }
-  if (d.usedByOldProjects > 0) lines.push(`还有 ${d.usedByOldProjects} 个老项目（没有自己的快捷操作副本）直接跟着这个模板走：改它们会立刻受影响，也不能删这个模板。`)
+  if (d.usedByProjects > 0) lines.push(`有 ${d.usedByProjects} 个项目在用这个模板：改模板会立刻影响它们，也不能删这个模板。`)
 
   if (actionId) {
     const a = d.actions.find((x) => x.id === actionId)
@@ -119,7 +119,7 @@ export function formatTemplateSaved(plan: Extract<TemplateSavePlan, { ok: true }
   if (plan.addedActions.length && !plan.created) lines.push(`新增操作：${plan.addedActions.join("、")}`)
   if (plan.removedActions.length) lines.push(`删掉的操作：${plan.removedActions.join("、")}`)
   if (plan.created) lines.push("之后建项目时 template_id 填它的 id 就能选到。")
-  else lines.push("已经建好的项目有自己的快捷操作副本，不受影响；要让某个项目用上新版操作，用 sync_steps。")
+  else lines.push("改动立即对所有在用这个模板的项目生效。")
   return lines.join("\n")
 }
 

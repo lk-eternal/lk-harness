@@ -17,7 +17,6 @@ import {
   fieldValuesToMetadata,
   mergeGroupFields,
   missingRequiredFields,
-  snapshotGroups,
 } from "./project-templates.js"
 import {
   DEFAULT_NODE_GROUP_ID,
@@ -227,7 +226,7 @@ export function snapshotDiffers(snapshot: ProjectNodeGroupDef[], globals: Projec
 }
 
 export interface ProjectListItemDeps {
-  /** 项目实际使用的流程组（副本优先） */
+  /** 项目实际使用的流程组 */
   groups: ProjectNodeGroupDef[]
   /** 全局流程组，判断能否同步 */
   globals: ProjectNodeGroupDef[]
@@ -241,15 +240,11 @@ function resolveGroupIds(ids: readonly string[], globals: readonly ProjectNodeGr
 }
 
 export type ProjectGroupChange =
-  | { ok: true; groupIds: string[]; groupId: string; changed: boolean; groupSnapshot?: ProjectNodeGroupDef[] }
+  | { ok: true; groupIds: string[]; groupId: string }
   | { ok: false; error: string }
 
-/**
- * 改项目的模板。模板真的换了、并且项目有自己的快捷操作副本时，才按所选模板重新复制一份；
- * 模板没变（比如只是改了项目名称，界面把当前模板原样传回来）不能动副本，否则每次保存都会把项目里改过的快捷操作冲掉。
- */
+/** 改项目的模板：所选模板都得存在，一个都没选回落默认模板。项目只记模板 id，步骤和字段实时读模板 */
 export function changeProjectGroups(
-  p: Pick<Project, "groupIds" | "groupId" | "groupSnapshot">,
   ids: readonly string[],
   globals: readonly ProjectNodeGroupDef[],
 ): ProjectGroupChange {
@@ -258,30 +253,16 @@ export function changeProjectGroups(
     if (id && !globals.some((g) => g.id === id)) return { ok: false, error: `项目模板不存在：${id}` }
   }
   const resolved = resolveGroupIds(ids, globals)
-  const current = p.groupSnapshot?.length
-    ? p.groupSnapshot.map((g) => g.id)
-    : resolveGroupIds(p.groupIds?.length ? p.groupIds : (p.groupId ? [p.groupId] : []), globals)
-  const changed = JSON.stringify(resolved) !== JSON.stringify(current)
-  return {
-    ok: true,
-    groupIds: resolved,
-    groupId: resolved[0],
-    changed,
-    ...(changed && p.groupSnapshot?.length
-      ? { groupSnapshot: snapshotGroups(resolved.map((id) => globals.find((g) => g.id === id)!)) }
-      : {}),
-  }
+  return { ok: true, groupIds: resolved, groupId: resolved[0] }
 }
 
 /**
- * 每个全局模板有多少个项目还依赖它（删模板前要看这个）。
- * 有自己快捷操作副本的项目不依赖全局模板，删模板、改模板都不影响它，不算在用；
- * 一个项目绑了好几个模板，每个都算一次；没记模板的老项目算在默认模板头上。
+ * 每个全局模板有多少个项目在用（删模板前要看这个）：项目都实时读模板，模板删了它们会退回默认模板。
+ * 归档的项目也算；一个项目绑了好几个模板，每个都算一次；没记模板的老项目算在默认模板头上。
  */
-export function templateUsage(projects: readonly Pick<Project, "groupId" | "groupIds" | "groupSnapshot">[]): Record<string, number> {
+export function templateUsage(projects: readonly Pick<Project, "groupId" | "groupIds">[]): Record<string, number> {
   const usage: Record<string, number> = {}
   for (const p of projects) {
-    if (p.groupSnapshot?.length) continue
     const ids = new Set((p.groupIds?.length ? p.groupIds : [p.groupId || DEFAULT_NODE_GROUP_ID]).filter(Boolean))
     for (const id of ids) usage[id] = (usage[id] ?? 0) + 1
   }
@@ -334,7 +315,7 @@ export function isProjectOwnedBy(p: Pick<Project, "bindings">, channelId: string
 export interface ProjectViewDeps {
   /** 当前查看的通道，用来判断项目归不归它 */
   channelId: string
-  /** 项目实际使用的流程组（副本优先） */
+  /** 项目实际使用的流程组 */
   groups: ProjectNodeGroupDef[]
   /** 全局流程组，判断能否同步 */
   globals: ProjectNodeGroupDef[]

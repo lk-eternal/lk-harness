@@ -94,8 +94,8 @@ const TEMPLATES = `# 项目模板（templates / template_save / template_delete�
   - actions：快捷操作列表，至少 1 个，名字 ≤40 字且不重复。每项 { label, prompt }：prompt 是点这个操作时交给 AI 的工作要求，要具体：做什么、参考哪些信息、产出什么、成果放哪、缺信息怎么办。不给 actions 会自动放一个「开始」。
 - 帮用户设计模板：先问他这类事一般怎么推进（3~5 步）、每步产出什么、开工前要先知道什么；由你起草整套模板发给他确认，再保存。不要让他自己写提示词。
 - 修改：template_save + template_id，只给要改的项。fields 和 actions 一旦给了就是完整新列表：actions 的顺序就是展示顺序，没列出的已有操作会被删掉。保留已有操作就带它的 id（或原来的名字），不给 prompt 就保持原提示词；新增的操作必须给 prompt。改之前先 templates + template_id 看现状，改完把变化告诉用户。
-- 删除：template_delete + template_id。至少要留 1 个模板；还有老项目直接跟着它走的删不了。删之前先确认。
-- 改了模板，已经建好的项目不受影响（建项时复制过一份快捷操作）；要让某个项目用上新版，用 action=sync_steps。
+- 删除：template_delete + template_id。至少要留 1 个模板；还有项目在用的删不了（归档的项目也算）。删之前先确认。
+- 改了模板，所有在用它的项目立即用上新版，不用同步。
 - 内置模板（开发、测试等）也可以改；它们的快捷操作没写自定义提示词时，用应用内置的默认提示词。`
 
 const SETTINGS = `# 全局设置（settings / settings_set）

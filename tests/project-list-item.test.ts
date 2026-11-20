@@ -96,64 +96,33 @@ describe("buildProjectListItem（设置页项目详情的数据）", () => {
 })
 
 describe("changeProjectGroups（改项目的模板）", () => {
-  it("模板没变（界面把当前模板原样传回来）：不算改动，也不碰项目的快捷操作副本", () => {
-    const snap = snapshotGroups(pick("report"))
-    snap[0].nodes[0].prompt = "项目里单独改过的"
-    const r = changeProjectGroups({ groupIds: ["report"], groupId: "report", groupSnapshot: snap }, ["report"], globals())
-    expect(r).toMatchObject({ ok: true, groupIds: ["report"], groupId: "report", changed: false })
-    expect(r.ok && r.groupSnapshot).toBeUndefined()
-  })
-
-  it("没记模板的老项目：当前算作默认模板，传回默认模板不算改动，换成别的才算", () => {
-    const r = changeProjectGroups({ groupSnapshot: snapshotGroups(pick("general")) }, ["general"], globals())
-    expect(r).toMatchObject({ ok: true, changed: false })
-    const noSnap = changeProjectGroups({}, [DEFAULT_NODE_GROUP_ID], globals())
-    expect(noSnap).toMatchObject({ ok: true, changed: false, groupIds: [DEFAULT_NODE_GROUP_ID] })
-    expect(changeProjectGroups({}, ["general"], globals())).toMatchObject({ ok: true, changed: true, groupIds: ["general"] })
-  })
-
-  it("换了模板且项目有副本：按新选的模板重新复制；没副本就只改 id", () => {
-    const snap = snapshotGroups(pick("general"))
-    const withSnap = changeProjectGroups({ groupIds: ["general"], groupId: "general", groupSnapshot: snap }, ["report", "general"], globals())
-    expect(withSnap).toMatchObject({ ok: true, changed: true, groupIds: ["report", "general"], groupId: "report" })
-    expect(withSnap.ok && withSnap.groupSnapshot?.map((g) => g.id)).toEqual(["report", "general"])
-    const without = changeProjectGroups({ groupIds: ["general"], groupId: "general" }, ["research"], globals())
-    expect(without).toMatchObject({ ok: true, changed: true, groupIds: ["research"] })
-    expect(without.ok && without.groupSnapshot).toBeUndefined()
-  })
-
-  it("只是调换了模板顺序也算改动（第一个是主模板）", () => {
-    const r = changeProjectGroups({ groupIds: ["general", "report"], groupId: "general" }, ["report", "general"], globals())
-    expect(r).toMatchObject({ ok: true, changed: true, groupId: "report" })
+  it("选哪些模板就是哪些，第一个是主模板；只给 id，不带任何模板内容", () => {
+    expect(changeProjectGroups(["report", "general"], globals())).toEqual({ ok: true, groupIds: ["report", "general"], groupId: "report" })
+    expect(changeProjectGroups(["research"], globals())).toEqual({ ok: true, groupIds: ["research"], groupId: "research" })
   })
 
   it("不存在的模板：报错，不静默忽略", () => {
-    const r = changeProjectGroups({ groupIds: ["general"], groupId: "general" }, ["general", "ghost"], globals())
-    expect(r).toEqual({ ok: false, error: "项目模板不存在：ghost" })
+    expect(changeProjectGroups(["general", "ghost"], globals())).toEqual({ ok: false, error: "项目模板不存在：ghost" })
   })
 
   it("重复的 id 去重；空列表回落默认模板", () => {
-    const dup = changeProjectGroups({}, ["report", "report"], globals())
-    expect(dup).toMatchObject({ ok: true, groupIds: ["report"] })
-    const empty = changeProjectGroups({ groupIds: ["report"], groupId: "report" }, [], globals())
-    expect(empty).toMatchObject({ ok: true, groupIds: [DEFAULT_NODE_GROUP_ID], groupId: DEFAULT_NODE_GROUP_ID, changed: true })
+    expect(changeProjectGroups(["report", "report"], globals())).toEqual({ ok: true, groupIds: ["report"], groupId: "report" })
+    expect(changeProjectGroups([], globals())).toEqual({ ok: true, groupIds: [DEFAULT_NODE_GROUP_ID], groupId: DEFAULT_NODE_GROUP_ID })
   })
 })
 
-describe("templateUsage（删模板前看有多少项目还依赖它）", () => {
-  const snap = snapshotGroups(pick("report"))
-
-  it("有自己快捷操作副本的项目不算在用：删模板、改模板都影响不到它", () => {
-    expect(templateUsage([project({ groupSnapshot: snap, groupIds: ["report"], groupId: "report" })])).toEqual({})
-  })
-
-  it("没有副本的项目算在它绑的模板头上；绑了几个模板，每个都算一次", () => {
+describe("templateUsage（删模板前看有多少项目在用它）", () => {
+  it("项目算在它绑的模板头上；绑了几个模板，每个都算一次", () => {
     const usage = templateUsage([
       project({ groupIds: ["report"], groupId: "report" }),
       project({ groupIds: ["report", "general"], groupId: "report" }),
       project({ groupIds: ["general"], groupId: "general" }),
     ])
     expect(usage).toEqual({ report: 2, general: 2 })
+  })
+
+  it("归档的项目也算在用：取消归档后它还要用这个模板", () => {
+    expect(templateUsage([project({ groupIds: ["report"], groupId: "report", archivedAt: 1700000000000 })])).toEqual({ report: 1 })
   })
 
   it("只记了 groupId 的老项目照样算；什么都没记的算在默认模板头上", () => {

@@ -403,7 +403,8 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(created).toContain("✅ 已创建项目")
     const p = store.listProjects().find((x) => x.name === "拜访A公司")!
     expect(p.metadata).toEqual({ 客户名称: "A 公司" })
-    expect(p.groupSnapshot?.[0].nodes.map((n) => n.label)).toEqual(["拜访准备", "会后跟进"])
+    expect(p.groupIds).toEqual([g.id])
+    expect(store.projectNodes(p).map((n) => n.label)).toEqual(["拜访准备", "会后跟进"])
   })
 
   it("不合规的模板整个不保存：新增操作没写提示词 / 重名 / 删光操作，原来的模板一点没变", async () => {
@@ -416,14 +417,13 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(store.getNodeGroups()).toEqual(before)
   })
 
-  it("修改模板：已建项目有自己的副本不受影响；sync_steps 才让它用上新版", async () => {
+  it("修改模板：已建项目立即用上新版，不用同步", async () => {
     const { call, store } = await boot()
     const g0 = store.getNodeGroups().find((x) => x.id === "research")!
     expect(g0.nodes.length).toBeGreaterThan(1)
     const created = await call({ action: "create", name: "调研A", template_id: "research", bindings: BIND })
     expect(created).toContain("✅")
     const id = store.listProjects().find((x) => x.name === "调研A")!.id
-    const snapBefore = whole(store.getProject(id)!.groupSnapshot)
 
     const keep = g0.nodes[0]
     const out = await call({
@@ -432,16 +432,21 @@ describe("项目模板：看、新建、修改、删除", () => {
     })
     expect(out).toContain("✅ 已更新项目模板")
     expect(out).toContain(`删掉的操作：${g0.nodes.slice(1).map((n) => n.label).join("、")}`)
+    expect(out).toContain("改动立即对所有在用这个模板的项目生效")
     expect(store.getNodeGroups().find((x) => x.id === "research")!.nodes.map((n) => n.label)).toEqual(["新版第一步", "收尾"])
-    expect(whole(store.getProject(id)!.groupSnapshot)).toBe(snapBefore)
+    expect(store.projectNodes(store.getProject(id)!).map((n) => n.label)).toEqual(["新版第一步", "收尾"])
+  })
 
-    expect(await call({ action: "sync_steps", project_id: id })).toContain("✅ 已把项目「调研A」的快捷操作同步成模板最新版")
-    expect(store.getProject(id)!.groupSnapshot![0].nodes.map((n) => n.label)).toEqual(["新版第一步", "收尾"])
+  it("sync_steps：项目都实时读模板，没有可同步的；缺 project_id / 项目不存在照常提示", async () => {
+    const { call, store } = await boot()
+    await call({ action: "create", name: "调研A", template_id: "research", bindings: BIND })
+    const id = store.listProjects().find((x) => x.name === "调研A")!.id
+    expect(await call({ action: "sync_steps", project_id: id })).toContain("本来就跟着模板走")
     expect(await call({ action: "sync_steps" })).toContain("需要 project_id")
     expect(await call({ action: "sync_steps", project_id: "nope" })).toContain("未找到项目")
   })
 
-  it("删除模板：自定义的能删；还有老项目（没有自己的副本）在用的不能删；有副本的项目不拦；至少留一个", async () => {
+  it("删除模板：自定义的能删；还有项目在用的不能删（不管哪个入口建的、归档的也算）；至少留一个", async () => {
     const { call, store } = await boot()
     await call({ action: "template_save", template: { name: "临时模板" } })
     const tmp = store.getNodeGroups().find((x) => x.name === "临时模板")!
@@ -450,13 +455,18 @@ describe("项目模板：看、新建、修改、删除", () => {
     expect(await call({ action: "template_delete", template_id: tmp.id })).toContain("没有 id 为")
     expect(await call({ action: "template_delete" })).toContain("需要 template_id")
 
-    // 老项目：没有模板副本，直接跟着全局模板走
+    // 项目都实时读模板：删了它们会退回默认模板，所以有项目在用就不让删
     store.createProject({ name: "老项目", goal: "", worktreePath: path.join(userData, "old"), groupIds: ["event"], groupId: "event" })
     const blocked = await call({ action: "template_delete", template_id: "event" })
-    expect(blocked).toContain("还有 1 个老项目在用")
+    expect(blocked).toContain("还有 1 个项目在用")
     expect(store.getNodeGroups().some((x) => x.id === "event")).toBe(true)
-    // 用 AI 建的项目（有副本）不拦
+    // 用 AI 建的项目同样拦；归档了也拦；项目删掉之后才能删模板
     await call({ action: "create", name: "新项目", template_id: "report", bindings: BIND })
+    const newId = store.listProjects().find((x) => x.name === "新项目")!.id
+    expect(await call({ action: "template_delete", template_id: "report" })).toContain("还有 1 个项目在用")
+    store.setProjectArchived(newId, true)
+    expect(await call({ action: "template_delete", template_id: "report" })).toContain("还有 1 个项目在用")
+    store.deleteProject(newId)
     expect(await call({ action: "template_delete", template_id: "report" })).toContain("✅ 已删除")
 
     store.saveNodeGroups(store.getNodeGroups().filter((x) => x.id === "general"))

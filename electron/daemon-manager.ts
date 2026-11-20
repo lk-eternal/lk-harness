@@ -2073,12 +2073,10 @@ export function initDaemonManager(): void {
         p.groupIds = undefined
       } else {
         const ids = Array.isArray(patch.groupIds) ? patch.groupIds : [String(patch.groupId)]
-        // 模板真的换了、项目又有自己的快捷操作副本时才重新复制；模板没变不动副本（见 changeProjectGroups）
-        const r = changeProjectGroups(p, ids, getNodeGroups())
+        const r = changeProjectGroups(ids, getNodeGroups())
         if (!r.ok) return { ok: false, error: r.error }
         p.groupIds = r.groupIds
         p.groupId = r.groupId
-        if (r.groupSnapshot) p.groupSnapshot = r.groupSnapshot
       }
     }
     saveProject(p)

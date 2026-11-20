@@ -351,7 +351,8 @@ describe("planTemplateSave：修改", () => {
     expect(r.removedActions).toEqual(["丙"])
     expect(r.addedActions).toEqual(["新来的"])
     expect(formatTemplateSaved(r)).toContain("删掉的操作：丙")
-    expect(formatTemplateSaved(r)).toContain("sync_steps")
+    expect(formatTemplateSaved(r)).toContain("改动立即对所有在用这个模板的项目生效")
+    expect(formatTemplateSaved(r)).not.toContain("sync_steps")
   })
 
   it("给了新 prompt 就覆盖；给空串 = 去掉自定义提示词（回到内置默认）", () => {
@@ -393,17 +394,19 @@ describe("planTemplateDelete：和设置页同一套限制", () => {
     expect(r.groups.map((x) => x.id)).toEqual(g.map((x) => x.id).filter((id) => id !== "event"))
     expect(r.removed.name).toBe("活动策划")
   })
-  it("不存在 / 只剩一个 / 还有老项目在用：拒绝并说明", () => {
+  it("不存在 / 只剩一个 / 还有项目在用：拒绝并说明（别建议「归档」，归档的项目也算在用）", () => {
     const g = groups()
     expect(err(planTemplateDelete("nope", g, {}))).toContain("templates")
     expect(err(planTemplateDelete("only", [{ id: "only", name: "唯一", nodes: [{ id: "a", label: "A" }] }], {}))).toContain("至少要保留")
-    expect(err(planTemplateDelete("develop", g, { develop: 2 }))).toContain("还有 2 个老项目")
+    const inUse = err(planTemplateDelete("develop", g, { develop: 2 }))
+    expect(inUse).toContain("还有 2 个项目在用")
+    expect(inUse).not.toContain("归档")
     expect(ok(planTemplateDelete("develop", g, { develop: 0 })).removed.id).toBe("develop")
   })
 })
 
 describe("buildTemplateDetail / formatTemplateDetail", () => {
-  it("内置默认提示词和自定义提示词分开标；老项目还在用要提醒", () => {
+  it("内置默认提示词和自定义提示词分开标；还有项目在用要提醒", () => {
     const g: ProjectNodeGroupDef[] = [{
       id: "t", name: "T", workspace: "worktree", branchMode: "test",
       fields: [{ label: "需求链接", required: true, placeholder: "https://x" }],
@@ -420,7 +423,7 @@ describe("buildTemplateDetail / formatTemplateDetail", () => {
     expect(text).toContain("内置默认提示词")
     expect(text).toContain("自定义：第一行 第二行")
     expect(text).toContain("没写提示词")
-    expect(text).toContain("还有 2 个老项目")
+    expect(text).toContain("有 2 个项目在用这个模板")
   })
 
   it("带 action_id 展开提示词全文：自定义的 / 内置默认的 / 没写的", () => {

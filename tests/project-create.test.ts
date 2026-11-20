@@ -103,7 +103,7 @@ const hit = (url: string) => hits.filter((h) => h.url === url)
 const portOf = (): number => (server.address() as { port: number }).port
 
 describe("应用内建项目", () => {
-  it("建好的项目：通用模板的步骤副本、项目信息、应用内会话键、目录和成果目录", async () => {
+  it("建好的项目：记着所选的模板（不复制内容）、项目信息、应用内会话键、目录和成果目录", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(APP, {
       name: "Q4 调研", goal: "看清竞品", templateId: "research", fields: { 交付形式: "PPT", 截止时间: "周五" },
@@ -114,7 +114,8 @@ describe("应用内建项目", () => {
     for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
     expect(p.externalWorkspace).toBeUndefined()
     expect(p.groupId).toBe("research")
-    expect(p.groupSnapshot?.map((g) => g.id)).toEqual(["research"])
+    expect(p.groupIds).toEqual(["research"])
+    expect(p).not.toHaveProperty("groupSnapshot")
     expect(p.metadata).toEqual({ 交付形式: "PPT", 截止时间: "周五" })
     // 默认只接应用内对话通道的主聊天，会话键记在这个入口上
     const sessionKey = `${APP_CHAT}::project_${p.id}`
@@ -366,22 +367,19 @@ describe("归档项目", () => {
 })
 
 describe("同步步骤和项目信息", () => {
-  it("全局模板改了，项目的步骤副本在同步前不变、同步后跟上", async () => {
+  it("全局模板改了，已建项目的步骤立即跟上，不用同步", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(APP, { name: "周报", templateId: "report" })
+    expect(create.getProjectView(r.projectId!, APP)!.steps.map((s) => s.id)).not.toContain("extra")
+
     const groups = store.getNodeGroups()
     store.saveNodeGroups(groups.map((g) => g.id === "report"
       ? { ...g, nodes: [...g.nodes, { id: "extra", label: "多一步" }] }
       : g))
 
-    const before = create.getProjectView(r.projectId!, APP)!
-    expect(before.steps.map((s) => s.id)).not.toContain("extra")
-    expect(before.canSyncSteps).toBe(true)
-
-    expect(create.syncProjectSteps(r.projectId!)).toEqual({ ok: true })
-    const after = create.getProjectView(r.projectId!, APP)!
-    expect(after.steps.map((s) => s.id)).toContain("extra")
-    expect(after.canSyncSteps).toBe(false)
+    const view = create.getProjectView(r.projectId!, APP)!
+    expect(view.steps.map((s) => s.id)).toContain("extra")
+    expect(view.canSyncSteps).toBe(false)
   })
 
   it("没有步骤副本的老项目：不用同步；项目不存在：报错", async () => {
@@ -454,7 +452,7 @@ describe("应用内建开发项目（接代码仓库）", () => {
     // 仓库、分支不再有专门的字段
     for (const k of ["repoPath", "baseBranch", "featureBranch", "repos", "workspaceType"]) expect(p).not.toHaveProperty(k)
     expect(p.externalWorkspace).toBeUndefined()
-    expect(p.groupSnapshot?.map((g) => g.id)).toEqual(["develop"])
+    expect(p.groupIds).toEqual(["develop"])
     const wt = p.worktreePath
     // 项目目录在应用数据目录下，只克隆了一个仓库：副本就是项目目录，停在新分支上
     expect(path.resolve(wt).startsWith(path.resolve(userData))).toBe(true)
