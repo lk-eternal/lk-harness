@@ -4,6 +4,7 @@ import { registerAgentOutboundTools } from "../src/daemon.js"
 import { registerProjectAgentTools } from "../src/server-project.js"
 import { registerAdminTools } from "../src/server-admin.js"
 import { registerScheduleTools, type ScheduleApi } from "../src/server-schedule.js"
+import { registerMemoryTools } from "../src/server-memory.js"
 import { getBuiltinMcpManifest } from "../src/shared/builtin-mcp-manifest.js"
 
 type Register = (s: McpServer, opts?: unknown) => void
@@ -20,6 +21,7 @@ const noopApi: ScheduleApi = {
   cancel: () => ({ ok: true, text: "" }),
 }
 const registerSchedule: Register = (s) => registerScheduleTools(s, noopApi, () => undefined)
+const registerMemory: Register = (s) => registerMemoryTools(s, "", () => undefined)
 
 const groupNames = (key: string): string[] =>
   (getBuiltinMcpManifest().find((g) => g.key === key)?.tools ?? []).map((t) => t.name).sort()
@@ -57,6 +59,11 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
   it("schedule 端点 == manifest AI 自排程组（3 个）", () => {
     expect(namesOf(registerSchedule)).toEqual(groupNames("lk-harness-schedule"))
     expect(groupNames("lk-harness-schedule")).toEqual(["schedule_cancel", "schedule_create", "schedule_list"])
+  })
+
+  it("memory 端点 == manifest 会话记忆组（3 个）", () => {
+    expect(namesOf(registerMemory)).toEqual(groupNames("lk-harness-memory"))
+    expect(groupNames("lk-harness-memory")).toEqual(["memory_delete", "memory_read", "memory_save"])
   })
 
   it("schedule_create 的说明同样告诉调用者：fresh 没事可报可静默、prompt 里写明何时汇报", () => {

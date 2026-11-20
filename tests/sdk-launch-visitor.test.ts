@@ -62,7 +62,7 @@ vi.mock("../electron/skill-catalog", () => ({
 import { launchSdkAgent } from "../electron/agent-sdk"
 import { initSessionModelStore } from "../src/shared/session-model-store"
 import { patchSessionRecord } from "../src/shared/session-overrides-store"
-import { initHarnessMcpStore, saveHarnessMcpServer, CLAW_MCP_KEY } from "../src/shared/harness-mcp-store"
+import { initHarnessMcpStore, saveHarnessMcpServer, CLAW_MCP_KEY, MEMORY_MCP_KEY } from "../src/shared/harness-mcp-store"
 import { resolveVisitorLimits, VISITOR_SDK_BASE_TOOLS } from "../src/shared/visitor-limits"
 
 let seq = 0
@@ -115,7 +115,7 @@ describe("不受限的会话：和以前一样，一个限制都不加", () => {
     const o = createOpts()
     expect("tools" in o).toBe(false)
     expect(o.mcpServers[CLAW_MCP_KEY]!.url).toBe("http://127.0.0.1:4321/mcp-interactive")
-    expect(Object.keys(o.mcpServers).sort()).toEqual([CLAW_MCP_KEY, "db", "notion"].sort())
+    expect(Object.keys(o.mcpServers).sort()).toEqual([CLAW_MCP_KEY, MEMORY_MCP_KEY, "db", "notion"].sort())
     expect(h.skillCalls[0]![1]).toBeUndefined()
   })
 })

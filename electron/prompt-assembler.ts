@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import * as fs from "node:fs"
+import { app } from "electron"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
 import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience, resolveChannelScene } from "../src/shared/channel-types.js"
@@ -8,7 +9,8 @@ import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
-import { shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
+import { shouldMountMemoryMcp, shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
+import { MEMORY_PROMPT_SECTION, memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
 import { buildVisitorPromptSection, visitorLimitsKey, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
@@ -36,7 +38,7 @@ function stripFrontmatter(raw: string): string {
   return raw.slice(end + 4).trim()
 }
 
-let cachedProtocol: { port: string; admin: boolean; schedule: boolean; body: string } | null = null
+let cachedProtocol: { port: string; admin: boolean; schedule: boolean; memory: boolean; body: string } | null = null
 
 export function clearProtocolTemplateCache(): void {
   cachedProtocol = null
@@ -90,25 +92,27 @@ function substituteDaemonPort(raw: string, port: string): string {
     .replace(/Daemon 端口为 [`']19528[`']/g, `Daemon 端口为 \`${port}\``)
 }
 
-function substituteToolSections(raw: string, includeAdmin: boolean, includeSchedule: boolean): string {
+function substituteToolSections(raw: string, includeAdmin: boolean, includeSchedule: boolean, includeMemory: boolean): string {
   const admin = includeAdmin ? getAdminMcpProtocolSection() : ""
   const schedule = includeSchedule ? `\n\n${AI_SCHEDULE_PROMPT_SECTION}\n` : ""
+  const memory = includeMemory ? `\n\n${MEMORY_PROMPT_SECTION}\n` : ""
   return raw
     .replace(/\{\{ADMIN_MCP_SECTION\}\}/g, () => admin)
     .replace(/\{\{SCHEDULE_MCP_SECTION\}\}/g, () => schedule)
+    .replace(/\{\{MEMORY_MCP_SECTION\}\}/g, () => memory)
 }
 
 /** 会话协议（无 poll，由 harness Session Worker 代管） */
-export function loadProtocol(daemonPort?: number | null, includeAdmin = false, includeSchedule = false): string {
+export function loadProtocol(daemonPort?: number | null, includeAdmin = false, includeSchedule = false, includeMemory = false): string {
   const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin && cachedProtocol.schedule === includeSchedule) return cachedProtocol.body
+  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin && cachedProtocol.schedule === includeSchedule && cachedProtocol.memory === includeMemory) return cachedProtocol.body
   const tplPath = getRuleTemplatePath()
   if (!fs.existsSync(tplPath)) throw new Error(`协议模板缺失: ${tplPath}`)
   let raw = fs.readFileSync(tplPath, "utf-8")
   raw = substituteDaemonPort(raw, port)
-  raw = substituteToolSections(raw, includeAdmin, includeSchedule)
+  raw = substituteToolSections(raw, includeAdmin, includeSchedule, includeMemory)
   const body = stripFrontmatter(raw)
-  cachedProtocol = { port, admin: includeAdmin, schedule: includeSchedule, body }
+  cachedProtocol = { port, admin: includeAdmin, schedule: includeSchedule, memory: includeMemory, body }
   return body
 }
 
@@ -175,6 +179,14 @@ function ctxIncludeSchedule(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKe
   })
 }
 
+/** 会话记忆段：与 lk-harness-memory 工具的挂载条件同一个判定（交互会话，不含独立任务和访客） */
+function ctxIncludeMemory(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "visitor">): boolean {
+  return shouldMountMemoryMcp({
+    endpoint: ctx.meta?.chatType === "task" ? "task" : ctx.visitor ? "visitor" : "interactive",
+    sessionKey: ctx.sessionKey,
+  })
+}
+
 /**
  * 独立定时任务会话的协议段：告诉 AI 它的输出没人看、结果要用 send_result 交付，以及结果会去哪。
  * 不是独立任务会话（含非独立任务、普通会话）返回空串。读任务文件失败也按「不是」处理，不阻断拉起。
@@ -198,7 +210,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const includeAdmin = ctxIncludeAdmin(ctx)
   const h = createHash("md5")
-  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin, ctxIncludeSchedule(ctx)))
+  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin, ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)))
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) h.update(identity)
   const scope = resolvePromptRuleScope(ctx)
@@ -219,7 +231,7 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
   const parts: string[] = []
   parts.push("---")
-  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx)))
+  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   if (identity) {
@@ -287,6 +299,13 @@ function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessa
   }
 }
 
+/** 首轮带给 AI 的会话记忆（key → 内容）；没挂记忆工具的会话（独立任务、访客）不带 */
+function firstTurnMemory(ctx: PromptAssemblyContext): Record<string, string> | undefined {
+  const sessionKey = ctx.sessionKey?.trim()
+  if (!sessionKey || !ctxIncludeMemory(ctx)) return undefined
+  return memoryForPrompt(readSessionMemory(app.getPath("userData"), sessionKey))
+}
+
 /** Session Worker 向 Agent 交付一批用户消息（JSON 结构化，避免正文与元数据混淆） */
 export function assembleTurnPrompt(
   messages: TurnMessage[],
@@ -300,8 +319,10 @@ export function assembleTurnPrompt(
   }))
   const sessionMeta: Record<string, string> = {}
   if (ctx.meta?.chatType) sessionMeta.chat_type = ctx.meta.chatType
+  const memory = opts?.firstTurn ? firstTurnMemory(ctx) : undefined
   const payload: Record<string, unknown> = {
     ...(Object.keys(sessionMeta).length ? { session: sessionMeta } : {}),
+    ...(memory ? { memory } : {}),
     messages: [
       ...history,
       ...messages.map((m) => ({

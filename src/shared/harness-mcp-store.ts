@@ -18,8 +18,9 @@ export const CLAW_MCP_KEY = "lk-harness"
 export const ADMIN_MCP_KEY = "lk-harness-admin"
 export const PROJECT_MCP_KEY = "lk-harness-project"
 export const SCHEDULE_MCP_KEY = "lk-harness-schedule"
+export const MEMORY_MCP_KEY = "lk-harness-memory"
 
-const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY, PROJECT_MCP_KEY, SCHEDULE_MCP_KEY])
+const RESERVED = new Set([CLAW_MCP_KEY, ADMIN_MCP_KEY, PROJECT_MCP_KEY, SCHEDULE_MCP_KEY, MEMORY_MCP_KEY])
 
 let userDataRoot = ""
 
@@ -201,6 +202,15 @@ export function shouldMountScheduleMcp(o: {
   return (o.includeAdmin || o.includeProject) && o.endpoint !== "task" && !!o.sessionKey?.trim()
 }
 
+/**
+ * 会话记忆工具是否挂载：交互会话才有。独立定时任务每次都是全新 Agent、没有「会话」可记；访客是受限档，不开放。
+ * 记忆绑定调用者会话，没有调用者身份就不挂。
+ * 提示词里「会话记忆」那一段和首轮带入记忆都与工具挂载共用这个判定。
+ */
+export function shouldMountMemoryMcp(o: { endpoint: HarnessMcpEndpoint; sessionKey?: string }): boolean {
+  return o.endpoint === "interactive" && !!o.sessionKey?.trim()
+}
+
 export function buildBuiltinMcpServers(
   port: number | null,
   includeAdmin: boolean,
@@ -224,6 +234,9 @@ export function buildBuiltinMcpServers(
     if (includeProject) servers[PROJECT_MCP_KEY] = { url: `${base}/mcp-project` }
     if (shouldMountScheduleMcp({ includeAdmin, includeProject, endpoint, sessionKey: sk })) {
       servers[SCHEDULE_MCP_KEY] = { url: `${base}/mcp-schedule`, ...invokerHeaders }
+    }
+    if (shouldMountMemoryMcp({ endpoint, sessionKey: sk })) {
+      servers[MEMORY_MCP_KEY] = { url: `${base}/mcp-memory`, ...invokerHeaders }
     }
   }
   return servers

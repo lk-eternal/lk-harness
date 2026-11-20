@@ -75,6 +75,21 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
       params: [{ name: "id", required: true, type: "string", description: "排程 id（来自 schedule_list）" }],
     },
   },
+  "lk-harness-memory": {
+    memory_save: {
+      summary: "记一条当前会话的记忆。对话只保留最近约 15 轮，记忆不会随会话滚动丢失。",
+      params: [
+        { name: "key", required: true, type: "string", description: "记忆名，简短（≤40 字），同名覆盖" },
+        { name: "content", required: true, type: "string", description: "记忆内容（≤500 字）" },
+      ],
+      notes: "每个会话最多 20 条；新起的会话首轮会自动带上记忆；重置会话才会清空。",
+    },
+    memory_read: { summary: "读出当前会话的全部记忆。", params: [] },
+    memory_delete: {
+      summary: "删掉当前会话的一条记忆。",
+      params: [{ name: "key", required: true, type: "string", description: "要删的记忆名" }],
+    },
+  },
   "lk-harness-project": {
     project_register_artifact: {
       summary: "登记项目最近产物（只写元数据）。",

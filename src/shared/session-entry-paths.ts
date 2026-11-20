@@ -9,6 +9,8 @@ export const SESSION_KEY_FILE = "session-key.txt"
 export const STATE_FILE = "state.json"
 export const CARRYOVER_FILE = "carryover.json"
 export const MIRROR_FILE = "mirror.jsonl"
+/** AI 自己记的会话记忆：独立于账本，账本滚动、切供应商都不动它 */
+export const MEMORY_FILE = "memory.json"
 export const QUEUE_SUBDIR = "queue"
 export const PI_SUBDIR = "pi"
 export const SDK_JSONL_SUBDIR = "sdk-jsonl"
@@ -149,6 +151,10 @@ export function sessionQueueDir(root: string, sessionKey: string): string {
 
 export function sessionMirrorPath(root: string, sessionKey: string): string {
   return path.join(sessionEntryDir(root, sessionKey), MIRROR_FILE)
+}
+
+export function sessionMemoryPath(root: string, sessionKey: string): string {
+  return path.join(sessionEntryDir(root, sessionKey), MEMORY_FILE)
 }
 
 export function sessionCarryoverPath(root: string, sessionKey: string): string {

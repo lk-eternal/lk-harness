@@ -22,6 +22,7 @@ import {
   stashCarryover,
 } from "../electron/carryover"
 import { sessionEntryDir } from "../src/shared/session-entry-paths"
+import { readSessionMemory, saveSessionMemory } from "../src/shared/session-memory"
 
 describe("resetAllSessionContext", () => {
   beforeEach(() => {
@@ -48,6 +49,16 @@ describe("resetAllSessionContext", () => {
     expect(h.resetCalls).toEqual(["sk"])
     expect(readMirrorTurns("sk")).toEqual([])
     expect(peekCarryover("sk")).toBeUndefined()
+  })
+
+  it("会话记忆也清掉：重置是用户要一个全新会话，旧记忆不能再带进去；别的会话的记忆不动", () => {
+    saveSessionMemory(h.userData, "sk", "a", "1")
+    saveSessionMemory(h.userData, "other", "b", "2")
+
+    resetAllSessionContext("sk")
+
+    expect(readSessionMemory(h.userData, "sk")).toEqual([])
+    expect(readSessionMemory(h.userData, "other")).toEqual([{ key: "b", content: "2" }])
   })
 
   it("只清本会话，别的会话的待搬运块不受影响", () => {

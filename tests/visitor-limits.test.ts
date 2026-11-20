@@ -16,6 +16,7 @@ import {
   ADMIN_MCP_KEY,
   CLAW_MCP_KEY,
   SCHEDULE_MCP_KEY,
+  MEMORY_MCP_KEY,
   buildSdkMcpServers,
   initHarnessMcpStore,
   saveHarnessMcpServer,
@@ -174,9 +175,9 @@ describe("buildSdkMcpServers：访客用专用端点，用户 MCP 按点名挂�
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it("不传白名单：用户装的全挂（主人 / 同我档，行为和以前一样）", () => {
+  it("不传白名单：用户装的全挂（主人 / 同我档），内置的是通用端点加会话记忆", () => {
     const s = buildSdkMcpServers(1234, false, "interactive", false, "sk")
-    expect(Object.keys(s).sort()).toEqual([CLAW_MCP_KEY, "db", "notion"].sort())
+    expect(Object.keys(s).sort()).toEqual([CLAW_MCP_KEY, MEMORY_MCP_KEY, "db", "notion"].sort())
     expect((s[CLAW_MCP_KEY] as { url: string }).url).toBe("http://127.0.0.1:1234/mcp-interactive")
   })
 
@@ -185,11 +186,12 @@ describe("buildSdkMcpServers：访客用专用端点，用户 MCP 按点名挂�
     expect(s[CLAW_MCP_KEY]).toEqual({ url: "http://127.0.0.1:1234/mcp-visitor", headers: { "X-Harness-Session-Key": "sk" } })
   })
 
-  it("白名单为空：一个用户 MCP 都不挂；管理 / 自排程 MCP 也不会出现", () => {
+  it("白名单为空：一个用户 MCP 都不挂；管理 / 自排程 / 会话记忆 MCP 也不会出现", () => {
     const s = buildSdkMcpServers(1234, false, "visitor", false, "sk", [])
     expect(Object.keys(s)).toEqual([CLAW_MCP_KEY])
     expect(s[ADMIN_MCP_KEY]).toBeUndefined()
     expect(s[SCHEDULE_MCP_KEY]).toBeUndefined()
+    expect(s[MEMORY_MCP_KEY]).toBeUndefined()
   })
 
   it("点名什么挂什么，不存在的名字忽略", () => {

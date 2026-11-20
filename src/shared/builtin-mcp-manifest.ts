@@ -51,6 +51,16 @@ export function getBuiltinMcpManifest(): BuiltinMcpGroup[] {
       ]),
     },
     {
+      key: "lk-harness-memory",
+      title: "LK Harness 会话记忆",
+      scope: "交互会话可用（独立定时任务、访客会话没有）",
+      tools: withDocs("lk-harness-memory", [
+        { name: "memory_save", description: "记一条当前会话的记忆（同名覆盖更新）。" },
+        { name: "memory_read", description: "读出当前会话的全部记忆。" },
+        { name: "memory_delete", description: "删掉当前会话的一条记忆。" },
+      ]),
+    },
+    {
       key: "lk-harness-project",
       title: "LK Harness 项目工具",
       scope: "仅项目会话可用",

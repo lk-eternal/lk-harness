@@ -108,6 +108,7 @@ import { z } from "zod";
 import { registerAdminTools } from "./server-admin.js";
 import { registerProjectAgentTools } from "./server-project.js";
 import { registerScheduleTools, type ScheduleApi } from "./server-schedule.js";
+import { registerMemoryTools } from "./server-memory.js";
 import { aiScheduleStateFile, readAiScheduleRuns, writeAiScheduleRuns } from "./shared/ai-schedule-state.js";
 import { registerDiffTools } from "./server-diff.js";
 import { initProjectStore, hasProjectNewDraft, getProject, getNodeGroups, findProjectByGroupChat, getProjectNewDraft, saveProjectNewDraft, clearProjectNewDraft } from "./shared/project-store.js";
@@ -4301,6 +4302,13 @@ function createScheduleMcpServer(): McpServer {
   return s;
 }
 
+/** 会话记忆：交互会话挂载（见 buildBuiltinMcpServers），记忆永远属于调用者所在的会话 */
+function createMemoryMcpServer(): McpServer {
+  const s = new McpServer({ name: "lk-harness-memory", version: PKG_VERSION, description: "会话记忆 – 记录和读取当前会话的记忆" });
+  registerMemoryTools(s, APP_DATA_DIR, getMcpInvokerSessionKey);
+  return s;
+}
+
 /** 项目会话模式：仅项目工具 */
 function createProjectMcpServer(): McpServer {
   const s = new McpServer({ name: "lk-harness-project", version: PKG_VERSION, description: "项目工具 – 仅项目会话" });
@@ -4322,18 +4330,20 @@ function startHttpServer(): Promise<number> {
       const method = req.method;
 
       try {
-        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-visitor" || pathname === "/mcp-project" || pathname === "/mcp-schedule") {
+        if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-visitor" || pathname === "/mcp-project" || pathname === "/mcp-schedule" || pathname === "/mcp-memory") {
           const isTask = pathname === "/mcp-task";
           // 访客会话的内置端点只有 send_question：和交互端点一样算「会话在用 MCP」
           const isVisitor = pathname === "/mcp-visitor";
           const isInteractive = pathname === "/mcp-interactive" || isVisitor;
           const isProject = pathname === "/mcp-project";
           const isSchedule = pathname === "/mcp-schedule";
+          const isMemory = pathname === "/mcp-memory";
           const srv = isVisitor ? createVisitorMcpServer()
             : isInteractive ? createInteractiveMcpServer()
             : isTask ? createTaskMcpServer()
             : isProject ? createProjectMcpServer()
             : isSchedule ? createScheduleMcpServer()
+            : isMemory ? createMemoryMcpServer()
             : createAdminMcpServer();
           const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           if (isTask || isInteractive) { activeMcpConnections++; lastMcpRequestTime = Date.now(); }
@@ -4342,7 +4352,7 @@ function startHttpServer(): Promise<number> {
             if (isTask || isInteractive) activeMcpConnections = Math.max(0, activeMcpConnections - 1);
           });
           await srv.connect(transport);
-          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || isVisitor || pathname === "/mcp-task" || isSchedule)
+          const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || isVisitor || pathname === "/mcp-task" || isSchedule || isMemory)
             ? (req.headers["x-harness-session-key"] as string | undefined)
             : undefined;
           await runWithMcpInvokerSessionKey(invokerSk, async () => { await transport.handleRequest(req, res); });
