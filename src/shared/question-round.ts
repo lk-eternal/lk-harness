@@ -4,12 +4,16 @@
 //     （他可能还没看到这一轮后面发的题）。
 //   · 这一轮结束之后：这一轮的题都选完就交给 Agent；用户再打字，没选的题才算被他的文字代替而关闭。
 // 轮的编号只在内存里。daemon 重启后，存盘的题记着的旧编号都对不上当前这一轮，一律算已结束。
+//
+// 一轮只有一个发言人（投递按发言人分批，见 file-queue）。每道题还记下自己归哪个发言人：
+// 只有他本人和管理员能点这道题、他打字才算代替了这道题。群里别人的点击和打字不碰它。
 
 import { randomUUID } from "node:crypto";
 import { normalizeSessionKey } from "./channel-types.js";
 
 export class QuestionRounds {
   private readonly active = new Map<string, string>();
+  private readonly owners = new Map<string, string>();
 
   private key(sessionKey: string): string {
     return normalizeSessionKey(sessionKey) || sessionKey;
@@ -26,6 +30,18 @@ export class QuestionRounds {
     return id;
   }
 
+  /** Agent 领到一批消息：记下这一批的发言人，这一轮问的题归他；整批都没有发言人（系统消息、定时任务）就清掉 */
+  setOwner(sessionKey: string, owner: string | undefined): void {
+    const key = this.key(sessionKey);
+    if (owner) this.owners.set(key, owner);
+    else this.owners.delete(key);
+  }
+
+  /** 这一轮问的题归谁：发题时记在题目上 */
+  owner(sessionKey: string): string | undefined {
+    return this.owners.get(this.key(sessionKey));
+  }
+
   /** 这一轮结束了（Agent 进入等待）：这一轮问的题此后都算已结束 */
   end(sessionKey: string): void {
     this.active.delete(this.key(sessionKey));
@@ -35,4 +51,12 @@ export class QuestionRounds {
   isEnded(sessionKey: string, round: string | undefined): boolean {
     return !round || this.active.get(this.key(sessionKey)) !== round;
   }
+}
+
+/**
+ * 这个人能不能替这道题作答（点它、或者打字代替它）：归属人本人，或管理员。
+ * 没有归属人的题（系统消息、定时任务问的、旧版本存下的）谁都可以；认不出是谁（回调没带点击人）也不拦。
+ */
+export function mayAnswerQuestion(owner: string | undefined, who: string | undefined, isAdmin: boolean): boolean {
+  return !owner || !who || who === owner || isAdmin;
 }

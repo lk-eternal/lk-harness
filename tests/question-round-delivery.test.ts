@@ -6,6 +6,7 @@
  *     这一轮还在跑就留着，Agent 进入等待时再交——否则 Agent 会拿着第一题的答案先跑，跑完了才等到第二题。
  *   · 用户打字：只处理那一轮已经结束的题（已选的先交给 Agent，没选的关掉）；那一轮还在跑的题不动。
  *   · 新消息送达只收口旧卡，不关卡上的题。
+ *   · 题归问它的那一轮的发言人：只有他和管理员能点、他打字才算代替；群里别人的点击和打字不碰它。
  *
  * 直接驱动 daemon 里真实的 handleCardAction / pushMessage / deliverReadyQuestionAnswers，
  * 通道里挂假的飞书发送器，队列是真实的文件队列（临时目录）。
@@ -25,7 +26,7 @@ const h = vi.hoisted(() => {
 })
 
 import {
-  activeSessionMap, agentStreamCards, cardQuestionMap, channels, deliverReadyQuestionAnswers, handleCardAction,
+  activeSessionMap, agentStreamCards, cardQuestionMap, channels, collectFreshAndTrack, deliverReadyQuestionAnswers, handleCardAction,
   pushMessage, questionRounds, rememberStreamCardQuestion, sealActiveStreamCardOnDelivery,
 } from "../src/daemon.js"
 import { clearAllQueueMessages, getQueueMessages, initFileQueue } from "../src/file-queue.js"
@@ -87,10 +88,13 @@ function seedOldCard(blocks: El[], session = SESSION): { messageId: string; card
   return { messageId, cardId }
 }
 
-const act = (messageId: string, value: El) =>
-  handleCardAction(rt, { messageId, chatId: "oc_round_test", value, operatorOpenId: "ou_round_user" } as any) as Promise<El>
-const pick = (messageId: string, blockId: string, opt: string, session = SESSION) =>
-  act(messageId, { kind: "question", opt, sk: session, blockId })
+/** 这道题归谁：问它的那一轮的发言人 */
+const owned = (owner: string, blocks: El[]): El[] => blocks.map((b) => ({ ...b, owner }))
+
+const act = (messageId: string, value: El, operator = "ou_round_user") =>
+  handleCardAction(rt, { messageId, chatId: "oc_round_test", value, operatorOpenId: operator } as any) as Promise<El>
+const pick = (messageId: string, blockId: string, opt: string, session = SESSION, operator?: string) =>
+  act(messageId, { kind: "question", opt, sk: session, blockId }, operator)
 
 /** Agent 进入阻塞 poll：这一轮结束，选完的答案此时交出 */
 function endRound(session = SESSION) {
@@ -99,9 +103,9 @@ function endRound(session = SESSION) {
 }
 
 /** 用户在飞书里打字（群聊 + 当前会话指针，消息会路由到 SESSION） */
-function typeText(text: string) {
+function typeText(text: string, sender = "ou_round_user") {
   activeSessionMap.set(CHAT, SESSION)
-  pushMessage(text, `om_round_typed_${++seq}`, CHAT, "group", "ou_round_user")
+  pushMessage(text, `om_round_typed_${++seq}`, CHAT, "group", sender)
 }
 
 const replacedIds = () => (sender.replaceCardElement.mock.calls as unknown as [string, string][]).map((c) => c[1])
@@ -114,8 +118,11 @@ beforeEach(() => {
   channels.set(CH, rt)
   questionRounds.end(SESSION)
   questionRounds.end(OTHER_SESSION)
+  questionRounds.setOwner(SESSION, undefined)
 })
 afterEach(() => {
+  rt.cfg.mainUserEnabled = false
+  delete rt.cfg.mainUserOpenId
   agentStreamCards.delete(SESSION)
   agentStreamCards.delete(OTHER_SESSION)
   cardQuestionMap.clear()
@@ -300,5 +307,150 @@ describe("新消息送达只收口旧卡，不关卡上的题", () => {
     expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A"])
     expect(agentStreamCards.get(SESSION)?.questionBlocks[0].answered).toBeUndefined()
     expect(cardQuestionMap.has(fresh)).toBe(true)
+  })
+})
+
+const NOT_YOURS = "这道题是问另一位成员的，请让他本人选择"
+
+describe("题归这一轮的发言人：点选", () => {
+  it("别人点：只提示，不改卡、不入队、不占掉答题位；归属人随后照常作答", async () => {
+    const messageId = seedLiveCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+    const refused = await pick(messageId, "q_first", "B", SESSION, "ou_b")
+
+    expect(refused).toEqual({ toast: { type: "warning", content: NOT_YOURS } })
+    expect(agentStreamCards.get(SESSION)?.questionBlocks[0].answered).toBeUndefined()
+    expect(cardQuestionMap.get(messageId)?.blocks?.[0].answered).toBeUndefined()
+    expect(queued()).toEqual([])
+
+    const ok = await pick(messageId, "q_first", "A", SESSION, "ou_a")
+    expect(ok.toast).toMatchObject({ type: "success", content: "已选择: A，AI 说完后一起提交" })
+    endRound()
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A"])
+  })
+
+  it("通道主用户（管理员）能替别人点", async () => {
+    rt.cfg.mainUserEnabled = true
+    rt.cfg.mainUserOpenId = "ou_admin"
+    const messageId = seedLiveCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+
+    const r = await pick(messageId, "q_first", "B", SESSION, "ou_admin")
+    expect(r.toast).toMatchObject({ type: "success" })
+    endRound()
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：B"])
+  })
+
+  it("没有归属人的题（系统消息、定时任务问的、旧版本存下的）谁都能点", async () => {
+    const messageId = seedLiveCard(inRound(SESSION, FIRST))
+    const r = await pick(messageId, "q_first", "A", SESSION, "ou_stranger")
+    expect(r.toast).toMatchObject({ type: "success" })
+  })
+
+  it("旧卡（内存里没有这张卡）上同样：别人点被拒，归属人点照常作答", async () => {
+    const { messageId } = seedOldCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+    const refused = await pick(messageId, "q_first", "B", SESSION, "ou_b")
+
+    expect(refused).toEqual({ toast: { type: "warning", content: NOT_YOURS } })
+    expect(sender.replaceCardElement).not.toHaveBeenCalled()
+    expect(cardQuestionMap.get(messageId)?.blocks?.[0].answered).toBeUndefined()
+
+    const ok = await pick(messageId, "q_first", "A", SESSION, "ou_a")
+    expect(ok.toast).toMatchObject({ type: "success" })
+    expect(sender.replaceCardElement).toHaveBeenCalledTimes(1)
+  })
+
+  it("多选题的提交也一样：别人提交被拒，不会去读勾选内容", async () => {
+    const multi = { blockId: "q_multi", text: "给哪些人开？", options: ["甲", "乙"], multi: true }
+    const messageId = seedLiveCard(inRound(SESSION, ...owned("ou_a", [multi])))
+
+    const r = await act(messageId, { kind: "question_submit", sk: SESSION, blockId: "q_multi" }, "ou_b")
+    expect(r).toEqual({ toast: { type: "warning", content: NOT_YOURS } })
+  })
+})
+
+describe("题归这一轮的发言人：打字", () => {
+  it("A、B、C 各有一张卡：A 打字只关 A 的，B、C 的还开着，仍能由各自的人点", async () => {
+    const a = seedOldCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+    const b = seedOldCard(inRound(SESSION, ...owned("ou_b", [{ ...SECOND, blockId: "q_b" }])))
+    const c = seedOldCard(inRound(SESSION, ...owned("ou_c", [{ blockId: "q_c", text: "发不发版？", options: ["发", "不发"] }])))
+    questionRounds.end(SESSION)
+
+    typeText("我自己说吧", "ou_a")
+    await vi.waitFor(() => expect(cardQuestionMap.has(a.messageId)).toBe(false))
+
+    expect(cardQuestionMap.has(b.messageId)).toBe(true)
+    expect(cardQuestionMap.has(c.messageId)).toBe(true)
+    expect(cardQuestionMap.get(b.messageId)?.blocks?.[0].closedNote).toBeUndefined()
+    expect(queued()).toEqual(["我自己说吧"])
+
+    const r = await pick(b.messageId, "q_b", "要", SESSION, "ou_b")
+    expect(r.toast).toMatchObject({ type: "success" })
+  })
+
+  it("别人打字：不关你的题，也不会把你已选的答案提前交出去", async () => {
+    const { messageId } = seedOldCard(inRound(SESSION, ...owned("ou_a", [FIRST, SECOND])))
+    await pick(messageId, "q_first", "A", SESSION, "ou_a")
+    sender.replaceCardElement.mockClear()
+    questionRounds.end(SESSION)
+
+    typeText("我有别的事", "ou_b")
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(queued()).toEqual(["我有别的事"])
+    expect(cardQuestionMap.get(messageId)?.blocks?.map((b) => [b.answered, b.closedNote])).toEqual([["A", undefined], [undefined, undefined]])
+    expect(sender.replaceCardElement).not.toHaveBeenCalled()
+  })
+
+  it("归属人自己打字：已选的先交出，没选的关掉，然后才是他的文字", async () => {
+    const { messageId } = seedOldCard(inRound(SESSION, ...owned("ou_a", [FIRST, SECOND])))
+    await pick(messageId, "q_first", "A", SESSION, "ou_a")
+    questionRounds.end(SESSION)
+
+    typeText("别的你定", "ou_a")
+    await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A", "别的你定"])
+  })
+
+  it("主用户（管理员）打字：别人的题也算被他的文字代替", async () => {
+    rt.cfg.mainUserEnabled = true
+    rt.cfg.mainUserOpenId = "ou_admin"
+    const { messageId } = seedOldCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+    questionRounds.end(SESSION)
+
+    typeText("这个先不用选了", "ou_admin")
+    await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
+    expect(queued()).toEqual(["这个先不用选了"])
+  })
+
+  it("没有归属人的题：谁打字都算代替（和以前一致）", async () => {
+    const { messageId } = seedOldCard(inRound(SESSION, FIRST))
+    questionRounds.end(SESSION)
+
+    typeText("我来说", "ou_stranger")
+    await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
+  })
+})
+
+describe("领消息时记下这一批的发言人", () => {
+  const delivered = (senderOpenId?: string) => [{
+    text: "帮我看下", messageId: `om_batch_${++seq}`, sessionKey: SESSION, timestamp: 1,
+    ...(senderOpenId ? { meta: { senderOpenId } } : {}),
+  }]
+
+  it("领到哪个人的一批，这一轮问的题就归哪个人；换一批就换人", () => {
+    collectFreshAndTrack(delivered("ou_a"), SESSION)
+    expect(questionRounds.owner(SESSION)).toBe("ou_a")
+    collectFreshAndTrack(delivered("ou_b"), SESSION)
+    expect(questionRounds.owner(SESSION)).toBe("ou_b")
+  })
+
+  it("整批都没有发言人（系统消息、定时任务）：不沿用上一批的人", () => {
+    collectFreshAndTrack(delivered("ou_a"), SESSION)
+    collectFreshAndTrack(delivered(), SESSION)
+    expect(questionRounds.owner(SESSION)).toBeUndefined()
+  })
+
+  it("题的归属人随未决问题登记存盘，重启后还认得", () => {
+    const messageId = seedLiveCard(inRound(SESSION, ...owned("ou_a", [FIRST])))
+    expect(cardQuestionMap.get(messageId)?.blocks?.[0]).toMatchObject({ owner: "ou_a" })
   })
 })

@@ -360,6 +360,13 @@ function senderOf(message: QueueMessage | null): string | undefined {
   return message?.meta?.senderOpenId || undefined;
 }
 
+/** 一批消息的发言人：最后一个有发言人的；整批都没有（系统消息、定时任务）就是 undefined */
+export function batchOwnerOf(messages: ReadonlyArray<QueueMessage | null>): string | undefined {
+  let owner: string | undefined;
+  for (const message of messages) owner = senderOf(message) ?? owner;
+  return owner;
+}
+
 /**
  * 一批投递的边界：相邻同一个人的消息合并，换人就换批（不会把后发的提到先发的前面）。
  * 没有发言人的消息跟随当前批，不单独成批。
@@ -397,13 +404,10 @@ export function claimSessionMessages(filterSessionKey?: string): QueueMessage[] 
   } catch {
     return [];
   }
-  let owner: string | undefined;
-  for (const f of names.filter((n) => n.endsWith(".claimed")).sort()) {
-    owner = senderOf(parseMessageFile(path.join(dir, f))) ?? owner;
-  }
+  const inFlight = names.filter((n) => n.endsWith(".claimed")).sort().map((f) => parseMessageFile(path.join(dir, f)));
   const queued = listPendingFiles(dir, names).sort();
   const queuedMessages = queued.map((f) => parseMessageFile(path.join(dir, f)));
-  for (const f of queued.slice(0, batchLength(owner, queuedMessages))) {
+  for (const f of queued.slice(0, batchLength(batchOwnerOf(inFlight), queuedMessages))) {
     const src = path.join(dir, f);
     try {
       fs.renameSync(src, path.join(dir, f.replace(/\.qmsg$/, ".claimed")));

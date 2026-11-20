@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { QuestionRounds } from "../src/shared/question-round"
+import { QuestionRounds, mayAnswerQuestion } from "../src/shared/question-round"
 
 const SESSION = "ch_a|oc_1::D:\\ws\\a"
 
@@ -51,5 +51,56 @@ describe("QuestionRounds", () => {
   it("没有进行中的一轮时结束一轮：什么也不发生", () => {
     const rounds = new QuestionRounds()
     expect(() => rounds.end(SESSION)).not.toThrow()
+  })
+})
+
+describe("QuestionRounds 这一轮问的题归谁", () => {
+  it("领到一批消息记下发言人，发题时取出来；换了一批就换人", () => {
+    const rounds = new QuestionRounds()
+    expect(rounds.owner(SESSION)).toBeUndefined()
+    rounds.setOwner(SESSION, "ou_a")
+    expect(rounds.owner(SESSION)).toBe("ou_a")
+    rounds.setOwner(SESSION, "ou_b")
+    expect(rounds.owner(SESSION)).toBe("ou_b")
+  })
+
+  it("整批都没有发言人（系统消息、定时任务）：清掉上一批的发言人，不会沿用", () => {
+    const rounds = new QuestionRounds()
+    rounds.setOwner(SESSION, "ou_a")
+    rounds.setOwner(SESSION, undefined)
+    expect(rounds.owner(SESSION)).toBeUndefined()
+  })
+
+  it("会话互不影响；盘符路径里重复的反斜杠不会让同一个会话分成两份", () => {
+    const rounds = new QuestionRounds()
+    rounds.setOwner("ch_a|oc_1::D:\\\\ws\\\\a", "ou_a")
+    expect(rounds.owner(SESSION)).toBe("ou_a")
+    expect(rounds.owner("ch_a|oc_2::D:\\ws\\b")).toBeUndefined()
+  })
+
+  it("一轮结束不清发言人：下一批领到消息时才换", () => {
+    const rounds = new QuestionRounds()
+    rounds.setOwner(SESSION, "ou_a")
+    rounds.end(SESSION)
+    expect(rounds.owner(SESSION)).toBe("ou_a")
+  })
+})
+
+describe("mayAnswerQuestion", () => {
+  it("归属人本人能答，别人不能", () => {
+    expect(mayAnswerQuestion("ou_a", "ou_a", false)).toBe(true)
+    expect(mayAnswerQuestion("ou_a", "ou_b", false)).toBe(false)
+  })
+
+  it("管理员能替任何人的题作答", () => {
+    expect(mayAnswerQuestion("ou_a", "ou_admin", true)).toBe(true)
+  })
+
+  it("没有归属人的题谁都能答", () => {
+    expect(mayAnswerQuestion(undefined, "ou_b", false)).toBe(true)
+  })
+
+  it("认不出是谁（回调没带点击人）不拦", () => {
+    expect(mayAnswerQuestion("ou_a", undefined, false)).toBe(true)
   })
 })

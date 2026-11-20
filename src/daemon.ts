@@ -15,7 +15,7 @@ import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
 import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-page.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
-import { QuestionRounds } from "./shared/question-round.js";
+import { QuestionRounds, mayAnswerQuestion } from "./shared/question-round.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
@@ -29,6 +29,7 @@ import {
   getEarliestMessageTime,
   claimNextMessage,
   claimSessionMessages,
+  batchOwnerOf,
   waitForSessionMessages,
   confirmClaimedMessages,
   getQueueLength as getFileQueueLength,
@@ -1384,6 +1385,7 @@ const replyTargets = createReplyTargetTracker();
 /** 记录消息归属会话，并返回首次投递（未打过表情）的 messageId，避免重投时重复打表情 */
 function collectFreshAndTrack(messages: QueueMessage[], sessionKey: string): string[] {
   replyTargets.observeDelivery(normalizeSessionKey(sessionKey) || sessionKey, messages);
+  questionRounds.setOwner(sessionKey, batchOwnerOf(messages));
   const fresh: string[] = [];
   for (const m of messages) {
     if (!m.messageId) continue;
@@ -1562,14 +1564,16 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
   if (senderOpenId) fullMeta.senderOpenId = senderOpenId;
   // 用户直接打字（非卡片点击）：他没选完的题由这段文字代替。已选的答案先于这条消息交给 Agent（只涉及那一轮已结束的卡）
   const typedSessionKey = messageId && !messageId.startsWith("internal_") ? routedId : undefined;
-  if (typedSessionKey) releaseEndedCardAnswers(typedSessionKey);
+  // 只替他自己的题作答：群里别人的题不碰（题的归属人是他，或他是管理员才算）
+  const typedForOwner: OwnerFilter = (owner) => mayAnswerQuestion(owner, senderOpenId, isMainUserSender(chatId, senderOpenId));
+  if (typedSessionKey) releaseEndedCardAnswers(typedSessionKey, typedForOwner);
   const written = pushToFileQueue(content, messageId, `daemon-${process.pid}`, routedId, false, Object.keys(fullMeta).length > 0 ? fullMeta : undefined);
   if (written) {
     // 入队即建立 messageId→会话映射：回复一条尚未被 Agent 领取的消息也能正确路由
     if (messageId && routedId) trackMessageSession(messageId, routedId);
     // 把那一轮已结束、没选的题关掉；不 seal 活流式卡（干活中插话不拆卡，换回合由 blocking poll 投递负责）
     if (typedSessionKey) {
-      void expireOpenCardQuestionsForSession(typedSessionKey, "问题已关闭");
+      void expireOpenCardQuestionsForSession(typedSessionKey, "问题已关闭", typedForOwner);
     }
     const preview = content.length > 200 ? `${content.slice(0, 200)} …(+${content.length - 200} chars)` : content;
     log("INFO", `消息已写入共享队列: ${JSON.stringify(preview)} (id=${messageId ?? "none"}, chat=${chatId ?? "none"}${routedId !== chatId ? ` → routed=${routedId}` : ""}${replyMessageId ? `, reply=${replyMessageId}` : ""})`);
@@ -1884,6 +1888,8 @@ interface StreamQuestionBlock {
   multi?: boolean;
   /** 问这道题时 Agent 所在的那一轮（见 question-round）。没有 = 不参与轮次，选完就交 */
   round?: string;
+  /** 这道题归谁：那一轮的发言人。只有他和管理员能点、他打字才算代替它。没有 = 谁都可以 */
+  owner?: string;
 }
 
 /** 随未决问题登记存盘的题目快照：渲染这道题（关闭 / 已作答的样子）所需的全部信息，不含它在时间线里的位置 */
@@ -2801,6 +2807,8 @@ const QUESTION_CARD_HINT = "<font color='grey'>请选择上方选项或直接输
 const MULTI_QUESTION_CARD_HINT = "<font color='grey'>可多选：勾选后点「提交」；也可直接回复文字</font>";
 /** 点选后答案要等 Agent 这一轮说完才提交：接在「已选择: X」后面提示用户 */
 const QUESTION_WAIT_TOAST_SUFFIX = "，AI 说完后一起提交";
+/** 群里别人点了不是问他的题：只提示，不改卡、不入队 */
+const NOT_YOUR_QUESTION_TOAST = "这道题是问另一位成员的，请让他本人选择";
 /** 独立多选卡（不在流式卡里）只有一道题，勾选框 name 前缀固定即可 */
 const STANDALONE_MULTI_PREFIX = "qm";
 const MULTI_LEGACY_CARD_TOAST = "这张多选卡是旧版样式，已失效，请直接回复选项文字，或让 Agent 重新提问";
@@ -3032,6 +3040,7 @@ function snapshotQuestionBlocks(blocks: StreamQuestionBlock[]): StreamQuestionSn
     ...(b.closedNote ? { closedNote: b.closedNote } : {}),
     ...(b.multi ? { multi: true } : {}),
     ...(b.round ? { round: b.round } : {}),
+    ...(b.owner ? { owner: b.owner } : {}),
   }));
 }
 
@@ -3100,12 +3109,19 @@ async function closeOrphanStreamQuestions(
 /**
  * 用户打字替代了没选的题：按 session 关闭未决问题（禁止按 chat 扩散，避免同私聊多会话误伤）。
  * 只关所属那一轮已经结束的卡；那一轮还在跑的卡不动（用户可能还没看到这一轮后面发的题）。
+ * 群里别人的题不关：mayClose 判断题归属人是不是打字的人（默认不限）。
  */
-async function expireOpenCardQuestionsForSession(sessionKey: string | undefined, note: string): Promise<void> {
+async function expireOpenCardQuestionsForSession(
+  sessionKey: string | undefined,
+  note: string,
+  mayClose: OwnerFilter = () => true,
+): Promise<void> {
   if (!sessionKey) return;
   const targets: { messageId: string; entry: CardQuestionEntry }[] = [];
   for (const [messageId, entry] of cardQuestionMap) {
-    if (isSameSession(entry.sessionKey, sessionKey) && cardQuestionRoundsEnded(entry)) targets.push({ messageId, entry });
+    if (isSameSession(entry.sessionKey, sessionKey) && cardQuestionRoundsEnded(entry) && cardQuestionsOpenToTypist(entry, mayClose)) {
+      targets.push({ messageId, entry });
+    }
   }
   if (!targets.length) return;
   const ch = resolveChannel(sessionKey, { allowDefault: false });
@@ -3223,6 +3239,19 @@ function cardQuestionRoundsEnded(entry: CardQuestionEntry): boolean {
   return (entry.blocks ?? []).every((b) => !!b.closedNote || questionRounds.isEnded(sessionKey, b.round));
 }
 
+/** 判断一道题的归属人是不是归打字的人管：传入题的归属人 */
+type OwnerFilter = (owner: string | undefined) => boolean;
+
+/** 这张卡上还开着的题是不是都归打字的人管（没有归属人的题谁都管） */
+function cardQuestionsOpenToTypist(entry: CardQuestionEntry, mayClose: OwnerFilter): boolean {
+  return (entry.blocks ?? []).every((b) => !!b.closedNote || mayClose(b.owner));
+}
+
+/** 点选的人能不能答这道题：题的归属人本人，或通道主用户 */
+function clickerMayAnswer(rt: ChannelRuntime, evt: LarkCardActionEvent, owner: string | undefined): boolean {
+  return mayAnswerQuestion(owner, evt.operatorOpenId, isMainUserSender(makeChatKey(rt.cfg.id, evt.chatId), evt.operatorOpenId));
+}
+
 /** 把一张卡上的答案（问题和回答）作为用户消息排进会话队列 */
 function enqueueCardAnswers(card: {
   messageId: string; sessionKey?: string; chatKey?: string; operatorOpenId?: string; summary: string;
@@ -3287,12 +3316,12 @@ function enqueueAppAnswers(sessionKey: string, text: string, anchorId: string | 
 
 /**
  * 用户打字发了消息：这个会话里所属那一轮已经结束、还没选完的卡，已选的答案先交给 Agent（排在用户这条消息前面），
- * 没选的题随后由 expireOpenCardQuestionsForSession 关掉。那一轮还在跑的卡不动。
+ * 没选的题随后由 expireOpenCardQuestionsForSession 关掉。那一轮还在跑的卡、别人的卡不动。
  */
-function releaseEndedCardAnswers(sessionKey: string): void {
+function releaseEndedCardAnswers(sessionKey: string, mayRelease: OwnerFilter): void {
   for (const [messageId, entry] of [...cardQuestionMap]) {
     if (!entry.isStreamCard || entry.answersDelivered || !isSameSession(entry.sessionKey, sessionKey)) continue;
-    if (!cardQuestionRoundsEnded(entry)) continue;
+    if (!cardQuestionRoundsEnded(entry) || !cardQuestionsOpenToTypist(entry, mayRelease)) continue;
     const answered = (entry.blocks ?? []).filter((b) => !b.closedNote && b.answered);
     if (answered.length === 0) continue;
     entry.answersDelivered = true;
@@ -3320,6 +3349,7 @@ async function handleOrphanStreamQuestionAction(
   const block = entry?.blocks?.find((b) => b.blockId === blockId);
   const sender = rt.sender;
   if (!entry || !entry.cardId || !entry.blocks || !block || block.answered || block.closedNote || !sender) return expired;
+  if (!clickerMayAnswer(rt, evt, block.owner)) return { toast: { type: "warning", content: NOT_YOUR_QUESTION_TOAST } };
   const sessionKey = entry.sessionKey;
 
   let opt: string;
@@ -3361,7 +3391,7 @@ async function handleOrphanStreamQuestionAction(
 }
 
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, expireOpenCardQuestionsForSession, sealActiveStreamCardOnDelivery, pushMessage, questionRounds, deliverReadyQuestionAnswers, rememberStreamCardQuestion, handleMessageRecalled, wireReplyTargetRecalled, sseClients };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, expireOpenCardQuestionsForSession, sealActiveStreamCardOnDelivery, pushMessage, questionRounds, deliverReadyQuestionAnswers, rememberStreamCardQuestion, collectFreshAndTrack, handleMessageRecalled, wireReplyTargetRecalled, sseClients };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
@@ -3404,6 +3434,10 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     // 把卡上的思考、工具、正文全冲掉，还会往队列塞一条答案，让 Agent 把新卡上的题顺手关掉
     if (blockId && !streamHit?.state.questionBlocks?.some((b) => b.blockId === blockId)) {
       return handleOrphanStreamQuestionAction(rt, evt, value, entry);
+    }
+    const clickedBlock = streamHit?.state.questionBlocks?.find((b) => b.blockId === blockId);
+    if (!clickerMayAnswer(rt, evt, clickedBlock?.owner)) {
+      return { toast: { type: "warning", content: NOT_YOUR_QUESTION_TOAST } };
     }
     const streamQuestion = !!streamHit && (streamHit.state.questionBlocks?.length ?? 0) > 0;
     // 按钮点击取 opt；输入框提交取 input_value（自由输入）；多选提交取表单里的勾选（按题目顺序拼接）
@@ -5568,6 +5602,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
             options: opts,
             ...(multi ? { multi: true } : {}),
             round: questionRounds.current(session_key),
+            owner: questionRounds.owner(session_key),
           });
           let mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
           if (!mergedOk) {
