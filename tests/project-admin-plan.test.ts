@@ -34,6 +34,8 @@ import type { ProjectListItem } from "../src/shared/project-app-types"
 
 const ABS = path.join(os.tmpdir(), "claw-projects")
 const TOKEN = "glpat-SECRET0123456789abc"
+/** 新生成的模板 / 快捷操作 id：8 位随机小写字母数字、字母开头，和名字无关 */
+const OPAQUE_ID = /^[a-z][a-z0-9]{7}$/
 
 function groups(): ProjectNodeGroupDef[] {
   return structuredClone(DEFAULT_NODE_GROUPS)
@@ -230,24 +232,26 @@ describe("planRepoSave：登记 / 修改常用仓库", () => {
 })
 
 describe("planTemplateSave：新建", () => {
-  it("只给名字：英文名生成 id，自带一个「开始」快捷操作；默认不接代码仓库", () => {
+  it("只给名字：id 随机生成、和名字无关，自带一个「开始」快捷操作；默认不接代码仓库", () => {
     const g = groups()
     const r = saved(planTemplateSave(undefined, { name: "Weekly Plan", description: "排周计划" }, g))
     expect(r.created).toBe(true)
-    expect(r.group).toMatchObject({ id: "weekly-plan", name: "Weekly Plan", workspace: "plain", description: "排周计划" })
+    expect(r.group).toMatchObject({ name: "Weekly Plan", workspace: "plain", description: "排周计划" })
+    expect(r.group.id).toMatch(OPAQUE_ID)
     expect(r.group.nodes.map((n) => n.label)).toEqual(["开始"])
     expect(r.groups).toHaveLength(g.length + 1)
     expect(r.groups.slice(0, g.length)).toEqual(g)
   })
 
-  it("带快捷操作和要填的信息：id 自动生成且全局不重复，顺序就是给的顺序", () => {
+  it("带快捷操作和要填的信息：id 随机生成且全局不重复，顺序就是给的顺序", () => {
     const r = saved(planTemplateSave(undefined, {
       name: "客户拜访",
       fields: [{ label: "客户名称", required: true, placeholder: "某某公司" }, { label: "拜访目的", multiline: true }],
       actions: [{ label: "拜访准备", prompt: "整理客户背景" }, { label: "Visit Notes", prompt: "整理纪要" }, { label: "跟进", prompt: "列待办" }],
     }, groups()))
-    expect(r.group.id).toBe("template-1")
-    expect(r.group.nodes.map((n) => n.id)).toEqual(["action-1", "visit-notes", "action-2"])
+    expect(r.group.id).toMatch(OPAQUE_ID)
+    for (const n of r.group.nodes) expect(n.id).toMatch(OPAQUE_ID)
+    expect(r.group.nodes.map((n) => n.id)).not.toContain("visit-notes")
     expect(r.group.nodes.map((n) => n.prompt)).toEqual(["整理客户背景", "整理纪要", "列待办"])
     expect(r.group.fields).toEqual([{ label: "客户名称", placeholder: "某某公司", required: true }, { label: "拜访目的", multiline: true }])
     expect(r.addedActions).toEqual(["拜访准备", "Visit Notes", "跟进"])
@@ -275,19 +279,25 @@ describe("planTemplateSave：新建", () => {
     expect(err(planTemplateSave(undefined, { name: "ok", fields: [{ label: "甲" }, { label: "甲" }] }, g))).toContain("重复")
   })
 
-  it("新增的快捷操作必须写 prompt；名字不能空 / 超长 / 重复；至少一个；自己指定的 id 不能撞别的模板或保留词", () => {
+  it("新增的快捷操作必须写 prompt；名字不能空 / 超长 / 重复；至少一个；新增的操作不能自己带 id", () => {
     const g = groups()
     const mk = (actions: { id?: string; label: string; prompt?: string }[]) => planTemplateSave(undefined, { name: "T", actions }, g)
     expect(err(mk([{ label: "做事" }]))).toContain("要写 prompt")
     expect(err(mk([{ label: " ", prompt: "p" }]))).toContain("缺少名称")
-    expect(err(mk([{ label: "x".repeat(21), prompt: "p" }]))).toContain("20")
+    expect(err(mk([{ label: "x".repeat(41), prompt: "p" }]))).toContain("40")
+    expect(saved(mk([{ label: "x".repeat(40), prompt: "p" }])).group.nodes[0].label).toBe("x".repeat(40))
     expect(err(mk([{ label: "甲", prompt: "p" }, { label: "甲", prompt: "q" }]))).toContain("重复")
     expect(err(mk([]))).toContain("至少")
-    expect(err(mk([{ id: "plan", label: "甲", prompt: "p" }]))).toContain("已经被占用")
-    expect(err(mk([{ id: "help", label: "甲", prompt: "p" }]))).toContain("保留命令")
-    expect(err(mk([{ id: "Bad Id", label: "甲", prompt: "p" }]))).toContain("小写字母开头")
-    expect(err(mk([{ id: "same", label: "甲", prompt: "p" }, { id: "same", label: "乙", prompt: "q" }]))).toContain("已经被占用")
+    expect(err(mk([{ id: "plan", label: "甲", prompt: "p" }]))).toContain("没有 id 为「plan」")
+    expect(err(mk([{ id: "same", label: "甲", prompt: "p" }, { id: "same", label: "乙", prompt: "q" }]))).toContain("新增的操作不用给 id")
     expect(err(mk([{ label: "甲", prompt: "x".repeat(ACTION_PROMPT_MAX + 1) }]))).toContain("太长")
+  })
+
+  it("新增的快捷操作不会因为名字叫 plan 之类，就借用内置节点的默认提示词：照样要写 prompt", () => {
+    const g: ProjectNodeGroupDef[] = [{ id: "x", name: "X", nodes: [{ id: "a", label: "A" }] }]
+    expect(err(planTemplateSave(undefined, { name: "T", actions: [{ label: "plan" }] }, g))).toContain("要写 prompt")
+    const r = saved(planTemplateSave(undefined, { name: "T", actions: [{ label: "plan", prompt: "p" }] }, g))
+    expect(r.group.nodes[0].id).not.toBe("plan")
   })
 })
 
@@ -336,7 +346,7 @@ describe("planTemplateSave：修改", () => {
     expect(r.group.nodes).toEqual([
       { id: "a2", label: "乙", prompt: "乙的要求" },
       { id: "a1", label: "甲（改名）", prompt: "甲的要求" },
-      { id: "action-1", label: "新来的", prompt: "新要求" },
+      { id: expect.stringMatching(OPAQUE_ID), label: "新来的", prompt: "新要求" },
     ])
     expect(r.removedActions).toEqual(["丙"])
     expect(r.addedActions).toEqual(["新来的"])
@@ -358,9 +368,9 @@ describe("planTemplateSave：修改", () => {
     expect(r.removedActions).toEqual([])
   })
 
-  it("不能把已有操作的 id 指到别的模板的操作上；删光操作被拒", () => {
+  it("不能把别的模板的操作 id 借过来用；删光操作被拒", () => {
     const g = groups()
-    expect(err(planTemplateSave("test", { actions: [{ id: "plan", label: "借来的", prompt: "p" }] }, g))).toContain("已经被占用")
+    expect(err(planTemplateSave("test", { actions: [{ id: "plan", label: "借来的", prompt: "p" }] }, g))).toContain("这个模板里没有 id 为「plan」")
     expect(err(planTemplateSave("test", { actions: [] }, g))).toContain("至少")
   })
 

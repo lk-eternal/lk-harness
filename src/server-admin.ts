@@ -212,7 +212,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
         })).optional().describe("建项时要用户填的信息（最多 8 项）；给了就是完整新列表"),
         actions: z.array(z.object({
           id: z.string().optional().describe("已有操作带它（保留原提示词）；新增的不用给"),
-          label: z.string().describe("快捷操作名称，≤20 字，同一模板里不重名"),
+          label: z.string().describe("快捷操作名称，≤40 字，同一模板里不重名"),
           prompt: z.string().optional().describe("点它时交给 AI 的工作要求；已有操作不给=不变；新增的必须给"),
         })).optional().describe("快捷操作（至少 1 个）；给了就是完整新列表，没列出的已有操作会被删掉"),
       }).optional().describe("template_save 用：新建时 name 必填，修改时只给要改的项"),

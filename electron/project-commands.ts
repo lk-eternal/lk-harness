@@ -93,27 +93,21 @@ function canOperateProjectInChat(project: Pick<Project, "id" | "bindings">, chat
 const GROUP_ONLY_HINT = "这个项目没有接入当前聊天：请到它接入的聊天（比如专属群）里进入与推进，或先在设置的项目管理里把它绑定到这个通道（避免串台）"
 const GROUP_LOCK_HINT = "当前为项目专属群，仅可协作本群项目，不能切换其它项目"
 
-function mergedProjectNodeIds(p?: Project): string[] {
-  return projectNodes(p ?? {}).map((n) => n.id)
-}
-
 function projectHasNode(p: Project | undefined, nodeId: string): boolean {
   if (!p) return false
   return projectNodes(p).some((n) => n.id === nodeId)
 }
 
-function projectHelpText(chatId?: string): string {
-  const nodeIds = mergedProjectNodeIds(resolveProjectForChat(chatId)).join("|")
+function projectHelpText(): string {
   return [
     "💡 /p 项目指令",
-    "🔹 /p — 打开项目菜单",
+    "🔹 /p — 打开项目菜单，点节点按钮推进项目",
     "🔹 /p info — 查看项目详细信息",
     "🔹 /p new — 新建项目",
     "🔹 /p ls — 列出全部项目",
     "🔹 /p use <序号|id> — 进入指定项目",
     "🔹 /p leave — 退出当前项目，回到主会话",
     "🔹 /c main — 快速切回主会话（不清项目选中态）",
-    `🔹 /p ${nodeIds} — 推进项目节点`,
     "🔹 /p setup — 配置项目目录与常用代码仓库",
     "🔹 /p del <序号|id> — 删除项目（连带移除项目目录）",
   ].join("\n")
@@ -1319,7 +1313,7 @@ export async function handleFeishuProjectCommand(
 
   const sub = low(parts[1])
   if (sub === "help" || sub === "-h" || sub === "--help") {
-    await reportCommandResult(port, messageId, true, projectHelpText(chatId), chatId, undefined, { patchMessageId })
+    await reportCommandResult(port, messageId, true, projectHelpText(), chatId, undefined, { patchMessageId })
     return
   }
 
@@ -1503,7 +1497,7 @@ export async function handleFeishuProjectCommand(
     return
   }
 
-  await reportCommandResult(port, messageId, false, `😅 未知指令: ${parts[1]}\n\n${projectHelpText(chatId)}`, chatId)
+  await reportCommandResult(port, messageId, false, `😅 未知指令: ${parts[1]}\n\n${projectHelpText()}`, chatId)
 }
 
 export async function handleProjectSyncSignal(payload: {

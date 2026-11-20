@@ -9,12 +9,10 @@ import { DEFAULT_GIT_PRINCIPLES, GIT_PRINCIPLES_MAX } from "./project-git-princi
 import { ACTION_GUIDES } from "./project-node-guides.js"
 import { mergeProjectMetadata } from "./project-store.js"
 import {
-  ACTION_ID_RESERVED,
   ACTION_LABEL_MAX,
-  actionIdProblem,
   applyTemplateEdit,
   buildNewTemplate,
-  makeUniqueId,
+  newOpaqueId,
   templateDraftProblem,
   type TemplateDraft,
 } from "./project-template-edit.js"
@@ -374,19 +372,9 @@ function planActions(
     if (id) existing = current.find((n) => n.id === id)
     else existing = current.find((n) => n.label === label && !matched.has(n.id))
     if (existing && matched.has(existing.id)) return fail(`快捷操作 id「${existing.id}」用了两次`)
+    if (id && !existing) return fail(`${no}「${label}」：这个模板里没有 id 为「${id}」的快捷操作（新增的操作不用给 id）`)
 
-    let nodeId: string
-    if (existing) {
-      nodeId = existing.id
-    } else if (id) {
-      // 新增且自己指定了 id：和别的模板、本次列表里的都不能撞
-      const problem = actionIdProblem(id, [...idsInOtherTemplates, ...used])
-      if (problem) return fail(`${no}「${label}」：${problem}`)
-      nodeId = id
-    } else {
-      nodeId = makeUniqueId(label, taken(), "action", ACTION_ID_RESERVED)
-    }
-    if (used.has(nodeId)) return fail(`快捷操作 id「${nodeId}」用了两次`)
+    const nodeId = existing ? existing.id : newOpaqueId(taken())
     used.add(nodeId)
 
     const prompt = a.prompt === undefined ? undefined : a.prompt.replace(/\r\n/g, "\n").trim()
@@ -400,7 +388,7 @@ function planActions(
       const next = prompt === undefined ? oldPrompt : prompt
       nodes.push({ ...rest, label, ...(next?.trim() ? { prompt: next } : {}) })
     } else {
-      if (!prompt && !ACTION_GUIDES[nodeId]) {
+      if (!prompt) {
         return fail(`新增的快捷操作「${label}」要写 prompt：点它的时候交给 AI 的工作要求（做什么、产出什么、成果放哪、缺信息怎么办）`)
       }
       nodes.push({ id: nodeId, label, ...(prompt ? { prompt } : {}) })

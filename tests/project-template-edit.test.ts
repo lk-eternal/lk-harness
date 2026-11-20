@@ -1,54 +1,48 @@
 import * as path from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
-  ACTION_ID_RESERVED, TEMPLATE_FIELDS_MAX, TEMPLATE_ID_RE, TEMPLATE_NAME_MAX,
-  actionIdProblem, applyTemplateEdit, buildNewTemplate, makeUniqueId, templateDraftProblem, templateFieldsProblem,
+  ACTION_LABEL_MAX, TEMPLATE_FIELDS_MAX, TEMPLATE_NAME_MAX,
+  applyTemplateEdit, buildNewTemplate, newOpaqueId, templateDraftProblem, templateFieldsProblem,
   type TemplateDraft,
 } from "../src/shared/project-template-edit"
 import { DEFAULT_NODE_GROUPS, type ProjectNodeGroupDef } from "../src/shared/project-types"
 import { planProjectCreate } from "../src/shared/project-create-plan"
 
-describe("makeUniqueId", () => {
-  it("英文数字名字：转成小写 slug，重名自动加序号", () => {
-    expect(makeUniqueId("Design Review", [], "action")).toBe("design-review")
-    expect(makeUniqueId("Design Review", ["design-review"], "action")).toBe("design-review-2")
-    expect(makeUniqueId("Design Review", ["design-review", "design-review-2"], "action")).toBe("design-review-3")
+describe("newOpaqueId", () => {
+  it("小写字母开头，后面是小写字母和数字，一共 8 位，不带任何语意", () => {
+    for (let i = 0; i < 200; i++) expect(newOpaqueId([])).toMatch(/^[a-z][a-z0-9]{7}$/)
   })
 
-  it("中文名字没有 slug：用「兜底词-序号」，序号从 1 开始并避开已占用的", () => {
-    expect(makeUniqueId("测试报告", [], "action")).toBe("action-1")
-    expect(makeUniqueId("测试报告", ["action-1", "action-2"], "action")).toBe("action-3")
-    expect(makeUniqueId("", [], "template")).toBe("template-1")
+  it("连续生成不重复", () => {
+    const ids = new Set<string>()
+    for (let i = 0; i < 500; i++) ids.add(newOpaqueId(ids))
+    expect(ids.size).toBe(500)
   })
 
-  it("中英混合取其中的英文数字；数字开头补兜底前缀，保证以字母开头", () => {
-    expect(makeUniqueId("Q4 调研", [], "template")).toBe("q4")
-    expect(makeUniqueId("v2 方案", [], "action")).toBe("v2")
-    expect(makeUniqueId("2024 计划", [], "action")).toBe("action-2024")
-  })
-
-  it("避开保留命令（它们占着 /p 子命令）", () => {
-    expect(makeUniqueId("list", [], "action", ACTION_ID_RESERVED)).toBe("list-2")
-    expect(makeUniqueId("Help", [], "action", ACTION_ID_RESERVED)).toBe("help-2")
-  })
-
-  it("生成的 id 永远合法，包括很长的名字和满是符号的名字", () => {
-    for (const label of ["a".repeat(100), "!!!", "---", "  ", "😀", "A_B C/D", "9"]) {
-      const id = makeUniqueId(label, [], "action", ACTION_ID_RESERVED)
-      expect(TEMPLATE_ID_RE.test(id), `「${label}」→「${id}」`).toBe(true)
-      expect(id.length).toBeLessThanOrEqual(40)
+  it("避开 taken 里已有的：把随机数钉成固定值，撞上了会重抽", () => {
+    const seq = [0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    let n = 0
+    const spy = vi.spyOn(Math, "random").mockImplementation(() => seq[n++ % seq.length])
+    try {
+      expect(newOpaqueId([])).toBe("aaaaaaaa")
+      n = 0
+      const second = newOpaqueId(["aaaaaaaa"])
+      expect(second).not.toBe("aaaaaaaa")
+      expect(second).toMatch(/^[a-z][a-z0-9]{7}$/)
+    } finally {
+      spy.mockRestore()
     }
+  })
+
+  it("taken 可以是任意可迭代对象（Set、数组）", () => {
+    expect(newOpaqueId(new Set(["abc"]))).toMatch(/^[a-z][a-z0-9]{7}$/)
+    expect(newOpaqueId(["abc"])).toMatch(/^[a-z][a-z0-9]{7}$/)
   })
 })
 
-describe("actionIdProblem", () => {
-  it("合法的通过；空、非法字符、保留词、重复各给一句人话", () => {
-    expect(actionIdProblem("test-report", ["other"])).toBe("")
-    expect(actionIdProblem("  ", [])).toContain("不能为空")
-    expect(actionIdProblem("Test", [])).toContain("小写字母开头")
-    expect(actionIdProblem("1abc", [])).toContain("小写字母开头")
-    expect(actionIdProblem("help", [])).toContain("保留")
-    expect(actionIdProblem("plan", ["plan"])).toContain("占用")
+describe("快捷操作名称上限", () => {
+  it("放宽到 40 字", () => {
+    expect(ACTION_LABEL_MAX).toBe(40)
   })
 })
 
@@ -81,7 +75,7 @@ describe("buildNewTemplate / applyTemplateEdit", () => {
       { name: "客户拜访", description: " 拜访前后要做的事 ", workspace: "plain", fields: [{ label: "客户", required: true }, { label: "" }] },
       existing.map((x) => x.id), existing.flatMap((x) => x.nodes.map((n) => n.id)),
     )
-    expect(TEMPLATE_ID_RE.test(g.id)).toBe(true)
+    expect(g.id).toMatch(/^[a-z][a-z0-9-]*$/)
     expect(existing.some((x) => x.id === g.id)).toBe(false)
     expect(g).toMatchObject({ name: "客户拜访", workspace: "plain", description: "拜访前后要做的事" })
     expect(g.fields).toEqual([{ label: "客户", required: true }])

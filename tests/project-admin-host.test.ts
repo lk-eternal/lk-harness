@@ -391,8 +391,9 @@ describe("项目模板：看、新建、修改、删除", () => {
       },
     })
     expect(out).toContain("✅ 已新建项目模板")
-    expect(out).toContain("拜访准备(action-1)")
     const g = store.getNodeGroups().find((x) => x.name === "客户拜访")!
+    expect(g.nodes.map((n) => n.id)).toEqual([expect.stringMatching(/^[a-z][a-z0-9]{7}$/), expect.stringMatching(/^[a-z][a-z0-9]{7}$/)])
+    expect(out).toContain(`拜访准备(${g.nodes[0].id})`)
     expect(g.nodes.map((n) => n.prompt)).toEqual(["整理客户背景和上次沟通要点", "整理纪要和待办"])
     expect(await call({ action: "templates" })).toContain("客户名称（必填，例：某某公司）")
 

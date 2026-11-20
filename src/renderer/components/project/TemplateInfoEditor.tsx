@@ -203,14 +203,6 @@ export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, 
           )}
         </div>
       </Section>
-
-      {editing && group && (
-        <details className="rounded-lg border border-line-subtle px-3 py-2 text-xs text-fg-muted">
-          <summary className="cursor-pointer select-none text-fg-3">更多</summary>
-          <p className="mt-2">模板 id：<span className="font-mono text-fg-2">{group.id}</span></p>
-          <p className="mt-0.5 text-[10.5px] text-fg-faint">内部标识，已被项目和共享空间引用，不能改。</p>
-        </details>
-      )}
     </EditorFrame>
   )
 }

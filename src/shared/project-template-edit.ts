@@ -1,62 +1,35 @@
 /**
  * 设置页「项目模板」编辑用的纯逻辑（不依赖 node / react，方便单测）。
- * 模板和快捷操作的 id 是内部标识，不该让用户操心：这里按名字自动生成。
+ * 模板和快捷操作的 id 是内部标识，用户和 AI 都不用看：这里随机生成，不带任何语意。
  */
 import type { ProjectFieldDef, ProjectNodeDef, ProjectNodeGroupDef } from "./project-types.js"
 import { normalizeWorkBranchMode, type WorkBranchMode } from "./work-branch-mode.js"
 import { normalizeFieldDefs } from "./project-templates.js"
 
-export const TEMPLATE_ID_RE = /^[a-z][a-z0-9-]*$/
 export const TEMPLATE_NAME_MAX = 30
 export const TEMPLATE_DESC_MAX = 200
 export const TEMPLATE_FIELDS_MAX = 8
-export const ACTION_LABEL_MAX = 20
+export const ACTION_LABEL_MAX = 40
 
-/** 和聊天里 /p 子命令撞名的词，不能当快捷操作 id */
-export const ACTION_ID_RESERVED: readonly string[] = [
-  "help", "menu", "ls", "list", "use", "leave", "info", "new", "del", "delete", "rm", "setup", "sync", "ship",
-]
+const ID_FIRST_CHARS = "abcdefghijklmnopqrstuvwxyz"
+const ID_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+const ID_LENGTH = 8
 
-function asciiSlug(text: string): string {
-  return (text ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 30)
-    .replace(/-+$/g, "")
+function pickChar(chars: string): string {
+  return chars[Math.floor(Math.random() * chars.length)]
 }
 
 /**
- * 按名字生成一个不重复的 id：名字里的英文数字当 slug；中文名没有 slug，就用「兜底词-序号」。
- * taken 里已有的、reserved 里禁用的都会避开。结果一定符合 TEMPLATE_ID_RE。
+ * 生成一个随机 id：小写字母开头，后面是小写字母和数字，和名字没有任何关系。
+ * 不从名字派生，就不会和内置节点的默认提示词、/p 子命令撞名；taken 里已有的会避开。
  */
-export function makeUniqueId(
-  label: string,
-  taken: Iterable<string>,
-  fallback: string,
-  reserved: Iterable<string> = [],
-): string {
-  const used = new Set<string>([...taken, ...reserved])
-  let base = asciiSlug(label)
-  if (base && !/^[a-z]/.test(base)) base = `${fallback}-${base}`
-  if (base && !used.has(base)) return base
-  const stem = base || fallback
-  for (let i = base ? 2 : 1; i < 1000; i++) {
-    const cand = `${stem}-${i}`
-    if (!used.has(cand)) return cand
-  }
-  return `${fallback}-${Date.now().toString(36)}`
-}
-
-/** 快捷操作 id 的人工输入校验（高级里手填时用）；没问题返回空串 */
-export function actionIdProblem(id: string, takenByOthers: Iterable<string>): string {
-  const v = (id ?? "").trim()
-  if (!v) return "命令 id 不能为空"
-  if (!TEMPLATE_ID_RE.test(v)) return `「${v}」需小写字母开头，只能含小写字母、数字和 -`
-  if (ACTION_ID_RESERVED.includes(v)) return `「${v}」是保留命令，换一个`
-  for (const t of takenByOthers) if (t === v) return `「${v}」已经被占用了，换一个`
-  return ""
+export function newOpaqueId(taken: Iterable<string>): string {
+  const used = new Set<string>(taken)
+  let id: string
+  do {
+    id = pickChar(ID_FIRST_CHARS) + Array.from({ length: ID_LENGTH - 1 }, () => pickChar(ID_CHARS)).join("")
+  } while (used.has(id))
+  return id
 }
 
 /** 「建项时要填的信息」的校验：数量、重名（值按名字存，重名会互相覆盖）；空名字的行保存时会被丢掉，不算错 */
@@ -110,11 +83,11 @@ export function buildNewTemplate(
   existingGroupIds: Iterable<string>,
   existingActionIds: Iterable<string>,
 ): ProjectNodeGroupDef {
-  const actionId = makeUniqueId("start", existingActionIds, "action", ACTION_ID_RESERVED)
+  const actionId = newOpaqueId(existingActionIds)
   const fields = normalizeFieldDefs(d.fields)
   const description = d.description.trim()
   return {
-    id: makeUniqueId(d.name, existingGroupIds, "template"),
+    id: newOpaqueId(existingGroupIds),
     name: d.name.trim(),
     workspace: d.workspace,
     ...draftBranchMode(d),

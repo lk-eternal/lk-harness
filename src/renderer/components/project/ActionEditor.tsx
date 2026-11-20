@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { Trash2, Upload } from "lucide-react"
-import { ACTION_ID_RESERVED, ACTION_LABEL_MAX, actionIdProblem, makeUniqueId } from "../../../shared/project-template-edit"
+import { ACTION_LABEL_MAX, newOpaqueId } from "../../../shared/project-template-edit"
 import { usePanelSave } from "../usePanelSave"
 import type { Action, Group } from "./template-data"
 import {
@@ -15,14 +15,13 @@ export interface ActionItem {
 }
 
 interface Draft {
-  id: string
   label: string
   /** 输入框里的全文：没改过时就是内置默认提示词 */
   prompt: string
 }
 
 function draftOf(action: Action | undefined): Draft {
-  return { id: action?.id ?? "", label: action?.label ?? "", prompt: action?.prompt ?? action?.defaultPrompt ?? "" }
+  return { label: action?.label ?? "", prompt: action?.prompt ?? action?.defaultPrompt ?? "" }
 }
 
 interface Props {
@@ -69,16 +68,7 @@ export default function ActionEditor({ group, action, takenIds, canDelete, hubCo
   const save = async (): Promise<boolean> => {
     const label = draft.label.trim()
     if (!label) return false
-    let id = action?.id ?? draft.id.trim()
-    if (isNew) {
-      // 新建：没手填命令 id 就按名字自动生成；手填了就按规则校验
-      if (id) {
-        const problem = actionIdProblem(id, takenIds)
-        if (problem) { await ui.showAlert("命令 id 不可用", problem); return false }
-      } else {
-        id = makeUniqueId(label, takenIds, "action", ACTION_ID_RESERVED)
-      }
-    }
+    const id = action?.id ?? newOpaqueId(takenIds)
     const raw = draft.prompt.trim()
     const prompt = raw && raw !== defaultPrompt ? raw : undefined
     setBusy(true)
@@ -160,21 +150,6 @@ export default function ActionEditor({ group, action, takenIds, canDelete, hubCo
           <button type="button" className="mt-1 text-[11px] text-accent hover:text-accent-soft" onClick={() => setDraft({ ...draft, prompt: action?.defaultPrompt ?? "" })}>恢复内置默认提示词</button>
         )}
       </label>
-
-      <details className="rounded-lg border border-line-subtle px-3 py-2 text-xs text-fg-muted">
-        <summary className="cursor-pointer select-none text-fg-3">更多</summary>
-        <div className="mt-2 space-y-1.5">
-          <p className="text-xs text-fg-muted">命令 id（飞书里用 /p 命令触发时才会用到）</p>
-          {isNew ? (
-            <input value={draft.id} onChange={(e) => setDraft({ ...draft, id: e.target.value.trim() })} className={inputCls} placeholder="不填，保存时按名称自动生成" />
-          ) : (
-            <>
-              <p className="font-mono text-xs text-fg-2">{action?.id}</p>
-              <p className="text-[10.5px] text-fg-faint">已经被项目和命令引用，建好后不能改。</p>
-            </>
-          )}
-        </div>
-      </details>
     </EditorFrame>
   )
 }
