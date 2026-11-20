@@ -108,6 +108,91 @@ describe("claimSessionMessages", () => {
   })
 })
 
+describe("claimSessionMessages 按发言人分批", () => {
+  const push = (id: string, sender?: string) =>
+    pushToFileQueue(`消息${id}`, id, "test", SESSION_A, false, sender ? { senderOpenId: sender } : undefined)
+  const ids = (msgs: { messageId: string }[]) => msgs.map((m) => m.messageId)
+
+  it("同一个人连发的消息合并成一批", () => {
+    push("a1", "ou_a")
+    push("a2", "ou_a")
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1", "a2"])
+  })
+
+  it("换人就换批：别人的消息留在队列里，这一批确认后下一次领取才拿到", () => {
+    push("a1", "ou_a")
+    push("b1", "ou_b")
+    push("c1", "ou_c")
+
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1"])
+    expect([...listPendingMessageIds(SESSION_A)].sort()).toEqual(["b1", "c1"])
+
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["b1"])
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["c1"])
+  })
+
+  it("保持发言先后：A、B、A 是三批，后发的 A 不会提到 B 前面", () => {
+    push("a1", "ou_a")
+    push("b1", "ou_b")
+    push("a2", "ou_a")
+
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1"])
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["b1"])
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a2"])
+  })
+
+  it("没有发言人的消息跟随当前批，不单独成批", () => {
+    push("s1")
+    push("a1", "ou_a")
+    push("s2")
+    push("b1", "ou_b")
+    push("s3")
+
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["s1", "a1", "s2"])
+    confirmClaimedMessages(undefined, SESSION_A)
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["b1", "s3"])
+  })
+
+  it("全都没有发言人时仍合并成一批", () => {
+    push("s1")
+    push("s2")
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["s1", "s2"])
+  })
+
+  it("上一批没确认时重投：同一个人接着发的并入，别人的不并入", () => {
+    push("a1", "ou_a")
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1"])
+
+    push("a2", "ou_a")
+    push("b1", "ou_b")
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1", "a2"])
+    expect([...listPendingMessageIds(SESSION_A)]).toEqual(["b1"])
+  })
+
+  it("上一批没确认时，没有发言人的新消息并入这一批", () => {
+    push("a1", "ou_a")
+    claimSessionMessages(SESSION_A)
+
+    push("s1")
+    push("b1", "ou_b")
+    expect(ids(claimSessionMessages(SESSION_A))).toEqual(["a1", "s1"])
+  })
+
+  it("这一批确认后，阻塞领取立即拿到下一个人的消息", async () => {
+    push("a1", "ou_a")
+    push("b1", "ou_b")
+    claimSessionMessages(SESSION_A)
+    confirmClaimedMessages(undefined, SESSION_A)
+
+    const next = await waitForSessionMessages(0, undefined, SESSION_A)
+    expect(ids(next)).toEqual(["b1"])
+  })
+})
+
 describe("confirmClaimedMessages", () => {
   it("确认目标及更早的 claimed 消息", async () => {
     pushToFileQueue("一", "m1", "test", SESSION_A)

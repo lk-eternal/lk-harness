@@ -355,9 +355,32 @@ function hasNewMessages(dir: string): boolean {
   return listPendingFiles(dir).length > 0;
 }
 
+/** 消息的发言人；系统消息、应用内答案、定时任务没有 */
+function senderOf(message: QueueMessage | null): string | undefined {
+  return message?.meta?.senderOpenId || undefined;
+}
+
 /**
- * 领取该会话所有未确认消息（不删除）：
- * 1. 把所有 .qmsg 改名为 .claimed（标记"已投递、待完成确认"）；
+ * 一批投递的边界：相邻同一个人的消息合并，换人就换批（不会把后发的提到先发的前面）。
+ * 没有发言人的消息跟随当前批，不单独成批。
+ * owner 是这一批已有的发言人，还没有就取排队消息里第一个有发言人的。返回排队消息里属于这一批的条数。
+ */
+function batchLength(owner: string | undefined, queued: ReadonlyArray<QueueMessage | null>): number {
+  let current = owner;
+  let count = 0;
+  for (const message of queued) {
+    const sender = senderOf(message);
+    if (sender && current && sender !== current) break;
+    if (sender) current = sender;
+    count++;
+  }
+  return count;
+}
+
+/**
+ * 领取该会话这一批未确认消息（不删除）：
+ * 1. 把排队的 .qmsg 里属于这一批的改名为 .claimed（标记"已投递、待完成确认"）。
+ *    一批只有一个发言人：已有未确认的消息时，只并入同一个人接着发的；别人的留在队列里，等这一批确认后下一次领取；
  * 2. 返回该会话全部 .claimed（含本次新投递的 + 历史未确认的），按 timestamp 升序。
  *
  * 消息在 Agent 下一次挂阻塞 poll 时隐式确认删除（Agent 干完手头活才会挂 poll）；
@@ -368,7 +391,19 @@ export function claimSessionMessages(filterSessionKey?: string): QueueMessage[] 
   if (!queueDir) return [];
   const dir = getSessionDir(filterSessionKey);
 
-  for (const f of listPendingFiles(dir)) {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  let owner: string | undefined;
+  for (const f of names.filter((n) => n.endsWith(".claimed")).sort()) {
+    owner = senderOf(parseMessageFile(path.join(dir, f))) ?? owner;
+  }
+  const queued = listPendingFiles(dir, names).sort();
+  const queuedMessages = queued.map((f) => parseMessageFile(path.join(dir, f)));
+  for (const f of queued.slice(0, batchLength(owner, queuedMessages))) {
     const src = path.join(dir, f);
     try {
       fs.renameSync(src, path.join(dir, f.replace(/\.qmsg$/, ".claimed")));
