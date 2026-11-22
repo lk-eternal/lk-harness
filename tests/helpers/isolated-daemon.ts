@@ -43,6 +43,8 @@ export interface IsolatedDaemonOptions {
    * 默认不开：其他测试不需要，行为保持原样。
    */
   isolatedHome?: boolean
+  /** 额外传给 daemon 进程的环境变量（比如缩短 poll 挂起时长） */
+  env?: Record<string, string>
 }
 
 export interface IsolatedDaemon {
@@ -109,6 +111,7 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
         LARK_WORKSPACE_DIR: wsDir,
         CLAW_CHANNELS_JSON: JSON.stringify(channels),
         LARK_DAEMON_PORT: "0",
+        ...opts.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },

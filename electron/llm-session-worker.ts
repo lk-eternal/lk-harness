@@ -121,11 +121,14 @@ function filterDeliverable(messages: PollMessage[]): PollMessage[] {
   return messages.filter((m) => m.text?.trim() && m.messageId)
 }
 
+/** resumed：上一次阻塞 poll 是挂起到点的空返回，这是静默续挂——没有消息被领走，不用再做冷启动检查，也不再写日志 */
 async function pollForWorkerTurn(
   state: WorkerState,
   sessionKey: string,
   abort: AbortSignal,
+  resumed: boolean,
 ): Promise<HostPollResult> {
+  if (resumed) return hostBlockingPoll(sessionKey, abort)
   if (state.firstTurn) {
     pushUiLog("LLM", "DEBUG", `[${sessionKey}] worker bootstrap (instant poll)`)
     const instant = await hostNonBlockingPoll(sessionKey)
@@ -169,6 +172,8 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   let failureKind: AgentFailureKind | undefined
   /** 正在处理的这批消息：worker 出错退出时，失败提示要回复其中的最后一条 */
   let inFlight: PollMessage[] = []
+  /** 上一次阻塞 poll 是挂起到点的空返回：这次是静默续挂 */
+  let resumed = false
 
   try {
     while (!abort.signal.aborted) {
@@ -179,7 +184,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
 
       let pollResult
       try {
-        pollResult = await pollForWorkerTurn(state, sessionKey, abort.signal)
+        pollResult = await pollForWorkerTurn(state, sessionKey, abort.signal, resumed)
       } catch (e: unknown) {
         if (abort.signal.aborted) break
         throw e
@@ -190,10 +195,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         pushUiLog("LLM", "INFO", `[${sessionKey}] poll 返回 end（按需唤醒，本回合结束），worker 退出`)
         break
       }
-      if (pollResult.reason === "timeout") {
-        pushUiLog("LLM", "DEBUG", `[${sessionKey}] poll 挂起到点，继续监听`)
-        continue
-      }
+      // 挂起到点是 daemon 的心跳：静默续挂，不逐次写日志（常驻会话每几分钟一条，会成为新的刷屏）
+      resumed = pollResult.reason === "timeout"
+      if (resumed) continue
 
       const deliverable = filterDeliverable(pollResult.messages)
       if (deliverable.length === 0) continue

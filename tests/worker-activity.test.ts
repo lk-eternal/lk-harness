@@ -11,6 +11,7 @@ const m = vi.hoisted(() => ({
   executeLlmPiTurn: vi.fn(),
   hostNonBlockingPoll: vi.fn(),
   hostBlockingPoll: vi.fn(),
+  pushUiLog: vi.fn(),
 }))
 
 vi.mock("../electron/agent-activity", () => ({ noteAgentActivity: m.noteAgentActivity }))
@@ -40,7 +41,7 @@ vi.mock("../electron/prompt-assembler", () => ({
   assembleTurnPrompt: vi.fn(() => "prompt"),
 }))
 vi.mock("../electron/carryover", () => ({ appendMirrorTurns: vi.fn(), replyTexts: vi.fn(() => []) }))
-vi.mock("../electron/ui-logger", () => ({ pushUiLog: vi.fn() }))
+vi.mock("../electron/ui-logger", () => ({ pushUiLog: m.pushUiLog }))
 vi.mock("../electron/stream-card", () => ({ rebaseUnensuredQueue: vi.fn(), isFeishuStreamEnabled: () => false }))
 vi.mock("../electron/session-retention", () => ({
   rolloverSessionLedgerIfNeeded: async () => false,
@@ -58,6 +59,10 @@ function hangUntilAbort(signal: AbortSignal): Promise<never> {
 }
 
 const oneMessage = { messages: [{ text: "你好", messageId: "m1" }] }
+
+/** 写过几次「worker listening」日志：每次从头开始监听写一条；poll 挂起到点后的静默续挂不写 */
+const listeningLogs = () => m.pushUiLog.mock.calls.filter((c) => String(c[2]).includes("worker listening")).length
+const heartbeatLogs = () => m.pushUiLog.mock.calls.filter((c) => String(c[2]).includes("挂起到点")).length
 
 beforeEach(() => {
   for (const fn of Object.values(m)) fn.mockReset()
@@ -87,10 +92,31 @@ describe("SDK worker 记 Agent 的动静", () => {
 
     expect(listSdkWorkerPhases()).toEqual(["listening"])
     expect(m.noteAgentActivity).not.toHaveBeenCalled()
+    // 三次到点续挂都是静默的：冷启动检查和监听日志只在第一次监听时有一份
+    expect(m.hostNonBlockingPoll).toHaveBeenCalledTimes(1)
+    expect(listeningLogs()).toBe(1)
+    expect(heartbeatLogs()).toBe(0)
 
     await stopSdkWorker(key)
     expect(listSdkWorkerPhases()).toEqual([])
     expect(m.noteAgentActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it("到点续挂后来了消息：照常跑一轮；回合结束回去监听时从头开始（重新写监听日志），之后的续挂又是静默的", async () => {
+    let polls = 0
+    m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+      polls++
+      if (polls === 1 || polls === 3) return Promise.resolve({ messages: [], reason: "timeout" })
+      return polls === 2 ? Promise.resolve(oneMessage) : hangUntilAbort(signal)
+    })
+    m.executeSdkTurn.mockResolvedValue({ ok: true })
+    start(session())
+    await vi.waitFor(() => expect(polls).toBe(4))
+
+    expect(m.executeSdkTurn).toHaveBeenCalledTimes(1)
+    expect(listeningLogs()).toBe(2)
+
+    await stopSdkWorker(key)
   })
 
   it("收到消息开始回合记一笔（阶段 processing），回合结束回去监听再记一笔（阶段 listening）", async () => {
@@ -152,10 +178,31 @@ describe("LLM worker 记 Agent 的动静", () => {
 
     expect([...listLlmWorkerPhases().values()]).toEqual(["listening"])
     expect(m.noteAgentActivity).not.toHaveBeenCalled()
+    // 三次到点续挂都是静默的：冷启动检查和监听日志只在第一次监听时有一份
+    expect(m.hostNonBlockingPoll).toHaveBeenCalledTimes(1)
+    expect(listeningLogs()).toBe(1)
+    expect(heartbeatLogs()).toBe(0)
 
     await stopLlmWorker(key)
     expect(listLlmWorkerPhases().size).toBe(0)
     expect(m.noteAgentActivity).toHaveBeenCalledTimes(1)
+  })
+
+  it("到点续挂后来了消息：照常跑一轮；回合结束回去监听时从头开始（重新写监听日志），之后的续挂又是静默的", async () => {
+    let polls = 0
+    m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+      polls++
+      if (polls === 1 || polls === 3) return Promise.resolve({ messages: [], reason: "timeout" })
+      return polls === 2 ? Promise.resolve(oneMessage) : hangUntilAbort(signal)
+    })
+    m.executeLlmPiTurn.mockResolvedValue({ ok: true, replyText: "好的" })
+    start(session())
+    await vi.waitFor(() => expect(polls).toBe(4))
+
+    expect(m.executeLlmPiTurn).toHaveBeenCalledTimes(1)
+    expect(listeningLogs()).toBe(2)
+
+    await stopLlmWorker(key)
   })
 
   it("收到消息开始回合记一笔（阶段 processing），回合结束回去监听再记一笔（阶段 listening）", async () => {

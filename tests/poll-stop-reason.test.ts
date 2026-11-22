@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { POLL_BLOCK_TIMEOUT_MS } from "../src/shared/poll-protocol"
 
 /**
  * poll-message 的空返回协议：daemon 只给宿主 Session Worker 一个机器可读的 reason（end / timeout），
@@ -34,6 +35,16 @@ vi.mock("../electron/ui-logger", () => ({ pushUiLog: vi.fn() }))
 vi.mock("../electron/stream-card", () => ({ rebaseUnensuredQueue: vi.fn() }))
 
 const realPollHost = () => vi.importActual<typeof import("../electron/poll-host")>("../electron/poll-host")
+
+describe("阻塞 poll 的挂起时长", () => {
+  // 宿主用 Node 内置 fetch（undici）发 poll，等响应头的默认上限是 300 秒，没人配过。
+  // daemon 挂得比它更久，请求库会先掐断，worker 就收到「fetch failed」，常驻会话每次空闲 5 分钟都会被掐线。
+  const HOST_FETCH_HEADERS_TIMEOUT_MS = 300_000
+
+  it("必须小于宿主请求库的默认上限，daemon 才能先以 timeout 空返回、让 worker 续挂", () => {
+    expect(POLL_BLOCK_TIMEOUT_MS).toBeLessThan(HOST_FETCH_HEADERS_TIMEOUT_MS)
+  })
+})
 
 describe("poll-host：解析 daemon 的 poll 响应", () => {
   let fetchMock: ReturnType<typeof vi.fn>
