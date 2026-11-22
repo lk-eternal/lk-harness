@@ -4520,10 +4520,11 @@ function startHttpServer(): Promise<number> {
               ...(boundChat ? { chatId: boundChat } : {}),
               ...senderMeta,
             };
+            const queueWasIdle = getFileQueueLength(normalized) === 0;
             const pushed = pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, queueMeta);
             // 独立任务会话的消息：记入运行记账，回合结束时才能对账「AI 有没有提交结果」
             const queuedTask = pushed ? findScheduledTaskBySessionKey(normalized, readTasksSafe()) : undefined;
-            if (queuedTask && queuedTask.independent !== false) taskRuns.queued(queuedTask.id);
+            if (queuedTask && queuedTask.independent !== false) taskRuns.queued(queuedTask.id, queueWasIdle);
             trackMessageSession(effectiveId, normalized);
             rememberSessionKey(normalized);
             broadcastQueueEvent(chatIdFromSessionKey(normalized) || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined));
@@ -6409,10 +6410,11 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
       log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+  const queueWasIdle = getFileQueueLength(task.id) === 0;
   if (!pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, task.id, false, { chatType: "task" })) {
     return fail("未投递: 写入会话队列失败");
   }
-  taskRuns.queued(task.id);
+  taskRuns.queued(task.id, queueWasIdle);
   trackMessageSession(internalMsgId, task.id);
   rememberSessionKey(task.id);
   broadcastQueueEvent(outboundChatKey);
@@ -6544,10 +6546,10 @@ function writeAiRuns(runs: Record<string, number>): void {
   }
 }
 
-/** 这个排程的上一次运行还没结束（独立运行：在跑或队列里还有消息）。只有独立运行有「在跑」的概念 */
+/** 这个排程的上一次运行还没结束：独立运行的会话队列里还有消息（排队中或处理中）。只有独立运行有「在跑」的概念 */
 function isAiTaskBusy(task: ScheduledTask): boolean {
   if (task.independent === false) return false;
-  return taskRuns.isActive(task.id) || getFileQueueLength(task.id) > 0;
+  return getFileQueueLength(task.id) > 0;
 }
 
 /** 从任务文件里删掉一批 AI 排程（读不出文件时什么都不动，避免把整份任务写成空） */

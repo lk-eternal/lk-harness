@@ -657,4 +657,35 @@ describe("AI 排程触发：次数 / 过期 / 合并 / 目标失效", () => {
     expect(readTasks().some((t) => t.id === "user-every-sec")).toBe(true)
     expect(stateRuns()["user-every-sec"]).toBeUndefined()
   })
+
+  it("P-004 独立运行：上一轮没做完（消息还在队列里）不叠加；确认处理完的下一次到点照常触发", async () => {
+    writeTasks([aiTask("ai-busy", { independent: true, notify: "none", maxRuns: 2 })])
+    expect(await waitFor(async () => (await pollKey("ai-busy")).length > 0, 10_000, 250)).toBe(true)
+
+    // 消息已被领取、还没确认处理完：几次到点都被挡掉（队列里始终只有第 1 轮那一条）
+    await sleep(2500)
+    expect(stateRuns()["ai-busy"]).toBe(1)
+    expect(await pollKey("ai-busy")).toHaveLength(1)
+
+    await confirm("ai-busy")
+    expect(await waitFor(async () => (await pollKey("ai-busy")).length > 0, 10_000, 250)).toBe(true)
+    expect(stateRuns()["ai-busy"]).toBe(2)
+  })
+
+  it("P-004 独立运行的队列被外力清空（/clean）后：下一次到点照常触发，上一轮的提交记录也不会串过来", async () => {
+    writeTasks([aiTask("ai-cleaned", { independent: true, notify: "none", maxRuns: 5 })])
+
+    // 第 1 轮：Agent 领取了消息、还没做完（.claimed 还在队列里），AI 已经提交过一次结果
+    expect(await waitFor(async () => (await pollKey("ai-cleaned")).length > 0, 10_000, 250)).toBe(true)
+    expect(await sendResult("ai-cleaned", { text: "第 1 轮结论" })).toContain("结果已处理")
+    expect(stateRuns()["ai-cleaned"]).toBe(1)
+
+    // 用户清空排队消息：队列文件全删了，没有任何人通知任务的运行记账
+    expect((await d.post("/clear-queue", {})).ok).toBe(true)
+
+    // 第 2 轮：到点照常触发（以前会一直被判成「上一次运行还没结束」而跳过，直到 daemon 重启）
+    expect(await waitFor(async () => (await pollKey("ai-cleaned")).length > 0, 10_000, 250)).toBe(true)
+    expect(stateRuns()["ai-cleaned"]).toBe(2)
+    expect(await sendResult("ai-cleaned", { text: "第 2 轮结论" })).toContain("结果已处理")
+  })
 })
