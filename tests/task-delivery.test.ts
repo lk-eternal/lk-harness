@@ -402,21 +402,21 @@ describe("buildTaskProtocolSection：独立任务的提示词", () => {
 describe("TaskRunTracker：这次运行有没有提交结果", () => {
   it("入队 → 提交 → 完成：submitted", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     t.submitted("a", false, 200)
     expect(t.finished("a", false, 300)).toBe("submitted")
   })
 
   it("声明没事可报：quiet", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     t.submitted("a", true, 200)
     expect(t.finished("a", false, 300)).toBe("quiet")
   })
 
   it("入队后什么都没提交：missing", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     expect(t.finished("a", false, 300)).toBe("missing")
   })
 
@@ -430,22 +430,41 @@ describe("TaskRunTracker：这次运行有没有提交结果", () => {
   it("结果早于入队时间的不算这一轮", () => {
     const t = new TaskRunTracker()
     t.submitted("a", false, 50)
-    t.queued("a", 100)
+    t.queued("a", false, 100)
     expect(t.finished("a", false, 300)).toBe("missing")
   })
 
   it("完成后清零：下一轮重新对账，上一轮的结果不会串过来", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     t.submitted("a", false, 200)
     expect(t.finished("a", false, 300)).toBe("submitted")
-    t.queued("a", 400)
+    t.queued("a", true, 400)
     expect(t.finished("a", false, 500)).toBe("missing")
+  })
+
+  it("上一轮被清空队列这类外力打断、没走到完成：新一轮入队时记账清零，上一轮的提交不会串过来", () => {
+    const t = new TaskRunTracker()
+    t.queued("a", true, 100)
+    t.submitted("a", false, 200)
+    // 队列被清空，finished 永远不会来；下一次入队时队列是空的
+    t.queued("a", true, 400)
+    expect(t.alreadySubmitted("a")).toBe(false)
+    expect(t.finished("a", false, 500)).toBe("missing")
+  })
+
+  it("入队时队列里还有消息：并入正在进行的这一批，已提交的结果仍然有效", () => {
+    const t = new TaskRunTracker()
+    t.queued("a", true, 100)
+    t.submitted("a", false, 200)
+    t.queued("a", false, 300)
+    expect(t.alreadySubmitted("a")).toBe(true)
+    expect(t.finished("a", false, 400)).toBe("submitted")
   })
 
   it("完成时队列里还有任务消息：窗口让给下一轮，从完成时刻算起", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     t.submitted("a", false, 200)
     expect(t.finished("a", true, 300)).toBe("submitted")
     // 下一轮没提交就完成 → missing（而不是 undefined）
@@ -454,15 +473,15 @@ describe("TaskRunTracker：这次运行有没有提交结果", () => {
 
   it("同一轮多条触发合并：以最早入队时间为准", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
-    t.queued("a", 150)
+    t.queued("a", true, 100)
+    t.queued("a", false, 150)
     t.submitted("a", false, 120)
     expect(t.finished("a", false, 300)).toBe("submitted")
   })
 
   it("alreadySubmitted：同一轮提交过就拒绝重复；完成后恢复", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
+    t.queued("a", true, 100)
     expect(t.alreadySubmitted("a")).toBe(false)
     t.submitted("a", false, 200)
     expect(t.alreadySubmitted("a")).toBe(true)
@@ -472,25 +491,11 @@ describe("TaskRunTracker：这次运行有没有提交结果", () => {
 
   it("不同任务互不影响", () => {
     const t = new TaskRunTracker()
-    t.queued("a", 100)
-    t.queued("b", 100)
+    t.queued("a", true, 100)
+    t.queued("b", true, 100)
     t.submitted("a", false, 200)
     expect(t.finished("b", false, 300)).toBe("missing")
     expect(t.finished("a", false, 300)).toBe("submitted")
-  })
-
-  it("isActive：入队后到确认前在跑；确认后不在；队列里还有下一批则继续算在跑；重启后迟到的提交不算", () => {
-    const t = new TaskRunTracker()
-    expect(t.isActive("a")).toBe(false)
-    t.queued("a", 100)
-    expect(t.isActive("a")).toBe(true)
-    t.finished("a", false, 200)
-    expect(t.isActive("a")).toBe(false)
-    t.queued("a", 300)
-    t.finished("a", true, 400)
-    expect(t.isActive("a")).toBe(true)
-    t.submitted("ghost", false, 500)
-    expect(t.isActive("ghost")).toBe(false)
   })
 })
 

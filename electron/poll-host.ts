@@ -25,7 +25,10 @@ export interface HostPollResult {
   reason?: PollStopReason
 }
 
-/** blocking poll 客户端兜底超时；daemon 侧挂起到点（POLL_BLOCK_TIMEOUT_MS）会先以 timeout 返回，正常走不到这里 */
+/**
+ * blocking poll 自己设的超时，实际不会触发：daemon 挂到 POLL_BLOCK_TIMEOUT_MS 就以 timeout 空返回。
+ * 真正的上限是 fetch（undici）等响应头的默认 300 秒，所以 POLL_BLOCK_TIMEOUT_MS 必须比它短。
+ */
 const POLL_BLOCK_MS = 86_400_000
 
 function pollFetchSignal(external: AbortSignal | undefined, timeoutMs: number): AbortSignal {

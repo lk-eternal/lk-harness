@@ -212,3 +212,34 @@ describe("点选要等问这些题的那一轮结束", () => {
     expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n回答：要"])
   })
 })
+
+describe("一轮结束但 Agent 没有进入等待（回合结束 worker 就退出）", () => {
+  /** 用户发一条消息，Agent 领走：新一轮开始，之后问的题归这一轮 */
+  async function startTurn(text: string): Promise<void> {
+    expect((await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text })).ok).toBe(true)
+    expect(await peeked()).toEqual([text])
+  }
+  const confirmTurnDone = () => d.post("/api/confirm-claimed", { session_key: d.sessionKey })
+
+  it("确认这一批已处理就算一轮结束：选好的答案照常交出，不必等阻塞 poll", async () => {
+    await startTurn("再问个问题")
+    const q1 = await ask("用哪个库？", ["A", "B"])
+    expect((await pick(q1, "B")).ok).toBe(true)
+    expect(await questionOf(q1)).toMatchObject({ answered: "B", held: true })
+
+    await confirmTurnDone()
+
+    expect(await peeked()).toEqual(["问题 1：用哪个库？\n回答：B"])
+    expect((await questionOf(q1)).held).toBeUndefined()
+  })
+
+  it("确认已处理之后才选：选完直接交出", async () => {
+    await startTurn("再问个问题")
+    const q1 = await ask("用哪个库？", ["A", "B"])
+    await confirmTurnDone()
+
+    expect((await pick(q1, "B")).ok).toBe(true)
+    expect(await peeked()).toEqual(["问题 1：用哪个库？\n回答：B"])
+    expect((await questionOf(q1)).held).toBeUndefined()
+  })
+})

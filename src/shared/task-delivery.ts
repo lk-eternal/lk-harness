@@ -332,17 +332,15 @@ interface RunState {
 export class TaskRunTracker {
   private readonly runs = new Map<string, RunState>();
 
-  /** 一条任务消息入队 */
-  queued(taskId: string, at: number = Date.now()): void {
-    const s = this.runs.get(taskId) ?? {};
+  /**
+   * 一条任务消息入队。queueWasIdle = 入队前这个任务的会话队列里没有排队 / 处理中的消息：
+   * 上一轮要么已对账收口，要么被清空队列、重置、删会话这类外力打断（不会走到「确认处理完」），
+   * 这一条开启新一轮，残留的记账一律作废；否则并入正在进行的这一批。
+   */
+  queued(taskId: string, queueWasIdle: boolean, at: number = Date.now()): void {
+    const s = queueWasIdle ? {} : (this.runs.get(taskId) ?? {});
     if (s.queuedAt === undefined) s.queuedAt = at;
     this.runs.set(taskId, s);
-  }
-
-  /** 有一轮运行在记账中（已入队、还没确认处理完）；清理 AI 排程前用它确认没有在跑 */
-  isActive(taskId: string): boolean {
-    const s = this.runs.get(taskId);
-    return s?.queuedAt !== undefined;
   }
 
   /** 这一轮是否已经提交过结果（用于拒绝重复提交） */

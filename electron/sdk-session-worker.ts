@@ -20,6 +20,7 @@ import { pushUiLog } from "./ui-logger"
 import { noteAgentActivity } from "./agent-activity"
 import { classifyAgentFailure, type AgentFailureKind } from "./agent-failure"
 import type { InterruptTurnResult } from "./agent-engine/types"
+import { WORKER_IDLE_EXIT_MS } from "../src/shared/poll-protocol.js"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
 
@@ -167,12 +168,17 @@ function filterDeliverable(messages: PollMessage[]): PollMessage[] {
   return messages.filter((m) => m.text?.trim() && m.messageId)
 }
 
-/** 冷启动先 instant poll（不 confirm），避免阻塞 poll 入口误删 .claimed */
+/**
+ * 冷启动先 instant poll（不 confirm），避免阻塞 poll 入口误删 .claimed。
+ * resumed：上一次阻塞 poll 是挂起到点的空返回，这是静默续挂——没有消息被领走，不用再做冷启动检查，也不再写日志。
+ */
 async function pollForWorkerTurn(
   state: WorkerState,
   sessionKey: string,
   abort: AbortSignal,
+  resumed: boolean,
 ): Promise<HostPollResult> {
+  if (resumed) return hostBlockingPoll(sessionKey, abort)
   if (state.firstTurn) {
     pushUiLog("SDK", "DEBUG", `[${sessionKey}] worker bootstrap (instant poll)`)
     const instant = await hostNonBlockingPoll(sessionKey)
@@ -221,18 +227,25 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
   let failureKind: AgentFailureKind | undefined
   /** 正在处理的这批消息：worker 出错退出时，失败提示要回复其中的最后一条 */
   let inFlight: PollMessage[] = []
+  /** 上一次阻塞 poll 是挂起到点的空返回：这次是静默续挂 */
+  let resumed = false
+  /** 空闲从这一刻起算：worker 启动，或上一轮回合结束 */
+  let idleSince = Date.now()
 
   try {
     while (!abort.signal.aborted && !session.abortController.signal.aborted) {
       // 刚收完一个回合才记一笔（poll 挂起到点后的 continue 不算动静，否则长连接会话每次超时都会刷新）
-      if (state.phase === "processing") noteAgentActivity()
+      if (state.phase === "processing") {
+        noteAgentActivity()
+        idleSince = Date.now()
+      }
       state.phase = "listening"
       inFlight = []
       flushTurnEndWaiters(state)
 
       let pollResult
       try {
-        pollResult = await pollForWorkerTurn(state, sessionKey, abort.signal)
+        pollResult = await pollForWorkerTurn(state, sessionKey, abort.signal, resumed)
       } catch (e: unknown) {
         if (abort.signal.aborted || session.abortController.signal.aborted) break
         throw e
@@ -243,8 +256,15 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         pushUiLog("SDK", "INFO", `[${sessionKey}] poll 返回 end（按需唤醒，本回合结束），worker 退出`)
         break
       }
-      if (pollResult.reason === "timeout") {
-        pushUiLog("SDK", "DEBUG", `[${sessionKey}] poll 挂起到点，继续监听`)
+      // 挂起到点是 daemon 的心跳：静默续挂，不逐次写日志（常驻会话每几分钟一条，会成为新的刷屏）
+      resumed = pollResult.reason === "timeout"
+      if (resumed) {
+        // 空闲够久：干净退出（不算异常，失败计数随之清零），下一条消息走 Resume 冷启动；
+        // 到点空返回时没有消息被领走，这里退出不会丢消息，退出前后来的消息由空闲回调重新拉起
+        if (Date.now() - idleSince >= WORKER_IDLE_EXIT_MS) {
+          pushUiLog("SDK", "INFO", `[${sessionKey}] 空闲超过 ${WORKER_IDLE_EXIT_MS / 60_000} 分钟，worker 退出（下一条消息会重新拉起，上下文保留）`)
+          break
+        }
         continue
       }
 

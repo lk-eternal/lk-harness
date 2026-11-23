@@ -22,7 +22,7 @@ import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./s
 import { buildTurnFooter } from "./shared/turn-footer.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
 import { resolveInboundTexts } from "./shared/lark-mentions.js";
-import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
+import { isPollStopReason, POLL_BLOCK_TIMEOUT_MS, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS, commandTextWithImages, isImageCarryingCommand } from "./shared/command-catalog.js";
 import {
   initFileQueue,
@@ -980,7 +980,9 @@ function purgeSessionFromRouting(sessionKey: string): void {
 }
 
 // ── 完成确认 ────────────────────────────────────────────
-// Agent 挂阻塞 poll = 声明手头活全部干完：确认删除全部 .claimed 并打 DONE。文件即状态，daemon 重启不丢。
+// 这一批消息处理完的两个信号都走这里：Agent 挂阻塞 poll（声明手头活全部干完），或 worker 回合结束后调 /api/confirm-claimed
+// （回合结束就退出的 worker 不会再挂 poll）。确认删除全部 .claimed 并打 DONE，文件即状态，daemon 重启不丢；
+// 这一批处理完 = 一轮结束，这一轮问的题已选完的答案此时才交给 Agent。
 // （模型违规「没回复就挂 poll」时会误确认一次——代价是漏答可追问，远优于守卫机制带来的复杂度与吞消息风险）
 function confirmSessionDone(sessionKey: string): number {
   const done = confirmClaimedMessages(undefined, sessionKey);
@@ -991,6 +993,8 @@ function confirmSessionDone(sessionKey: string): number {
     log("INFO", `完成确认: 删除 ${done.length} 条队列消息, DONE 表情 ${ids.length} 条, session=${sessionKey}`);
   }
   onTaskSessionConfirmed(sessionKey, done);
+  questionRounds.end(sessionKey);
+  deliverReadyQuestionAnswers(sessionKey);
   return done.length;
 }
 
@@ -1425,9 +1429,10 @@ function hasUserDeliverableMessages(messages: QueueMessage[]): boolean {
 
 /**
  * 阻塞 poll 最长挂起：到点以 reason=timeout 空返回，宿主 Session Worker 续挂。
- * 也是兜底心跳——连接不会无限期悬挂（宿主侧 fetch 另有 24h 兜底，永远走不到）。
+ * 时长取自协议常量（必须小于宿主请求库的 300 秒默认上限，见 poll-protocol.ts）；
+ * 环境变量只给端到端测试缩短用，让「到点续挂」几百毫秒内跑完，生产不设。
  */
-const POLL_BLOCK_TIMEOUT_MS = 25 * 60 * 1000;
+const pollBlockTimeoutMs = Number(process.env.LARK_POLL_BLOCK_TIMEOUT_MS) || POLL_BLOCK_TIMEOUT_MS;
 
 /** 排查 poll 投递：把投递给宿主 Session Worker 的消息摘要写入 daemon.log */
 function logPollDelivery(
@@ -1454,7 +1459,8 @@ function respondPoll(
   opts: { blocking: boolean; reason: PollPhaseReason; keepAlive: boolean; messages?: QueueMessage[] },
 ): void {
   const messages = opts.messages ?? [];
-  logPollDelivery(sessionKey, { ...opts, messages });
+  // timeout 是常驻会话每几分钟一次的心跳，不逐次写日志（否则每个会话每几分钟一条，成了新的刷屏）
+  if (opts.reason !== "timeout") logPollDelivery(sessionKey, { ...opts, messages });
   broadcastPollPhaseEvent(sessionKey, "end", {
     blocking: opts.blocking,
     reason: opts.reason,
@@ -3364,7 +3370,7 @@ function isSameSession(a: string | undefined, b: string): boolean {
 }
 
 /**
- * Agent 进入等待、这一轮结束了：这个会话里选完的答案现在交给 Agent。
+ * 这一轮结束了（这一批消息已确认处理完）：这个会话里选完的答案现在交给 Agent。
  * 飞书是登记里等着这一轮结束的卡；应用内对话是等着的各组问题。
  */
 function deliverReadyQuestionAnswers(sessionKey: string): void {
@@ -4589,10 +4595,11 @@ function startHttpServer(): Promise<number> {
               ...(boundChat ? { chatId: boundChat } : {}),
               ...senderMeta,
             };
+            const queueWasIdle = getFileQueueLength(normalized) === 0;
             const pushed = pushToFileQueue(content, effectiveId, `daemon-${process.pid}`, normalized, false, queueMeta);
             // 独立任务会话的消息：记入运行记账，回合结束时才能对账「AI 有没有提交结果」
             const queuedTask = pushed ? findScheduledTaskBySessionKey(normalized, readTasksSafe()) : undefined;
-            if (queuedTask && queuedTask.independent !== false) taskRuns.queued(queuedTask.id);
+            if (queuedTask && queuedTask.independent !== false) taskRuns.queued(queuedTask.id, queueWasIdle);
             trackMessageSession(effectiveId, normalized);
             rememberSessionKey(normalized);
             broadcastQueueEvent(chatIdFromSessionKey(normalized) || (rt && target ? makeChatKey(rt.cfg.id, target) : undefined));
@@ -5936,21 +5943,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     return true;
   }
 
-  // pack / dev 重启后：确认主会话残留 .claimed，避免重投的旧消息被再次执行
+  // worker 回合结束后确认这一批已处理；pack / dev 重启后确认主会话残留 .claimed，避免重投的旧消息被再次执行
   if (method === "POST" && pathname === "/api/confirm-claimed") {
     const body = JSON.parse(await readBody(req));
     const { session_key } = body as { session_key?: string };
     if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
     const sk = normalizeSessionKey(session_key) || session_key;
-    const done = confirmClaimedMessages(undefined, sk);
-    if (done.length > 0) {
-      broadcastQueueEvent(sk);
-      const ids = done.filter((mid) => mid && !mid.startsWith("internal_"));
-      if (ids.length > 0) addReactionToMessages(ids, sk, "DONE");
-      log("INFO", `强制确认 claimed: ${done.length} 条, DONE ${ids.length} 条, session=${sk}`);
-      onTaskSessionConfirmed(sk, done);
-    }
-    json(res, { ok: true, confirmed: done.length });
+    json(res, { ok: true, confirmed: confirmSessionDone(sk) });
     return true;
   }
 
@@ -6130,12 +6129,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       }
     }
 
-    // 阻塞 poll = Agent 声明手头事项全部处理完：确认全部 .claimed 并打 DONE
+    // 阻塞 poll = Agent 声明手头事项全部处理完：确认全部 .claimed 并打 DONE，一轮结束，选完的答案交给 Agent（下面等消息时就会领到）
     confirmSessionDone(sessionKeyFilter);
     redeliveredMsgIds.delete(sessionKeyFilter);
-    // 一轮结束：这一轮问的题，用户已经选完的答案现在才能交给 Agent（下面等消息时就会领到）
-    questionRounds.end(sessionKeyFilter);
-    deliverReadyQuestionAnswers(sessionKeyFilter);
 
     // 空等挂起 = 回合结束：兜底收口无未决问题的活卡（SDK 侧 ensure 失败无 cardId 时不会自己 finish）
     const liveCard = agentStreamCards.get(sessionKeyFilter);
@@ -6160,7 +6156,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       return true;
     }
 
-    const messages = await waitForSessionMessages(POLL_BLOCK_TIMEOUT_MS, undefined, sessionKeyFilter, () => disconnected);
+    const messages = await waitForSessionMessages(pollBlockTimeoutMs, undefined, sessionKeyFilter, () => disconnected);
     unregisterPollConn(sessionKeyFilter, res);
 
     // 客户端已断开：消息仍是 .claimed（未确认），下次 poll 会重新投递，不会丢
@@ -6477,10 +6473,11 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
       log("WARN", `定时任务模型 override 写入失败: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
+  const queueWasIdle = getFileQueueLength(task.id) === 0;
   if (!pushToFileQueue(content, internalMsgId, `daemon-${process.pid}`, task.id, false, { chatType: "task" })) {
     return fail("未投递: 写入会话队列失败");
   }
-  taskRuns.queued(task.id);
+  taskRuns.queued(task.id, queueWasIdle);
   trackMessageSession(internalMsgId, task.id);
   rememberSessionKey(task.id);
   broadcastQueueEvent(outboundChatKey);
@@ -6612,10 +6609,10 @@ function writeAiRuns(runs: Record<string, number>): void {
   }
 }
 
-/** 这个排程的上一次运行还没结束（独立运行：在跑或队列里还有消息）。只有独立运行有「在跑」的概念 */
+/** 这个排程的上一次运行还没结束：独立运行的会话队列里还有消息（排队中或处理中）。只有独立运行有「在跑」的概念 */
 function isAiTaskBusy(task: ScheduledTask): boolean {
   if (task.independent === false) return false;
-  return taskRuns.isActive(task.id) || getFileQueueLength(task.id) > 0;
+  return getFileQueueLength(task.id) > 0;
 }
 
 /** 从任务文件里删掉一批 AI 排程（读不出文件时什么都不动，避免把整份任务写成空） */
