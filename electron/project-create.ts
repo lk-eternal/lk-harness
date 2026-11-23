@@ -8,7 +8,6 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { addRepoProfilesIfMissing, getChannel, getChannels, getRepoProfiles } from "./config-store"
 import { readLockFile } from "./daemon-client"
-import { reportCommandResult } from "./command-handler"
 import {
   archiveProjectGroup,
   attachPlannedBindings,
@@ -443,8 +442,7 @@ export async function runProjectStepFromApp(channelId: string, projectId: string
 
   const r = await startProjectNode(lock.port, chatKey, p, nodeId, { touchCurrent: false })
   if (!r.ok) return { ok: false, error: r.error }
-  // 聊天里留一条记录：点了哪一步（步骤提示词本身很长，不当用户消息显示）
-  await reportCommandResult(lock.port, "", true, `▶ 开始：${r.label}`, chatKey, undefined, { sessionKey: r.sessionKey })
+  // 聊天里「点了哪一步」的记录不在这里写：提示词交给 Agent 时 daemon 会按投递补一条（标题 + 折叠全文）
   return { ok: true }
 }
 

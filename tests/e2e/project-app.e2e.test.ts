@@ -4,7 +4,7 @@
  * 主进程这头是真的 config-store / project-store / project-commands / project-create / session-dispatcher
  * （只把 electron 和落盘的 electron-store 顶掉），daemon 是真的隔离 daemon，走真实 HTTP：
  * - 建项目后，daemon 里应用内聊天的当前会话真的切到了项目会话，会话树里它是 project 标签
- * - 点步骤：步骤提示词真的进了项目会话的队列，聊天记录里真的多了一条「▶ 开始」的通知（这条是 daemon 生成的，单测看不到）
+ * - 点步骤：步骤提示词真的进了项目会话的队列，交给 Agent 时聊天记录里真的补了一条提示条（这条是 daemon 生成的，单测看不到）
  * - 删项目：路由登记、聊天记录真的清了，当前会话回到默认
  *
  * 用 `npm run test:e2e` 运行；不在默认的 `npm test` 里。
@@ -14,7 +14,7 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { spawnSync } from "node:child_process"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { startIsolatedDaemon, waitFor, type IsolatedDaemon } from "../helpers/isolated-daemon"
+import { startIsolatedDaemon, type IsolatedDaemon } from "../helpers/isolated-daemon"
 
 let userData = ""
 let disk: Record<string, unknown> = {}
@@ -88,7 +88,7 @@ async function boot() {
   return { store, create, tabs }
 }
 
-const history = async (sessionKey: string): Promise<Array<{ kind: string; text?: string }>> =>
+const history = async (sessionKey: string): Promise<Array<{ kind: string; text?: string; detail?: string }>> =>
   (await d.post("/api/app-chat/history", { sessionKey })).items ?? []
 const pollKey = async (key: string): Promise<string[]> => {
   const r = await (await fetch(`${d.base}/api/poll-message?sessionKey=${encodeURIComponent(key)}&wait=false`)).json() as { messages?: Array<{ text: string }> }
@@ -173,7 +173,7 @@ describe("应用内项目：真实 daemon", () => {
     expect(appChat.renameAppChatSession("ch_nope|app_main::project_abc", "x")).toEqual({ ok: false, error: "不是应用内对话的会话" })
   })
 
-  it("点步骤：提示词进了项目会话的队列，聊天记录里有「开始」的通知；全局当前项目指针不动", async () => {
+  it("点步骤：提示词进了项目会话的队列，交给 Agent 时聊天记录里补一条提示条（标题 + 折叠全文）；全局当前项目指针不动", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(CH, { name: "写周报", templateId: "report" })
     const before = store.getCurrentProjectId()
@@ -185,9 +185,13 @@ describe("应用内项目：真实 daemon", () => {
     expect(texts[0]).not.toMatch(/分支与红线|GitLab/)
     expect(store.getCurrentProjectId()).toBe(before)
 
-    expect(await waitFor(async () => (await history(r.sessionKey!)).some((i) => i.kind === "notice" && i.text?.includes("▶ 开始：")))).toBe(true)
-    // 项目会话以外的会话里不会有这条通知
-    expect((await history(d.sessionKey)).some((i) => i.kind === "notice" && i.text?.includes("▶ 开始："))).toBe(false)
+    // 记录是 daemon 在把提示词交给 Agent 时补的，不是点按钮时另写一条：只有这一条，没有「▶ 开始」
+    const notices = (await history(r.sessionKey!)).filter((i) => i.kind === "notice")
+    expect(notices).toHaveLength(1)
+    expect(notices[0].text).toMatch(/^\[PROJECT_ACTION\]/)
+    expect(notices[0].detail).toBe(texts[0].trim())
+    // 项目会话以外的会话里不会有这条记录
+    expect((await history(d.sessionKey)).some((i) => i.kind === "notice" && i.text?.startsWith("[PROJECT_ACTION]"))).toBe(false)
   })
 
   it("项目会话里直接发消息也能到 Agent（和普通会话一样），项目目录是它的工作目录", async () => {
@@ -204,6 +208,7 @@ describe("应用内项目：真实 daemon", () => {
     const { store, create, tabs } = await boot()
     const r = await create.createProjectFromApp(CH, { name: "临时调研", templateId: "research" })
     await create.runProjectStepFromApp(CH, r.projectId!, "scope")
+    await pollKey(r.sessionKey!) // 提示词交给 Agent 时，聊天记录里才有东西
     const p = store.getProject(r.projectId!)!
     expect((await history(r.sessionKey!)).length).toBeGreaterThan(0)
 

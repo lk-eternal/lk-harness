@@ -204,7 +204,7 @@ describe("应用内建项目", () => {
 })
 
 describe("点步骤", () => {
-  it("步骤提示词投进项目会话；不动全局指针；聊天里留一条记录", async () => {
+  it("步骤提示词投进项目会话；不动全局指针；不另写「开始」通知（记录由 daemon 在投递时补）", async () => {
     const { store, create } = await boot()
     const r = await create.createProjectFromApp(APP, { name: "写作", templateId: "writing" })
     const before = store.getCurrentProjectId(APP_CHAT)
@@ -218,10 +218,8 @@ describe("点步骤", () => {
     expect(String(enq[0].body.content)).toContain("[PROJECT_ACTION]")
     expect(String(enq[0].body.content)).not.toMatch(/分支与红线|飞书|GitLab/)
     expect(store.getCurrentProjectId(APP_CHAT)).toBe(before)
-    const notice = hit("/cmd/result")
-    expect(notice).toHaveLength(1)
-    expect(notice[0].body).toMatchObject({ chatId: APP_CHAT, sessionKey: r.sessionKey, ok: true })
-    expect(String(notice[0].body.message)).toContain("开始：")
+    // 投递时 daemon 已经会给这条提示词记一条提示条，这里再写一条「开始」就重复了
+    expect(hit("/cmd/result")).toHaveLength(0)
   })
 
   it("项目里没有的步骤、不存在的项目、非应用内通道：都拒绝，且什么都不投", async () => {
