@@ -976,7 +976,9 @@ function purgeSessionFromRouting(sessionKey: string): void {
 }
 
 // ── 完成确认 ────────────────────────────────────────────
-// Agent 挂阻塞 poll = 声明手头活全部干完：确认删除全部 .claimed 并打 DONE。文件即状态，daemon 重启不丢。
+// 这一批消息处理完的两个信号都走这里：Agent 挂阻塞 poll（声明手头活全部干完），或 worker 回合结束后调 /api/confirm-claimed
+// （回合结束就退出的 worker 不会再挂 poll）。确认删除全部 .claimed 并打 DONE，文件即状态，daemon 重启不丢；
+// 这一批处理完 = 一轮结束，这一轮问的题已选完的答案此时才交给 Agent。
 // （模型违规「没回复就挂 poll」时会误确认一次——代价是漏答可追问，远优于守卫机制带来的复杂度与吞消息风险）
 function confirmSessionDone(sessionKey: string): number {
   const done = confirmClaimedMessages(undefined, sessionKey);
@@ -987,6 +989,8 @@ function confirmSessionDone(sessionKey: string): number {
     log("INFO", `完成确认: 删除 ${done.length} 条队列消息, DONE 表情 ${ids.length} 条, session=${sessionKey}`);
   }
   onTaskSessionConfirmed(sessionKey, done);
+  questionRounds.end(sessionKey);
+  deliverReadyQuestionAnswers(sessionKey);
   return done.length;
 }
 
@@ -3297,7 +3301,7 @@ function isSameSession(a: string | undefined, b: string): boolean {
 }
 
 /**
- * Agent 进入等待、这一轮结束了：这个会话里选完的答案现在交给 Agent。
+ * 这一轮结束了（这一批消息已确认处理完）：这个会话里选完的答案现在交给 Agent。
  * 飞书是登记里等着这一轮结束的卡；应用内对话是等着的各组问题。
  */
 function deliverReadyQuestionAnswers(sessionKey: string): void {
@@ -5870,21 +5874,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     return true;
   }
 
-  // pack / dev 重启后：确认主会话残留 .claimed，避免重投的旧消息被再次执行
+  // worker 回合结束后确认这一批已处理；pack / dev 重启后确认主会话残留 .claimed，避免重投的旧消息被再次执行
   if (method === "POST" && pathname === "/api/confirm-claimed") {
     const body = JSON.parse(await readBody(req));
     const { session_key } = body as { session_key?: string };
     if (!session_key) { json(res, { ok: false, error: "session_key required" }, 400); return true; }
     const sk = normalizeSessionKey(session_key) || session_key;
-    const done = confirmClaimedMessages(undefined, sk);
-    if (done.length > 0) {
-      broadcastQueueEvent(sk);
-      const ids = done.filter((mid) => mid && !mid.startsWith("internal_"));
-      if (ids.length > 0) addReactionToMessages(ids, sk, "DONE");
-      log("INFO", `强制确认 claimed: ${done.length} 条, DONE ${ids.length} 条, session=${sk}`);
-      onTaskSessionConfirmed(sk, done);
-    }
-    json(res, { ok: true, confirmed: done.length });
+    json(res, { ok: true, confirmed: confirmSessionDone(sk) });
     return true;
   }
 
@@ -6064,12 +6060,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       }
     }
 
-    // 阻塞 poll = Agent 声明手头事项全部处理完：确认全部 .claimed 并打 DONE
+    // 阻塞 poll = Agent 声明手头事项全部处理完：确认全部 .claimed 并打 DONE，一轮结束，选完的答案交给 Agent（下面等消息时就会领到）
     confirmSessionDone(sessionKeyFilter);
     redeliveredMsgIds.delete(sessionKeyFilter);
-    // 一轮结束：这一轮问的题，用户已经选完的答案现在才能交给 Agent（下面等消息时就会领到）
-    questionRounds.end(sessionKeyFilter);
-    deliverReadyQuestionAnswers(sessionKeyFilter);
 
     // 空等挂起 = 回合结束：兜底收口无未决问题的活卡（SDK 侧 ensure 失败无 cardId 时不会自己 finish）
     const liveCard = agentStreamCards.get(sessionKeyFilter);
