@@ -211,6 +211,22 @@ export function shouldMountMemoryMcp(o: { endpoint: HarnessMcpEndpoint; sessionK
   return o.endpoint === "interactive" && !!o.sessionKey?.trim()
 }
 
+/**
+ * 内置 MCP 认「调用者是哪个会话」靠的请求头。
+ * HTTP 头只能放 Latin-1 字符，而会话键里的目录可以是中文（如 `::D:\workspace\排查`），原样放进去客户端会直接拒发，
+ * 所以放进头里的是 encodeURIComponent 之后的值，daemon 读到后再还原。两端都经过下面这一对函数，不要各写各的。
+ */
+export const INVOKER_SESSION_KEY_HEADER = "X-Harness-Session-Key"
+
+export function encodeInvokerSessionKey(sessionKey: string): string {
+  return encodeURIComponent(sessionKey)
+}
+
+/** 没有这个头就是没有调用者，返回 undefined；值不是合法编码会抛 URIError，由请求处理的最外层按 500 报出去 */
+export function decodeInvokerSessionKey(headerValue: string | undefined): string | undefined {
+  return headerValue === undefined ? undefined : decodeURIComponent(headerValue)
+}
+
 export function buildBuiltinMcpServers(
   port: number | null,
   includeAdmin: boolean,
@@ -222,7 +238,7 @@ export function buildBuiltinMcpServers(
   if (port) {
     const base = `http://127.0.0.1:${port}`
     const sk = invokerSessionKey?.trim()
-    const invokerHeaders = sk ? { headers: { "X-Harness-Session-Key": sk } } : {}
+    const invokerHeaders = sk ? { headers: { [INVOKER_SESSION_KEY_HEADER]: encodeInvokerSessionKey(sk) } } : {}
     const builtinPath = endpoint === "task" ? "/mcp-task" : endpoint === "visitor" ? "/mcp-visitor" : "/mcp-interactive"
     servers[CLAW_MCP_KEY] = { url: `${base}${builtinPath}`, ...invokerHeaders }
     if (includeAdmin) {

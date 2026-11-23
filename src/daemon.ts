@@ -122,6 +122,8 @@ import {
   deleteHarnessMcpServer,
   CLAW_MCP_KEY,
   ADMIN_MCP_KEY,
+  INVOKER_SESSION_KEY_HEADER,
+  decodeInvokerSessionKey,
 } from "./shared/harness-mcp-store.js";
 import {
   initHarnessRuleStore,
@@ -4430,7 +4432,7 @@ function startHttpServer(): Promise<number> {
           });
           await srv.connect(transport);
           const invokerSk = (pathname === "/mcp-admin" || pathname === "/mcp-interactive" || isVisitor || pathname === "/mcp-task" || isSchedule || isMemory)
-            ? (req.headers["x-harness-session-key"] as string | undefined)
+            ? decodeInvokerSessionKey(req.headers[INVOKER_SESSION_KEY_HEADER.toLowerCase()] as string | undefined)
             : undefined;
           await runWithMcpInvokerSessionKey(invokerSk, async () => { await transport.handleRequest(req, res); });
           return;

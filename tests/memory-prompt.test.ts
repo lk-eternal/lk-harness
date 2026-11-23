@@ -115,7 +115,7 @@ describe("shouldMountMemoryMcp / buildBuiltinMcpServers", () => {
   })
 
   it("挂载时带上调用者会话头，且主用户、项目、普通交互会话都有", () => {
-    const entry = { url: "http://127.0.0.1:19528/mcp-memory", headers: { "X-Harness-Session-Key": "ch_a|oc_main" } }
+    const entry = { url: "http://127.0.0.1:19528/mcp-memory", headers: { "X-Harness-Session-Key": "ch_a%7Coc_main" } }
     expect(buildBuiltinMcpServers(19528, true, "interactive", false, "ch_a|oc_main")[MEMORY_MCP_KEY]).toEqual(entry)
     expect(MEMORY_MCP_KEY in buildBuiltinMcpServers(19528, false, "interactive", true, "ch_a|oc_g::project_p1")).toBe(true)
     expect(MEMORY_MCP_KEY in buildBuiltinMcpServers(19528, false, "interactive", false, "ch_a|oc_x")).toBe(true)

@@ -117,7 +117,7 @@ describe("buildBuiltinMcpServers 的自排程挂载", () => {
     const s = buildBuiltinMcpServers(19528, false, "interactive", true, "ch_a|oc_g::project_p1")
     expect(s[SCHEDULE_MCP_KEY]).toEqual({
       url: "http://127.0.0.1:19528/mcp-schedule",
-      headers: { "X-Harness-Session-Key": "ch_a|oc_g::project_p1" },
+      headers: { "X-Harness-Session-Key": "ch_a%7Coc_g%3A%3Aproject_p1" },
     })
   })
   it("普通会话不挂", () => {
