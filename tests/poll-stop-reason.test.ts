@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { POLL_BLOCK_TIMEOUT_MS } from "../src/shared/poll-protocol"
+import { POLL_BLOCK_TIMEOUT_MS, WORKER_IDLE_EXIT_MS } from "../src/shared/poll-protocol"
 
 /**
  * poll-message 的空返回协议：daemon 只给宿主 Session Worker 一个机器可读的 reason（end / timeout），
@@ -43,6 +43,11 @@ describe("阻塞 poll 的挂起时长", () => {
 
   it("必须小于宿主请求库的默认上限，daemon 才能先以 timeout 空返回、让 worker 续挂", () => {
     expect(POLL_BLOCK_TIMEOUT_MS).toBeLessThan(HOST_FETCH_HEADERS_TIMEOUT_MS)
+  })
+
+  it("空闲退出的时限是 30 分钟，且远大于一次挂起：worker 只在到点空返回时检查，至少要能检查到好几次", () => {
+    expect(WORKER_IDLE_EXIT_MS).toBe(30 * 60 * 1000)
+    expect(WORKER_IDLE_EXIT_MS).toBeGreaterThanOrEqual(POLL_BLOCK_TIMEOUT_MS * 5)
   })
 })
 

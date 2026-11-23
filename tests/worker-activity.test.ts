@@ -3,12 +3,14 @@
  * 但长连接 poll 挂起到点后的继续监听不能记（否则每次超时都会刷新，应用就永远「不安静」、永远不会自动重启）。
  * 同时验证 listSdkWorkerPhases / listLlmWorkerPhases：监听中是 listening，跑回合时是 processing。
  */
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const m = vi.hoisted(() => ({
   noteAgentActivity: vi.fn(),
   executeSdkTurn: vi.fn(),
   executeLlmPiTurn: vi.fn(),
+  onSdkWorkerFinished: vi.fn(),
+  onLlmWorkerFinished: vi.fn(),
   hostNonBlockingPoll: vi.fn(),
   hostBlockingPoll: vi.fn(),
   pushUiLog: vi.fn(),
@@ -18,12 +20,12 @@ vi.mock("../electron/agent-activity", () => ({ noteAgentActivity: m.noteAgentAct
 vi.mock("../electron/agent-sdk", () => ({
   executeSdkTurn: m.executeSdkTurn,
   finishInterruptedTurn: vi.fn(async () => undefined),
-  onSdkWorkerFinished: vi.fn(),
+  onSdkWorkerFinished: m.onSdkWorkerFinished,
   unregisterSdkSessionForWorker: vi.fn(async () => undefined),
 }))
 vi.mock("../electron/agent-llm", () => ({
   executeLlmPiTurn: m.executeLlmPiTurn,
-  onLlmWorkerFinished: vi.fn(),
+  onLlmWorkerFinished: m.onLlmWorkerFinished,
   registerLlmSession: vi.fn(),
   unregisterLlmSession: vi.fn(async () => undefined),
 }))
@@ -63,11 +65,20 @@ const oneMessage = { messages: [{ text: "你好", messageId: "m1" }] }
 /** 写过几次「worker listening」日志：每次从头开始监听写一条；poll 挂起到点后的静默续挂不写 */
 const listeningLogs = () => m.pushUiLog.mock.calls.filter((c) => String(c[2]).includes("worker listening")).length
 const heartbeatLogs = () => m.pushUiLog.mock.calls.filter((c) => String(c[2]).includes("挂起到点")).length
+const idleExitLogs = () => m.pushUiLog.mock.calls.filter((c) => String(c[2]).includes("空闲超过")).length
+
+/** 只假 Date：worker 的「空闲多久」靠 Date.now()，让测试能一步跨过 30 分钟；定时器仍是真的（vi.waitFor 要用） */
+const T0 = new Date("2026-11-23T10:00:00Z").getTime()
+const atMinute = (min: number) => vi.setSystemTime(T0 + min * 60_000)
 
 beforeEach(() => {
   for (const fn of Object.values(m)) fn.mockReset()
   m.hostNonBlockingPoll.mockResolvedValue({ messages: [] })
+  vi.useFakeTimers({ toFake: ["Date"] })
+  atMinute(0)
 })
+
+afterEach(() => { vi.useRealTimers() })
 
 describe("SDK worker 记 Agent 的动静", () => {
   const key = "s-activity"
@@ -152,6 +163,81 @@ describe("SDK worker 记 Agent 的动静", () => {
     await vi.waitFor(() => expect(listSdkWorkerPhases()).toEqual([]))
     // 回合开始一笔 + 退出一笔
     expect(m.noteAgentActivity).toHaveBeenCalledTimes(2)
+  })
+
+  describe("空闲 30 分钟干净退出", () => {
+    // 某条用例失败时 worker 可能还挂着，停掉它免得连累后面的用例。
+    // 用例里 poll 超过 5 次就改成挂起不返回：万一退出逻辑坏了，worker 会一直续挂，这样是超时失败，而不是死循环卡住
+    afterEach(async () => { await stopSdkWorker(key) })
+
+    it("空闲不满 30 分钟：到点空返回只续挂，worker 不退出", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 3) return hangUntilAbort(signal)
+        atMinute(polls * 9) // 9、18、27 分钟各到点一次
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      start(session())
+      await vi.waitFor(() => expect(polls).toBe(4))
+
+      expect(listSdkWorkerPhases()).toEqual(["listening"])
+      expect(m.onSdkWorkerFinished).not.toHaveBeenCalled()
+      expect(idleExitLogs()).toBe(0)
+    })
+
+    it("空闲满 30 分钟后的到点空返回：干净退出（不算异常），不再挂 poll，不起回合", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 5) return hangUntilAbort(signal)
+        atMinute(polls === 1 ? 29 : 30) // 29 分钟还续挂，刚好 30 分钟退出
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      start(session())
+      await vi.waitFor(() => expect(m.onSdkWorkerFinished).toHaveBeenCalledTimes(1))
+
+      expect(polls).toBe(2)
+      expect(m.executeSdkTurn).not.toHaveBeenCalled()
+      expect(idleExitLogs()).toBe(1)
+      expect(m.onSdkWorkerFinished.mock.calls[0][1]).toBe(false) // errored=false：不会报红字、不会累计失败次数
+      expect(listSdkWorkerPhases()).toEqual([])
+    })
+
+    it("空闲从上一轮回合结束起算，不是从 worker 启动起算", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 5) return hangUntilAbort(signal)
+        if (polls === 1) { atMinute(25); return Promise.resolve(oneMessage) } // 25 分钟时来了消息，回合当场结束
+        atMinute(polls === 2 ? 25 + 29 : 25 + 30) // 回合结束后空闲 29 分钟续挂，30 分钟退出
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      m.executeSdkTurn.mockResolvedValue({ ok: true })
+      start(session())
+      await vi.waitFor(() => expect(m.onSdkWorkerFinished).toHaveBeenCalledTimes(1))
+
+      expect(polls).toBe(3) // 从启动起算的话第 2 次（54 分钟）就退出了
+      expect(m.executeSdkTurn).toHaveBeenCalledTimes(1)
+      expect(idleExitLogs()).toBe(1)
+      expect(m.onSdkWorkerFinished.mock.calls[0][1]).toBe(false)
+    })
+
+    it("空闲很久之后来了消息：照常处理，不会因为空闲时间到了而丢掉它", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls === 1) { atMinute(40); return Promise.resolve(oneMessage) }
+        return hangUntilAbort(signal)
+      })
+      m.executeSdkTurn.mockResolvedValue({ ok: true })
+      start(session())
+      await vi.waitFor(() => expect(polls).toBe(2))
+
+      expect(m.executeSdkTurn).toHaveBeenCalledTimes(1)
+      expect(idleExitLogs()).toBe(0)
+      expect(listSdkWorkerPhases()).toEqual(["listening"])
+    })
   })
 })
 
@@ -244,5 +330,79 @@ describe("LLM worker 记 Agent 的动静", () => {
     expect(m.noteAgentActivity).toHaveBeenCalledTimes(2)
 
     await stopLlmWorker(key)
+  })
+
+  describe("空闲 30 分钟干净退出", () => {
+    // 同 SDK 那组：失败时停掉残留的 worker；poll 超过 5 次就挂起不返回，退出逻辑坏了是超时失败而不是死循环
+    afterEach(async () => { await stopLlmWorker(key) })
+
+    it("空闲不满 30 分钟：到点空返回只续挂，worker 不退出", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 3) return hangUntilAbort(signal)
+        atMinute(polls * 9) // 9、18、27 分钟各到点一次
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      start(session())
+      await vi.waitFor(() => expect(polls).toBe(4))
+
+      expect([...listLlmWorkerPhases().values()]).toEqual(["listening"])
+      expect(m.onLlmWorkerFinished).not.toHaveBeenCalled()
+      expect(idleExitLogs()).toBe(0)
+    })
+
+    it("空闲满 30 分钟后的到点空返回：干净退出（不算异常），不再挂 poll，不起回合", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 5) return hangUntilAbort(signal)
+        atMinute(polls === 1 ? 29 : 30) // 29 分钟还续挂，刚好 30 分钟退出
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      start(session())
+      await vi.waitFor(() => expect(m.onLlmWorkerFinished).toHaveBeenCalledTimes(1))
+
+      expect(polls).toBe(2)
+      expect(m.executeLlmPiTurn).not.toHaveBeenCalled()
+      expect(idleExitLogs()).toBe(1)
+      expect(m.onLlmWorkerFinished.mock.calls[0][1]).toBe(false) // errored=false
+      expect(listLlmWorkerPhases().size).toBe(0)
+    })
+
+    it("空闲从上一轮回合结束起算，不是从 worker 启动起算", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls > 5) return hangUntilAbort(signal)
+        if (polls === 1) { atMinute(25); return Promise.resolve(oneMessage) } // 25 分钟时来了消息，回合当场结束
+        atMinute(polls === 2 ? 25 + 29 : 25 + 30) // 回合结束后空闲 29 分钟续挂，30 分钟退出
+        return Promise.resolve({ messages: [], reason: "timeout" })
+      })
+      m.executeLlmPiTurn.mockResolvedValue({ ok: true, replyText: "好的" })
+      start(session())
+      await vi.waitFor(() => expect(m.onLlmWorkerFinished).toHaveBeenCalledTimes(1))
+
+      expect(polls).toBe(3) // 从启动起算的话第 2 次（54 分钟）就退出了
+      expect(m.executeLlmPiTurn).toHaveBeenCalledTimes(1)
+      expect(idleExitLogs()).toBe(1)
+      expect(m.onLlmWorkerFinished.mock.calls[0][1]).toBe(false)
+    })
+
+    it("空闲很久之后来了消息：照常处理，不会因为空闲时间到了而丢掉它", async () => {
+      let polls = 0
+      m.hostBlockingPoll.mockImplementation((_k: string, signal: AbortSignal) => {
+        polls++
+        if (polls === 1) { atMinute(40); return Promise.resolve(oneMessage) }
+        return hangUntilAbort(signal)
+      })
+      m.executeLlmPiTurn.mockResolvedValue({ ok: true, replyText: "好的" })
+      start(session())
+      await vi.waitFor(() => expect(polls).toBe(2))
+
+      expect(m.executeLlmPiTurn).toHaveBeenCalledTimes(1)
+      expect(idleExitLogs()).toBe(0)
+      expect([...listLlmWorkerPhases().values()]).toEqual(["listening"])
+    })
   })
 })
