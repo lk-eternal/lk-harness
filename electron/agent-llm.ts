@@ -458,7 +458,7 @@ function beginLlmTurn(session: LlmSession): void {
 }
 
 /**
- * interrupted：会话被摘除时卡片仍未收口，说明回合没跑完，页脚标注「Agent 已中断」（对齐 SDK 的 sealStreamCardForStop）。
+ * interrupted：会话被摘除时卡片仍未收口，说明回合没跑完，页脚标注「已中断」（对齐 SDK 的 sealStreamCardForStop）。
  * 正常回合结束时 agg 早已 finished，不会走到 flush，所以不会误标。
  */
 async function sealLlmStream(session: LlmSession, opts?: { interrupted?: boolean }): Promise<void> {

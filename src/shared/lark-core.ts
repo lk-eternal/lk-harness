@@ -1,6 +1,7 @@
 import { DEFAULT_NODE_GROUP_ID, encodeRepoPairOption } from "./project-types.js";
 import { checkerFieldName } from "./question-multi.js";
 import { RepeatLogGate } from "./stream-card-failure.js";
+import type { TurnFooterPart } from "./turn-footer.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -915,6 +916,36 @@ export class LarkSender {
   static readonly STREAM_REPLY_ID = "reply_md";
   /** 流式卡：未决问题题干（与 reply_md 分离，避免并卡 Duplicate ID） */
   static readonly STREAM_QUESTION_ID = "question_md";
+  /** 流式卡：回合页脚（≤20 字符）；孤儿卡收口时要按这个 id 单独把它改写成「已中断」 */
+  static readonly TURN_FOOTER_ID = "turn_footer";
+
+  /** 回合页脚元素。整卡构建和单独改写都从这里取，免得两处各写一份形状 */
+  static turnFooterElement(content: string): Record<string, unknown> {
+    return { tag: "markdown", element_id: LarkSender.TURN_FOOTER_ID, content, text_size: "notation" };
+  }
+
+  /**
+   * 把共享的页脚项拼成飞书 notation 小字。运行中用青绿（与工具「运行中」同色），已中断用橙色；
+   * 完成时间只写 HH:mm（静态文字，按本机时区，不带今天/昨天）。
+   */
+  static turnFooterMarkdown(parts: TurnFooterPart[]): string {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return parts
+      .map((p) => {
+        switch (p.kind) {
+          case "model":
+          case "elapsed":
+            return p.text;
+          case "status":
+            return `<font color='${p.status === "running" ? "turquoise" : "orange"}'>${p.text}</font>`;
+          case "time": {
+            const d = new Date(p.ts);
+            return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+          }
+        }
+      })
+      .join(" · ");
+  }
   /** @deprecated 使用 STREAM_REPLY_ID */
   static readonly STREAM_ELEMENT_ID = "reply_md";
 
@@ -1722,7 +1753,7 @@ export class LarkSender {
         } else if (foot) {
           els.push({ tag: "hr" });
         }
-        if (foot && !qText) els.push({ tag: "markdown", content: foot, text_size: "notation" });
+        if (foot && !qText) els.push(LarkSender.turnFooterElement(foot));
       }
       return els;
     };

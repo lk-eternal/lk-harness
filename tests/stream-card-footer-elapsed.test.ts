@@ -7,6 +7,8 @@
  *
  * 直接驱动 daemon 里真实的 finishAgentStreamCard / updateAgentStreamCard / handleCardAction，
  * 通道里挂假的飞书发送器抓每次整卡刷新，用假的系统时间控制「过了多久」。
+ *
+ * 页脚格式（与应用内聊天共用 buildTurnFooter）：收口后是「模型 · 耗时 X · HH:mm」，末尾的时间是收口时刻（本机时区）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { agentStreamCards, cardQuestionMap, channels, finishAgentStreamCard, handleCardAction, updateAgentStreamCard } from "../src/daemon.js"
@@ -49,13 +51,22 @@ function seedCard(opts: { withQuestion?: boolean } = {}) {
   } as any)
 }
 
-/** 整卡最后一个元素就是页脚（模型 · 耗时） */
+/** 整卡最后一个元素就是页脚（固定 element_id，孤儿卡收口时靠它单独改写） */
 const footerOf = (card: El): string => {
   const last = card.body.elements.at(-1)
   expect(last.tag).toBe("markdown")
   expect(last.text_size).toBe("notation")
+  expect(last.element_id).toBe("turn_footer")
   return last.content
 }
+/** 页脚末尾的完成时间：HH:mm，本机时区（测试机时区不固定，所以按本地时间算期望值） */
+const clock = (ms: number): string => {
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+}
+const BASE_MS = Date.parse("2026-11-17T07:31:28Z")
+/** 建卡后 22 秒收口的页脚 */
+const FOOTER_22S = `${MODEL} · 耗时 22s · ${clock(BASE_MS + 22_000)}`
 const lastFooter = () => footerOf(updates.at(-1)!)
 
 const advance = (seconds: number) => vi.setSystemTime(Date.now() + seconds * 1000)
@@ -64,7 +75,7 @@ const click = (opt = "测试") =>
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] })
-  vi.setSystemTime(new Date("2026-11-17T07:31:28Z"))
+  vi.setSystemTime(BASE_MS)
   updates.length = 0
   sender.updateStreamingCard.mockClear()
   sender.closeStreamingCard.mockClear()
@@ -82,14 +93,14 @@ describe("页脚耗时在收口时定下来", () => {
     seedCard({ withQuestion: false })
     advance(22)
     await finishAgentStreamCard(SESSION, reply("好的"), ch, CARD, MODEL)
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
   })
 
   it("带未决问题收口：页脚是收口时的耗时", async () => {
     seedCard()
     advance(22)
     await finishAgentStreamCard(SESSION, reply("请选"), ch, CARD, MODEL)
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
   })
 })
 
@@ -103,8 +114,8 @@ describe("收口之后再刷新这张卡，耗时不再增长", () => {
     const r = await click()
     expect(r.toast).toMatchObject({ type: "success" })
     expect(JSON.stringify(updates.at(-1))).toContain("已选择: **测试**")
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
-    expect(footerOf(r.card.data)).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
+    expect(footerOf(r.card.data)).toBe(FOOTER_22S)
   })
 
   it("几个小时后才点选，页脚也不变", async () => {
@@ -114,7 +125,7 @@ describe("收口之后再刷新这张卡，耗时不再增长", () => {
     advance(3 * 3600)
 
     await click()
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
   })
 
   it("已收口的卡再收口一次（新消息送达关题就是这条路）：页脚不变", async () => {
@@ -125,7 +136,7 @@ describe("收口之后再刷新这张卡，耗时不再增长", () => {
 
     await finishAgentStreamCard(SESSION, reply("请选"), ch, CARD, MODEL)
     expect(updates).toHaveLength(2)
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
   })
 })
 
@@ -134,16 +145,16 @@ describe("卡被续写后再收口：以最后一次收口为准", () => {
     seedCard()
     advance(22)
     await finishAgentStreamCard(SESSION, reply("请选"), ch, CARD, MODEL)
-    expect(lastFooter()).toBe(`${MODEL} · 22s`)
+    expect(lastFooter()).toBe(FOOTER_22S)
 
     advance(38)
     const r = await updateAgentStreamCard(SESSION, reply("接着说"), ch, CARD)
     expect(r.ok).toBe(true)
-    // 续写中的卡是流式状态，不带页脚
-    expect(updates.at(-1)!.body.elements.at(-1).text_size).not.toBe("notation")
+    // 续写中的卡又回到流式状态：页脚带「运行中…」，没有完成时间
+    expect(lastFooter()).toBe(`${MODEL} · <font color='turquoise'>运行中…</font> · 耗时 1m`)
 
     advance(0)
     await finishAgentStreamCard(SESSION, reply("接着说"), ch, CARD, MODEL)
-    expect(lastFooter()).toBe(`${MODEL} · 1m`)
+    expect(lastFooter()).toBe(`${MODEL} · 耗时 1m · ${clock(BASE_MS + 60_000)}`)
   })
 })

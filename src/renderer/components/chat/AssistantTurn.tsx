@@ -1,20 +1,13 @@
-import { useState, type ReactNode } from "react"
+import { Fragment, useState, type ReactNode } from "react"
 import { Brain, Check, CheckCircle2, ChevronDown, ChevronRight, Circle, Layers, ListChecks, Loader2, Wrench, XCircle } from "lucide-react"
 import type { AppChatAssistantItem, AppChatSegment, AppChatTodo, AppChatTool } from "../../../shared/app-chat-types"
+import { buildTurnFooter, type TurnFooterPart } from "../../../shared/turn-footer"
 import { MessageTime } from "./ItemViews"
 import Markdown, { CopyButton } from "./Markdown"
 import { groupSegments, summarizeGroup, type GroupSummary, type ProcessSegment } from "./segment-groups"
 
 function fmtMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
-}
-
-/** 整个回合的耗时：不满一分钟 12.3s，满一分钟 1m12s */
-function fmtDuration(ms: number): string {
-  const seconds = Math.round(ms / 100) / 10
-  if (seconds < 60) return `${seconds.toFixed(1)}s`
-  const whole = Math.round(ms / 1000)
-  return `${Math.floor(whole / 60)}m${whole % 60}s`
 }
 
 /** 折叠头：点击切换；未手动切换时由 auto 决定（回合进行中的最新块展开、其余折叠） */
@@ -159,6 +152,38 @@ function TodosBlock({ items }: { items: AppChatTodo[] }) {
   )
 }
 
+function FooterPart({ part }: { part: TurnFooterPart }) {
+  switch (part.kind) {
+    case "status": return <span className={part.status === "interrupted" ? "text-yellow-500" : "text-accent"}>{part.text}</span>
+    case "time": return <MessageTime ts={part.ts} />
+    default: return <span>{part.text}</span>
+  }
+}
+
+/**
+ * 回合页脚：显示哪几项、什么顺序由共享的 buildTurnFooter 定（飞书卡片页脚用的是同一个函数），这里只负责画。
+ * 时间是回合完成的时刻；旧记录没存完成时间，退回显示开始时间，也就没有耗时。
+ */
+function TurnFooter({ item, replyText }: { item: AppChatAssistantItem; replyText: string }) {
+  const parts = buildTurnFooter({
+    modelLabel: item.modelLabel,
+    status: item.interrupted ? "interrupted" : undefined,
+    elapsedMs: item.finishedAt !== undefined ? item.finishedAt - item.ts : undefined,
+    time: item.finishedAt ?? item.ts,
+  })
+  return (
+    <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
+      {parts.map((part, i) => (
+        <Fragment key={part.kind}>
+          {i > 0 && <span>·</span>}
+          <FooterPart part={part} />
+        </Fragment>
+      ))}
+      {replyText && <CopyButton text={replyText} className="ml-1.5" />}
+    </div>
+  )
+}
+
 export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) {
   const last = item.segments.length - 1
   const lastThinking = lastIndexOfType(item.segments, "thinking")
@@ -190,15 +215,7 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
       {!item.finished && item.segments.length === 0 && (
         <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>
       )}
-      {item.finished && (
-        <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
-          {item.modelLabel && <><span>{item.modelLabel}</span><span>·</span></>}
-          {item.interrupted && <><span className="text-yellow-500">已中断</span><span>·</span></>}
-          {item.finishedAt !== undefined && <><span>耗时 {fmtDuration(Math.max(0, item.finishedAt - item.ts))}</span><span>·</span></>}
-          <MessageTime ts={item.ts} />
-          {replyText && <CopyButton text={replyText} className="ml-1.5" />}
-        </div>
-      )}
+      {item.finished && <TurnFooter item={item} replyText={replyText} />}
     </div>
   )
 }

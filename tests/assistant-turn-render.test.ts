@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import type { AppChatAssistantItem, AppChatSegment } from "../src/shared/app-chat-types"
 import AssistantTurn from "../src/renderer/components/chat/AssistantTurn"
+import { formatFullTime, formatMessageTime } from "../src/renderer/time-ago"
 
 const base: AppChatAssistantItem = { id: "a1", kind: "assistant", ts: 1_700_000_000_000, segments: [], finished: true }
 
@@ -80,5 +81,62 @@ describe("AssistantTurn 折叠", () => {
       { type: "tools", tools: [{ name: "shell", status: "running", summary: "sleep 99" }] },
     ]
     expect(render(segs, true)).not.toContain("animate-spin")
+  })
+})
+
+/**
+ * 页脚的内容和顺序由共享的 buildTurnFooter 定（飞书卡片页脚用同一个函数），这里验证应用内这一端画得对：
+ * 模型 · 状态 · 耗时 · 时间，时间是完成时刻。
+ */
+describe("AssistantTurn 页脚", () => {
+  const TS = base.ts
+  const DONE = TS + 129_000
+  const renderItem = (over: Partial<AppChatAssistantItem>) =>
+    renderToStaticMarkup(createElement(AssistantTurn, { item: { ...base, ...over } }))
+
+  it("正常完成：模型 · 耗时 2m9s · 完成时间（没有状态项）", () => {
+    const html = renderItem({ modelLabel: "gpt-5.5", finishedAt: DONE })
+    expect(text(html)).toBe(`gpt-5.5 · 耗时 2m9s · ${formatMessageTime(DONE)}`)
+  })
+
+  it("已中断排在模型和耗时之间，黄色，没有 Agent 前缀", () => {
+    const html = renderItem({ modelLabel: "gpt-5.5", finishedAt: DONE, interrupted: true })
+    expect(text(html)).toBe(`gpt-5.5 · 已中断 · 耗时 2m9s · ${formatMessageTime(DONE)}`)
+    expect(html).toContain('<span class="text-yellow-500">已中断</span>')
+    expect(text(html)).not.toContain("Agent")
+  })
+
+  it("时间是完成时刻不是开始时刻：悬停提示里是完成时刻的完整时间", () => {
+    const html = renderItem({ finishedAt: DONE })
+    expect(html).toContain(`title="${formatFullTime(DONE)}"`)
+    expect(html).not.toContain(`title="${formatFullTime(TS)}"`)
+  })
+
+  it("耗时统一整秒写法：满分钟不带 0s，不再有小数", () => {
+    expect(text(renderItem({ finishedAt: TS + 120_000 }))).toContain("耗时 2m ·")
+    expect(text(renderItem({ finishedAt: TS + 12_300 }))).toContain("耗时 12s ·")
+  })
+
+  it("旧记录没存完成时间：不写耗时，时间退回开始时间", () => {
+    const html = renderItem({ modelLabel: "gpt-5.5" })
+    expect(text(html)).toBe(`gpt-5.5 · ${formatMessageTime(TS)}`)
+    expect(html).toContain(`title="${formatFullTime(TS)}"`)
+  })
+
+  it("没有模型名：模型项和它后面的分隔符一起省掉", () => {
+    expect(text(renderItem({ finishedAt: DONE }))).toBe(`耗时 2m9s · ${formatMessageTime(DONE)}`)
+  })
+
+  it("回合进行中不显示页脚（应用内靠转圈，不写运行中…）", () => {
+    const t = text(renderItem({ finished: false, modelLabel: "gpt-5.5" }))
+    expect(t).not.toContain("耗时")
+    expect(t).not.toContain("gpt-5.5")
+  })
+
+  it("有回复正文时页脚末尾是复制按钮", () => {
+    const html = renderItem({ finishedAt: DONE, segments: [{ type: "reply", text: "你好" }] })
+    expect(html).toContain("你好")
+    // 复制按钮在页脚最后一个元素，位于完成时间之后
+    expect(html.lastIndexOf("耗时")).toBeLessThan(html.lastIndexOf("button"))
   })
 })

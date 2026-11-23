@@ -19,6 +19,7 @@ import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { QuestionRounds, mayAnswerQuestion } from "./shared/question-round.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
+import { buildTurnFooter } from "./shared/turn-footer.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
 import { resolveInboundTexts } from "./shared/lark-mentions.js";
 import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
@@ -695,8 +696,11 @@ const sessionLastReplyAt = new Map<string, number>();
 type SessionAgentRuntime = "llm" | "sdk";
 const sessionAgentRuntime = new Map<string, SessionAgentRuntime>();
 
-/** 会话最近一次拉起时用的模型显示名（session-launched 登记）：独立定时任务的卡片页脚用，它不建流式卡，没有收口页脚 */
-const sessionModelLabel = new Map<string, string>();
+/**
+ * 会话最近一次拉起时用的模型显示名（session-launched 登记）：
+ * 独立定时任务的卡片页脚用（它不建流式卡）；流式卡运行中页脚也用它，因为随 finish 才下发的 modelLabel 那时还没到。
+ */
+export const sessionModelLabel = new Map<string, string>();
 
 /** 记录出站回复时刻（zombie 假死判定 + 黑洞投递嫌疑判定） */
 function touchSessionLastReply(sessionKey: string): void {
@@ -1954,7 +1958,7 @@ interface AgentStreamCardState {
   finishedAt?: number;
   /** 页脚用模型名（Electron 随 finish 下发，update 刷新） */
   modelLabel?: string;
-  /** 回合没跑完就被收口（Electron 随 finish 下发），页脚标注「Agent 已中断」 */
+  /** 回合没跑完就被收口（Electron 随 finish 下发），页脚标注「已中断」 */
   interrupted?: boolean;
   /** 这张卡的体积预算（字节）：飞书报 200860 后收紧；没设就用默认值。只收紧不放宽，卡只活一个回合 */
   byteBudget?: number;
@@ -1962,6 +1966,10 @@ interface AgentStreamCardState {
   updateFailures?: number;
   /** 失败后的退避：这个时刻之前不再发流式刷新（收口不受限），期间的新内容留在 lastSegments 里，放行时一并带上 */
   retryNotBefore?: number;
+  /** 最近一次整卡刷新成功的时刻：页脚走表只补「很久没刷过」的卡，有事件在刷的卡不用管 */
+  lastRefreshAt?: number;
+  /** 页脚走表已经排了一次刷新、还没跑完：上一次没完成前不再重复排，避免慢网络下队列堆积 */
+  footerTickPending?: boolean;
 }
 
 const agentStreamCards = new Map<string, AgentStreamCardState>();
@@ -2348,16 +2356,6 @@ function buildCardMergedPayload(sessionKey: string, state: AgentStreamCardState)
   };
 }
 
-/** 页脚耗时：建卡→收口，紧凑英文单位 */
-function formatTurnElapsed(ms: number): string {
-  const s = Math.max(1, Math.round(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rest = s % 60;
-  if (m < 60) return rest ? `${m}m${rest}s` : `${m}m`;
-  return `${Math.floor(m / 60)}h${m % 60 ? `${m % 60}m` : ""}`;
-}
-
 /** 拼流式卡 JSON（纯构建，不动 sequence/lastHash/终态，供全量刷新与回调回卡共用） */
 function buildAgentStreamCardJson(
   sessionKey: string,
@@ -2384,17 +2382,17 @@ function buildAgentStreamCardJson(
     skipThinkingOnlyPlaceholder: hasInlineQuestion,
   }, state, sessionKey);
   const status = terminal ? "completed" as const : "streaming" as const;
-  // 页脚只在收口时落：模型 + 本轮耗时（建卡→收口），正文区不掺元信息
-  let footer: string | undefined;
-  if (terminal) {
-    const parts: string[] = [];
-    if (state.modelLabel?.trim()) parts.push(state.modelLabel.trim());
-    if (state.interrupted) parts.push("Agent 已中断");
-    const endAt = state.finishedAt ?? Date.now();
-    const elapsedMs = endAt - (state.createdAt || endAt);
-    if (elapsedMs >= 0) parts.push(formatTurnElapsed(elapsedMs));
-    if (parts.length > 0) footer = parts.join(" · ");
-  }
+  // 页脚：模型 · 状态 · 耗时 · 时间（内容与顺序由共享的 buildTurnFooter 定，和应用内聊天一致），正文区不掺元信息。
+  // 运行中：带「运行中…」，耗时走到现在，没有完成时间；收口后耗时固定为 建卡→收口，末尾补完成时间
+  const nowMs = Date.now();
+  const endAt = terminal ? (state.finishedAt ?? nowMs) : nowMs;
+  const footer = LarkSender.turnFooterMarkdown(buildTurnFooter({
+    // 模型名随 finish 才下发，运行中靠会话拉起时登记的
+    modelLabel: state.modelLabel?.trim() || sessionModelLabel.get(normalizeSessionKey(sessionKey) || sessionKey),
+    status: terminal ? (state.interrupted ? "interrupted" : undefined) : "running",
+    elapsedMs: endAt - (state.createdAt || endAt),
+    time: terminal ? endAt : undefined,
+  }));
   const cardJson = LarkSender.buildStreamingCardJson({
     status,
     showThinking: state.showThinking,
@@ -2454,7 +2452,11 @@ async function refreshAgentStreamCard(
       }
       state.updateFailures = 0;
       state.retryNotBefore = undefined;
-      if (opts.finish) state.finished = true;
+      state.lastRefreshAt = Date.now();
+      if (opts.finish) {
+        state.finished = true;
+        rememberFinalizedStreamCard(state.cardId);
+      }
       state.lastHash = payloadFingerprint(merged, opts.finish);
       const sk = normalizeSessionKey(sessionKey) || sessionKey;
       const hasReply = merged.segments.some((s) => s.type === "reply" && s.text.trim());
@@ -2476,6 +2478,42 @@ async function refreshAgentStreamCard(
   return next;
 }
 
+
+/**
+ * 页脚走表：流式卡页脚里的耗时要自己往前走。卡片平时只在 Agent 有新事件时才刷新，
+ * 长工具调用、长时间思考期间没有事件，不补刷的话耗时会停在上一次事件那一刻，看起来像卡死了。
+ */
+const STREAM_FOOTER_TICK_MS = 5_000;
+/** 卡建出来超过这个时间就不再替它走表：Electron 异常退出后可能留下永远收不了口的卡，不能无限刷下去 */
+const STREAM_FOOTER_MAX_AGE_MS = 6 * 3600_000;
+
+/**
+ * 给每张「还在跑、已经 ≥ 5s 没刷新过」的流式卡补一次整卡刷新（只为更新页脚耗时）。
+ * 跳过：已收口的卡、仍在失败退避期的卡（别在飞书报错时再加压）、上一次走表还没跑完的卡、超过 6 小时的卡。
+ * 刷新入该会话的全序链执行，与事件驱动的刷新、收口互相串行；真正跑之前再确认一次这张卡还是在跑的那张。
+ */
+export function tickStreamCardFooters(): void {
+  const now = Date.now();
+  for (const [sessionKey, state] of agentStreamCards) {
+    if (state.finished || state.footerTickPending) continue;
+    if (now - (state.createdAt || now) > STREAM_FOOTER_MAX_AGE_MS) continue;
+    if (state.retryNotBefore && now < state.retryNotBefore) continue;
+    if (now - (state.lastRefreshAt ?? state.createdAt ?? now) < STREAM_FOOTER_TICK_MS) continue;
+    state.footerTickPending = true;
+    enqueueCardOp(sessionKey, async () => {
+      try {
+        if (agentStreamCards.get(sessionKey) !== state || state.finished) return;
+        const ch = resolveChannel(sessionKey, { allowDefault: false });
+        if (ch.type !== "feishu") return;
+        await refreshAgentStreamCard(sessionKey, state, ch, { finish: false });
+      } finally {
+        state.footerTickPending = false;
+      }
+    }).catch((e: any) => {
+      log("WARN", `[StreamCard] 页脚走表刷新异常 session=${sessionKey} card=${state.cardId}: ${e?.message ?? e}`);
+    });
+  }
+}
 
 function isStreamCardEnabled(sessionKey: string, ch: Extract<ResolvedChannel, { type: "feishu" }>): boolean {
   if (isIndependentTaskSessionKey(sessionKey, readTasksSafe())) return false;
@@ -2672,17 +2710,43 @@ function nextOrphanCardSequence(cardId: string): number {
 }
 
 /**
+ * 页脚已经写成最终样子（正常收口过）的卡。
+ * 孤儿卡收口会把页脚改写成「已中断」，但一张卡正常收口后，Electron 那边迟到或重复的 finish 也会走到孤儿路径，
+ * 靠这个集合认出「这张卡已经收口过，别把它改成已中断」。只在内存里记：重启后记忆清空，
+ * 那时留下的孤儿卡页脚多半还停在「运行中…」，改成「已中断」正合适。
+ */
+const finalizedStreamCards = new Set<string>();
+const FINALIZED_STREAM_CARDS_MAX = 500;
+function rememberFinalizedStreamCard(cardId: string): void {
+  finalizedStreamCards.delete(cardId);
+  finalizedStreamCards.add(cardId);
+  if (finalizedStreamCards.size > FINALIZED_STREAM_CARDS_MAX) {
+    const oldest = finalizedStreamCards.values().next().value;
+    if (oldest !== undefined) finalizedStreamCards.delete(oldest);
+  }
+}
+
+/**
  * daemon 内存无卡时按 cardId 收口飞书孤儿流式卡（pack/进程重启后常见）。
  * sequence 见 nextOrphanCardSequence；
  * 只关 streaming_mode 不全量 update——daemon 不知道卡内容，空 segments 会把正文冲掉。
+ * markInterrupted：卡页脚还停在「运行中…」时，单独把页脚这一个元素改写成「已中断」（卡上有页脚元素，见 TURN_FOOTER_ID）；
+ * 已知正常收口过的卡不改。
  */
 async function finishOrphanStreamCardById(
   cardId: string,
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
+  opts?: { markInterrupted?: boolean },
 ): Promise<boolean> {
   const sender = ch.rt.sender!;
   try {
-    return await sender.closeStreamingCard(cardId, nextOrphanCardSequence(cardId));
+    const closed = await sender.closeStreamingCard(cardId, nextOrphanCardSequence(cardId));
+    // 关不掉说明卡多半已不存在（被撤回/删除），再改页脚只会多一条失败日志
+    if (closed && opts?.markInterrupted && !finalizedStreamCards.has(cardId)) {
+      const footer = LarkSender.turnFooterMarkdown(buildTurnFooter({ status: "interrupted" }));
+      await sender.replaceCardElement(cardId, LarkSender.TURN_FOOTER_ID, LarkSender.turnFooterElement(footer), nextOrphanCardSequence(cardId));
+    }
+    return closed;
   } catch (e: any) {
     log("WARN", `[StreamCard] 孤儿卡收口失败 card=${cardId}: ${e?.message ?? e}`);
     return false;
@@ -2700,7 +2764,7 @@ async function finishAgentStreamCard(
   const state = agentStreamCards.get(sessionKey);
   if (!state) {
     if (expectCardId) {
-      const ok = await finishOrphanStreamCardById(expectCardId, ch);
+      const ok = await finishOrphanStreamCardById(expectCardId, ch, { markInterrupted: true });
       if (ok) log("INFO", `[StreamCard] 已收口孤儿卡 card=${expectCardId} session=${sessionKey}`);
       return { ok, cardId: expectCardId };
     }
@@ -6840,6 +6904,7 @@ export async function daemonMain(): Promise<void> {
   touchTaskRunAlive();
   setInterval(touchTaskRunAlive, 60_000).unref();
   setInterval(sweepAiTasks, 60_000).unref();
+  setInterval(tickStreamCardFooters, STREAM_FOOTER_TICK_MS).unref();
 
   log("INFO", `Daemon 就绪 ✓ port=${daemonPort}`);
 }
