@@ -231,12 +231,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         rebaseUnensuredQueue(session)
       } catch { /* best-effort */ }
 
-      let ledgerNearLimit = false
-      try {
-        const { isSessionLedgerNearRollover } = await import("./session-retention.js")
-        ledgerNearLimit = await isSessionLedgerNearRollover({ runtime: "llm", sessionKey })
-      } catch { /* 提醒只是锦上添花：量不出来这一轮就不提醒，不能挡住回合 */ }
-
       state.phase = "processing"
       inFlight = fresh
       noteAgentActivity()
@@ -244,7 +238,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         firstTurn: state.firstTurn,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
         historyTurns: state.firstTurn ? state.historyTurns : undefined,
-        ledgerNearLimit,
       })
       state.firstTurn = false
       state.taskMessage = undefined

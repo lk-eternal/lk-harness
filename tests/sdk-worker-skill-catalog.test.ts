@@ -37,7 +37,6 @@ vi.mock("../electron/ui-logger", () => ({ pushUiLog: vi.fn() }))
 vi.mock("../electron/stream-card", () => ({ rebaseUnensuredQueue: vi.fn() }))
 vi.mock("../electron/session-retention", () => ({
   rolloverSessionLedgerIfNeeded: mocks.rollover,
-  isSessionLedgerNearRollover: async () => false,
 }))
 
 import { interruptSdkWorkerTurn, startSdkWorkerLoop, stopSdkWorker } from "../electron/sdk-session-worker"

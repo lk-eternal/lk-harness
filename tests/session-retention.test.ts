@@ -12,8 +12,6 @@ import {
   LEDGER_MAX_SDK_RUNS,
   measureLedger,
   rolloverSessionLedgerIfNeeded,
-  ledgerNearRollover,
-  isSessionLedgerNearRollover,
 } from "../electron/session-retention.js"
 import { initCarryoverStore, resetCarryoverStoreForTests, appendMirrorTurns, peekCarryover } from "../electron/carryover.js"
 
@@ -130,79 +128,6 @@ describe("session-retention", () => {
     expect(sdkRunsLimitExceeded(LEDGER_MAX_SDK_RUNS, 0)).toBe(true)
     expect(sdkRunsLimitExceeded(LEDGER_MAX_SDK_RUNS - 1, LEDGER_MAX_BYTES)).toBe(true)
     expect(sdkRunsLimitExceeded(1, 100)).toBe(false)
-  })
-
-  it("ledgerNearRollover：滚动前最后两个来回开始（SDK 倒数 2 次 run、LLM 倒数 4 条消息），体积到八成也算", () => {
-    expect(ledgerNearRollover("sdk", LEDGER_MAX_SDK_RUNS - 3, 0)).toBe(false)
-    expect(ledgerNearRollover("sdk", LEDGER_MAX_SDK_RUNS - 2, 0)).toBe(true)
-    expect(ledgerNearRollover("llm", LEDGER_MAX_TURNS - 5, 0)).toBe(false)
-    expect(ledgerNearRollover("llm", LEDGER_MAX_TURNS - 4, 0)).toBe(true)
-    // 两种口径各用各的阈值：同一个数 13，SDK 该提醒了，LLM 还早
-    expect(ledgerNearRollover("sdk", 13, 0)).toBe(true)
-    expect(ledgerNearRollover("llm", 13, 0)).toBe(false)
-    for (const runtime of ["sdk", "llm"] as const) {
-      expect(ledgerNearRollover(runtime, 1, LEDGER_MAX_BYTES * 0.8 - 1)).toBe(false)
-      expect(ledgerNearRollover(runtime, 1, LEDGER_MAX_BYTES * 0.8)).toBe(true)
-    }
-  })
-
-  it("isSessionLedgerNearRollover 量真实 SDK 账本：倒数第 3 次 run 不提醒，倒数第 2 次起提醒，滚动清账本后不再提醒", async () => {
-    const sk = "sdk-sk-near"
-    const workspace = "D:\\workspace\\lk-harness"
-    const { sdkJsonlStoreDir } = await import("../electron/agent-sdk.js")
-    const dir = sdkJsonlStoreDir(workspace, sk)
-    fs.mkdirSync(dir, { recursive: true })
-    const writeRuns = (n: number) => fs.writeFileSync(
-      path.join(dir, "runs.ndjson"),
-      Array.from({ length: n }, (_, i) => JSON.stringify({ runId: `run-${i}` })).join("\n"),
-    )
-    const near = () => isSessionLedgerNearRollover({ runtime: "sdk", sessionKey: sk, workspaceDir: workspace, userDataDir: dataDir })
-
-    writeRuns(LEDGER_MAX_SDK_RUNS - 3)
-    expect(await near()).toBe(false)
-    writeRuns(LEDGER_MAX_SDK_RUNS - 2)
-    expect(await near()).toBe(true)
-
-    writeRuns(LEDGER_MAX_SDK_RUNS)
-    appendMirrorTurns(sk, [{ role: "user", text: "hello" }, { role: "assistant", text: "hi" }])
-    expect(await rolloverSessionLedgerIfNeeded({ runtime: "sdk", sessionKey: sk, workspaceDir: workspace, userDataDir: dataDir })).toBe(true)
-    expect(await near()).toBe(false)
-  })
-
-  it("isSessionLedgerNearRollover 量真实 LLM 账本：25 条正文消息不提醒，26 条起提醒", async () => {
-    const sk = "llm-sk-near"
-    const { piSessionDir } = await import("../electron/pi-embedded.js")
-    const dir = piSessionDir(sk)
-    fs.mkdirSync(dir, { recursive: true })
-    const writeMessages = (n: number) => fs.writeFileSync(
-      path.join(dir, "session.jsonl"),
-      Array.from({ length: n }, (_, i) => JSON.stringify({
-        type: "message",
-        message: { role: i % 2 === 0 ? "user" : "assistant", content: `第${i + 1}条` },
-      })).join("\n") + "\n",
-      "utf-8",
-    )
-    const near = () => isSessionLedgerNearRollover({ runtime: "llm", sessionKey: sk, userDataDir: dataDir })
-
-    writeMessages(LEDGER_MAX_TURNS - 5)
-    expect(await near()).toBe(false)
-    writeMessages(LEDGER_MAX_TURNS - 4)
-    expect(await near()).toBe(true)
-  })
-
-  it("isSessionLedgerNearRollover 只量不动：不清账本、不 stash carryover", async () => {
-    const sk = "sdk-sk-near-readonly"
-    const workspace = "D:\\workspace\\lk-harness"
-    const { sdkJsonlStoreDir } = await import("../electron/agent-sdk.js")
-    const dir = sdkJsonlStoreDir(workspace, sk)
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(
-      path.join(dir, "runs.ndjson"),
-      Array.from({ length: LEDGER_MAX_SDK_RUNS }, (_, i) => JSON.stringify({ runId: `run-${i}` })).join("\n"),
-    )
-    expect(await isSessionLedgerNearRollover({ runtime: "sdk", sessionKey: sk, workspaceDir: workspace, userDataDir: dataDir })).toBe(true)
-    expect(fs.existsSync(dir)).toBe(true)
-    expect(peekCarryover(sk)).toBeUndefined()
   })
 
   it("SDK 15 runs 触发 rollover：清账本但保留 mirror，且不重复触发", async () => {

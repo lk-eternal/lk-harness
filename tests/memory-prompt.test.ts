@@ -28,7 +28,7 @@ import {
 } from "../electron/prompt-assembler.js"
 import { buildBuiltinMcpServers, MEMORY_MCP_KEY, shouldMountMemoryMcp } from "../src/shared/harness-mcp-store.js"
 import { resolveVisitorLimits } from "../src/shared/visitor-limits.js"
-import { MEMORY_ROLLOVER_NOTICE, saveSessionMemory } from "../src/shared/session-memory.js"
+import { saveSessionMemory } from "../src/shared/session-memory.js"
 
 beforeEach(() => {
   h.userData = fs.mkdtempSync(path.join(os.tmpdir(), "lk-memprompt-"))
@@ -183,51 +183,5 @@ describe("首轮带入记忆", () => {
     expect(p.indexOf(MEMORY_TOOLS)).toBeLessThan(p.indexOf("[本轮投递]\n```json"))
     expect(count(p, "线上只能周三发布")).toBe(1)
     expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: false })).not.toContain("线上只能周三发布")
-  })
-})
-
-describe("快滚动时的提醒（notice）", () => {
-  const NEAR = { ledgerNearLimit: true }
-
-  it.each([["主用户会话", MAIN], ["完整档的其他人", FULL_OTHER]] as [string, PromptAssemblyContext][])(
-    "%s：账本快满，[本轮投递] 末尾多一个 notice，点明用 memory_save",
-    (_n, ctx) => {
-      const payload = payloadOf(assembleTurnPrompt(MSGS, ctx, NEAR))
-      expect(payload.notice).toBe(MEMORY_ROLLOVER_NOTICE)
-      expect(payload.notice).toContain("memory_save")
-      expect(Object.keys(payload)).toEqual(["session", "messages", "notice"])
-    },
-  )
-
-  it("账本没快满（false 或没传）：没有 notice", () => {
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN, { ledgerNearLimit: false })).notice).toBeUndefined()
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN, {})).notice).toBeUndefined()
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN)).notice).toBeUndefined()
-  })
-
-  it.each([["独立定时任务", TASK], ["访客档", VISITOR]] as [string, PromptAssemblyContext][])(
-    "%s：没挂记忆工具，账本快满也不提醒（它没有 memory_save 可用）",
-    (_n, ctx) => {
-      expect(payloadOf(assembleTurnPrompt(MSGS, ctx, NEAR)).notice).toBeUndefined()
-    },
-  )
-
-  it("没有会话 key（没有调用者身份）：不提醒", () => {
-    expect(payloadOf(assembleTurnPrompt(MSGS, {}, NEAR)).notice).toBeUndefined()
-  })
-
-  it("和首轮的 memory 同时出现时：session、memory、messages、notice 按这个顺序，互不影响", () => {
-    saveSessionMemory(h.userData, MAIN.sessionKey!, "待办", "等产品确认文案")
-    const payload = payloadOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true, ledgerNearLimit: true }))
-    expect(Object.keys(payload)).toEqual(["session", "memory", "messages", "notice"])
-    expect(payload.memory).toEqual({ 待办: "等产品确认文案" })
-    expect(payload.notice).toBe(MEMORY_ROLLOVER_NOTICE)
-  })
-
-  it("SDK 引擎的整轮提示词：notice 跟着 [本轮投递] 出现一次；不快滚动时整段提示词里都没有", () => {
-    const near = assembleSdkWorkerTurnPrompt(MSGS, MAIN, { ledgerNearLimit: true })
-    expect(count(near, MEMORY_ROLLOVER_NOTICE)).toBe(1)
-    expect(near.indexOf(MEMORY_ROLLOVER_NOTICE)).toBeGreaterThan(near.indexOf("[本轮投递]\n```json"))
-    expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { ledgerNearLimit: false })).not.toContain(MEMORY_ROLLOVER_NOTICE)
   })
 })
