@@ -21,7 +21,7 @@ import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/questio
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { createReplyTargetTracker, sendReplyWithBackoff } from "./shared/inbound-reply-target.js";
 import { resolveInboundTexts } from "./shared/lark-mentions.js";
-import { isPollStopReason, type PollPhaseReason } from "./shared/poll-protocol.js";
+import { isPollStopReason, POLL_BLOCK_TIMEOUT_MS, type PollPhaseReason } from "./shared/poll-protocol.js";
 import { COMMANDS, commandTextWithImages, isImageCarryingCommand } from "./shared/command-catalog.js";
 import {
   initFileQueue,
@@ -1416,9 +1416,10 @@ function hasUserDeliverableMessages(messages: QueueMessage[]): boolean {
 
 /**
  * 阻塞 poll 最长挂起：到点以 reason=timeout 空返回，宿主 Session Worker 续挂。
- * 也是兜底心跳——连接不会无限期悬挂（宿主侧 fetch 另有 24h 兜底，永远走不到）。
+ * 时长取自协议常量（必须小于宿主请求库的 300 秒默认上限，见 poll-protocol.ts）；
+ * 环境变量只给端到端测试缩短用，让「到点续挂」几百毫秒内跑完，生产不设。
  */
-const POLL_BLOCK_TIMEOUT_MS = 25 * 60 * 1000;
+const pollBlockTimeoutMs = Number(process.env.LARK_POLL_BLOCK_TIMEOUT_MS) || POLL_BLOCK_TIMEOUT_MS;
 
 /** 排查 poll 投递：把投递给宿主 Session Worker 的消息摘要写入 daemon.log */
 function logPollDelivery(
@@ -1445,7 +1446,8 @@ function respondPoll(
   opts: { blocking: boolean; reason: PollPhaseReason; keepAlive: boolean; messages?: QueueMessage[] },
 ): void {
   const messages = opts.messages ?? [];
-  logPollDelivery(sessionKey, { ...opts, messages });
+  // timeout 是常驻会话每几分钟一次的心跳，不逐次写日志（否则每个会话每几分钟一条，成了新的刷屏）
+  if (opts.reason !== "timeout") logPollDelivery(sessionKey, { ...opts, messages });
   broadcastPollPhaseEvent(sessionKey, "end", {
     blocking: opts.blocking,
     reason: opts.reason,
@@ -6092,7 +6094,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       return true;
     }
 
-    const messages = await waitForSessionMessages(POLL_BLOCK_TIMEOUT_MS, undefined, sessionKeyFilter, () => disconnected);
+    const messages = await waitForSessionMessages(pollBlockTimeoutMs, undefined, sessionKeyFilter, () => disconnected);
     unregisterPollConn(sessionKeyFilter, res);
 
     // 客户端已断开：消息仍是 .claimed（未确认），下次 poll 会重新投递，不会丢
