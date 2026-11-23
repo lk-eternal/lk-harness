@@ -1386,6 +1386,9 @@ const reactedMessageIds = new Set<string>();
  */
 const replyTargets = createReplyTargetTracker();
 
+/** 应用内点选答案的投递消息 id 前缀：答案已经显示在问题卡上，投递时不再往聊天流补记录 */
+const APP_ANSWER_ID_PREFIX = "internal_app_";
+
 /** 记录消息归属会话，并返回首次投递（未打过表情）的 messageId，避免重投时重复打表情 */
 function collectFreshAndTrack(messages: QueueMessage[], sessionKey: string): string[] {
   replyTargets.observeDelivery(normalizeSessionKey(sessionKey) || sessionKey, messages);
@@ -1403,9 +1406,11 @@ function collectFreshAndTrack(messages: QueueMessage[], sessionKey: string): str
     }
     trackMessageSession(m.messageId, sessionKey);
   }
-  // 应用内对话：投递给 Agent 的消息离开暂存区，进入聊天流
+  // 应用内对话：投递给 Agent 的消息离开暂存区，进入聊天流；聊天流里还没有记录的（任务、项目步骤等）补一条。
+  // 点选答案不补：它已经显示在问题卡上
   if (appChannelOfSession(sessionKey)) {
     appChat.markDelivered(sessionKey, messages.map((m) => m.messageId).filter(Boolean));
+    appChat.recordDelivered(sessionKey, messages.filter((m) => m.messageId && !m.messageId.startsWith(APP_ANSWER_ID_PREFIX)));
   }
   return fresh;
 }
@@ -3313,7 +3318,7 @@ function deliverReadyQuestionAnswers(sessionKey: string): void {
 /** 应用内对话的答案作为用户消息排进会话队列；anchorId 是其中一道题的 messageId，没有路由绑定时靠它回到原会话 */
 function enqueueAppAnswers(sessionKey: string, text: string, anchorId: string | undefined): void {
   const chatKey = chatIdFromSessionKey(sessionKey);
-  const internalId = `internal_app_${randomUUID()}`;
+  const internalId = `${APP_ANSWER_ID_PREFIX}${randomUUID()}`;
   trackInternalMsgChat(internalId, chatKey);
   pushMessage(text, internalId, chatKey, "p2p", undefined, anchorId, { senderType: "user" });
 }

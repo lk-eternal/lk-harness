@@ -45,13 +45,25 @@ describe("searchChatItems：搜哪些记录", () => {
     expect(ids([q], "ramda")).toEqual(["q1"])
   })
 
-  it("图片、文件、提示条不搜", () => {
+  it("图片、文件不搜", () => {
     const items = [
       { kind: "image", id: "i1", ts: 1000, path: "/tmp/关键词.png" },
       { kind: "file", id: "f1", ts: 2000, path: "/tmp/关键词.txt", name: "关键词.txt" },
-      { kind: "notice", id: "n1", ts: 3000, text: "关键词" },
     ] as AppChatItem[]
     expect(ids(items, "关键词")).toEqual([])
+  })
+
+  it("提示条：标题和折叠着的全文都能搜，命中带 notice 类型", () => {
+    const notice = { kind: "notice", id: "n1", ts: 3000, text: "⏰ 定时任务「巡检」汇报", detail: "⏰ 定时任务「巡检」汇报\n\n磁盘占用 91%，需要清理" } as AppChatItem
+    expect(ids([notice], "巡检")).toEqual(["n1"])
+    expect(ids([notice], "磁盘占用")).toEqual(["n1"])
+    expect(searchChatItems([notice], "磁盘占用").hits[0]).toMatchObject({ id: "n1", kind: "notice" })
+    expect(ids([notice], "不存在")).toEqual([])
+  })
+
+  it("没有全文的提示条：只搜标题", () => {
+    const notice = { kind: "notice", id: "n1", ts: 1000, text: "✅ 已切换主会话" } as AppChatItem
+    expect(ids([notice], "切换")).toEqual(["n1"])
   })
 
   it("还在暂存区排队的用户消息不在聊天流里，不搜", () => {

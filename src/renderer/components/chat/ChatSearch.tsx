@@ -8,7 +8,7 @@ import { BarButton } from "../preview/preview-ui"
 /** 停止输入多久之后再去搜：连续打字只搜一次 */
 const SEARCH_DELAY_MS = 200
 
-const KIND_LABEL: Record<ChatSearchKind, string> = { user: "我", assistant: "AI", text: "AI", question: "问题" }
+const KIND_LABEL: Record<ChatSearchKind, string> = { user: "我", assistant: "AI", text: "AI", question: "问题", notice: "提示" }
 
 interface Found {
   /** 这批命中是用哪个关键词搜出来的：高亮按它切，输入框里的字已经变了也不会错位 */

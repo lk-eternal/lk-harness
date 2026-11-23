@@ -250,8 +250,13 @@ export function FileCard({ item }: { item: AppChatFileItem }) {
   )
 }
 
-/** 指令回执：居中提示条；带 cmd 的按钮等同于发送该指令，按 section 分组 */
-export function NoticePill({ item, onCommand }: { item: AppChatNoticeItem; onCommand: (cmd: string) => void }) {
+/**
+ * 指令回执 / 系统提示：居中提示条；带 cmd 的按钮等同于发送该指令，按 section 分组。
+ * 有 detail 时标题下面给「展开全文」；reveal 变了（搜索刚定位到这条）就自动展开，免得命中藏在折叠里。
+ */
+export function NoticePill({ item, onCommand, reveal }: { item: AppChatNoticeItem; onCommand: (cmd: string) => void; reveal?: number }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => { if (reveal !== undefined) setOpen(true) }, [reveal])
   const groups: { section: string; buttons: NonNullable<AppChatNoticeItem["buttons"]> }[] = []
   for (const b of item.buttons ?? []) {
     const section = b.section ?? ""
@@ -262,6 +267,12 @@ export function NoticePill({ item, onCommand }: { item: AppChatNoticeItem; onCom
   return (
     <div className="max-w-[90%] self-center rounded-lg bg-raised/60 px-3.5 py-2 text-left text-xs text-fg-3">
       {item.text && <p className="whitespace-pre-wrap leading-relaxed">{item.text}</p>}
+      {item.detail && (
+        <>
+          <button type="button" onClick={() => setOpen((v) => !v)} className="mt-1 block text-fg-faint transition hover:text-fg-2">{open ? "收起" : "展开全文"}</button>
+          {open && <p className="mt-2 whitespace-pre-wrap break-words border-t border-line-subtle pt-2 leading-relaxed">{item.detail}</p>}
+        </>
+      )}
       {groups.map((g) => (
         <div key={g.section} className="mt-2 flex flex-wrap items-center justify-start gap-1.5">
           {g.section && <span className="text-fg-faint">{g.section}</span>}

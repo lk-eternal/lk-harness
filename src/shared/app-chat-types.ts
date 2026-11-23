@@ -100,6 +100,8 @@ export interface AppChatFileItem extends AppChatItemBase {
 export interface AppChatNoticeItem extends AppChatItemBase {
   kind: "notice";
   text: string;
+  /** 折叠着的全文：text 只是标题行，点「展开全文」才显示（交给 Agent 的长消息，如定时任务结果、项目步骤提示词） */
+  detail?: string;
   buttons?: AppChatButton[];
 }
 

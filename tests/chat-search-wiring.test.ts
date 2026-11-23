@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import ChatItemList from "../src/renderer/components/chat/ChatItemList"
 import ChatSearch from "../src/renderer/components/chat/ChatSearch"
-import type { AppChatItem } from "../src/shared/app-chat-types"
+import { NoticePill } from "../src/renderer/components/chat/ItemViews"
+import type { AppChatItem, AppChatNoticeItem } from "../src/shared/app-chat-types"
 
 const items: AppChatItem[] = [
   { kind: "user", id: "u1", ts: 1, text: "你好" },
@@ -48,6 +49,24 @@ describe("对话列表：搜索条什么时候出现", () => {
 
   it("打开了：显示搜索条", () => {
     expect(render(searchProp(true))).toContain('role="search"')
+  })
+})
+
+describe("提示条：折叠的全文", () => {
+  const pill = (item: Partial<AppChatNoticeItem>) =>
+    renderToStaticMarkup(createElement(NoticePill, { item: { kind: "notice", id: "n", ts: 1, text: "标题行", ...item }, onCommand: () => {} }))
+
+  it("有全文：显示标题和「展开全文」，全文默认不出现", () => {
+    const html = pill({ detail: "标题行\n\n很长的正文" })
+    expect(html).toContain("标题行")
+    expect(html).toContain("展开全文")
+    expect(html).not.toContain("很长的正文")
+  })
+
+  it("没有全文：没有展开按钮", () => {
+    const html = pill({})
+    expect(html).toContain("标题行")
+    expect(html).not.toContain("展开全文")
   })
 })
 

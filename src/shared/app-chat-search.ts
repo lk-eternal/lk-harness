@@ -10,7 +10,7 @@ export const SEARCH_MAX_HITS = 100;
 const SNIPPET_LEAD_CHARS = 24;
 const SNIPPET_CHARS = 120;
 
-export type ChatSearchKind = "user" | "assistant" | "text" | "question";
+export type ChatSearchKind = "user" | "assistant" | "text" | "question" | "notice";
 
 export interface ChatSearchHit {
   id: string;
@@ -77,9 +77,11 @@ function searchable(item: AppChatItem): { kind: ChatSearchKind; text: string } |
       return { kind: item.kind, text: item.segments.flatMap((s) => (s.type === "reply" ? [s.text] : [])).join("\n\n") };
     case "question":
       return { kind: item.kind, text: [item.text, ...item.options, item.answered ?? ""].join("\n") };
+    case "notice":
+      // 折叠的全文也搜：定位到命中时界面会把它展开
+      return { kind: item.kind, text: [item.text, item.detail ?? ""].join("\n") };
     case "image":
     case "file":
-    case "notice":
       return undefined;
     default: {
       // 新增消息类型时在这里编译报错，由写代码的人决定它搜不搜，而不是悄悄搜不到

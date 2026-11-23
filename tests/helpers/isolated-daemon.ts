@@ -20,6 +20,8 @@ export interface ChatItem {
   kind: string
   ts?: number
   text?: string
+  /** 提示条折叠着的全文 */
+  detail?: string
   queued?: boolean
   /** 用户消息带的本地图片路径 */
   images?: string[]

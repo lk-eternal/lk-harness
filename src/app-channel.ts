@@ -172,6 +172,17 @@ function readItems(file: string): AppChatItem[] {
   return items;
 }
 
+/** 投递记录的标题最多多少字；超出的靠折叠的全文看 */
+const DELIVERED_TITLE_MAX_CHARS = 80;
+
+/** 交给 Agent 的一条消息在聊天流里怎么显示：第一行当标题，整段当折叠的全文；只有一行且不长就没有全文 */
+export function deliveredNoticeParts(text: string): { text: string; detail?: string } {
+  const full = text.trim();
+  const firstLine = full.split(/\r?\n/, 1)[0].trim();
+  const title = firstLine.length > DELIVERED_TITLE_MAX_CHARS ? `${firstLine.slice(0, DELIVERED_TITLE_MAX_CHARS)}…` : firstLine;
+  return title === full ? { text: full } : { text: title, detail: full };
+}
+
 export class AppChat {
   private readonly sessions = new Map<string, SessionEntry>();
 
@@ -397,6 +408,18 @@ export class AppChat {
       kind: "notice", id: randomUUID(), ts: Date.now(), text,
       ...(buttons?.length ? { buttons } : {}),
     });
+  }
+
+  /**
+   * 交给 Agent 的消息里，聊天流里还没有对应记录的（定时任务的触发和结果、项目步骤、新会话的第一条等）：补一条提示。
+   * 记录 id 就是消息 id：已有记录的（用户在界面发的）不动，重投也不会重复。
+   */
+  recordDelivered(sessionKey: string, messages: ReadonlyArray<{ messageId: string; text: string }>): void {
+    const entry = this.entry(sessionKey);
+    for (const m of messages) {
+      if (entry.items.some((i) => i.id === m.messageId)) continue;
+      this.upsert(entry, { kind: "notice", id: m.messageId, ts: Date.now(), ...deliveredNoticeParts(m.text) });
+    }
   }
 
   addImage(sessionKey: string, imagePath: string): void {

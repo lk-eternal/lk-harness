@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react"
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { ArrowDown, Loader2, MessageCircle } from "lucide-react"
 import type { AppChatItem } from "../../../shared/app-chat-types"
 import { useKeepScrollOnPrepend } from "../../hooks/useKeepScrollOnPrepend"
@@ -35,7 +35,8 @@ interface Props {
   }
 }
 
-function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Props["onCommand"]): ReactNode {
+/** reveal：搜索刚定位到这条记录的时刻；折叠着的提示条据此自动展开 */
+function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Props["onCommand"], reveal?: number): ReactNode {
   switch (it.kind) {
     case "user": return <UserBubble item={it} />
     case "assistant": return <AssistantTurn item={it} />
@@ -43,7 +44,7 @@ function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Pro
     case "question": return <QuestionCard item={it} onAnswer={onAnswer} />
     case "image": return <LocalImage path={it.path} className="max-h-72 max-w-sm self-start" />
     case "file": return <FileCard item={it} />
-    case "notice": return <NoticePill item={it} onCommand={onCommand} />
+    case "notice": return <NoticePill item={it} onCommand={onCommand} reveal={reveal} />
     default: {
       // 新增消息类型漏渲染时在这里编译报错，而不是悄悄丢消息
       const unhandled: never = it
@@ -105,9 +106,11 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
     if (id && jumpTo(id)) pendingLocateRef.current = null
   }, [items, jumpTo])
 
+  const [revealed, setRevealed] = useState<{ id: string; at: number } | null>(null)
   const locate = async (id: string): Promise<boolean> => {
     // 贴底跟随先松手，否则流式输出会把滚动拽回底部
     stickRef.current = false
+    setRevealed({ id, at: Date.now() })
     pendingLocateRef.current = null
     if (jumpTo(id)) return true
     if (!search) return false
@@ -137,7 +140,7 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
           )}
           {/* 每条记录套一个定位锚点（搜索定位靠它找）；flex-col 让里面的 self-end / max-w 百分比和直接放在列里时一致 */}
           {items.map((it) => (
-            <div key={it.id} data-item-id={it.id} className="flex flex-col">{renderItem(it, onAnswer, onCommand)}</div>
+            <div key={it.id} data-item-id={it.id} className="flex flex-col">{renderItem(it, onAnswer, onCommand, revealed?.id === it.id ? revealed.at : undefined)}</div>
           ))}
           {waiting && <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}
           <div ref={sentinelRef} />
