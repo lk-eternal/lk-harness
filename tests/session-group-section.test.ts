@@ -76,6 +76,12 @@ describe("画一类会话：标题和行", () => {
     expect(shownRows(markup)).toEqual([])
     expect(markup).not.toContain("data-session-group-footer")
   })
+
+  it("折着时，展开后的前 5 行已经交给分类组件（折起是先滑合再摘掉，滑的过程中还要画着）", () => {
+    const { c } = control(parseGroupStates({ chat: { collapsed: true } }))
+    const node = draw("chat", rowsOf(12), c) as ReactElement<{ children: ReactElement[] }>
+    expect(node.props.children.map((row) => row.key)).toEqual(["s1", "s2", "s3", "s4", "s5"])
+  })
 })
 
 describe("画一类会话：展开按钮", () => {
@@ -145,10 +151,15 @@ describe("画一类会话：置顶的几行一起画", () => {
     expect(markup).toContain("展开更多（还有 3 个）")
   })
 
-  it("没有置顶的行、或这一类折着：不调用 renderPinned", () => {
+  it("没有置顶的行：不调用 renderPinned", () => {
     expect(drawWithPinned(rowsOf(3)).calls).toEqual([])
+  })
+
+  it("这一类折着：界面上不画，但置顶的行照样交给 renderPinned（折起的动画还要画着它们）", () => {
     const folded = control(parseGroupStates({ chat: { collapsed: true } })).c
-    expect(drawWithPinned(pinnedRows(), folded).calls).toEqual([])
+    const { calls, markup } = drawWithPinned(pinnedRows(), folded)
+    expect(calls).toEqual([["p1", "p2"]])
+    expect(shownRows(markup)).toEqual([])
   })
 })
 

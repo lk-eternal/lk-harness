@@ -9,6 +9,7 @@ import {
   type GroupRowStatus,
   type SessionListGroupId,
 } from "../../../shared/session-groups"
+import Collapsible from "./Collapsible"
 import type { SessionGroupControl } from "./session-groups-state"
 
 /** 桌面端会话栏和手机端抽屉共用同一个分类标题和底部按钮，只是触控尺寸不同 */
@@ -20,7 +21,7 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
     head: "rounded-lg px-2.5 py-1.5 hover:brightness-125",
     footer: "rounded-lg px-2.5 py-1.5 hover:bg-strong/25 hover:text-fg-2",
     icon: 12,
-    body: "ml-3 mt-1 border-l-2 pl-1",
+    body: "mt-1 border-l-2 pl-1",
     rows: "space-y-0.5",
   },
   mobile: {
@@ -28,7 +29,7 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
     head: "rounded-xl px-3 py-2 active:brightness-125",
     footer: "rounded-xl px-3 py-2 active:bg-raised",
     icon: 13,
-    body: "ml-3 mt-1 border-l-2 pl-1",
+    body: "mt-1 border-l-2 pl-1",
     rows: "space-y-1",
   },
 }
@@ -85,7 +86,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
         <span className="shrink-0 text-[11px] font-normal opacity-70">{count}</span>
         <ChevronDown size={style.icon} className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-180"}`} />
       </button>
-      {!collapsed && (
+      <Collapsible open={!collapsed}>
         <div className={`${style.body} ${look.bar}`}>
           <div className={style.rows}>{children}</div>
           {footer && (
@@ -101,7 +102,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
             </button>
           )}
         </div>
-      )}
+      </Collapsible>
     </div>
   )
 }
@@ -125,14 +126,18 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
   variant: SessionGroupVariant
 }): ReactNode {
   if (rows.length === 0) return null
-  const view = viewGroup(rows, control.states[group], { isPinned, keep: (row) => control.isRevealed(row.sessionKey) })
-  const drawShown = (): ReactNode => {
-    if (!renderPinned) return view.shown.map(renderRow)
-    const pinned = view.shown.filter(isPinned)
+  const state = control.states[group]
+  const opts = { isPinned, keep: (row: T) => control.isRevealed(row.sessionKey) }
+  const view = viewGroup(rows, state, opts)
+  // 整类折着时也算出展开后的行：折起来是先滑合再摘掉，滑的过程中这些行还得画着
+  const bodyRows = view.collapsed ? viewGroup(rows, { ...state, collapsed: false }, opts).shown : view.shown
+  const drawBody = (): ReactNode => {
+    if (!renderPinned) return bodyRows.map(renderRow)
+    const pinned = bodyRows.filter(isPinned)
     return (
       <>
         {pinned.length > 0 && renderPinned(pinned)}
-        {view.shown.filter((row) => !isPinned(row)).map(renderRow)}
+        {bodyRows.filter((row) => !isPinned(row)).map(renderRow)}
       </>
     )
   }
@@ -155,7 +160,7 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
         control.change(group, { level: to })
       }}
     >
-      {drawShown()}
+      {drawBody()}
     </SessionGroupSection>
   )
 }
