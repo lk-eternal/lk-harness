@@ -23,8 +23,8 @@ interface Props {
   onOpenTemplateSettings: () => void
 }
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] text-fg outline-none transition focus:border-blue-500/70"
-const smallInputCls = "rounded-md border border-line bg-surface px-2 py-1 text-[12px] text-fg outline-none transition focus:border-blue-500/70"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] text-fg outline-none transition focus:border-focus/70"
+const smallInputCls = "rounded-md border border-line bg-surface px-2 py-1 text-[12px] text-fg outline-none transition focus:border-focus/70"
 const dashedBtnCls = "inline-flex items-center gap-1.5 rounded-lg border border-dashed border-line px-3 py-1.5 text-[12px] text-fg-muted transition hover:border-line-strong hover:bg-raised/40 hover:text-fg-2 disabled:opacity-50"
 
 /** 一个通道在对话框里的选择：勾没勾、用哪种方式接入、绑已有群时填的群 ID */
@@ -253,7 +253,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                   type="button"
                   aria-pressed={on}
                   onClick={() => pickTemplate(t)}
-                  className={`rounded-lg border px-3 py-2 text-left transition ${on ? "border-blue-500/70 bg-blue-600/10" : "border-line bg-surface/60 hover:bg-raised/50"}`}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${on ? "border-focus/70 bg-primary/10" : "border-line bg-surface/60 hover:bg-raised/50"}`}
                 >
                   <span className="flex items-center gap-1.5 text-[13px] font-medium text-fg">
                     {t.name}
@@ -276,7 +276,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
               type="button"
               disabled={busy}
               onClick={onOpenTemplateSettings}
-              className="ml-0.5 text-accent underline-offset-2 transition hover:underline disabled:opacity-50 disabled:no-underline"
+              className="ml-0.5 text-link underline-offset-2 transition hover:underline disabled:opacity-50 disabled:no-underline"
             >去「项目模板」新建一个</button>
           </p>
         </section>
@@ -341,7 +341,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
               )}
               <ul className="space-y-1.5">
                 {repos.map((r, idx) => (
-                  <li key={r.path} className={`rounded-lg border px-3 py-2 ${r.checked ? "border-blue-500/50 bg-blue-600/5" : "border-line bg-surface/60"}`}>
+                  <li key={r.path} className={`rounded-lg border px-3 py-2 ${r.checked ? "border-focus/50 bg-primary/5" : "border-line bg-surface/60"}`}>
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -349,14 +349,14 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                         disabled={busy}
                         onChange={() => toggleRepo(r.path)}
                         aria-label={`选用 ${r.name}`}
-                        className="h-3.5 w-3.5 shrink-0 accent-blue-500"
+                        className="h-3.5 w-3.5 shrink-0 accent-primary"
                       />
                       <button type="button" disabled={busy} onClick={() => toggleRepo(r.path)} className="min-w-0 flex-1 text-left">
                         <span className="flex items-center gap-1.5">
                           <span className="truncate text-[13px] font-medium text-fg">{r.name}</span>
                           <span
                             title={r.clone ? "建项目时克隆一份副本到项目目录，AI 在副本里改，不动你自己的仓库" : "不克隆：只把仓库信息记进项目，AI 直接用你本机这份；应用不会去动它"}
-                            className={`shrink-0 rounded px-1 py-px text-[10.5px] font-normal ${r.clone ? "bg-raised/80 text-fg-muted" : "bg-amber-500/15 text-amber-500"}`}
+                            className={`shrink-0 rounded px-1 py-px text-[10.5px] font-normal ${r.clone ? "bg-raised/80 text-fg-muted" : "bg-warning/15 text-warning"}`}
                           >{r.clone ? "克隆副本" : "不克隆"}</span>
                         </span>
                         <span className="block truncate text-[11px] text-fg-faint" title={r.path}>{r.path}</span>
@@ -488,7 +488,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                 if (!pick) return null
                 const disabled = busy || o.modes.length === 0
                 return (
-                  <li key={o.id} className={`rounded-lg border px-3 py-2 ${pick.on ? "border-blue-500/50 bg-blue-600/5" : "border-line bg-surface/60"}`}>
+                  <li key={o.id} className={`rounded-lg border px-3 py-2 ${pick.on ? "border-focus/50 bg-primary/5" : "border-line bg-surface/60"}`}>
                     <div className="flex items-center gap-2">
                       <input
                         type="checkbox"
@@ -496,7 +496,7 @@ export default function NewProjectDialog({ channelId, onClose, onCreated, onOpen
                         disabled={disabled}
                         onChange={() => setBindPick(o.id, { on: !pick.on })}
                         aria-label={`接入 ${o.name}`}
-                        className="h-3.5 w-3.5 shrink-0 accent-blue-500"
+                        className="h-3.5 w-3.5 shrink-0 accent-primary"
                       />
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">
                         {o.name}

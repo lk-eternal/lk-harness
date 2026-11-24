@@ -154,9 +154,9 @@ export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, 
             aria-label="接入代码仓库"
             aria-checked={draft.workspace === "worktree"}
             onClick={() => setDraft((d) => ({ ...d, workspace: d.workspace === "worktree" ? "plain" : "worktree" }))}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${draft.workspace === "worktree" ? "bg-green-500" : "bg-stronger"}`}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${draft.workspace === "worktree" ? "bg-primary" : "bg-stronger"}`}
           >
-            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${draft.workspace === "worktree" ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+            <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${draft.workspace === "worktree" ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
           </button>
         </div>
         {draft.workspace === "worktree" && (
@@ -189,8 +189,8 @@ export default function TemplateInfoEditor({ mode, group, otherNames, onSubmit, 
                 <input value={f.placeholder ?? ""} placeholder="填写提示（可不填）" aria-label="填写提示" onChange={(e) => setField(i, { placeholder: e.target.value || undefined })} className={`${inputBase} min-w-0 flex-[1.6]`} />
               </div>
               <div className="mt-1.5 flex items-center gap-4 text-[11.5px] text-fg-muted">
-                <label className="flex items-center gap-1.5 whitespace-nowrap"><input type="checkbox" checked={f.required === true} onChange={(e) => setField(i, { required: e.target.checked || undefined })} className="accent-blue-500" />必填</label>
-                <label className="flex items-center gap-1.5 whitespace-nowrap"><input type="checkbox" checked={f.multiline === true} onChange={(e) => setField(i, { multiline: e.target.checked || undefined })} className="accent-blue-500" />多行输入</label>
+                <label className="flex items-center gap-1.5 whitespace-nowrap"><input type="checkbox" checked={f.required === true} onChange={(e) => setField(i, { required: e.target.checked || undefined })} className="accent-primary" />必填</label>
+                <label className="flex items-center gap-1.5 whitespace-nowrap"><input type="checkbox" checked={f.multiline === true} onChange={(e) => setField(i, { multiline: e.target.checked || undefined })} className="accent-primary" />多行输入</label>
                 <span className="flex-1" />
                 <button type="button" title="上移" aria-label="上移" disabled={i === 0} onClick={() => moveField(i, -1)} className="shrink-0 rounded-md border border-line p-1 text-fg-3 hover:bg-raised disabled:opacity-30"><ArrowUp size={13} /></button>
                 <button type="button" title="下移" aria-label="下移" disabled={i === draft.fields.length - 1} onClick={() => moveField(i, 1)} className="shrink-0 rounded-md border border-line p-1 text-fg-3 hover:bg-raised disabled:opacity-30"><ArrowDown size={13} /></button>

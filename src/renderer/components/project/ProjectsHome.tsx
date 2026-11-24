@@ -23,7 +23,7 @@ export function TemplatesHome({ onNew, onImport, onOpenHub, hubUrlReady }: { onN
       <p>新建项目时先选一个模板。模板决定要填哪些信息、项目里有哪些快捷操作。</p>
       <p>快捷操作是预设好提示词的按钮，点一下就让 AI 按提示词做事；不点按钮，直接在对话里说同样的话效果一样。</p>
       <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-        <button type="button" onClick={onNew} className={`${dashedBtn} border-blue-500/60 text-accent`}><Plus size={13} />新建模板</button>
+        <button type="button" onClick={onNew} className={`${dashedBtn} border-focus/60 text-accent`}><Plus size={13} />新建模板</button>
         <button type="button" onClick={onImport} className={dashedBtn}><FilePlus size={13} />导入文件</button>
         {hubUrlReady && <button type="button" onClick={onOpenHub} className={dashedBtn}><Download size={13} />从共享空间获取</button>}
       </div>

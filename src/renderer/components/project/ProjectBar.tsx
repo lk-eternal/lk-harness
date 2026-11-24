@@ -32,7 +32,7 @@ function LinkedText({ text }: { text: string }) {
   return (
     <>
       {splitTextLinks(text).map((p, i) => (p.kind === "link"
-        ? <SafeLink key={i} href={p.url} className="text-accent hover:underline">{p.url}</SafeLink>
+        ? <SafeLink key={i} href={p.url} className="text-link hover:underline">{p.url}</SafeLink>
         : p.text))}
     </>
   )
@@ -183,9 +183,9 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
                 </div>
                 {art.exists && (
                   <>
-                    <button type="button" onClick={() => preview.openFile({ path: art.path, name: art.name })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览</button>
+                    <button type="button" onClick={() => preview.openFile({ path: art.path, name: art.name })} disabled={!preview.available} className="shrink-0 rounded border border-focus/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-primary/10 disabled:opacity-40">预览</button>
                     {artDir && (
-                      <button type="button" onClick={() => preview.openDir({ path: artDir })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览所在文件夹</button>
+                      <button type="button" onClick={() => preview.openDir({ path: artDir })} disabled={!preview.available} className="shrink-0 rounded border border-focus/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-primary/10 disabled:opacity-40">预览所在文件夹</button>
                     )}
                     <button type="button" onClick={() => void window.electronAPI.appChatShowInFolder(art.path)} className="shrink-0 rounded border border-line px-2 py-0.5 text-[11.5px] text-fg-3 transition hover:bg-raised/50">所在位置</button>
                   </>
@@ -199,7 +199,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
           <Section title={view.externalDir ? "项目文件夹（你选的）" : "项目文件夹"}>
             <div className="flex items-center gap-2">
               <p className="min-w-0 flex-1 truncate text-[12.5px] text-fg-2" title={view.dir}>{view.dir}</p>
-              <button type="button" onClick={() => preview.openDir({ path: view.dir })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览</button>
+              <button type="button" onClick={() => preview.openDir({ path: view.dir })} disabled={!preview.available} className="shrink-0 rounded border border-focus/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-primary/10 disabled:opacity-40">预览</button>
               <button type="button" onClick={() => void window.electronAPI.appChatShowInFolder(view.dir)} className="inline-flex shrink-0 items-center gap-1 rounded border border-line px-2 py-0.5 text-[11.5px] text-fg-3 transition hover:bg-raised/50"><FolderOpen size={12} />打开</button>
             </div>
           </Section>
@@ -238,7 +238,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
                 onClick={() => void runStep(s.id)}
                 disabled={!!starting}
                 title={`点一下，AI 开始做「${s.label}」${view.templateNames.length > 1 ? `（${s.group}）` : ""}`}
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-page/60 px-2.5 py-0.5 text-[12px] text-fg-3 transition hover:border-blue-500/60 hover:text-accent disabled:opacity-60"
+                className="inline-flex items-center gap-1 rounded-full border border-line bg-page/60 px-2.5 py-0.5 text-[12px] text-fg-3 transition hover:border-focus/60 hover:text-accent disabled:opacity-60"
               >
                 {starting === s.id && <Loader2 size={11} className="animate-spin" />}{s.label}
               </button>

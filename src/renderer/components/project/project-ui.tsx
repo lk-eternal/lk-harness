@@ -3,9 +3,9 @@ import { useEffect, useRef, type ReactNode } from "react"
 /** 设置页「项目」里各个编辑区共用的样式和小部件 */
 
 /** 输入框的外观，不带宽度：要自己定宽的（和别的元素排一行）用它，别再叠一个 w-xx 去和 w-full 抢 */
-export const inputBase = "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+export const inputBase = "rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 export const inputCls = `w-full ${inputBase}`
-export const smallInputCls = "rounded-md border border-line bg-surface px-2 py-1 text-xs outline-none transition focus:border-blue-500"
+export const smallInputCls = "rounded-md border border-line bg-surface px-2 py-1 text-xs outline-none transition focus:border-focus"
 export const ghostBtn = "shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent"
 export const dashedBtn = "inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-dashed border-line px-3 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg-2"
 export const dangerBtn = "flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-tint/30"
@@ -83,7 +83,7 @@ export function SaveButtons({
         type="button"
         onClick={onSave}
         disabled={!canSave || busy}
-        className={`shrink-0 whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}
+        className={`shrink-0 whitespace-nowrap rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}
       >{justSaved ? "已保存" : saveLabel}</button>
     </div>
   )

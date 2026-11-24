@@ -94,7 +94,7 @@ export default function ChipMultiSelect({ options, value, onChange, placeholder,
         ref={btnRef}
         type="button"
         onClick={() => { setOpen(!open); setQuery("") }}
-        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-line bg-raised px-2 py-1 text-left text-sm outline-none transition hover:border-line-strong focus:border-blue-500"
+        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-line bg-raised px-2 py-1 text-left text-sm outline-none transition hover:border-line-strong focus:border-focus"
       >
         <span className="flex min-w-0 flex-1 flex-wrap gap-1">
           {value.length === 0
@@ -103,7 +103,7 @@ export default function ChipMultiSelect({ options, value, onChange, placeholder,
               const o = byId.get(id)
               const label = o?.label ?? id
               return (
-                <span key={id} className={`flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-xs ${o ? "bg-blue-600/25 text-accent-bright" : "bg-raised text-fg-faint line-through"}`}>
+                <span key={id} className={`flex max-w-full items-center gap-1 rounded px-1.5 py-0.5 text-xs ${o ? "bg-primary/20 text-accent-bright" : "bg-raised text-fg-faint line-through"}`}>
                   <span className="truncate" title={o ? (o.hint || label) : `${id}（已不存在）`}>{label}</span>
                   <span
                     role="button"
@@ -154,7 +154,7 @@ export default function ChipMultiSelect({ options, value, onChange, placeholder,
                           onClick={() => toggle(o.id)}
                           className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-raised ${checked ? "text-accent-soft" : "text-fg-2"}`}
                         >
-                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-blue-500 bg-blue-600" : "border-line-strong"}`}>
+                          <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-on-primary" : "border-line-strong"}`}>
                             {checked && <Check size={12} />}
                           </span>
                           <span className="min-w-0 flex-1">

@@ -166,7 +166,7 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
               value={draft.name}
               maxLength={PROJECT_NAME_MAX}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base font-medium text-fg outline-none transition hover:border-line focus:border-blue-500 focus:bg-surface"
+              className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base font-medium text-fg outline-none transition hover:border-line focus:border-focus focus:bg-surface"
             />
             {item.archived && <span className="shrink-0 rounded bg-raised px-2 py-0.5 text-xs text-fg-muted">已归档</span>}
           </div>
@@ -320,7 +320,7 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
                 type="button"
                 aria-pressed={on}
                 onClick={() => toggleGroup(g.id)}
-                className={`rounded-md border px-3 py-1.5 text-xs transition ${on ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
+                className={`rounded-md border px-3 py-1.5 text-xs transition ${on ? "border-focus bg-primary/10 font-medium text-fg" : "border-line text-fg-3 hover:bg-raised hover:text-fg-soft"}`}
               >{g.name}</button>
             )
           })}

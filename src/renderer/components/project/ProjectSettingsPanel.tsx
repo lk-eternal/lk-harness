@@ -8,9 +8,9 @@ import {
   type ProjectSettingsField, type ProjectSettingsValues, type RepoProfileRow,
 } from "../../../shared/project-settings-patch"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 /** 表格里的输入框：比表单里的矮一点，一行放得下一个仓库的全部信息 */
-const cellCls = "w-full min-w-0 rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm outline-none transition placeholder:text-fg-faint focus:border-blue-500"
+const cellCls = "w-full min-w-0 rounded-md border border-line bg-surface px-2.5 py-1.5 text-sm outline-none transition placeholder:text-fg-faint focus:border-focus"
 const smallBtn = "shrink-0 rounded-md border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:bg-raised disabled:opacity-50"
 
 /**
@@ -260,7 +260,7 @@ export default function ProjectSettingsPanel({ onSaved }: { onSaved?: () => void
                         className="col-span-3 flex items-center gap-1.5 text-[11.5px] text-fg-muted @[42rem]:col-auto @[42rem]:justify-center"
                         title={isRemoteRepoUrl(p.path) ? "远程地址本机没有副本可用，一定会克隆" : "勾上：建项目时克隆一份副本到项目目录，AI 在副本里改，不动你自己的仓库。不勾：不克隆，只把仓库信息记进项目，AI 直接用你本机这份"}
                       >
-                        <input type="checkbox" aria-label="克隆副本" className="h-3.5 w-3.5 accent-blue-500"
+                        <input type="checkbox" aria-label="克隆副本" className="h-3.5 w-3.5 accent-primary"
                           checked={isRemoteRepoUrl(p.path) || p.clone !== false}
                           disabled={isRemoteRepoUrl(p.path)}
                           onChange={(e) => setProfile(i, { clone: e.target.checked ? undefined : false })} />
