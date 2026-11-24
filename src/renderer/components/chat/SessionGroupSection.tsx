@@ -68,7 +68,7 @@ export interface MoreTier {
 
 /**
  * 一类会话：标题（点了整类折叠 / 展开）+ 行 + 底部的展开按钮。要画哪些行由 viewGroup 算好，见 renderSessionGroup。
- * children 是总在的那几行（置顶的加前 5 个），moreTiers 是「展开更多 / 展开全部」多出来的行，点按钮时它们滑开 / 滑合。
+ * children 是总在的那几行（置顶的加前 5 个名额里剩下的），moreTiers 是「展开更多 / 展开全部」多出来的行，点按钮时它们滑开 / 滑合。
  */
 export default function SessionGroupSection({ group, count, collapsed, footer, hiddenCount, hiddenStatus, variant, onToggle, onFooter, moreTiers, children }: {
   group: SessionListGroupId
@@ -155,7 +155,7 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
   const expanded = view.collapsed ? viewGroup(rows, { ...state, collapsed: false }, opts) : view
   const pinned = rows.filter(isPinned)
   const rest = rows.filter((row) => !isPinned(row))
-  const { head, more } = splitTiers(rest, rest.length - expanded.hidden.length)
+  const { head, more } = splitTiers(rest, rest.length - expanded.hidden.length, pinned.length)
   const drawHead = (): ReactNode => {
     if (!renderPinned) return [...pinned, ...head].map(renderRow)
     return (

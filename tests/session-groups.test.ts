@@ -186,17 +186,57 @@ describe("这一类此刻该显示哪些行", () => {
   })
 
   describe("置顶的行", () => {
-    it("置顶的始终显示，不占那 5 个名额", () => {
+    it("置顶的始终显示，也算在前 5 个名额里：置顶 2 个，其余的先显示 3 个", () => {
       const v = view([...ids(2, "p"), ...ids(8)], state(0))
-      expect(v.shown).toEqual(["p1", "p2", "r1", "r2", "r3", "r4", "r5"])
-      expect(v.hidden).toEqual(["r6", "r7", "r8"])
+      expect(v.shown).toEqual(["p1", "p2", "r1", "r2", "r3"])
+      expect(v.hidden).toEqual(ids(8).slice(3))
+      expect(v.footer).toEqual({ kind: "more", to: 1 })
     })
 
-    it("置顶的比 5 个还多：全显示；其余的不超过 5 个就没有展开按钮", () => {
-      const v = view([...ids(7, "p"), ...ids(3)], state(0))
+    it("有置顶的「展开更多」：其余的再多 5 个（置顶 2 个时一共 10 行），再点是「展开全部」", () => {
+      const rows = [...ids(2, "p"), ...ids(12)]
+      const more = view(rows, state(1))
+      expect(more.shown).toEqual(["p1", "p2", ...ids(8)])
+      expect(more.footer).toEqual({ kind: "all", to: 2 })
+      const all = view(rows, state(2))
+      expect(all.shown).toEqual(rows)
+      expect(all.footer).toEqual({ kind: "less", to: 0 })
+    })
+
+    it("置顶不少于 5 个：置顶的全显示，其余的先一个都不显示，底部是「展开更多」", () => {
+      const rows = [...ids(7, "p"), ...ids(3)]
+      const v = view(rows, state(0))
+      expect(v.shown).toEqual(ids(7, "p"))
+      expect(v.hidden).toEqual(ids(3))
+      expect(v.footer).toEqual({ kind: "more", to: 1 })
+    })
+
+    it("置顶不少于 5 个：「展开更多」显示其余的 5 个，不受置顶个数影响；再点「展开全部」", () => {
+      const rows = [...ids(7, "p"), ...ids(12)]
+      const more = view(rows, state(1))
+      expect(more.shown).toEqual([...ids(7, "p"), ...ids(5)])
+      expect(more.footer).toEqual({ kind: "all", to: 2 })
+      expect(view(rows, state(2)).shown).toEqual(rows)
+    })
+
+    it("置顶不少于 5 个、其余的不到 5 个：点一次「展开更多」就全出来了，下一步是「收起」", () => {
+      const v = view([...ids(7, "p"), ...ids(3)], state(1))
       expect(v.shown).toHaveLength(10)
       expect(v.hidden).toEqual([])
-      expect(v.footer).toBeNull()
+      expect(v.footer).toEqual({ kind: "less", to: 0 })
+    })
+
+    it("置顶加其余刚好 5 个：没有展开按钮；置顶刚好 5 个、没有其余的：同样没有", () => {
+      expect(view([...ids(2, "p"), ...ids(3)], state(0)).footer).toBeNull()
+      const five = view(ids(5, "p"), state(0))
+      expect(five.shown).toEqual(ids(5, "p"))
+      expect(five.footer).toBeNull()
+    })
+
+    it("置顶 5 个、其余还有会话：默认只显示置顶的，有「展开更多」", () => {
+      const v = view([...ids(5, "p"), ...ids(2)], state(0))
+      expect(v.shown).toEqual(ids(5, "p"))
+      expect(v.footer).toEqual({ kind: "more", to: 1 })
     })
 
     it("置顶的排在最前，两组内部保持传入的顺序", () => {
@@ -237,7 +277,19 @@ describe("这一类此刻该显示哪些行", () => {
 
     it("它本来就看得见（在前 5 个里，或是置顶的）：档位不变", () => {
       expect(view(ids(30), state(0), (row) => row === "r2").shown).toEqual(ids(5))
-      expect(view([...ids(1, "p"), ...ids(30)], state(0), (row) => row === "p1").shown).toEqual(["p1", ...ids(5)])
+      expect(view([...ids(1, "p"), ...ids(30)], state(0), (row) => row === "p1").shown).toEqual(["p1", ...ids(4)])
+    })
+
+    it("置顶占了名额：第 5 个其余的行已经在前 5 个之外，要档位提到够看见它", () => {
+      const rows = [...ids(1, "p"), ...ids(30)]
+      expect(view(rows, state(0), (row) => row === "r4").shown).toEqual(["p1", ...ids(4)])
+      expect(view(rows, state(0), (row) => row === "r5").shown).toEqual(["p1", ...ids(9)])
+    })
+
+    it("置顶不少于 5 个：其余的第一个也在前 5 个之外，先提到「展开更多」那档", () => {
+      const rows = [...ids(7, "p"), ...ids(30)]
+      expect(view(rows, state(0), (row) => row === "r1").shown).toEqual([...ids(7, "p"), ...ids(5)])
+      expect(view(rows, state(0), (row) => row === "r6").shown).toEqual(rows)
     })
 
     it("记下的档位已经够看见它：不改", () => {
@@ -256,44 +308,61 @@ describe("按档位分块（展开更多 / 展开全部 / 收起时整块滑开�
   const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `r${i + 1}`)
   const range = (from: number, to: number): string[] => ids(to).slice(from - 1)
 
-  it("前 5 个是 head，第 6 到 10 个是第一块，其余是第二块", () => {
-    const { head, more } = splitTiers(ids(30), 5)
+  it("没有置顶：前 5 个是 head，第 6 到 10 个是第一块，其余是第二块", () => {
+    const { head, more } = splitTiers(ids(30), 5, 0)
     expect(head).toEqual(ids(5))
     expect(more.map((m) => [m.tier, m.rows])).toEqual([[1, range(6, 10)], [2, range(11, 30)]])
   })
 
   it("块跟着显示个数开：5 个都关，10 个开第一块，再多两块都开", () => {
-    const opens = (shown: number) => splitTiers(ids(30), shown).more.map((m) => m.open)
+    const opens = (shown: number) => splitTiers(ids(30), shown, 0).more.map((m) => m.open)
     expect(opens(5)).toEqual([false, false])
     expect(opens(10)).toEqual([true, false])
     expect(opens(30)).toEqual([true, true])
   })
 
   it("关着的块也给出：收起时它要先滑合、滑完才摘掉，行得还在", () => {
-    const { more } = splitTiers(ids(30), 5)
+    const { more } = splitTiers(ids(30), 5, 0)
     expect(more.every((m) => !m.open && m.rows.length > 0)).toBe(true)
   })
 
   it("不到 6 个：没有块；6 到 10 个：只有第一块", () => {
-    expect(splitTiers(ids(5), 5)).toEqual({ head: ids(5), more: [] })
-    expect(splitTiers(ids(8), 8).more).toEqual([{ tier: 1, rows: range(6, 8), open: true }])
-    expect(splitTiers(ids(10), 5).more).toEqual([{ tier: 1, rows: range(6, 10), open: false }])
+    expect(splitTiers(ids(5), 5, 0)).toEqual({ head: ids(5), more: [] })
+    expect(splitTiers(ids(8), 8, 0).more).toEqual([{ tier: 1, rows: range(6, 8), open: true }])
+    expect(splitTiers(ids(10), 5, 0).more).toEqual([{ tier: 1, rows: range(6, 10), open: false }])
   })
 
   it("没有行：什么都没有", () => {
-    expect(splitTiers([], 0)).toEqual({ head: [], more: [] })
+    expect(splitTiers([], 0, 0)).toEqual({ head: [], more: [] })
   })
 
-  it("和 viewGroup 对得上：head 加开着的块，就是此刻要显示的行（含为选中会话撑开的）", () => {
-    const keeps = [undefined, "r2", "r8", "r25"]
-    for (const n of [0, 3, 5, 6, 10, 11, 30]) {
-      for (const level of [0, 1, 2] as const) {
-        for (const keepKey of keeps) {
-          const rows = ids(n)
-          const v = viewGroup(rows, { collapsed: false, level }, { isPinned: () => false, keep: (row) => row === keepKey })
-          const { head, more } = splitTiers(rows, rows.length - v.hidden.length)
-          const drawn = [...head, ...more.filter((m) => m.open).flatMap((m) => m.rows)]
-          expect(drawn, `n=${n} level=${level} keep=${keepKey}`).toEqual(v.shown)
+  it("置顶占了名额：置顶 2 个时 head 只有 3 个，第一块是接着的 5 个", () => {
+    const { head, more } = splitTiers(ids(30), 3, 2)
+    expect(head).toEqual(ids(3))
+    expect(more.map((m) => [m.tier, m.rows, m.open])).toEqual([[1, range(4, 8), false], [2, range(9, 30), false]])
+  })
+
+  it("置顶不少于 5 个：head 是空的，第一块从其余的第一个开始", () => {
+    const { head, more } = splitTiers(ids(30), 0, 7)
+    expect(head).toEqual([])
+    expect(more.map((m) => [m.tier, m.rows, m.open])).toEqual([[1, ids(5), false], [2, range(6, 30), false]])
+    expect(splitTiers(ids(30), 5, 7).more.map((m) => m.open)).toEqual([true, false])
+  })
+
+  it("和 viewGroup 对得上：置顶的加 head 加开着的块，就是此刻要显示的行（含为选中会话撑开的）", () => {
+    const pins = (n: number): string[] => Array.from({ length: n }, (_, i) => `p${i + 1}`)
+    const keeps = [undefined, "r2", "r4", "r8", "r25"]
+    for (const pinnedCount of [0, 1, 2, 4, 5, 7, 12]) {
+      for (const n of [0, 3, 5, 6, 10, 11, 30]) {
+        for (const level of [0, 1, 2] as const) {
+          for (const keepKey of keeps) {
+            const pinned = pins(pinnedCount)
+            const rest = ids(n)
+            const v = viewGroup([...pinned, ...rest], { collapsed: false, level }, { isPinned: (row) => row.startsWith("p"), keep: (row) => row === keepKey })
+            const { head, more } = splitTiers(rest, rest.length - v.hidden.length, pinnedCount)
+            const drawn = [...pinned, ...head, ...more.filter((m) => m.open).flatMap((m) => m.rows)]
+            expect(drawn, `pinned=${pinnedCount} n=${n} level=${level} keep=${keepKey}`).toEqual(v.shown)
+          }
         }
       }
     }
@@ -301,7 +370,7 @@ describe("按档位分块（展开更多 / 展开全部 / 收起时整块滑开�
 
   it("不改传入的数组", () => {
     const rows = ids(12)
-    splitTiers(rows, 12)
+    splitTiers(rows, 12, 0)
     expect(rows).toEqual(ids(12))
   })
 })

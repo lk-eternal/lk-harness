@@ -113,11 +113,29 @@ describe("画一类会话：展开按钮", () => {
     expect(html(draw("chat", rowsOf(5), states(0)))).not.toContain("data-session-group-footer")
   })
 
-  it("置顶的不占 5 个名额，始终显示", () => {
+  it("置顶的也算在前 5 个名额里，始终显示", () => {
     const rows: Row[] = [{ sessionKey: "p1", pinned: true }, { sessionKey: "p2", pinned: true }, ...rowsOf(8)]
     const markup = html(draw("chat", rows, states(0)))
-    expect(shownRows(markup)).toEqual(["p1", "p2", "s1", "s2", "s3", "s4", "s5"])
-    expect(markup).toContain("展开更多（还有 3 个）")
+    expect(shownRows(markup)).toEqual(["p1", "p2", "s1", "s2", "s3"])
+    expect(markup).toContain("展开更多（还有 5 个）")
+  })
+
+  it("置顶不少于 5 个：只显示置顶的，其余的收起；点「展开更多」再显示 5 个", () => {
+    const pinnedRows = (n: number): Row[] => Array.from({ length: n }, (_, i) => ({ sessionKey: `p${i + 1}`, pinned: true }))
+    const rows: Row[] = [...pinnedRows(6), ...rowsOf(12)]
+    const first = html(draw("chat", rows, states(0)))
+    expect(shownRows(first)).toEqual(["p1", "p2", "p3", "p4", "p5", "p6"])
+    expect(first).toContain("展开更多（还有 12 个）")
+    const second = html(draw("chat", rows, states(1)))
+    expect(shownRows(second)).toEqual(["p1", "p2", "p3", "p4", "p5", "p6", "s1", "s2", "s3", "s4", "s5"])
+    expect(second).toContain("展开全部（还有 7 个）")
+  })
+
+  it("置顶刚好 5 个、没有其余的会话：没有展开按钮", () => {
+    const rows: Row[] = Array.from({ length: 5 }, (_, i) => ({ sessionKey: `p${i + 1}`, pinned: true }))
+    const markup = html(draw("chat", rows, states(0)))
+    expect(shownRows(markup)).toHaveLength(5)
+    expect(markup).not.toContain("data-session-group-footer")
   })
 })
 
@@ -143,13 +161,13 @@ describe("画一类会话：置顶的几行一起画", () => {
     return { calls, markup: html(node) }
   }
 
-  it("置顶的几行一次交给 renderPinned，排在其余行前面；其余行仍一行行画，名额照旧只算它们", () => {
+  it("置顶的几行一次交给 renderPinned，排在其余行前面；其余行仍一行行画，前 5 个名额里置顶的也算", () => {
     const { calls, markup } = drawWithPinned(pinnedRows(), control(parseGroupStates({ chat: { level: 0 } })).c)
     expect(calls).toEqual([["p1", "p2"]])
-    expect(shownRows(markup)).toEqual(["p1", "p2", "s1", "s2", "s3", "s4", "s5"])
+    expect(shownRows(markup)).toEqual(["p1", "p2", "s1", "s2", "s3"])
     const block = /<section>(.*?)<\/section>/.exec(markup)
     expect(shownRows(block?.[1] ?? "")).toEqual(["p1", "p2"])
-    expect(markup).toContain("展开更多（还有 3 个）")
+    expect(markup).toContain("展开更多（还有 5 个）")
   })
 
   it("没有置顶的行：不调用 renderPinned", () => {
@@ -298,10 +316,18 @@ describe("画一类会话：展开更多 / 展开全部 / 收起的滑动（档�
     expect(tiersOf(draw("chat", rowsOf(12), folded)).map((t) => t.open)).toEqual([true, false])
   })
 
-  it("置顶的不算进块：它们不占名额，块的边界只数其余的行", () => {
+  it("置顶的不画进块，但占名额：块的边界跟着置顶个数走（置顶 1 个，第一块从其余的第 5 个开始）", () => {
     const rows: Row[] = [{ sessionKey: "p1", pinned: true }, ...rowsOf(12)]
     const tiers = tiersOf(draw("chat", rows, level(0)))
-    expect((tiers[0].draw() as ReactElement[]).map((row) => row.key)).toEqual(["s6", "s7", "s8", "s9", "s10"])
+    expect((tiers[0].draw() as ReactElement[]).map((row) => row.key)).toEqual(["s5", "s6", "s7", "s8", "s9"])
+  })
+
+  it("置顶不少于 5 个：第一块从其余的第一个开始，「展开更多」那档开着它", () => {
+    const rows: Row[] = [...Array.from({ length: 6 }, (_, i) => ({ sessionKey: `p${i + 1}`, pinned: true })), ...rowsOf(12)]
+    const closed = tiersOf(draw("chat", rows, level(0)))
+    expect(closed.map((t) => [t.tier, t.open])).toEqual([[1, false], [2, false]])
+    expect((closed[0].draw() as ReactElement[]).map((row) => row.key)).toEqual(["s1", "s2", "s3", "s4", "s5"])
+    expect(tiersOf(draw("chat", rows, level(1))).map((t) => t.open)).toEqual([true, false])
   })
 })
 

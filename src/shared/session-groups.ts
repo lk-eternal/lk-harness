@@ -16,15 +16,21 @@ export const SESSION_GROUP_TITLES: Record<SessionListGroupId, string> = {
   archived: ARCHIVED_GROUP_TITLE,
 }
 
-/** 展开档位：0 = 前 5 个，1 = 前 10 个，2 = 全部 */
+/** 展开档位：0 = 前 5 个名额，1 = 再多 5 个，2 = 全部 */
 export type GroupLevel = 0 | 1 | 2
 
 export const GROUP_PAGE_SIZE = 5
 
 const LEVELS: readonly GroupLevel[] = [0, 1, 2]
 
-/** 各档位最多显示几个（不含置顶的） */
-const LEVEL_LIMITS: Record<GroupLevel, number> = { 0: GROUP_PAGE_SIZE, 1: GROUP_PAGE_SIZE * 2, 2: Infinity }
+/**
+ * 某个档位最多显示几个非置顶的行。置顶的永远显示，也算在前 5 个名额里：置顶 2 个，其余的先显示 3 个；
+ * 置顶不少于 5 个，其余的一个都不显示。之后每个档位再多 5 个其余的行，最后是全部。
+ */
+function restLimit(level: GroupLevel, pinnedCount: number): number {
+  if (level === 2) return Infinity
+  return Math.max(0, GROUP_PAGE_SIZE - pinnedCount) + level * GROUP_PAGE_SIZE
+}
 
 export interface GroupViewState {
   collapsed: boolean
@@ -111,7 +117,7 @@ export function summarizeStatus<T>(rows: readonly T[], statusOf: (row: T) => Gro
 }
 
 export interface GroupFooter {
-  /** more：再多看 5 个；all：看全部；less：收回前 5 个 */
+  /** more：再多看 5 个；all：看全部；less：收回到前 5 个名额 */
   kind: "more" | "all" | "less"
   /** 点了之后要记下的档位 */
   to: GroupLevel
@@ -129,7 +135,7 @@ export interface GroupView<T> {
 
 /**
  * 一类会话此刻该显示哪些行。rows 已经排好序（置顶的在前）。
- * - 置顶的行始终显示，不占那 5 个名额。
+ * - 置顶的行始终显示，也算在前 5 个名额里（置顶不少于 5 个时，其余的行先一个都不显示），每个档位再多 5 个其余的行。
  * - keep 命中的行（刚被选中的会话）一定要看得见：它所在的类即使折着也先展开，被档位收起的话把档位提到够看见它。
  *   这只影响此刻的显示，不改记下的状态；谁来决定 keep 见 useSessionGroupControl。
  */
@@ -143,19 +149,20 @@ export function viewGroup<T>(
 
   const pinned = rows.filter(opts.isPinned)
   const rest = rows.filter((row) => !opts.isPinned(row))
-  const level = LEVELS.slice(state.level).find((lv) => !rest.slice(LEVEL_LIMITS[lv]).some(keep)) ?? 2
-  const shownRest = rest.slice(0, LEVEL_LIMITS[level])
-  const hidden = rest.slice(LEVEL_LIMITS[level])
+  const limitOf = (lv: GroupLevel) => restLimit(lv, pinned.length)
+  const level = LEVELS.slice(state.level).find((lv) => !rest.slice(limitOf(lv)).some(keep)) ?? 2
+  const shownRest = rest.slice(0, limitOf(level))
+  const hidden = rest.slice(limitOf(level))
 
-  return { collapsed: false, shown: [...pinned, ...shownRest], hidden, footer: footerOf(level, hidden.length, rest.length) }
+  return { collapsed: false, shown: [...pinned, ...shownRest], hidden, footer: footerOf(level, hidden.length, rest.length, pinned.length) }
 }
 
-function footerOf(level: GroupLevel, hiddenCount: number, restCount: number): GroupFooter | null {
+function footerOf(level: GroupLevel, hiddenCount: number, restCount: number, pinnedCount: number): GroupFooter | null {
   if (hiddenCount > 0) return level === 0 ? { kind: "more", to: 1 } : { kind: "all", to: 2 }
-  return restCount > GROUP_PAGE_SIZE ? { kind: "less", to: 0 } : null
+  return restCount > restLimit(0, pinnedCount) ? { kind: "less", to: 0 } : null
 }
 
-/** 非置顶行里档位多出来的一块：第 6 到 10 个（tier 1）、其余（tier 2）。展开 / 收起时整块滑开 / 滑合 */
+/** 非置顶行里档位多出来的一块：「展开更多」多出的 5 个（tier 1）、其余（tier 2）。展开 / 收起时整块滑开 / 滑合 */
 export interface GroupTier<T> {
   tier: 1 | 2
   rows: T[]
@@ -163,13 +170,13 @@ export interface GroupTier<T> {
 }
 
 /**
- * 把非置顶的行按档位切成块：head 是前 5 个（整类展开时总在），more 是后面各档多出来的行，
- * 点「展开更多 / 展开全部 / 收起」时 more 里每一块跟着档位滑开 / 滑合，所以收起的块也要给出（open 为 false）。
- * shownCount 是此刻显示几个非置顶行（viewGroup 算出的：档位加上为选中会话撑开的部分）。
+ * 把非置顶的行按档位切成块：head 是前 5 个名额里没被置顶占掉的行（整类展开时总在，置顶不少于 5 个时是空的），
+ * more 是后面各档多出来的行，点「展开更多 / 展开全部 / 收起」时 more 里每一块跟着档位滑开 / 滑合，所以收起的块也要给出（open 为 false）。
+ * shownCount 是此刻显示几个非置顶行（viewGroup 算出的：档位加上为选中会话撑开的部分），pinnedCount 是这一类置顶几个。
  */
-export function splitTiers<T>(rest: readonly T[], shownCount: number): { head: T[]; more: GroupTier<T>[] } {
-  const firstEnd = LEVEL_LIMITS[0]
-  const secondEnd = LEVEL_LIMITS[1]
+export function splitTiers<T>(rest: readonly T[], shownCount: number, pinnedCount: number): { head: T[]; more: GroupTier<T>[] } {
+  const firstEnd = restLimit(0, pinnedCount)
+  const secondEnd = restLimit(1, pinnedCount)
   const more: GroupTier<T>[] = []
   const second = rest.slice(firstEnd, secondEnd)
   if (second.length > 0) more.push({ tier: 1, rows: second, open: shownCount > firstEnd })
