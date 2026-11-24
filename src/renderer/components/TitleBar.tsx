@@ -59,7 +59,7 @@ export function TitleBarView({ children, center, actions, layout, maximized }: V
             </button>
             <button
               onClick={() => window.electronAPI.windowClose()}
-              className="rounded-lg p-2 text-fg-3 transition hover:bg-red-600 hover:text-white"
+              className="rounded-lg p-2 text-fg-3 transition hover:bg-danger-solid hover:text-white"
             >
               <X size={16} />
             </button>

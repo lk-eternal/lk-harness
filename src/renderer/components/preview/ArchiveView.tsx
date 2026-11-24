@@ -48,7 +48,7 @@ export default function ArchiveView({ info, actions }: { info: PreviewFileInfo; 
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索文件名"
           spellCheck={false}
-          className="h-6 w-40 rounded border border-line-subtle bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-blue-500"
+          className="h-6 w-40 rounded border border-line-subtle bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-focus"
         />
         <span className="ml-auto">{value.total.toLocaleString()} 项 · 解压后 {formatBytes(unpacked)} · 压缩包 {formatBytes(value.size)}</span>
       </ViewerBar>

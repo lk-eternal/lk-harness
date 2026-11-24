@@ -72,10 +72,10 @@ export default function UpdateDownloadBanner() {
       <p className="text-center text-xs font-medium text-fg-soft">
         {preparing ? "下载完成，正在准备安装包…" : pct === null ? "正在下载更新…" : `正在下载更新 ${pct}%`}
       </p>
-      {retryNote && <p className="mt-1 text-center text-[11px] text-amber-500">{retryNote}</p>}
+      {retryNote && <p className="mt-1 text-center text-[11px] text-warning">{retryNote}</p>}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised">
         <div
-          className="h-full rounded-full bg-blue-500 transition-[width] duration-300 ease-out"
+          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
           style={{ width: pct === null ? "0%" : `${pct}%` }}
         />
       </div>

@@ -68,7 +68,7 @@ function SheetGrid({ sheet }: { sheet: XlsxSheetData }) {
       {limit < sheet.rowCount && (
         <div className="flex items-center justify-center gap-3 border-t border-line-subtle py-3 text-xs text-fg-muted">
           <span>已显示 {limit.toLocaleString()} / {sheet.rowCount.toLocaleString()} 行</span>
-          <button type="button" onClick={() => setLimit((n) => n + MORE_ROWS)} className="rounded border border-line px-2.5 py-1 text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">再显示 {Math.min(MORE_ROWS, sheet.rowCount - limit).toLocaleString()} 行</button>
+          <button type="button" onClick={() => setLimit((n) => n + MORE_ROWS)} className="rounded border border-line px-2.5 py-1 text-fg-2 transition hover:border-focus hover:text-accent-soft">再显示 {Math.min(MORE_ROWS, sheet.rowCount - limit).toLocaleString()} 行</button>
         </div>
       )}
     </>

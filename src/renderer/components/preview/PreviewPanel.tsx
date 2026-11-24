@@ -134,7 +134,7 @@ function WebToolbar({ tab, controller }: { tab: WebTab; controller: PreviewContr
           onKeyDown={onKeyDown}
           spellCheck={false}
           placeholder="输入网址，回车打开"
-          className={`mx-1 h-7 min-w-0 flex-1 rounded-md border bg-surface px-2.5 text-xs text-fg-soft outline-none transition placeholder:text-fg-faint focus:border-blue-500 ${addrError ? "border-danger-line" : "border-line-subtle"}`}
+          className={`mx-1 h-7 min-w-0 flex-1 rounded-md border bg-surface px-2.5 text-xs text-fg-soft outline-none transition placeholder:text-fg-faint focus:border-focus ${addrError ? "border-danger-line" : "border-line-subtle"}`}
         />
         <BarButton title="用系统浏览器打开" disabled={!tab.url} onClick={() => void window.electronAPI.previewOpenExternalUrl(tab.url)}><ExternalLink size={14} /></BarButton>
         <div className="relative" ref={menuRef}>
@@ -258,7 +258,7 @@ export default function PreviewPanel({ controller, visible, sidebarStore, sideba
         onPointerCancel={endDrag}
         onLostPointerCapture={endDrag}
         title="拖动调整宽度"
-        className={`w-1.5 shrink-0 cursor-col-resize touch-none transition hover:bg-blue-500/30 ${dragging ? "bg-blue-500/40" : ""}`}
+        className={`w-1.5 shrink-0 cursor-col-resize touch-none transition hover:bg-focus/30 ${dragging ? "bg-focus/40" : ""}`}
       />
       <aside style={{ width }} className="flex shrink-0 flex-col border-l border-line-subtle bg-page">
         <TabStrip controller={controller} />

@@ -110,7 +110,7 @@ export function NoChannels({ onOpenSettings }: { onOpenSettings: () => void }) {
         type="button"
         data-open-channel-settings
         onClick={onOpenSettings}
-        className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500"
+        className="rounded-lg bg-primary px-4 py-2 text-xs text-on-primary transition hover:bg-primary-hover"
       >
         去设置里添加
       </button>
@@ -136,7 +136,7 @@ export function ChannelBar({
       data-channel-tab={id}
       aria-pressed={id === selected}
       onClick={() => onSelect(id)}
-      className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${id === selected ? "border-blue-500/60 bg-blue-600/20 text-accent-soft" : "border-line text-fg-3 hover:text-fg"}`}
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${id === selected ? "border-focus/60 bg-primary/15 text-accent-soft" : "border-line text-fg-3 hover:text-fg"}`}
     >
       {content}
     </button>

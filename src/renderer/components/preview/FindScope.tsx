@@ -38,7 +38,7 @@ export function FindBar({ inputRef, query, onQuery, active, total, capped, onSte
         spellCheck={false}
         aria-label="在文档中查找"
         placeholder="在文档中查找"
-        className={`h-6 w-44 rounded border bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-blue-500 ${none ? "border-danger-line" : "border-line-subtle"}`}
+        className={`h-6 w-44 rounded border bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-focus ${none ? "border-danger-line" : "border-line-subtle"}`}
       />
       <span aria-live="polite" className={`min-w-[3.75rem] text-center text-[11px] tabular-nums ${none ? "text-danger" : "text-fg-muted"}`}>
         {query === "" ? "" : formatFindCount(active, total, capped)}

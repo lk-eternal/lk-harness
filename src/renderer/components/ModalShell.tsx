@@ -52,7 +52,7 @@ export const modalBtnGhost =
   `${modalBtnBase} border border-line bg-raised/60 text-fg-soft hover:bg-strong/80`
 
 export const modalBtnPrimary =
-  `${modalBtnBase} border border-blue-600/40 bg-blue-600/20 text-accent-soft hover:bg-blue-600/30`
+  `${modalBtnBase} border border-focus/40 bg-primary/20 text-accent-soft hover:bg-primary/30`
 
 export const modalBtnDanger =
   `${modalBtnBase} border border-danger-line/50 bg-danger-tint/40 text-danger-soft hover:bg-danger-tint-strong/50`

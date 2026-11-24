@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { ModalShell, modalBtnGhost, modalBtnPrimary } from "./ModalShell"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 interface Props {
   title: string

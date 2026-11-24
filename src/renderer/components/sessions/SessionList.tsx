@@ -167,7 +167,7 @@ export default function SessionList({
                 type="button"
                 data-session-filter={c.id}
                 onClick={() => setFilter(c.id)}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition ${activeFilter === c.id ? "border-blue-500/60 bg-blue-600/20 text-accent-soft" : "border-line text-fg-3 hover:text-fg"}`}
+                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] transition ${activeFilter === c.id ? "border-focus/60 bg-primary/15 text-accent-soft" : "border-line text-fg-3 hover:text-fg"}`}
               >
                 {Icon && <Icon size={11} aria-hidden="true" />}
                 {c.label}
@@ -182,7 +182,7 @@ export default function SessionList({
               type="button"
               onClick={() => { if (channelId) onAddFavorite(channelId) }}
               disabled={!channelId}
-              className="inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-dashed border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft disabled:opacity-40"
               title={channelId ? "给主用户加一个常用工作目录" : needChannelHint}
             >
               <Plus size={12} />常用目录
@@ -191,7 +191,7 @@ export default function SessionList({
               type="button"
               onClick={() => setCleanupOpen(true)}
               disabled={!channelId || !loaded || othersCount === 0}
-              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft disabled:opacity-40"
               title={channelId ? "按天数批量清理久未使用的会话（只清别人的，主用户、项目、任务不会动）" : needChannelHint}
             >
               <BrushCleaning size={12} />清理久未使用…

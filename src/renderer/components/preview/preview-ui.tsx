@@ -87,9 +87,9 @@ export function Loading() {
 }
 
 /** 说明页里的操作按钮样式 */
-export const NOTICE_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"
+export const NOTICE_BUTTON = "inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft"
 /** 主操作（说明页里最该点的那个） */
-export const NOTICE_BUTTON_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg border border-blue-500 px-3 py-1.5 text-xs text-accent-soft transition hover:bg-blue-500/10"
+export const NOTICE_BUTTON_PRIMARY = "inline-flex items-center gap-1.5 rounded-lg border border-focus px-3 py-1.5 text-xs text-accent-soft transition hover:bg-primary/10"
 
 /** 文件没法在应用内显示时的说明页：文件名、原因，下面放这个环境里能做的操作（用默认程序打开、下载等） */
 export function FileNotice({ file, reason, children }: { file: { name: string; size: number }; reason: string; children?: ReactNode }) {

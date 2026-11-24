@@ -77,7 +77,7 @@ export default function SearchableSelect({ value, onChange, options, placeholder
         ref={btnRef}
         type="button"
         onClick={() => { setOpen(!open); setQuery("") }}
-        className="flex h-[34px] w-full items-center justify-between rounded-md border border-line bg-raised px-3 text-left text-sm outline-none transition hover:border-line-strong focus:border-blue-500"
+        className="flex h-[34px] w-full items-center justify-between rounded-md border border-line bg-raised px-3 text-left text-sm outline-none transition hover:border-line-strong focus:border-focus"
       >
         <span className={`truncate ${displayText ? "text-fg" : "text-fg-muted"}`} title={displayText}>
           {displayText || placeholder || "选择..."}
@@ -116,7 +116,7 @@ export default function SearchableSelect({ value, onChange, options, placeholder
                   type="button"
                   onClick={() => { onChange(o.id); setOpen(false) }}
                   className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-raised ${
-                    o.id === value ? "bg-blue-600/20 text-accent" : "text-fg-2"
+                    o.id === value ? "bg-primary/15 text-accent" : "text-fg-2"
                   }`}
                 >
                   <span className="truncate" title={o.label}>{o.label}</span>

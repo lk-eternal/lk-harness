@@ -102,7 +102,7 @@ export default function DirView({ sessionKey, path, reload = 0, onOpenFile, onOp
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索名称"
           spellCheck={false}
-          className="h-6 w-40 rounded border border-line-subtle bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-blue-500"
+          className="h-6 w-40 rounded border border-line-subtle bg-surface px-2 text-xs text-fg-soft outline-none placeholder:text-fg-faint focus:border-focus"
         />
         {listing && <span className="ml-auto">{listing.total.toLocaleString()} 项</span>}
       </ViewerBar>

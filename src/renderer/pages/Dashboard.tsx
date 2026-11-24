@@ -661,7 +661,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             <button
               onClick={handleStop}
               disabled={stopping}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-danger/20 disabled:opacity-50"
               title="停止 Daemon"
             >
               {stopping ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
@@ -676,7 +676,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             <button
               onClick={handleStart}
               disabled={starting}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-success transition hover:bg-green-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-success transition hover:bg-success/20 disabled:opacity-50"
               title="启动 Daemon"
             >
               {starting ? <Loader2 size={10} className="animate-spin" /> : <Play size={10} />}
@@ -724,7 +724,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             <button
               onClick={() => void handleStopAgent()}
               disabled={stoppingAgent}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-danger/20 disabled:opacity-50"
               title="停止全部 Agent"
             >
               {stoppingAgent ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
@@ -746,12 +746,12 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
               <span className="flex items-baseline gap-2.5">
                 {processing > 0 && (
                   <span className="flex items-baseline gap-1 text-accent" title="处理中">
-                    {processing}<span className="text-[10px] text-blue-500/70">处理中</span>
+                    {processing}<span className="text-[10px] text-accent/70">处理中</span>
                   </span>
                 )}
                 {pending > 0 && (
                   <span className="flex items-baseline gap-1 text-warning" title="排队中">
-                    {pending}<span className="text-[10px] text-yellow-500/70">排队</span>
+                    {pending}<span className="text-[10px] text-warning/70">排队</span>
                   </span>
                 )}
               </span>
@@ -763,7 +763,7 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
             <button
               onClick={() => void handleClearQueue()}
               disabled={clearingQueue}
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-red-600/20 disabled:opacity-50"
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-danger transition hover:bg-danger/20 disabled:opacity-50"
               title="清空队列"
             >
               {clearingQueue ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}

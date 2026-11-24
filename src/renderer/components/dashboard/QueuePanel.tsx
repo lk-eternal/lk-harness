@@ -59,7 +59,7 @@ export default function QueuePanel({
                     <span className="min-w-0 truncate text-[10px] font-medium text-accent" title={msg.sessionKey}>
                       {row.label}
                     </span>
-                    <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-blue-600/25 text-accent-soft" : "bg-yellow-600/20 text-warning-soft"}`}>
+                    <span className={`shrink-0 rounded px-1 text-[9px] ${msg.status === "processing" ? "bg-primary/20 text-accent-soft" : "bg-warning/20 text-warning-soft"}`}>
                       {msg.status === "processing" ? "处理中" : "排队"}
                     </span>
                     <span className="shrink-0 text-[10px] text-fg-muted">{formatQueueTimestamp(msg.timestamp)}</span>
@@ -69,7 +69,7 @@ export default function QueuePanel({
                 <button
                   type="button"
                   onClick={() => onDelete(msg.fileId)}
-                  className="shrink-0 rounded p-0.5 text-fg-muted transition hover:bg-red-600/20 hover:text-danger"
+                  className="shrink-0 rounded p-0.5 text-fg-muted transition hover:bg-danger/20 hover:text-danger"
                   title="删除此消息"
                 >
                   <Trash2 size={12} />

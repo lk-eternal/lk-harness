@@ -90,7 +90,7 @@ export default function StatusCard({
       onClick={onSelect}
       onKeyDown={onKeyDown}
       className={`flex h-[88px] cursor-pointer flex-col rounded-lg border p-3 transition ${
-        selected ? "border-blue-500/60 bg-blue-600/10" : "border-line-subtle hover:border-line hover:bg-surface/40"
+        selected ? "border-focus/60 bg-primary/10" : "border-line-subtle hover:border-line hover:bg-surface/40"
       }`}
     >
       <div className="flex items-center justify-between">

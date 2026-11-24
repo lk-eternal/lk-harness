@@ -236,7 +236,7 @@ function ActionBtn({ st, busy, onAdd, onSync }: {
   onSync: () => void
 }) {
   if (busy) return <span className="text-xs text-fg-muted">…</span>
-  if (st === "synced") return <span className="text-xs text-emerald-500">✓ 已添加</span>
+  if (st === "synced") return <span className="text-xs text-success">✓ 已添加</span>
   if (st === "outdated" || st === "local_modified") {
     return (
       <button type="button" onClick={onSync} className="inline-flex items-center gap-1 text-xs text-warning hover:text-warning-soft">

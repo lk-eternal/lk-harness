@@ -48,8 +48,8 @@ describe("StatusCard：卡片就是页签", () => {
   })
 
   it("选中的卡片高亮，没选中的不高亮", () => {
-    expect(String(render({ selected: true }).props.className)).toContain("border-blue-500/60")
-    expect(String(render({ selected: false }).props.className)).not.toContain("border-blue-500/60")
+    expect(String(render({ selected: true }).props.className)).toContain("border-focus/60")
+    expect(String(render({ selected: false }).props.className)).not.toContain("border-focus/60")
   })
 
   it("卡片上不再有「点击展开 / 收起」这类折叠提示，副标题原样显示", () => {

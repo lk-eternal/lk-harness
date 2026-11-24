@@ -86,7 +86,7 @@ export default function WebViewer({ tab, visible, dragging }: { tab: WebTab; vis
           <button
             type="button"
             onClick={() => void window.electronAPI.previewWebNav(tab.id, "reload")}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft"
           ><RotateCw size={12} />重试</button>
         </CenterMessage>
       )}

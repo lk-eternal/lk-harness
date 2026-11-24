@@ -103,7 +103,7 @@ export default function SessionListRow({
             type="button"
             disabled={blocked}
             onClick={onActivate}
-            className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-3 hover:border-blue-500 hover:text-accent-soft disabled:opacity-40"
+            className="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] text-fg-3 hover:border-focus hover:text-accent-soft disabled:opacity-40"
             title="切到此会话（只改路由，不拉起）"
           >
             激活
@@ -119,15 +119,15 @@ export default function SessionListRow({
             className="inline-flex shrink-0 items-center gap-1"
           >
             {processing > 0 && (
-              <span className="rounded bg-blue-600/25 px-1 text-[10px] text-accent-soft">处理中 {processing}</span>
+              <span className="rounded bg-primary/20 px-1 text-[10px] text-accent-soft">处理中 {processing}</span>
             )}
             {pending > 0 && (
-              <span className="rounded bg-yellow-600/20 px-1 text-[10px] text-warning-soft">排队 {pending}</span>
+              <span className="rounded bg-warning/20 px-1 text-[10px] text-warning-soft">排队 {pending}</span>
             )}
           </button>
         )}
         {badge && (
-          <span className="shrink-0 rounded bg-blue-600/20 px-1 text-[10px] text-accent-soft" title={badge.title}>{badge.text}</span>
+          <span className="shrink-0 rounded bg-primary/15 px-1 text-[10px] text-accent-soft" title={badge.title}>{badge.text}</span>
         )}
         {/* 右边三栏（时间 / 模型 / 操作）都是固定宽度、靠右对齐：每行操作按钮个数不同，不固定的话各行的模型下拉会参差不齐 */}
         <span className="ml-auto w-16 shrink-0 text-right text-[11px] text-fg-muted" title="最近一次对话">
@@ -157,7 +157,7 @@ export default function SessionListRow({
         <div data-session-col="actions" className="flex shrink-0">
           <span className={ACTION_SLOT}>
             {caps.stop && (
-              <button type="button" disabled={blocked} onClick={onStop} className={`${iconBtn} text-danger hover:bg-red-600/20`} title="停止会话">
+              <button type="button" disabled={blocked} onClick={onStop} className={`${iconBtn} text-danger hover:bg-danger/20`} title="停止会话">
                 <Square size={12} />
               </button>
             )}
@@ -201,7 +201,7 @@ export default function SessionListRow({
         <div data-queue-panel className="space-y-1 border-t border-line-subtle/50 bg-page/40 px-3 py-2 text-[11px] text-fg-3">
           {item.queue.map((q) => (
             <div key={q.fileId} className="flex items-start gap-2 rounded bg-surface/80 px-2 py-1">
-              <span className={q.status === "processing" ? "text-accent" : "text-yellow-500"}>
+              <span className={q.status === "processing" ? "text-accent" : "text-warning"}>
                 {q.status === "processing" ? "处理中" : "排队"}
               </span>
               <span className="min-w-0 flex-1 break-all text-fg-2">{q.preview}</span>

@@ -27,7 +27,7 @@ export default function CloseWindowModal({ open, onClose }: Props) {
               type="checkbox"
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
-              className="mt-0.5 shrink-0 rounded border-line-strong bg-raised text-blue-500 focus:ring-blue-500/40"
+              className="mt-0.5 shrink-0 rounded border-line-strong bg-raised text-primary focus:ring-focus/40"
             />
             <span>不再提醒，以后按本次选择执行</span>
           </label>

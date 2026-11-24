@@ -18,10 +18,10 @@ const LEVEL_COLORS: Record<string, string> = {
 }
 
 const PROCESS_COLORS: Record<string, string> = {
-  Daemon: "text-purple",
-  Agent: "text-cyan",
-  Electron: "text-orange",
-  Scheduler: "text-teal",
+  Daemon: "text-accent-bright",
+  Agent: "text-accent-soft",
+  Electron: "text-fg-3",
+  Scheduler: "text-fg-muted",
 }
 
 /** 命中片段高亮渲染（大小写不敏感） */
@@ -34,7 +34,7 @@ function renderHighlighted(text: string, query: string): React.ReactNode {
   let idx: number
   while ((idx = lower.indexOf(q, i)) >= 0) {
     if (idx > i) parts.push(text.slice(i, idx))
-    parts.push(<mark key={idx} className="rounded-sm bg-yellow-500/40 text-warning-bright">{text.slice(idx, idx + q.length)}</mark>)
+    parts.push(<mark key={idx} className="rounded-sm bg-warning/40 text-warning-bright">{text.slice(idx, idx + q.length)}</mark>)
     i = idx + q.length
   }
   if (parts.length === 0) return text
@@ -249,7 +249,7 @@ export default function LogPanel({
                 <div
                   key={i}
                   data-log-idx={i}
-                  className={logMatchIndexes[logMatchCursor] === i ? "rounded bg-yellow-500/10" : undefined}
+                  className={logMatchIndexes[logMatchCursor] === i ? "rounded bg-warning/10" : undefined}
                 >
                   <LogLine
                     line={line}

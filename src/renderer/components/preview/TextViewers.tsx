@@ -119,7 +119,7 @@ const NO_REGIONS: readonly FoldRegion[] = []
 function WrapToggle({ wrap, onChange }: { wrap: boolean; onChange: (wrap: boolean) => void }) {
   return (
     <label className="flex cursor-pointer items-center gap-1.5 select-none">
-      <input type="checkbox" checked={wrap} onChange={(e) => onChange(e.target.checked)} className="accent-blue-500" />自动换行
+      <input type="checkbox" checked={wrap} onChange={(e) => onChange(e.target.checked)} className="accent-primary" />自动换行
     </label>
   )
 }
@@ -282,7 +282,7 @@ export function HtmlView({ info }: { info: PreviewFileInfo }) {
         <Segmented value={mode} onChange={setMode} options={[{ value: "render", label: "预览" }, { value: "source", label: "源码" }]} />
         {mode === "render" ? (
           <label className="flex cursor-pointer items-center gap-1.5 select-none" title="页面里的脚本默认不运行；打开后仍在隔离环境里，访问不到本应用">
-            <input type="checkbox" checked={scripts} onChange={(e) => setScripts(e.target.checked)} className="accent-blue-500" />运行脚本
+            <input type="checkbox" checked={scripts} onChange={(e) => setScripts(e.target.checked)} className="accent-primary" />运行脚本
           </label>
         ) : (
           <WrapToggle wrap={wrap} onChange={setWrap} />
