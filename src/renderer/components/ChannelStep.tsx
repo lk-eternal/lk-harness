@@ -9,10 +9,10 @@ import { saveChannelWithImpact, type ImpactChoice } from "../../shared/channel-s
 import { emptyChannel } from "../channel-defaults"
 import ChannelModelImpactDialog from "./ChannelModelImpactDialog"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 const CHANNEL_OPTIONS: { type: ChannelType; icon: LucideIcon; iconCls: string; desc: string }[] = [
-  { type: "app", icon: MonitorSmartphone, iconCls: "text-purple", desc: "在本应用的对话页直接聊，无需配置" },
+  { type: "app", icon: MonitorSmartphone, iconCls: "text-fg-3", desc: "在本应用的对话页直接聊，无需配置" },
   { type: "feishu", icon: Bird, iconCls: "text-accent", desc: "在飞书里给机器人发消息" },
   { type: "wechat", icon: MessageSquare, iconCls: "text-success", desc: "扫码接入微信，在微信里聊" },
 ]
@@ -53,7 +53,7 @@ function BindBlock({ channel, platform, binding, error, onStart, onCancel }: {
         {isBound(channel) && <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已绑定</span>}
         {!isBound(channel) && !binding && (
           <button type="button" onClick={onStart}
-            className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent">
+            className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent">
             <UserCheck size={12} />开始绑定
           </button>
         )}
@@ -280,7 +280,7 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
       <div className="mt-4 grid grid-cols-3 gap-2">
         {CHANNEL_OPTIONS.map((opt) => (
           <button key={opt.type} type="button" onClick={() => toggle(opt.type)}
-            className={`relative rounded-lg border px-3 py-2.5 text-left transition ${selected[opt.type] ? "border-blue-500 bg-blue-600/10" : "border-line-subtle hover:border-line-strong"}`}>
+            className={`relative rounded-lg border px-3 py-2.5 text-left transition ${selected[opt.type] ? "border-focus bg-primary/10" : "border-line-subtle hover:border-line-strong"}`}>
             <div className="flex items-center gap-2 text-sm text-fg-soft"><opt.icon size={14} className={opt.iconCls} />{CHANNEL_TYPE_LABELS[opt.type]}</div>
             <p className="mt-0.5 text-[11px] text-fg-muted">{opt.desc}</p>
             {selected[opt.type] && <CheckCircle2 size={13} className="absolute right-2 top-2 text-accent" />}
@@ -302,7 +302,7 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
           </p>
           {feishuQr.status === "idle" && (
             <button type="button" onClick={() => void quickCreateFeishu()} disabled={feishuChecking}
-              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
+              className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary transition hover:bg-primary-hover disabled:opacity-50">
               <LogIn size={15} />一键创建飞书应用
             </button>
           )}
@@ -316,13 +316,13 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
             </div>
           )}
           <div className="space-y-2 rounded-lg border border-line-subtle p-3">
-            <p className="text-xs text-fg-muted">已有飞书应用？直接填凭据（<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-accent hover:underline">开发者后台</a>可查）：</p>
+            <p className="text-xs text-fg-muted">已有飞书应用？直接填凭据（<a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-link hover:underline">开发者后台</a>可查）：</p>
             <div className="grid grid-cols-2 gap-2">
               <input type="text" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="App ID (cli_...)" className={inputCls} />
               <input type="password" value={appSecret} onChange={(e) => setAppSecret(e.target.value)} placeholder="App Secret" className={inputCls} />
             </div>
             <button type="button" onClick={() => void connectFeishu(appId, appSecret, false)} disabled={feishuChecking || !appId.trim() || !appSecret.trim()}
-              className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
+              className="flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent disabled:opacity-50">
               {feishuChecking ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
               {feishuChecking ? "校验中..." : "校验并连接"}
             </button>
@@ -359,7 +359,7 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
             </div>
           )}
           {wechatQr.status === "error" && (
-            <p className="text-xs text-danger">{wechatQr.msg} <button type="button" onClick={() => void loginWechat()} className="text-accent hover:underline">重试</button></p>
+            <p className="text-xs text-danger">{wechatQr.msg} <button type="button" onClick={() => void loginWechat()} className="text-link hover:underline">重试</button></p>
           )}
           {wechatQr.status === "idle" && (isConnected(wechat)
             ? (
@@ -371,7 +371,7 @@ export default function ChannelStep({ agentResourceId, onNext }: Props) {
             )
             : (
               <button type="button" onClick={() => void loginWechat()}
-                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500">
+                className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary transition hover:bg-primary-hover">
                 <LogIn size={15} />扫码接入微信
               </button>
             ))}

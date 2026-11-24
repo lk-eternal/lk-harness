@@ -22,7 +22,7 @@ import {
   type RuleTarget,
 } from "../../shared/rule-scope"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 interface HarnessRule { id: string; name: string; content: string; enabled: boolean; scope?: RuleScope }
 interface ChannelLite { id: string; name: string; type?: ChannelType }
@@ -126,7 +126,7 @@ export default function RulePanel() {
             {rules.map((r) => (
               <button key={r.id} type="button" onClick={() => void selectRule(r)} aria-current={selectedId === r.id ? "true" : undefined}
                 className={`flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition ${selectedId === r.id ? "bg-raised/70 font-medium text-fg" : "text-fg-3 hover:bg-raised/40 hover:text-fg-soft"}`}>
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.enabled ? "bg-green-500" : "bg-stronger"}`} />
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.enabled ? "bg-success" : "bg-stronger"}`} />
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{r.id}</p>
                   <p className="truncate text-[10px] text-fg-faint">{r.enabled ? "已启用" : "已停用"} · {scopeHint(r)}</p>
@@ -158,7 +158,7 @@ export default function RulePanel() {
                 <div className="ml-auto flex items-center gap-2">
                   <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()} disabled={!draft.name.trim()}
-                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}>
                     {justSaved ? "已保存" : "保存"}
                   </button>
                 </div>
@@ -228,13 +228,13 @@ function ScopeEditor({ scope, channels, onChange }: {
               </label>
             )
           })}
-          {uniform.length === 0 && <p className="text-xs text-yellow-500">一个都没勾：这条规则不会对任何人生效（只存放）。</p>}
+          {uniform.length === 0 && <p className="text-xs text-warning">一个都没勾：这条规则不会对任何人生效（只存放）。</p>}
         </div>
       )}
       {customized && (
         <p className="text-xs text-fg-faint">
           这条规则按通道单独设置了生效范围。
-          <button type="button" className="ml-1 text-accent hover:underline"
+          <button type="button" className="ml-1 text-link hover:underline"
             onClick={() => onChange(scenesToScope(scopeUnionScenes(s, channels), channels))}>
             改回统一设置
           </button>
@@ -344,13 +344,13 @@ function AudienceMultiSelect({ channels, value, onChange }: {
         ref={btnRef}
         type="button"
         onClick={() => { setOpen(!open); setQuery("") }}
-        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-line bg-raised px-2 py-1 text-left text-sm outline-none transition hover:border-line-strong focus:border-blue-500"
+        className="flex min-h-[34px] w-full items-center gap-1.5 rounded-md border border-line bg-raised px-2 py-1 text-left text-sm outline-none transition hover:border-line-strong focus:border-focus"
       >
         <span className="flex min-w-0 flex-1 flex-wrap gap-1">
           {chips.length === 0
             ? <span className="px-1 text-fg-muted">选择生效范围…（不选=不生效）</span>
             : chips.map((c) => (
-              <span key={c.id} className="flex max-w-full items-center gap-1 rounded bg-blue-600/25 px-1.5 py-0.5 text-xs text-accent-bright">
+              <span key={c.id} className="flex max-w-full items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-xs text-accent-bright">
                 <span className="truncate" title={c.label}>{c.label}</span>
                 <span
                   role="button"
@@ -397,7 +397,7 @@ function AudienceMultiSelect({ channels, value, onChange }: {
                       onClick={() => toggle(o.id)}
                       className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-raised ${checked ? "text-accent-soft" : "text-fg-2"}`}
                     >
-                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-blue-500 bg-blue-600" : "border-line-strong"}`}>
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-primary bg-primary text-on-primary" : "border-line-strong"}`}>
                         {checked && <Check size={12} />}
                       </span>
                       <span className="truncate" title={o.label}>{o.label}</span>

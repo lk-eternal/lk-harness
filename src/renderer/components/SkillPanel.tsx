@@ -369,7 +369,7 @@ export default function SkillPanel() {
             <EmptyPane title="这个目录里还没有 Skill">
               <p>Skill 是写给 AI 的一份做事说明（SKILL.md），还可以带上脚本和参考资料。AI 遇到相关的事，会去读它。</p>
               <div className="pt-1">
-                <button type="button" onClick={() => void openAdd()} className={`${dashedBtn} border-blue-500/60 text-accent`}>新建 Skill</button>
+                <button type="button" onClick={() => void openAdd()} className={`${dashedBtn} border-focus/60 text-accent`}>新建 Skill</button>
               </div>
             </EmptyPane>
           ) : skillSel ? (

@@ -5,7 +5,7 @@ import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 import { useScrollActiveIntoView } from "./panel-scroll"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 const MCP_TEMPLATE = JSON.stringify({ "my-mcp-server": { command: "npx", args: ["-y", "@some/mcp-server"] } }, null, 2)
 
 interface McpEditForm { json: string; jsonError?: string }
@@ -260,7 +260,7 @@ export default function McpPanel() {
                     </div>
                   </div>
                   <textarea value={draft.json} onChange={(e) => setDraft({ ...draft, json: e.target.value, jsonError: undefined })}
-                    rows={14} spellCheck={false} className={inputCls + " font-mono text-xs leading-relaxed" + (draft.jsonError ? " border-red-500" : "")} />
+                    rows={14} spellCheck={false} className={inputCls + " font-mono text-xs leading-relaxed" + (draft.jsonError ? " border-danger" : "")} />
                   {draft.jsonError && <p className="mt-1 text-xs text-danger">{draft.jsonError}</p>}
                 </div>
                 {currentServer && (
@@ -296,7 +296,7 @@ export default function McpPanel() {
                 <div className="flex items-center gap-2">
                   <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave()}
-                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}>
                     {justSaved ? "已保存" : "保存"}
                   </button>
                 </div>
@@ -316,7 +316,7 @@ export default function McpPanel() {
                           return (
                             <button key={t.name} type="button"
                               onClick={() => setSelectedBuiltinTool({ groupKey: g.key, name: t.name })}
-                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition ${active ? "bg-accent-tint-strong/50 text-accent-bright ring-1 ring-blue-700" : "bg-raised text-fg-2 hover:bg-strong"}`}>
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] transition ${active ? "bg-accent-tint-strong/50 text-accent-bright ring-1 ring-focus/60" : "bg-raised text-fg-2 hover:bg-strong"}`}>
                               <Wrench size={10} className={active ? "text-accent" : "text-fg-muted"} />{t.name}
                             </button>
                           )

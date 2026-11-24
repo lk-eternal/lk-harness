@@ -27,7 +27,7 @@ const RUN_TONE_CLASS: Record<TaskRunTone, string> = {
   bad: "text-danger",
 }
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 interface ProjectOption { id: string; name: string; archived: boolean }
 
@@ -346,7 +346,7 @@ export default function TaskPanel() {
                   <input type="text" value={draft.name} readOnly={ai} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} placeholder="日报推送" /></div>
                 <div>
                   <label className="mb-1 block text-xs text-fg-muted">Cron 表达式</label>
-                  <input type="text" value={draft.cron} readOnly={ai} onChange={(e) => { setDraft({ ...draft, cron: e.target.value }); setTaskCronValid(true) }} className={inputCls + (!taskCronValid ? " border-red-500" : "")} placeholder="0 9 * * 1-5" />
+                  <input type="text" value={draft.cron} readOnly={ai} onChange={(e) => { setDraft({ ...draft, cron: e.target.value }); setTaskCronValid(true) }} className={inputCls + (!taskCronValid ? " border-danger" : "")} placeholder="0 9 * * 1-5" />
                   {!taskCronValid && <p className="mt-1 text-xs text-danger">Cron 表达式无效</p>}
                   <div className="mt-2 rounded-lg border border-line-subtle bg-surface/80 px-3 py-2">
                     <p className="text-xs font-medium text-fg-muted">最近 5 次触发</p>
@@ -482,7 +482,7 @@ export default function TaskPanel() {
                     <button type="button" onClick={() => void handleDelete()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-danger hover:bg-danger-tint/30"><Trash2 size={13} />删除</button>
                   )}
                   {!isNew && (
-                    <button type="button" onClick={() => void handleTrigger()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-accent hover:bg-blue-600/20"><Play size={13} />立即执行</button>
+                    <button type="button" onClick={() => void handleTrigger()} className="flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-accent hover:bg-primary/20"><Play size={13} />立即执行</button>
                   )}
                   {!isNew && !ai && (
                     <button type="button" onClick={() => void handleToggle()} className={`rounded-md px-2.5 py-1.5 text-xs ${draft.enabled ? "text-success" : "text-fg-muted"}`}>{draft.enabled ? "已启用" : "已停用"}</button>
@@ -493,7 +493,7 @@ export default function TaskPanel() {
                   <div className="flex items-center gap-2">
                     <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
                     <button onClick={() => void handleSave()} disabled={!draft.name.trim() || !draft.cron.trim()}
-                      className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                      className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}>
                       {justSaved ? "已保存" : "保存"}
                     </button>
                   </div>

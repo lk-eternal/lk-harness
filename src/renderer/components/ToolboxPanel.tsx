@@ -47,7 +47,7 @@ export default function ToolboxPanel() {
           {key === "larkCli" && (st.loggedIn
             ? <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已登录{st.userName ? `：${st.userName}` : ""}</span>
             : <button onClick={() => void login()} disabled={!!busy}
-                className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
+                className="flex items-center gap-1 rounded-md border border-focus/50 bg-primary/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-primary/20 disabled:opacity-50">
                 {busy === "login" ? <Loader2 size={11} className="animate-spin" /> : <LogIn size={11} />}
                 {busy === "login" ? "请在浏览器完成授权..." : "登录"}
               </button>)}
@@ -56,7 +56,7 @@ export default function ToolboxPanel() {
         <>
           <span className="rounded-full border border-line px-2 py-0.5 text-xs text-fg-muted">未安装</span>
           <button onClick={() => void install(key)} disabled={!!busy}
-            className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
+            className="flex items-center gap-1 rounded-md border border-focus/50 bg-primary/10 px-2 py-0.5 text-xs text-accent-soft hover:bg-primary/20 disabled:opacity-50">
             {busy === key ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
             {busy === key ? "安装中..." : "一键安装"}
           </button>
@@ -74,11 +74,11 @@ export default function ToolboxPanel() {
           依赖 Node.js
           {status?.nodeOk
             ? <span className="text-success">（已检测到{status.nodeVersion ? ` v${status.nodeVersion}` : ""}）</span>
-            : <span className="text-warning">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a>（Windows 安装时勾选 Add to PATH），然后重启本应用）</span>}
+            : <span className="text-warning">（未检测到——请先装 <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-link hover:underline">nodejs.org</a>（Windows 安装时勾选 Add to PATH），然后重启本应用）</span>}
         </p>
         {anyInstalled && (
           <button onClick={() => void updateAll()} disabled={!!busy}
-            className="mt-3 flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft disabled:opacity-50">
+            className="mt-3 flex items-center gap-1 rounded-md border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft disabled:opacity-50">
             {busy === "update" ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
             {busy === "update" ? "更新中..." : "更新"}
           </button>

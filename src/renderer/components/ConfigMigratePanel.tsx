@@ -121,7 +121,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                   setBusy("")
                 }
               }}
-              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
+              className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-focus disabled:opacity-50"
             >
               <Download size={16} /> 导出配置
             </button>
@@ -146,7 +146,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                 setBusy("")
               }
             }}
-            className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-blue-500 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-focus disabled:opacity-50"
           >
             <Upload size={16} /> 导入配置
           </button>
@@ -168,7 +168,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                   return (
                     <label
                       key={item.id}
-                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${selected.has(item.id) ? "border-blue-500 bg-blue-500/10" : "border-line hover:border-line-strong"}`}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${selected.has(item.id) ? "border-focus bg-primary/10" : "border-line hover:border-line-strong"}`}
                     >
                       <input
                         type="checkbox"
@@ -189,7 +189,7 @@ export default function ConfigMigratePanel({ showAlert, onMigrateSuccess, varian
                 type="button"
                 onClick={() => void confirmModal()}
                 disabled={!pickedSections().length}
-                className="rounded-md bg-blue-600 px-4 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40"
+                className="rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-on-primary hover:bg-primary-hover disabled:opacity-40"
               >
                 确定
               </button>

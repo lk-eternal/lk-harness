@@ -11,7 +11,7 @@ import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 type AddKind = "sdk" | "llm-builtin" | "llm-custom"
 
@@ -21,9 +21,9 @@ function newResourceId(prefix: string): string {
 }
 
 function resourceIcon(r: AgentResource) {
-  if (r.type === "sdk") return <KeyRound size={14} className="shrink-0 text-purple" />
+  if (r.type === "sdk") return <KeyRound size={14} className="shrink-0 text-fg-3" />
   if (r.type === "llm-custom") return <Globe size={14} className="shrink-0 text-warning" />
-  return <Cloud size={14} className="shrink-0 text-sky" />
+  return <Cloud size={14} className="shrink-0 text-fg-3" />
 }
 
 function resourceSubtitle(r: AgentResource): string {
@@ -302,12 +302,12 @@ export default function AgentPanel() {
             </button>
             <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
               <button type="button" onClick={() => openAdd("sdk")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
-                <KeyRound size={12} className="text-purple" />Cursor SDK
+                <KeyRound size={12} className="text-fg-3" />Cursor SDK
               </button>
               <div className="my-1 border-t border-line-subtle" />
               {BUILTIN_LLM_PROVIDERS.map((p) => (
                 <button key={p.id} type="button" onClick={() => openAdd("llm-builtin", p.id)} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised">
-                  <Cloud size={12} className="text-sky" />{p.label}
+                  <Cloud size={12} className="text-fg-3" />{p.label}
                 </button>
               ))}
               <div className="my-1 border-t border-line-subtle" />
@@ -363,12 +363,12 @@ export default function AgentPanel() {
                         </div>
                         <p className="mt-1.5 text-xs text-fg-muted">
                           还没有 Key？前往{" "}
-                          <a href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys" target="_blank" rel="noreferrer" className="text-accent hover:underline">Cursor Dashboard</a>
+                          <a href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys" target="_blank" rel="noreferrer" className="text-link hover:underline">Cursor Dashboard</a>
                           {" "}创建。
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
@@ -392,7 +392,7 @@ export default function AgentPanel() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
@@ -416,7 +416,7 @@ export default function AgentPanel() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim() || !draft.baseUrl?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">
+                        <button type="button" onClick={() => void handleVerify()} disabled={verifying || !draft.apiKey?.trim() || !draft.baseUrl?.trim()} className="flex items-center gap-1 rounded-md border border-line-strong px-3 py-1.5 text-xs text-fg-2 transition hover:border-focus hover:text-accent disabled:opacity-50">
                           {verifying ? <Loader2 size={12} className="animate-spin" /> : <ShieldCheck size={12} />}
                           {verifying ? "验证中..." : "验证"}
                         </button>
@@ -439,7 +439,7 @@ export default function AgentPanel() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button type="button" onClick={() => { setDraft(null); setSelectedId(null); setIsNew(false) }} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
-                  <button type="button" onClick={() => void handleSave()} className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                  <button type="button" onClick={() => void handleSave()} className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}>
                     {justSaved ? "已保存" : "保存"}
                   </button>
                 </div>

@@ -21,7 +21,7 @@ import ChipMultiSelect, { type ChipOption } from "./ChipMultiSelect"
 import useInlineModal from "./useInlineModal"
 import { usePanelSave } from "./usePanelSave"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 const sectionCls = "mt-5 space-y-3 border-t border-line-subtle pt-5 pb-5"
 /** tab 内首个分组：去顶部隔线，保留间隙 */
 const sectionFirstCls = "mt-5 space-y-3 pt-5 pb-5"
@@ -217,7 +217,7 @@ export default function ChannelPanel() {
             <PanelAddMenu open={showAddMenu} anchorRef={addMenuRef} onClose={() => setShowAddMenu(false)}>
               <button type="button" onClick={() => openAdd("feishu")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><Bird size={12} className="text-accent" />飞书</button>
               <button type="button" onClick={() => openAdd("wechat")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MessageSquare size={12} className="text-success" />微信</button>
-              <button type="button" onClick={() => openAdd("app")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MonitorSmartphone size={12} className="text-purple" />应用内对话</button>
+              <button type="button" onClick={() => openAdd("app")} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-fg-2 hover:bg-raised"><MonitorSmartphone size={12} className="text-fg-3" />应用内对话</button>
             </PanelAddMenu>
           </div>
           <div ref={listRef} className={PANEL_LIST}>
@@ -236,7 +236,7 @@ export default function ChannelPanel() {
                     ? <Bird size={14} className="shrink-0 text-accent" />
                     : c.type === "wechat"
                       ? <MessageSquare size={14} className="shrink-0 text-success" />
-                      : <MonitorSmartphone size={14} className="shrink-0 text-purple" />}
+                      : <MonitorSmartphone size={14} className="shrink-0 text-fg-3" />}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-xs font-medium">{c.name}</p>
                     <p className="truncate text-[10px] text-fg-faint">{st?.connected ? "已连接" : c.enabled ? "未连接" : "已停用"}</p>
@@ -280,7 +280,7 @@ export default function ChannelPanel() {
                 <div className="flex items-center gap-2">
                   <button onClick={() => void handleCancel()} className="rounded-md px-4 py-1.5 text-xs text-fg-3 transition hover:bg-raised hover:text-fg">取消</button>
                   <button onClick={() => void handleSave(draft)} disabled={!draft.name.trim()}
-                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-green-600 text-white" : "bg-blue-600 text-white hover:bg-blue-500"}`}>
+                    className={`rounded-md px-4 py-1.5 text-xs font-medium transition disabled:opacity-40 ${justSaved ? "bg-success-solid text-white" : "bg-primary text-on-primary hover:bg-primary-hover"}`}>
                     {justSaved ? "已保存" : "保存"}
                   </button>
                 </div>
@@ -522,7 +522,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
     <div>
       <label className="mb-1 block text-xs text-fg-muted">工作目录</label>
       <div className="flex items-center gap-2">
-        <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2 transition hover:border-blue-500">
+        <div onClick={() => void selectWorkDir()} className="flex flex-1 cursor-pointer items-center gap-2 rounded-lg border border-line px-3 py-2 transition hover:border-focus">
           <FolderOpen size={14} className="text-accent" />
           <span className="truncate text-xs">{draft.workspaceDir || "点击选择…"}</span>
         </div>
@@ -552,13 +552,13 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                     <ExternalLink size={11} />开发者后台
                   </a>
                   <button type="button" onClick={openRegisterForm} disabled={feishuQrStatus === "loading" || feishuQrStatus === "wait" || registerForm !== null}
-                    className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2 py-1 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
+                    className="flex items-center gap-1 rounded-md border border-focus/50 bg-primary/10 px-2 py-1 text-xs text-accent-soft hover:bg-primary/20 disabled:opacity-50">
                     <LogIn size={11} />一键创建应用
                   </button>
                 </div>
               </div>
               {registerForm && (
-                <div className="space-y-2 rounded-lg border border-blue-800/40 bg-accent-tint/20 p-3">
+                <div className="space-y-2 rounded-lg border border-line bg-accent-tint/20 p-3">
                   <p className="text-xs font-medium text-accent-bright">新应用信息（创建页将预填，扫码后可修改）</p>
                   <div>
                     <label className="mb-1 block text-xs text-fg-muted">应用名称（群内机器人显示名）</label>
@@ -570,7 +570,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                   </div>
                   <div className="flex justify-end gap-2 pt-1">
                     <button onClick={() => setRegisterForm(null)} className="rounded-md px-3 py-1 text-xs text-fg-3 hover:bg-raised hover:text-fg">取消</button>
-                    <button onClick={() => void startFeishuRegister(registerForm)} disabled={!registerForm.name.trim()} className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40">开始扫码创建</button>
+                    <button onClick={() => void startFeishuRegister(registerForm)} disabled={!registerForm.name.trim()} className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-on-primary hover:bg-primary-hover disabled:opacity-40">开始扫码创建</button>
                   </div>
                 </div>
               )}
@@ -592,9 +592,9 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               )}
               {feishuQrStatus === "error" && (
                 <p className="text-xs text-danger">
-                  {feishuQrMsg} <button onClick={openRegisterForm} className="text-accent hover:underline">重试</button>
+                  {feishuQrMsg} <button onClick={openRegisterForm} className="text-link hover:underline">重试</button>
                   <span className="text-fg-muted"> · 若飞书侧已创建成功，可到</span>
-                  <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-accent hover:underline">开发者平台</a>
+                  <a href="https://open.feishu.cn/app" target="_blank" rel="noreferrer" className="text-link hover:underline">开发者平台</a>
                   <span className="text-fg-muted">复制凭据手动填入</span>
                 </p>
               )}
@@ -635,9 +635,9 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                       <button onClick={async () => { await window.electronAPI.wechatQrLoginCancel(); wechatQrBusy.current = false; setWechatQrStatus("idle") }} className="text-xs text-fg-muted hover:text-danger">取消</button>
                     </div>
                   )}
-                  {wechatQrStatus === "error" && <p className="text-xs text-danger">{wechatQrMsg} <button onClick={() => void startWechatQrLogin()} className="text-accent hover:underline">重试</button></p>}
+                  {wechatQrStatus === "error" && <p className="text-xs text-danger">{wechatQrMsg} <button onClick={() => void startWechatQrLogin()} className="text-link hover:underline">重试</button></p>}
                   {wechatQrStatus === "idle" && (
-                    <button onClick={() => void startWechatQrLogin()} className="flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent">
+                    <button onClick={() => void startWechatQrLogin()} className="flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-xs text-fg-2 transition hover:border-focus hover:text-accent">
                       <LogIn size={13} />扫码绑定ClawBot
                     </button>
                   )}
@@ -697,9 +697,9 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                           <button type="button" onClick={() => void handleTest()} disabled={testing} className="text-xs text-fg-muted hover:text-success disabled:opacity-50">{testing ? "…" : "测试"}</button>
                         </>
                       : <>
-                          <ShieldAlert size={14} className="text-yellow-500" />
+                          <ShieldAlert size={14} className="text-warning" />
                           <span className="flex-1 text-xs text-fg-muted">未绑定</span>
-                          <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-line-strong px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent disabled:opacity-50">绑定</button>
+                          <button type="button" onClick={() => void handleBind()} disabled={!credOk} className="rounded-md border border-line-strong px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent disabled:opacity-50">绑定</button>
                         </>}
                 </div>
             {(draft.mainUserEnabled || draft.mainUserChatId) && workDirField}
@@ -736,16 +736,16 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             <div className="flex items-center justify-between">
               <p className="text-xs text-fg-3">保留会话</p>
               <button onClick={() => set({ keepSessionMain: !(draft.keepSessionMain ?? true) })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionMain ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSessionMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionMain ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.keepSessionMain ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
               </button>
             </div>
             {(draft.keepSessionMain ?? true) && (
               <div className="flex items-center justify-between border-t border-line-subtle pt-3">
                 <p className="text-xs text-fg-3">保持长连接</p>
                 <button onClick={() => set({ persistentPollMain: !(draft.persistentPollMain ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollMain ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPollMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollMain ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.persistentPollMain ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
             )}
@@ -753,8 +753,8 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               <div className="flex items-center justify-between border-t border-line-subtle pt-3">
                 <p className="text-xs text-fg-3">展示思考过程</p>
                 <button onClick={() => set({ showThinkingMain: !(draft.showThinkingMain ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingMain ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinkingMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingMain ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.showThinkingMain ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
             )}
@@ -771,14 +771,14 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                     const n = parseInt(e.target.value, 10)
                     set({ streamKeepPerKindMain: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
                   }}
-                  className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
+                  className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-focus"
                 />
               </div>
               <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
                 <p className="text-xs text-fg-3">回复后隐藏思考</p>
                 <button onClick={() => set({ hideThinkingOnFinishMain: !(draft.hideThinkingOnFinishMain ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishMain ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinishMain ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishMain ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.hideThinkingOnFinishMain ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
               </>
@@ -796,8 +796,8 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                 <p className="text-[11px] text-fg-faint">别人私聊机器人，机器人会回复</p>
               </div>
               <button onClick={() => set({ othersDm: !(draft.othersDm ?? false) })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.othersDm ?? false) ? "bg-blue-600" : "bg-stronger"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.othersDm ?? false) ? "left-[18px]" : "left-0.5"}`} />
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.othersDm ?? false) ? "bg-primary" : "bg-stronger"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.othersDm ?? false) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
               </button>
             </div>
             <div className="flex items-center justify-between border-t border-line-subtle pt-3">
@@ -808,7 +808,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               <select
                 value={draft.groupPolicy ?? "off"}
                 onChange={(e) => set({ groupPolicy: e.target.value as GroupPolicy })}
-                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-focus"
               >
                 {GROUP_POLICIES.map((p) => <option key={p} value={p}>{GROUP_POLICY_LABELS[p]}</option>)}
               </select>
@@ -844,7 +844,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               <select
                 value={visitorTier}
                 onChange={(e) => set({ visitorTier: e.target.value as VisitorTier })}
-                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-blue-500"
+                className="rounded-lg border border-line bg-surface px-2 py-1.5 text-xs outline-none focus:border-focus"
               >
                 <option value="visitor">访客</option>
                 <option value="full">同我</option>
@@ -877,14 +877,14 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                     emptyText="本机没有可开放的 Skill。"
                   />
                   {(draft.visitorSkills ?? []).length > 0 && (
-                    <p className="text-xs leading-relaxed text-yellow-500">
+                    <p className="text-xs leading-relaxed text-warning">
                       开放 Skill 需要让 AI 读取它的说明文件，所以访客也能读取本机文件；需要执行脚本的 Skill 在访客档仍然用不了。
                     </p>
                   )}
                 </div>
               </>
             ) : (
-              <p className="text-xs leading-relaxed text-yellow-500">
+              <p className="text-xs leading-relaxed text-warning">
                 和你一样：能读写本机文件、执行命令，用你装的全部 MCP 和 Skill。只给完全信任的人开放。
               </p>
             )}
@@ -914,7 +914,7 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               onSelect={(c) => set({ othersAgentResourceId: c.resourceId, othersModel: c.model, othersModelParams: c.modelParams ?? "" })}
             />
             {!sameResource && !draft.othersModel?.trim() && (
-              <p className="text-xs text-yellow-500">其他人资源与主用户不同，请显式选择模型（不可跟随）。</p>
+              <p className="text-xs text-warning">其他人资源与主用户不同，请显式选择模型（不可跟随）。</p>
             )}
           </section>
           )}
@@ -924,16 +924,16 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
             <div className="flex items-center justify-between">
               <p className="text-xs text-fg-3">保留会话</p>
               <button onClick={() => set({ keepSessionOthers: !(draft.keepSessionOthers ?? true) })}
-                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionOthers ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.keepSessionOthers ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.keepSessionOthers ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.keepSessionOthers ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
               </button>
             </div>
             {(draft.keepSessionOthers ?? true) && (
               <div className="flex items-center justify-between border-t border-line-subtle pt-3">
                 <p className="text-xs text-fg-3">保持长连接</p>
                 <button onClick={() => set({ persistentPollOthers: !(draft.persistentPollOthers ?? false) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollOthers ?? false) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.persistentPollOthers ?? false) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.persistentPollOthers ?? false) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.persistentPollOthers ?? false) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
             )}
@@ -941,8 +941,8 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
               <div className="flex items-center justify-between border-t border-line-subtle pt-3">
                 <p className="text-xs text-fg-3">展示思考过程</p>
                 <button onClick={() => set({ showThinkingOthers: !(draft.showThinkingOthers ?? false) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingOthers ?? false) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.showThinkingOthers ?? false) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.showThinkingOthers ?? false) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.showThinkingOthers ?? false) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
             )}
@@ -959,14 +959,14 @@ function ChannelDetailForm({ channel, isNew, resources, onChange, onSaveDraft, s
                     const n = parseInt(e.target.value, 10)
                     set({ streamKeepPerKindOthers: Number.isFinite(n) ? Math.min(20, Math.max(1, n)) : 5 })
                   }}
-                  className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-blue-500"
+                  className="w-16 rounded-lg border border-line bg-surface px-2 py-1 text-center text-sm outline-none focus:border-focus"
                 />
               </div>
               <div className="flex items-center justify-between border-t border-line-subtle pt-3 pl-2">
                 <p className="text-xs text-fg-3">回复后隐藏思考</p>
                 <button onClick={() => set({ hideThinkingOnFinishOthers: !(draft.hideThinkingOnFinishOthers ?? true) })}
-                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "bg-blue-600" : "bg-stronger"}`}>
-                  <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "left-[18px]" : "left-0.5"}`} />
+                  className={`relative h-5 w-9 shrink-0 rounded-full transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "bg-primary" : "bg-stronger"}`}>
+                  <span className={`absolute top-0.5 h-4 w-4 rounded-full transition ${(draft.hideThinkingOnFinishOthers ?? true) ? "left-[18px] bg-on-primary" : "left-0.5 bg-white"}`} />
                 </button>
               </div>
               </>

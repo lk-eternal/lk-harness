@@ -90,7 +90,7 @@ export default function MobilePairPanel() {
     return <p className="text-xs text-fg-muted">正在读取手机网关状态…</p>
   }
 
-  const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+  const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
   return (
     <div className="space-y-6">
       <section className="space-y-3">
@@ -100,7 +100,7 @@ export default function MobilePairPanel() {
               <Smartphone size={16} className="text-accent" />
               <p className="text-sm font-medium">启用手机端远程对话网关</p>
               {status.running ? (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-success">运行中 · :{status.port}</span>
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[11px] text-success">运行中 · :{status.port}</span>
               ) : (
                 <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] text-fg-muted">未启动</span>
               )}
@@ -115,9 +115,9 @@ export default function MobilePairPanel() {
             aria-checked={status.enabled}
             disabled={busy}
             onClick={() => void toggleEnabled()}
-            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${status.enabled ? "bg-green-500" : "bg-stronger"}`}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${status.enabled ? "bg-primary" : "bg-stronger"}`}
           >
-            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${status.enabled ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+            <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${status.enabled ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
           </button>
         </div>
         {status.error && <p className="text-xs text-danger">{status.error}</p>}
@@ -180,7 +180,7 @@ export default function MobilePairPanel() {
           )}
           <div className="min-w-0 flex-1 space-y-2.5 text-xs">
             <p className="text-fg-2 leading-relaxed">
-              <span className="mr-1.5 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] text-success">仅 Android</span>
+              <span className="mr-1.5 rounded-full bg-success/15 px-2 py-0.5 text-[11px] text-success">仅 Android</span>
               用手机浏览器扫码下载并安装 APK。
             </p>
             <div className="flex items-center gap-2">

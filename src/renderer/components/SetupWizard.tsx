@@ -9,7 +9,7 @@ import ConfigMigratePanel from "./ConfigMigratePanel"
 import useInlineModal from "./useInlineModal"
 import { BUILTIN_LLM_PROVIDERS, builtinProviderLabel } from "../../shared/agent-providers"
 
-const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
 function newId(prefix: string): string {
   const hex = Array.from(crypto.getRandomValues(new Uint8Array(4))).map((b) => b.toString(16).padStart(2, "0")).join("")
@@ -185,7 +185,7 @@ export default function SetupWizard({ open, onClose }: Props) {
                 onClick={() => { if (i <= maxStep) setStep(i) }}
                 disabled={i > maxStep}
                 className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition ${
-                  i === step ? "bg-blue-600/20 text-accent-soft"
+                  i === step ? "bg-primary/20 text-accent-soft"
                   : stepDone[i] ? "text-success hover:bg-raised"
                   : i <= maxStep ? "text-fg-3 hover:bg-raised" : "text-fg-ghost"}`}
               >
@@ -217,7 +217,7 @@ export default function SetupWizard({ open, onClose }: Props) {
               ]).map((opt) => (
                 <button key={opt.id} type="button"
                   onClick={() => { setAgentMode(opt.id); setVerifyErr(""); setAgentConfigured(false); setSdkSaved(false) }}
-                  className={`rounded-lg border px-3 py-2.5 text-left transition ${agentMode === opt.id ? "border-blue-500 bg-blue-600/10" : "border-line-subtle hover:border-line-strong"}`}>
+                  className={`rounded-lg border px-3 py-2.5 text-left transition ${agentMode === opt.id ? "border-focus bg-primary/10" : "border-line-subtle hover:border-line-strong"}`}>
                   <div className="flex items-center gap-2 text-sm text-fg-soft"><opt.icon size={14} />{opt.title}</div>
                   <p className="mt-0.5 text-[11px] text-fg-muted">{opt.desc}</p>
                 </button>
@@ -248,7 +248,7 @@ export default function SetupWizard({ open, onClose }: Props) {
 
             <div className="mt-4 flex items-center gap-3">
               <button onClick={() => void verifyAndSaveAgent()} disabled={verifying || agentConfigured}
-                className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-50">
+                className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary transition hover:bg-primary-hover disabled:opacity-50">
                 {verifying ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                 {verifying ? "验证中..." : agentConfigured ? "已验证" : "验证并继续"}
               </button>
@@ -284,7 +284,7 @@ export default function SetupWizard({ open, onClose }: Props) {
             </p>
             <p className="mt-2 rounded-lg border border-warning-line/40 bg-warning-tint/30 px-3 py-2 text-xs leading-relaxed text-warning-bright/90">
               一键安装需要本机已装 <span className="font-medium text-warning-bright">Node.js</span>
-              （<a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-accent hover:underline">nodejs.org</a>
+              （<a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-link hover:underline">nodejs.org</a>
               ，安装时勾选 Add to PATH）。新电脑若未安装，点安装会失败并在下方提示原因。
               {toolStatus && toolStatus.nodeOk === false && <span className="mt-1 block text-danger-soft">当前未检测到 Node.js。</span>}
               {toolStatus?.nodeOk && toolStatus.nodeVersion && <span className="mt-1 block text-success/80">已检测到 Node v{toolStatus.nodeVersion}</span>}
@@ -303,7 +303,7 @@ export default function SetupWizard({ open, onClose }: Props) {
                       : st?.installed ? <span className="flex items-center gap-1 text-xs text-success"><CheckCircle2 size={13} />已安装</span>
                       : (
                         <button onClick={() => void installTool(key)} disabled={!!toolBusy}
-                          className="flex items-center gap-1 rounded-md border border-blue-600/50 bg-blue-600/10 px-2.5 py-1 text-xs text-accent-soft hover:bg-blue-600/20 disabled:opacity-50">
+                          className="flex items-center gap-1 rounded-md border border-focus/50 bg-primary/10 px-2.5 py-1 text-xs text-accent-soft hover:bg-primary/20 disabled:opacity-50">
                           {toolBusy === key ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
                           {toolBusy === key ? "安装中..." : "一键安装"}
                         </button>
@@ -313,7 +313,7 @@ export default function SetupWizard({ open, onClose }: Props) {
               })}
             </div>
             {toolErr && <p className="mt-3 text-xs leading-relaxed text-danger">{toolErr}</p>}
-            <button onClick={() => void finish(true)} className="mt-8 flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-green-500">
+            <button onClick={() => void finish(true)} className="mt-8 flex items-center gap-2 rounded-lg bg-success-solid px-5 py-2 text-sm font-medium text-white transition hover:bg-success-solid-hover">
               <CheckCircle2 size={15} />{anyToolInstalled ? "完成，开始使用" : "跳过，开始使用"}
             </button>
           </>)}

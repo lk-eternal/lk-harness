@@ -306,7 +306,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
     await window.electronAPI.saveConfig({ silentUpdateIdleRestart: next })
   }
 
-  const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-blue-500"
+  const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
   const masterDetailLayout = MASTER_DETAIL_TABS.includes(tab) || tab === "projects"
 
   return (
@@ -355,7 +355,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       key={opt.v}
                       type="button"
                       onClick={() => void handleThemeChange(opt.v)}
-                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${theme === opt.v ? "border-blue-500 bg-blue-500/10 font-medium text-fg" : "border-line text-fg-3 hover:border-line-strong"}`}
+                      className={`flex flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${theme === opt.v ? "border-focus bg-primary/10 font-medium text-fg" : "border-line text-fg-3 hover:border-line-strong"}`}
                     >
                       <opt.icon size={15} />{opt.label}
                     </button>
@@ -375,9 +375,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     role="switch"
                     aria-checked={autoLaunch}
                     onClick={handleAutoLaunchToggle}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoLaunch ? "bg-green-500" : "bg-stronger"}`}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoLaunch ? "bg-primary" : "bg-stronger"}`}
                   >
-                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${autoLaunch ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${autoLaunch ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
                   </button>
                 </div>
               </section>
@@ -392,7 +392,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   ]).map((opt) => (
                     <label
                       key={opt.v}
-                      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition ${closeWindowAction === opt.v ? "border-blue-500 bg-blue-500/10" : "border-line hover:border-line-strong"}`}
+                      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition ${closeWindowAction === opt.v ? "border-focus bg-primary/10" : "border-line hover:border-line-strong"}`}
                     >
                       <input
                         type="radio"
@@ -454,7 +454,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   <p className="text-sm text-fg-3">从头走一遍三步引导：接入 AI → 选消息通道（飞书 / 微信 / 应用内，飞书和微信可顺便绑定自己）→ 装工具。已有配置会自动带入，不会被清空。</p>
                   <button
                     onClick={() => onReenterWizard?.()}
-                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
+                    className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-on-primary transition hover:bg-primary-hover"
                   >
                     <BookOpen size={15} />重新进入引导
                   </button>
@@ -579,9 +579,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     role="switch"
                     aria-checked={autoUpgradePrompt}
                     onClick={() => void handleAutoUpgradePromptToggle()}
-                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoUpgradePrompt ? "bg-green-500" : "bg-stronger"}`}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${autoUpgradePrompt ? "bg-primary" : "bg-stronger"}`}
                   >
-                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${autoUpgradePrompt ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${autoUpgradePrompt ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
                   </button>
                 </div>
                 {window.electronAPI?.platform === "win32" && (
@@ -595,9 +595,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       role="switch"
                       aria-checked={silentUpdate}
                       onClick={() => void handleSilentUpdateToggle()}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${silentUpdate ? "bg-green-500" : "bg-stronger"}`}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${silentUpdate ? "bg-primary" : "bg-stronger"}`}
                     >
-                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${silentUpdate ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${silentUpdate ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
                     </button>
                   </div>
                 )}
@@ -612,9 +612,9 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       role="switch"
                       aria-checked={idleRestart}
                       onClick={() => void handleIdleRestartToggle()}
-                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${idleRestart ? "bg-green-500" : "bg-stronger"}`}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors duration-200 ${idleRestart ? "bg-primary" : "bg-stronger"}`}
                     >
-                      <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform duration-200 ${idleRestart ? "translate-x-[18px]" : "translate-x-[3px]"}`} />
+                      <span className={`inline-block h-3.5 w-3.5 rounded-full shadow transition-transform duration-200 ${idleRestart ? "translate-x-[18px] bg-on-primary" : "translate-x-[3px] bg-white"}`} />
                     </button>
                   </div>
                 )}
@@ -627,7 +627,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     type="button"
                     disabled={updateBusy || updateDownloading}
                     onClick={() => void handleCheckUpdate()}
-                    className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm transition hover:border-blue-500 hover:bg-raised disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm transition hover:border-focus hover:bg-raised disabled:opacity-50"
                   >
                     {updateBusy ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                     检查更新
@@ -637,7 +637,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       type="button"
                       disabled={updateBusy || updateDownloading}
                       onClick={() => void handleApplyUpdate()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-blue-500 bg-blue-500/15 px-4 py-2 text-sm text-accent-bright transition hover:bg-blue-500/25 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-focus bg-primary/15 px-4 py-2 text-sm text-accent-bright transition hover:bg-primary/25 disabled:opacity-50"
                     >
                       立即更新
                     </button>
@@ -647,7 +647,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                       type="button"
                       disabled={updateBusy}
                       onClick={() => void handleApplyUpdate()}
-                      className="inline-flex items-center gap-2 rounded-lg border border-green-500 bg-green-500/15 px-4 py-2 text-sm text-success-bright transition hover:bg-green-500/25 disabled:opacity-50"
+                      className="inline-flex items-center gap-2 rounded-lg border border-success bg-success/15 px-4 py-2 text-sm text-success-bright transition hover:bg-success/25 disabled:opacity-50"
                     >
                       立即安装
                     </button>
@@ -662,7 +662,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                         href={updateDownloadUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs text-accent hover:underline"
+                        className="inline-flex items-center gap-1.5 text-xs text-link hover:underline"
                       >
                         <Download size={13} />下载安装包
                       </a>
@@ -670,7 +670,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                     {updateDownloading && (
                       <div className="h-1.5 w-full overflow-hidden rounded-full bg-raised">
                         <div
-                          className="h-full rounded-full bg-blue-500 transition-[width] duration-300 ease-out"
+                          className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
                           style={{ width: updateDownloadPct === null ? "0%" : `${updateDownloadPct}%` }}
                         />
                       </div>
@@ -691,7 +691,7 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
                   href="https://github.com/lk-eternal/lk-harness"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm text-fg-2 transition hover:border-blue-500 hover:bg-raised hover:text-accent"
+                  className="inline-flex items-center gap-2 rounded-lg border border-line-strong bg-raised/50 px-4 py-2 text-sm text-fg-2 transition hover:border-focus hover:bg-raised hover:text-accent"
                 >
                   <Github size={16} />
                   GitHub 仓库
