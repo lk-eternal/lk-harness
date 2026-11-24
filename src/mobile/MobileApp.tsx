@@ -1054,9 +1054,9 @@ export default function MobileApp() {
         >
           <Menu size={19} />
           {hasBackgroundUnread ? (
-            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
+            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-success ring-2 ring-surface" />
           ) : hasBackgroundWorking ? (
-            <span className="absolute right-1.5 top-1.5 h-2 w-2 animate-pulse rounded-full bg-blue-500 ring-2 ring-surface" />
+            <span className="absolute right-1.5 top-1.5 h-2 w-2 animate-pulse rounded-full bg-accent ring-2 ring-surface" />
           ) : null}
         </button>
 
@@ -1073,12 +1073,12 @@ export default function MobileApp() {
                   if (e.key === "Escape") setRenaming(false)
                 }}
                 autoFocus
-                className="w-full rounded-lg border border-blue-500 bg-page px-2 py-0.5 text-xs text-fg focus:outline-none"
+                className="w-full rounded-lg border border-focus bg-page px-2 py-0.5 text-xs text-fg focus:outline-none"
               />
               <button
                 type="button"
                 onClick={() => void submitRename()}
-                className="rounded p-1 text-emerald-400"
+                className="rounded p-1 text-success"
               >
                 <Check size={14} />
               </button>
@@ -1106,7 +1106,7 @@ export default function MobileApp() {
                     onClick={() => setBranchSheetOpen(true)}
                     title={branchWorking ? "有会话正在这个目录里回复，暂时不能切换分支" : "切换分支"}
                     className={`relative inline-flex min-w-0 items-center gap-0.5 rounded-full border border-line bg-page/70 px-1.5 py-0.5 transition before:absolute before:-inset-x-2 before:-inset-y-1 before:content-[''] active:bg-raised ${
-                      branchWorking ? "text-fg-faint" : isDetachedLabel(branchLabel ?? "") ? "text-amber-500" : "text-fg-2"
+                      branchWorking ? "text-fg-faint" : isDetachedLabel(branchLabel ?? "") ? "text-warning" : "text-fg-2"
                     }`}
                   >
                     <GitBranch size={10} className="shrink-0" />
@@ -1135,10 +1135,10 @@ export default function MobileApp() {
           <span
             className={`h-2 w-2 rounded-full ${
               route.connected && sseOnline
-                ? "bg-emerald-500"
+                ? "bg-success"
                 : route.connected
-                  ? "bg-blue-500"
-                  : "bg-amber-500"
+                  ? "bg-accent"
+                  : "bg-warning"
             }`}
           />
           <span>
@@ -1276,7 +1276,7 @@ export default function MobileApp() {
             <button
               type="button"
               onClick={() => setPairSheetOpen(true)}
-              className="mt-4 rounded-xl bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow-sm"
+              className="mt-4 rounded-xl bg-primary px-4 py-2 text-xs font-medium text-on-primary shadow-sm"
             >
               配置电脑配对与线路
             </button>
@@ -1442,7 +1442,7 @@ export default function MobileApp() {
                     ? "Agent 运行中，发送的消息会排队…"
                     : "发消息给电脑端 Agent，输入 / 查看指令…"
             }
-            className="max-h-[120px] min-h-[38px] flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 text-[14px] leading-snug text-fg focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            className="max-h-[120px] min-h-[38px] flex-1 resize-none rounded-2xl border border-line bg-page px-3.5 py-2 text-[14px] leading-snug text-fg focus:border-focus focus:outline-none disabled:opacity-50"
           />
 
           {composerAction(busy, hasContent) === "stop" ? (
@@ -1450,7 +1450,7 @@ export default function MobileApp() {
               type="button"
               onClick={() => void handleStop()}
               title="停止并清空排队消息"
-              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-rose-600 text-white shadow-sm transition active:scale-90"
+              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-danger-solid text-white shadow-sm transition active:scale-90"
             >
               <Square size={15} fill="currentColor" />
             </button>
@@ -1460,7 +1460,7 @@ export default function MobileApp() {
               disabled={!selected || !route.connected || !hasContent || waitingUpload}
               onClick={() => void handleSend()}
               title={waitingUpload ? "等图片上传完再发送" : busy ? "发送（排队）" : "发送"}
-              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-blue-600 text-white shadow-sm transition active:scale-90 disabled:opacity-40"
+              className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-full bg-primary text-on-primary shadow-sm transition active:scale-90 disabled:opacity-40"
             >
               {waitingUpload ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             </button>

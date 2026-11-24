@@ -20,7 +20,7 @@ export default function UpdateBanner({
       <button
         type="button"
         onClick={onUpdate}
-        className="shrink-0 rounded-lg bg-blue-600 px-2.5 py-1 font-medium text-white active:opacity-80"
+        className="shrink-0 rounded-lg bg-primary px-2.5 py-1 font-medium text-on-primary active:opacity-80"
       >
         下载更新
       </button>

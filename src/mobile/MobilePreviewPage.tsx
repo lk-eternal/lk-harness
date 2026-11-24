@@ -136,7 +136,7 @@ function PreviewFrame({ title, subtitle, right, notice, onClose, children }: {
         </div>
         {right}
       </header>
-      {notice && <p className="shrink-0 border-b border-line-subtle bg-surface/60 px-3 py-1.5 text-[11px] text-amber-400">{notice}</p>}
+      {notice && <p className="shrink-0 border-b border-line-subtle bg-surface/60 px-3 py-1.5 text-[11px] text-warning">{notice}</p>}
       {/* 手机端页面整体禁止选中（select-none），预览的文字、代码要能选中复制 */}
       <div className="min-h-0 flex-1 select-text overflow-hidden" style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}>{children}</div>
     </div>

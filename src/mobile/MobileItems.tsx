@@ -105,7 +105,7 @@ function MobileUserBubble({
         </div>
       )}
       {item.text && (
-        <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-[14px] leading-relaxed text-white shadow-sm">
+        <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-raised px-3.5 py-2 text-[14px] leading-relaxed text-fg shadow-sm">
           {item.text}
         </div>
       )}
@@ -137,7 +137,7 @@ function MobileFileCard({
   return (
     <div className="rounded-xl border border-line bg-surface/70 px-3.5 py-2.5">
       <div className="flex items-center gap-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600/15 text-accent">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/15 text-accent">
           <FileText size={18} />
         </div>
         <div className="min-w-0 flex-1">
@@ -148,7 +148,7 @@ function MobileFileCard({
           <button
             type="button"
             onClick={() => preview.openFile({ path: item.path, name: item.name })}
-            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95"
+            className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-on-primary transition active:scale-95"
           >
             <Eye size={13} />预览
           </button>
@@ -158,13 +158,13 @@ function MobileFileCard({
           disabled={downloading}
           onClick={() => void start(() => requestMobileFileDownloadUrl(baseUrl, token, item.path, sessionKey), item.name)}
           className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition active:scale-95 disabled:opacity-60 ${
-            canPreview ? "border border-line text-fg-2" : "bg-blue-600 text-white"
+            canPreview ? "border border-line text-fg-2" : "bg-primary text-on-primary"
           }`}
         >
           {downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}下载
         </button>
       </div>
-      {error && <p className="mt-1.5 text-[11px] text-amber-400">{error}</p>}
+      {error && <p className="mt-1.5 text-[11px] text-warning">{error}</p>}
     </div>
   )
 }

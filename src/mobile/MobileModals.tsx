@@ -151,7 +151,7 @@ export function SessionDrawer({
           }}
           className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left transition ${
             on
-              ? "border border-blue-500/35 bg-blue-600/15 text-fg"
+              ? "border border-focus/35 bg-primary/15 text-fg"
               : "text-fg-2 active:bg-raised"
           }`}
         >
@@ -175,7 +175,7 @@ export function SessionDrawer({
                 />
               )}
               {status === "unread" && (
-                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-surface" />
+                <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-success ring-2 ring-surface" />
               )}
             </span>
           )}
@@ -208,11 +208,11 @@ export function SessionDrawer({
           {/* 右侧状态角标或活跃时间 */}
           <div className="shrink-0 text-right">
             {status === "unread" ? (
-              <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+              <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
                 已完成
               </span>
             ) : status === "working" ? (
-              <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-medium text-accent">
+              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-medium text-accent">
                 回复中
               </span>
             ) : at !== undefined ? (
@@ -286,7 +286,7 @@ export function SessionDrawer({
         <div className="border-b border-line-subtle px-4 pb-3 pt-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-xs font-bold text-white shadow-sm">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-xs font-bold text-on-primary shadow-sm">
                 LK
               </div>
               <div className="min-w-0">
@@ -296,7 +296,7 @@ export function SessionDrawer({
                   </span>
                   <span
                     className={`h-2 w-2 shrink-0 rounded-full ${
-                      route.connected ? "bg-emerald-500" : "bg-amber-500"
+                      route.connected ? "bg-success" : "bg-warning"
                     }`}
                   />
                 </div>
@@ -326,7 +326,7 @@ export function SessionDrawer({
                   onNewTemp(defaultChannelId)
                   onClose()
                 }}
-                className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-2 text-xs font-medium text-white shadow-sm transition active:scale-[0.99]"
+                className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary py-2 text-xs font-medium text-on-primary shadow-sm transition active:scale-[0.99]"
               >
                 <Plus size={15} />新建临时会话
               </button>
@@ -416,7 +416,7 @@ export function QuickModelCard({
       onClick={() => onPick(choiceForQuick(qm))}
       className={`flex min-w-0 flex-col items-start rounded-xl border px-3 py-2 text-left transition active:scale-[0.98] ${
         current
-          ? "border-blue-500 bg-blue-600/15 text-fg"
+          ? "border-focus bg-primary/15 text-fg"
           : "border-line bg-page/70 text-fg-2"
       }`}
     >
@@ -453,7 +453,7 @@ export function ModelRow({
       onClick={() => onPick(choiceForListed(row, resourceId))}
       className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-left transition active:scale-[0.99] ${
         current
-          ? "border-blue-500/50 bg-blue-600/15 text-fg"
+          ? "border-focus/50 bg-primary/15 text-fg"
           : "border-line-subtle bg-page/60 text-fg-2"
       }`}
     >
@@ -636,7 +636,7 @@ function ModelSheetBody({
                       onClick={() => setPickedResId(r.id)}
                       className={`shrink-0 rounded-full border px-3 py-1 text-xs font-medium transition ${
                         active
-                          ? "border-blue-500 bg-blue-600 text-white"
+                          ? "border-primary bg-primary text-on-primary"
                           : "border-line bg-page text-fg-3"
                       }`}
                     >
@@ -752,7 +752,7 @@ export function DirSheet({
                   }}
                   className={`flex w-full items-center justify-between rounded-xl border px-3.5 py-2.5 text-left transition ${
                     on
-                      ? "border-blue-500/50 bg-blue-600/15 text-fg"
+                      ? "border-focus/50 bg-primary/15 text-fg"
                       : "border-line-subtle bg-page/60 text-fg-2"
                   }`}
                 >
@@ -837,7 +837,7 @@ function BranchSheetBody({ onClose, baseUrl, token, sessionKey, shared, onSwitch
         {notices.length > 0 && (
           <div className="space-y-1 px-4 pb-2">
             {notices.map((n) => (
-              <p key={n.text} className={`text-[11px] leading-relaxed ${n.tone === "warn" ? "text-amber-500" : "text-fg-muted"}`}>{n.text}</p>
+              <p key={n.text} className={`text-[11px] leading-relaxed ${n.tone === "warn" ? "text-warning" : "text-fg-muted"}`}>{n.text}</p>
             ))}
           </div>
         )}
@@ -874,7 +874,7 @@ function BranchSheetBody({ onClose, baseUrl, token, sessionKey, shared, onSwitch
                     aria-current={cur ? "true" : undefined}
                     onClick={() => void pick(row.option)}
                     className={`flex w-full items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-left transition disabled:opacity-45 ${
-                      cur ? "border-blue-500/50 bg-blue-600/15 text-fg" : "border-line-subtle bg-page/60 text-fg-2"
+                      cur ? "border-focus/50 bg-primary/15 text-fg" : "border-line-subtle bg-page/60 text-fg-2"
                     }`}
                   >
                     {g.kind === "remote" ? <Cloud size={14} className="shrink-0 text-fg-muted" /> : <GitBranch size={14} className={`shrink-0 ${cur ? "text-accent" : "text-fg-muted"}`} />}
@@ -1003,7 +1003,7 @@ export function PairSheet({
               <div className="flex items-center gap-2">
                 <span
                   className={`h-2.5 w-2.5 rounded-full ${
-                    route.connected ? "bg-emerald-500" : "bg-amber-500"
+                    route.connected ? "bg-success" : "bg-warning"
                   }`}
                 />
                 <span className="text-xs font-semibold text-fg">
@@ -1013,14 +1013,14 @@ export function PairSheet({
                 </span>
               </div>
               {route.connected && (
-                <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-400">
+                <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
                   {route.routeType === "lan" ? "局域网直连" : "公网连接"}
                   {route.latencyMs ? ` · ${route.latencyMs}ms` : ""}
                 </span>
               )}
             </div>
             {!route.connected && route.error && (
-              <p className="mt-1.5 text-[11px] text-amber-400">{route.error}</p>
+              <p className="mt-1.5 text-[11px] text-warning">{route.error}</p>
             )}
           </div>
 
@@ -1029,14 +1029,14 @@ export function PairSheet({
             <button
               type="button"
               onClick={() => setScanOpen(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white shadow-sm transition active:scale-[0.99]"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-3 text-sm font-semibold text-on-primary shadow-sm transition active:scale-[0.99]"
             >
               <ScanLine size={16} />扫描电脑端二维码
             </button>
             <button
               type="button"
               onClick={() => void handlePasteFromClipboard()}
-              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-blue-500/40 bg-blue-600/15 py-2.5 text-xs font-medium text-accent transition active:scale-[0.99]"
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-focus/40 bg-primary/15 py-2.5 text-xs font-medium text-accent transition active:scale-[0.99]"
             >
               <ClipboardPaste size={14} />粘贴电脑端配对链接一键填入
             </button>
@@ -1063,20 +1063,20 @@ export function PairSheet({
                   setPubUrl(v)
                 }}
                 placeholder="例如 https://ai.your-domain.com 或 http://1.2.3.4:19529"
-                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-focus focus:outline-none"
               />
             </div>
 
             <div>
               <label className="mb-1 flex items-center gap-1 text-xs text-fg-2">
-                <Wifi size={12} className="text-emerald-400" />局域网地址（同一 Wi-Fi 下自动直连）
+                <Wifi size={12} className="text-success" />局域网地址（同一 Wi-Fi 下自动直连）
               </label>
               <input
                 type="url"
                 value={lanUrl}
                 onChange={(e) => setLanUrl(e.target.value)}
                 placeholder="例如 http://192.168.1.100:19529"
-                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-focus focus:outline-none"
               />
             </div>
 
@@ -1089,7 +1089,7 @@ export function PairSheet({
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder="在电脑端「设置 → 手机端」复制或粘贴配对链接"
-                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-blue-500 focus:outline-none"
+                className="w-full rounded-xl border border-line bg-page px-3 py-2 font-mono text-xs text-fg focus:border-focus focus:outline-none"
               />
             </div>
           </div>
@@ -1109,7 +1109,7 @@ export function PairSheet({
                   onClick={() => setPreferRoute(opt.id as "auto" | "pub" | "lan")}
                   className={`rounded-xl border py-2 text-xs font-medium transition ${
                     preferRoute === opt.id
-                      ? "border-blue-500 bg-blue-600/20 text-accent"
+                      ? "border-focus bg-primary/15 text-accent"
                       : "border-line bg-page text-fg-3"
                   }`}
                 >
@@ -1130,7 +1130,7 @@ export function PairSheet({
                 preferRoute,
               })
             }}
-            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-600 py-2.5 text-xs font-semibold text-white shadow-sm transition active:scale-[0.99] disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-primary py-2.5 text-xs font-semibold text-on-primary shadow-sm transition active:scale-[0.99] disabled:opacity-50"
           >
             {reconnecting ? (
               <Loader2 size={14} className="animate-spin" />

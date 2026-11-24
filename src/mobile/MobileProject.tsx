@@ -24,7 +24,7 @@ import { projectArtifactDownloadUrl } from "./project-download"
 import { useFileDownload } from "./use-file-download"
 import { useSheetDrag } from "./useSheetDrag"
 
-const inputCls = "w-full rounded-xl border border-line bg-page px-3 py-2 text-[14px] text-fg focus:border-blue-500 focus:outline-none"
+const inputCls = "w-full rounded-xl border border-line bg-page px-3 py-2 text-[14px] text-fg focus:border-focus focus:outline-none"
 
 // ── 新建项目 ───────────────────────────────────────────────────────────────
 
@@ -198,7 +198,7 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
                     type="button"
                     aria-pressed={on}
                     onClick={() => pickTemplate(t)}
-                    className={`block w-full rounded-xl border px-3 py-2 text-left transition active:scale-[0.99] ${on ? "border-blue-500/60 bg-blue-600/15" : "border-line-subtle bg-page/60"}`}
+                    className={`block w-full rounded-xl border px-3 py-2 text-left transition active:scale-[0.99] ${on ? "border-focus/60 bg-primary/15" : "border-line-subtle bg-page/60"}`}
                   >
                     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] font-medium text-fg">
                       {t.name}
@@ -275,13 +275,13 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
                 )}
                 <ul className="space-y-1.5">
                   {repos.map((r) => (
-                    <li key={r.path} className={`rounded-xl border px-3 py-2 ${r.checked ? "border-blue-500/60 bg-blue-600/10" : "border-line-subtle bg-page/60"}`}>
+                    <li key={r.path} className={`rounded-xl border px-3 py-2 ${r.checked ? "border-focus/60 bg-primary/10" : "border-line-subtle bg-page/60"}`}>
                       <button type="button" disabled={busy} onClick={() => toggleRepo(r.path)} aria-pressed={r.checked} className="flex w-full items-center gap-2 text-left">
-                        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${r.checked ? "border-blue-500 bg-blue-600 text-white" : "border-line"}`}>{r.checked ? "✓" : ""}</span>
+                        <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[11px] ${r.checked ? "border-primary bg-primary text-on-primary" : "border-line"}`}>{r.checked ? "✓" : ""}</span>
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1.5">
                             <span className="truncate text-[13px] font-medium text-fg">{r.name}</span>
-                            <span className={`shrink-0 rounded px-1 py-px text-[10.5px] font-normal ${r.clone ? "bg-raised/80 text-fg-muted" : "bg-amber-500/15 text-amber-500"}`}>{r.clone ? "克隆副本" : "不克隆"}</span>
+                            <span className={`shrink-0 rounded px-1 py-px text-[10.5px] font-normal ${r.clone ? "bg-raised/80 text-fg-muted" : "bg-warning/15 text-warning"}`}>{r.clone ? "克隆副本" : "不克隆"}</span>
                           </span>
                           <span className="block truncate text-[11px] text-fg-faint">{r.path}</span>
                         </span>
@@ -295,7 +295,7 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
                             autoCapitalize="none"
                             autoCorrect="off"
                             onChange={(e) => setBase(r.path, e.target.value)}
-                            className="min-w-0 flex-1 rounded-lg border border-line bg-page px-2 py-1 text-[13px] text-fg focus:border-blue-500 focus:outline-none"
+                            className="min-w-0 flex-1 rounded-lg border border-line bg-page px-2 py-1 text-[13px] text-fg focus:border-focus focus:outline-none"
                           />
                         </label>
                       )}
@@ -311,7 +311,7 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
                     placeholder="远程仓库地址（https://… 或 git@…）"
                     onChange={(e) => { setRemoteInput(e.target.value); if (repoNote) setRepoNote("") }}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.nativeEvent.isComposing) { e.preventDefault(); addRemoteRepo() } }}
-                    className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-2 text-[13px] text-fg focus:border-blue-500 focus:outline-none"
+                    className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-2 text-[13px] text-fg focus:border-focus focus:outline-none"
                   />
                   <button
                     type="button"
@@ -332,7 +332,7 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
                         value={workBranch}
                         disabled={busy}
                         onChange={(e) => setWorkBranch(e.target.value as WorkBranchMode)}
-                        className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-2 text-[13px] text-fg focus:border-blue-500 focus:outline-none"
+                        className="min-w-0 flex-1 rounded-xl border border-line bg-page px-3 py-2 text-[13px] text-fg focus:border-focus focus:outline-none"
                       >
                         {WORK_BRANCH_MODES.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                       </select>
@@ -392,7 +392,7 @@ export function NewProjectSheet({ open, onClose, baseUrl, token, channelId, onCr
             type="button"
             onClick={() => void submit()}
             disabled={!canSubmit}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-blue-600 px-5 py-2 text-[13px] font-medium text-white transition active:scale-95 disabled:opacity-40"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-primary px-5 py-2 text-[13px] font-medium text-on-primary transition active:scale-95 disabled:opacity-40"
           >
             {busy ? <><Loader2 size={13} className="animate-spin" />{cloneCount > 0 ? "正在克隆仓库…" : "创建中…"}</> : "创建"}
           </button>
@@ -508,7 +508,7 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
                     <button
                       type="button"
                       onClick={() => preview.openFile({ path: art.path, name: art.name })}
-                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition active:scale-95"
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-primary px-2.5 py-1.5 text-xs font-medium text-on-primary transition active:scale-95"
                     ><Eye size={13} />预览</button>
                   )}
                   {art.exists && (
@@ -516,11 +516,11 @@ function ProjectInfoSheet({ open, onClose, view, baseUrl, token, sessionKey, bus
                       type="button"
                       disabled={downloading}
                       onClick={() => void start(() => projectArtifactDownloadUrl(baseUrl, token, sessionKey, art.path), art.name)}
-                      className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition active:scale-95 disabled:opacity-60 ${canPreview ? "border border-line text-fg-2" : "bg-blue-600 text-white"}`}
+                      className={`inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium transition active:scale-95 disabled:opacity-60 ${canPreview ? "border border-line text-fg-2" : "bg-primary text-on-primary"}`}
                     >{downloading ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}下载</button>
                   )}
                 </div>
-                {downloadError && <p className="mt-1.5 text-[11px] text-amber-400">{downloadError}</p>}
+                {downloadError && <p className="mt-1.5 text-[11px] text-warning">{downloadError}</p>}
               </>
             ) : (
               <p className="text-[13px] text-fg-faint">还没有。AI 做完一步，成果会记在这里。</p>
