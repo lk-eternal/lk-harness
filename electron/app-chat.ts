@@ -11,10 +11,11 @@ import { readLockFile } from "./daemon-client"
 import { getAgentResource, getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
-import { getAppChatPins, removeAppChatPin, setAppChatPinned } from "./app-chat-pins"
+import { getAppChatPins, moveAppChatPin, removeAppChatPin, setAppChatPinned } from "./app-chat-pins"
 import { getSessionGroupStates, setSessionGroupState } from "./app-chat-session-groups"
 import { listSessionBranches, subscribeBranchChanged, switchSessionBranch } from "./session-branch"
 import { parseBranchTarget } from "../src/shared/git-branch"
+import { parsePinPlacement } from "../src/shared/app-chat-pins"
 import { parseGroupId, parseGroupPatch } from "../src/shared/session-groups"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
@@ -93,6 +94,18 @@ export function setAppChatSessionPinned(sessionKey: string, pinned: boolean): Ap
   if (!channelId || getChannel(channelId)?.type !== "app") return { ok: false, error: "不是应用内对话的会话" }
   try {
     setAppChatPinned(sessionKey, pinned)
+    return { ok: true, pins: getAppChatPins() }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** 拖动调整置顶的顺序：把 sessionKey 挪到 targetKey 的前面 / 后面；返回最新的置顶列表 */
+export function moveAppChatSessionPin(sessionKey: unknown, targetKey: unknown, placement: unknown): AppChatResult {
+  const where = parsePinPlacement(placement)
+  if (typeof sessionKey !== "string" || typeof targetKey !== "string" || !where) return { ok: false, error: "置顶排序的参数不对" }
+  try {
+    moveAppChatPin(sessionKey, targetKey, where)
     return { ok: true, pins: getAppChatPins() }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
@@ -334,6 +347,7 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:get-pins", () => getAppChatPins())
   ipcMain.handle("app-chat:set-pinned", (_e, sessionKey: string, pinned: boolean) => setAppChatSessionPinned(sessionKey, pinned === true))
+  ipcMain.handle("app-chat:move-pin", (_e, sessionKey: unknown, targetKey: unknown, placement: unknown) => moveAppChatSessionPin(sessionKey, targetKey, placement))
   ipcMain.handle("app-chat:get-session-groups", () => getSessionGroupStates())
   ipcMain.handle("app-chat:set-session-group", (_e, group: unknown, patch: unknown) => setAppChatSessionGroup(group, patch))
   ipcMain.handle("app-chat:list-branches", (_e, sessionKey: string) => listSessionBranches(String(sessionKey ?? "")))

@@ -29,6 +29,7 @@ import { useSidebarWidthStore } from "../components/chat/sidebar-width"
 import SidebarShell from "../components/chat/SidebarShell"
 import { useScrollActiveIntoView } from "../components/panel-scroll"
 import { usePinnedSessions } from "../components/chat/pinned-sessions"
+import { usePinDrag } from "../components/chat/pin-drag"
 import { useSessionGroupControl, useSessionGroupStates } from "../components/chat/session-groups-state"
 import { renderSessionGroup } from "../components/chat/SessionGroupSection"
 import useOutsideClose from "../hooks/useOutsideClose"
@@ -307,6 +308,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const sidebarWidth = useSidebarWidthStore()
   /** 置顶的会话：存在电脑端，和手机端同一份 */
   const pins = usePinnedSessions(setActionError)
+  /** 置顶的会话可以在同一类里拖动调整顺序 */
+  const pinDrag = usePinDrag(pins.move)
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
@@ -326,7 +329,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 最近有对话的排前面；还没有对话的临时会话按创建时间排，其它没有记录的排在最后 */
   const sortAt = (t: ChatTab) => activeAt(t) ?? tempWorkspaceCreatedAt(workspaceDirFromSessionKey(t.sessionKey)) ?? 0
   const byRecent = (tabs: ChatTab[]) => [...tabs].sort((a, b) => sortAt(b) - sortAt(a))
-  /** 置顶的排在最前，其余按最近对话排；两组内部都是最近的在前 */
+  /** 置顶的排在最前、按用户拖的顺序（新置顶的在最前）；其余按最近对话排，最近的在前 */
   const listOrder = (tabs: ChatTab[]) => pins.order(byRecent(tabs))
   /** 目录菜单：这个通道里各会话在用的目录（去重）。目录不是会话的身份，同一个目录可以有多个会话 */
   const dirOptions = chatDirOptions(ownerView?.tabs ?? [], boundDirOf)
@@ -616,15 +619,22 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面一个分类里；一个都没有就不出现这一类 */
   const archivedTabs = views.flatMap((v) => splitGroups(v.tabs).archived)
 
-  const renderRow = (t: ChatTab) => {
+  /** zone：这一行在哪一类里（renderGroup 的 id）；置顶的会话只能在同一个 zone 里拖动换位置 */
+  const renderRow = (t: ChatTab, zone: string) => {
     const on = sameChatSession(t.sessionKey, selected)
     const at = activeAt(t)
     const pinned = pins.isPinned(t.sessionKey)
     const status = sessionStatus(t.sessionKey, t.running)
     const isProject = t.kind === "project"
     const deletable = !!t.removable
+    const drag = pinDrag(zone, t.sessionKey, pinned)
     return (
-      <div key={t.sessionKey} className={`group/row relative ${t.archived ? "opacity-70 transition hover:opacity-100" : ""}`}>
+      <div
+        key={t.sessionKey}
+        {...drag.props}
+        className={`group/row relative ${t.archived ? "opacity-70 transition hover:opacity-100" : ""} ${drag.dragging ? "opacity-40" : ""}`}
+      >
+        {drag.dropAt && <span aria-hidden className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-accent ${drag.dropAt === "before" ? "-top-px" : "-bottom-px"}`} />}
         <button
           type="button"
           onClick={() => setSelected(t.sessionKey)}
@@ -679,7 +689,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     )
   }
 
-  /** 画一类会话：项目 / 会话在各通道下各一份，已归档全局一份；置顶的在前、其余按最近对话排，折叠和展开见 groupControl */
+  /** 画一类会话：项目 / 会话在各通道下各一份，已归档全局一份；置顶的在前（按用户拖的顺序）、其余按最近对话排，折叠和展开见 groupControl */
   const renderGroup = (id: string, group: SessionListGroupId, tabs: ChatTab[]) => renderSessionGroup({
     id,
     group,
@@ -687,7 +697,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     control: groupControl,
     isPinned: (t) => pins.isPinned(t.sessionKey),
     statusOf: (t) => sessionStatus(t.sessionKey, t.running),
-    renderRow,
+    renderRow: (t) => renderRow(t, id),
     variant: "desktop",
   })
 

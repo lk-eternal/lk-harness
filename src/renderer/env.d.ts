@@ -20,6 +20,7 @@ import type {
   AppChatSendPayload as AppChatSendPayloadType,
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
+import type { PinPlacement as PinPlacementType } from "../shared/app-chat-pins"
 import type {
   GroupStatePatch as GroupStatePatchType,
   SessionGroupStates as SessionGroupStatesType,
@@ -289,6 +290,8 @@ declare global {
     onAppChatTitles(cb: (titles: Record<string, string>) => void): () => void
     appChatPins(): Promise<string[]>
     appChatSetPinned(sessionKey: string, pinned: boolean): Promise<AppChatResultType>
+    /** 拖动调整置顶的顺序：把 sessionKey 挪到 targetKey 的前面 / 后面 */
+    appChatMovePin(sessionKey: string, targetKey: string, placement: PinPlacementType): Promise<AppChatResultType>
     onAppChatPins(cb: (pins: string[]) => void): () => void
     /** 会话列表各分类（项目 / 会话 / 已归档）的折叠和展开状态：存在电脑端，和手机端同一份 */
     appChatSessionGroups(): Promise<SessionGroupStatesType>

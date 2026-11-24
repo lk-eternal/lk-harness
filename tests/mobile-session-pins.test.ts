@@ -45,6 +45,11 @@ describe("手机端会话抽屉：置顶", () => {
     expect(order(html, ["a", "b", "c"])).toEqual(["c", "a", "b"])
   })
 
+  it("置顶的之间按电脑端排好的顺序，不按最近对话（手机端只跟着，不能拖）", () => {
+    const html = render(tabs, { pins: [appChatSessionId(tabs[1].sessionKey), appChatSessionId(tabs[0].sessionKey)] }, recent)
+    expect(order(html, ["a", "b", "c"])).toEqual(["b", "a", "c"])
+  })
+
   it("每个会话一个图钉按钮：置顶的标「取消置顶」并处于按下状态，没置顶的标「置顶会话」", () => {
     const html = render(tabs, { pins: [appChatSessionId(tabs[1].sessionKey)] }, recent)
     const btns = pinButtons(html)

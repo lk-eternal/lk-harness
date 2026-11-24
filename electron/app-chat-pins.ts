@@ -7,7 +7,7 @@ import * as fs from "node:fs"
 import * as path from "node:path"
 import { app, BrowserWindow } from "electron"
 import { broadcastLog } from "./ui-logger"
-import { parsePinnedIds, setSessionPinned } from "../src/shared/app-chat-pins"
+import { movePinned, parsePinnedIds, setSessionPinned, type PinPlacement } from "../src/shared/app-chat-pins"
 
 let cache: readonly string[] | null = null
 const pinListeners = new Set<(pins: string[]) => void>()
@@ -37,17 +37,16 @@ function pins(): readonly string[] {
   return cache
 }
 
-/** 当前置顶的会话（appChatSessionId 列表，先置顶的在前） */
+/** 当前置顶的会话（appChatSessionId 列表，就是会话栏里从上到下的顺序，新置顶的在最前） */
 export function getAppChatPins(): string[] {
   return [...pins()]
 }
 
 /**
- * 置顶 / 取消置顶。已经是目标状态时什么都不做（不写盘、不通知）；
+ * 换成新的置顶列表。和现在一样（同一个数组）就什么都不做（不写盘、不通知）；
  * 先写盘再更新内存：写不进去会抛错，内存和磁盘不会各是各的。
  */
-export function setAppChatPinned(sessionKey: string, pinned: boolean): void {
-  const next = setSessionPinned(pins(), sessionKey, pinned)
+function commitPins(next: readonly string[]): void {
   if (next === pins()) return
   fs.writeFileSync(pinsFile(), JSON.stringify(next, null, 2), "utf-8")
   cache = next
@@ -56,6 +55,16 @@ export function setAppChatPinned(sessionKey: string, pinned: boolean): void {
   for (const fn of pinListeners) {
     try { fn(snapshot) } catch { /* ignore */ }
   }
+}
+
+/** 置顶 / 取消置顶 */
+export function setAppChatPinned(sessionKey: string, pinned: boolean): void {
+  commitPins(setSessionPinned(pins(), sessionKey, pinned))
+}
+
+/** 拖动调整置顶的顺序：把 sessionKey 挪到 targetKey 的前面 / 后面 */
+export function moveAppChatPin(sessionKey: string, targetKey: string, placement: PinPlacement): void {
+  commitPins(movePinned(pins(), sessionKey, targetKey, placement))
 }
 
 /** 会话删掉后顺手取消置顶，免得之后同一个目录重新开会话时它莫名其妙就在最上面；这件事失败不该连累删除 */

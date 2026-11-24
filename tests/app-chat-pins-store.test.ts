@@ -43,11 +43,11 @@ describe("电脑端的置顶会话", () => {
     expect((await load()).getAppChatPins()).toEqual([])
   })
 
-  it("置顶后能读到，先置顶的在前", async () => {
+  it("置顶后能读到，后置顶的在最前", async () => {
     const pins = await load()
     pins.setAppChatPinned(A, true)
     pins.setAppChatPinned(B, true)
-    expect(pins.getAppChatPins()).toEqual([appChatSessionId(A), appChatSessionId(B)])
+    expect(pins.getAppChatPins()).toEqual([appChatSessionId(B), appChatSessionId(A)])
   })
 
   it("存在磁盘上：重启后还在", async () => {
@@ -130,6 +130,55 @@ describe("置顶变化通知两端", () => {
     off()
     pins.setAppChatPinned(B, true)
     expect(seen).toEqual([1, 2, 2])
+  })
+})
+
+describe("拖动调整置顶顺序", () => {
+  const C = "ch|app_main::D:\\work\\c"
+  const [idA, idB, idC] = [A, B, C].map(appChatSessionId)
+
+  async function pinned(): Promise<Pins> {
+    const pins = await load()
+    pins.setAppChatPinned(C, true)
+    pins.setAppChatPinned(B, true)
+    pins.setAppChatPinned(A, true)
+    sent.length = 0
+    return pins
+  }
+
+  it("挪完能读到新顺序，存在磁盘上，重启后还在", async () => {
+    const pins = await pinned()
+    expect(pins.getAppChatPins()).toEqual([idA, idB, idC])
+    pins.moveAppChatPin(A, C, "after")
+    expect(pins.getAppChatPins()).toEqual([idB, idC, idA])
+    expect(JSON.parse(fs.readFileSync(file(), "utf-8"))).toEqual([idB, idC, idA])
+    expect((await load()).getAppChatPins()).toEqual([idB, idC, idA])
+  })
+
+  it("推给所有桌面窗口和订阅者（手机端靠它跟着变顺序）", async () => {
+    const pins = await pinned()
+    const seen: string[][] = []
+    pins.subscribeAppChatPins((p) => seen.push(p))
+    pins.moveAppChatPin(C, A, "before")
+    expect(sent).toEqual([{ channel: "app-chat:pins", payload: [idC, idA, idB] }])
+    expect(seen).toEqual([[idC, idA, idB]])
+  })
+
+  it("顺序没变、有一个没置顶：不写盘、不通知", async () => {
+    const pins = await pinned()
+    const before = fs.statSync(file()).mtimeMs
+    pins.moveAppChatPin(B, A, "after")
+    pins.moveAppChatPin(A, "ch|app_main::D:\\work\\x", "before")
+    expect(sent).toHaveLength(0)
+    expect(fs.statSync(file()).mtimeMs).toBe(before)
+  })
+
+  it("写不进磁盘：抛错，内存里的顺序也不变", async () => {
+    const pins = await pinned()
+    fs.rmSync(userData, { recursive: true, force: true })
+    expect(() => pins.moveAppChatPin(A, C, "after")).toThrow()
+    expect(pins.getAppChatPins()).toEqual([idA, idB, idC])
+    expect(sent).toHaveLength(0)
   })
 })
 

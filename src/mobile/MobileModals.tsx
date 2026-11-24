@@ -119,7 +119,7 @@ export function SessionDrawer({
 
   const defaultChannelId = views[0]?.channelId
 
-  // 置顶的在前，其余按最近对话排；两组内部都是最近的在前
+  // 置顶的在前、按电脑端拖好的顺序（手机端只跟着，不能拖）；其余按最近对话排，最近的在前
   const sortTabs = (tabs: MobileChatTab[]) =>
     pinFirst([...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0)), pins)
   /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面 */

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
+import type { PinPlacement } from "../src/shared/app-chat-pins"
 import type { GroupStatePatch, SessionGroupStates, SessionListGroupId } from "../src/shared/session-groups"
 import type { BranchListResult, BranchSwitchResult, BranchTarget } from "../src/shared/git-branch"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types"
@@ -228,6 +229,7 @@ const api = {
   },
   appChatPins: (): Promise<string[]> => ipcRenderer.invoke("app-chat:get-pins"),
   appChatSetPinned: (sessionKey: string, pinned: boolean): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:set-pinned", sessionKey, pinned),
+  appChatMovePin: (sessionKey: string, targetKey: string, placement: PinPlacement): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:move-pin", sessionKey, targetKey, placement),
   onAppChatPins: (cb: (pins: string[]) => void) => {
     const handler = (_: unknown, pins: string[]) => cb(pins)
     ipcRenderer.on("app-chat:pins", handler)

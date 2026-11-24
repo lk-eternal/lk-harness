@@ -19,18 +19,48 @@ export function isSessionPinned(ids: readonly string[], sessionKey: string): boo
   return ids.includes(appChatSessionId(sessionKey))
 }
 
-/** 置顶 / 取消置顶：返回新列表；已经是目标状态时原样返回同一个数组（调用方据此省掉写盘和刷新） */
+/**
+ * 置顶 / 取消置顶：返回新列表；已经是目标状态时原样返回同一个数组（调用方据此省掉写盘和刷新）。
+ * 列表的顺序就是置顶的会话在会话栏里从上到下的顺序，新置顶的放在最前面。
+ */
 export function setSessionPinned(ids: readonly string[], sessionKey: string, pinned: boolean): readonly string[] {
   const id = appChatSessionId(sessionKey)
   const has = ids.includes(id)
   if (pinned === has) return ids
-  return pinned ? [...ids, id] : ids.filter((x) => x !== id)
+  return pinned ? [id, ...ids] : ids.filter((x) => x !== id)
 }
 
-/** 置顶的排到最前面；两组内部各自保持原来的顺序（比如按最近对话排好的） */
+export type PinPlacement = "before" | "after"
+
+export function parsePinPlacement(raw: unknown): PinPlacement | undefined {
+  return raw === "before" || raw === "after" ? raw : undefined
+}
+
+/**
+ * 拖动调整置顶的顺序：把 sessionKey 挪到 targetKey 的前面 / 后面。
+ * 有一个不在置顶列表里、是同一个会话、或者挪完顺序没变：原样返回同一个数组（调用方据此省掉写盘和刷新）。
+ * 列表里还有别的分类、别的通道的置顶，这里只管这两个会话的相对位置，其余的相对顺序不变。
+ */
+export function movePinned(ids: readonly string[], sessionKey: string, targetKey: string, placement: PinPlacement): readonly string[] {
+  const id = appChatSessionId(sessionKey)
+  const target = appChatSessionId(targetKey)
+  if (id === target || !ids.includes(id) || !ids.includes(target)) return ids
+  const rest = ids.filter((x) => x !== id)
+  const at = rest.indexOf(target) + (placement === "after" ? 1 : 0)
+  const next = [...rest.slice(0, at), id, ...rest.slice(at)]
+  return next.every((x, i) => x === ids[i]) ? ids : next
+}
+
+/** 置顶的排到最前面，按置顶列表里的顺序；其余的保持原来的顺序（比如按最近对话排好的） */
 export function pinFirst<T extends { sessionKey: string }>(tabs: readonly T[], ids: readonly string[]): T[] {
   if (ids.length === 0) return [...tabs]
-  const pinned = new Set(ids)
-  const isPinned = (t: T) => pinned.has(appChatSessionId(t.sessionKey))
-  return [...tabs.filter(isPinned), ...tabs.filter((t) => !isPinned(t))]
+  const rank = new Map(ids.map((id, i) => [id, i]))
+  const pinned: { tab: T; rank: number }[] = []
+  const rest: T[] = []
+  for (const tab of tabs) {
+    const r = rank.get(appChatSessionId(tab.sessionKey))
+    if (r === undefined) rest.push(tab)
+    else pinned.push({ tab, rank: r })
+  }
+  return [...pinned.sort((a, b) => a.rank - b.rank).map((p) => p.tab), ...rest]
 }
