@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
-  Archive,
   Check,
-  ChevronRight,
   ClipboardPaste,
   Cloud,
   Cpu,
@@ -26,9 +24,11 @@ import {
 import type { AgentResource } from "../shared/channel-types"
 import { appChatSessionDir, sameChatDir, type ChatDirOption } from "../shared/app-chat-types"
 import { isSessionPinned, pinFirst } from "../shared/app-chat-pins"
-import { ARCHIVED_GROUP_TITLE, splitArchived } from "../shared/session-archive"
+import { splitGroups, type SessionListGroupId } from "../shared/session-groups"
 import { branchGroups, branchNotices, type BranchOption } from "../shared/git-branch"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
+import { renderSessionGroup } from "../renderer/components/chat/SessionGroupSection"
+import { NO_GROUP_CONTROL, type SessionGroupControl } from "../renderer/components/chat/session-groups-state"
 import { useBranchMenu } from "../renderer/components/chat/useBranchMenu"
 import { modelSlug } from "../renderer/model-utils"
 import { formatTimeAgo } from "../renderer/time-ago"
@@ -69,36 +69,6 @@ function dirName(dir: string | undefined): string | undefined {
 
 const NO_PINS: readonly string[] = []
 
-/**
- * 会话列表最下面的「已归档」折叠分组（调用方保证至少有一个才渲染）。
- * 默认收起；选中的会话在里面（点通知跳过来的、刚把当前项目归档了）就展开，不然打开抽屉找不到自己在哪。
- */
-function ArchivedGroup({ tabs, selected, renderRow }: {
-  tabs: MobileChatTab[]
-  selected: string | null
-  renderRow: (t: MobileChatTab) => ReactNode
-}) {
-  const hasSelected = tabs.some((t) => sameChatSession(t.sessionKey, selected))
-  const [open, setOpen] = useState(hasSelected)
-  useEffect(() => { if (hasSelected) setOpen(true) }, [selected, hasSelected])
-  return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1.5 rounded-xl px-3 py-2 text-left text-[12px] text-fg-muted transition active:bg-raised"
-      >
-        <ChevronRight size={13} className={`shrink-0 transition-transform ${open ? "rotate-90" : ""}`} />
-        <Archive size={13} className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{ARCHIVED_GROUP_TITLE}</span>
-        <span className="shrink-0 text-[11px] text-fg-faint">{tabs.length}</span>
-      </button>
-      {open && <div className="space-y-1">{tabs.map(renderRow)}</div>}
-    </div>
-  )
-}
-
 export function SessionDrawer({
   open,
   onClose,
@@ -110,6 +80,7 @@ export function SessionDrawer({
   sessionStatus,
   activeAt,
   pins = NO_PINS,
+  groups = NO_GROUP_CONTROL,
   usageBytes,
   onSelect,
   onNewTemp,
@@ -130,6 +101,8 @@ export function SessionDrawer({
   activeAt: (t: MobileChatTab) => number | undefined
   /** 置顶的会话（appChatSessionId），置顶的排在最前；不传就是没有置顶 */
   pins?: readonly string[]
+  /** 项目 / 会话 / 已归档各类的折叠和展开（和桌面端同一份）；不传就是默认状态，改了也不记 */
+  groups?: SessionGroupControl
   usageBytes: number | null
   onSelect: (sessionKey: string) => void
   onNewTemp: (channelId: string) => void
@@ -150,7 +123,7 @@ export function SessionDrawer({
   const sortTabs = (tabs: MobileChatTab[]) =>
     pinFirst([...tabs].sort((a, b) => (activeAt(b) ?? 0) - (activeAt(a) ?? 0)), pins)
   /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面 */
-  const archivedTabs = views.flatMap((v) => splitArchived(v.tabs).archived)
+  const archivedTabs = views.flatMap((v) => splitGroups(v.tabs).archived)
 
   const renderRow = (t: MobileChatTab) => {
     const on = sameChatSession(t.sessionKey, selected)
@@ -284,6 +257,18 @@ export function SessionDrawer({
     )
   }
 
+  /** 画一类会话；折叠和展开由 groups 管（和桌面端同一份） */
+  const renderGroup = (id: string, group: SessionListGroupId, tabs: MobileChatTab[]) => renderSessionGroup({
+    id,
+    group,
+    rows: sortTabs(tabs),
+    control: groups,
+    isPinned: (t) => isSessionPinned(pins, t.sessionKey),
+    statusOf: (t) => sessionStatus(t.sessionKey, t.running),
+    renderRow,
+    variant: "mobile",
+  })
+
   // 常驻挂载、靠 CSS 滑入滑出（关着时 visibility:hidden，见 mobile.css 的 .drawer）：
   // 这样手指才能拖着它走（drawer-swipe.ts），按钮、遮罩、返回键也都有同样的动画
   return (
@@ -369,15 +354,14 @@ export function SessionDrawer({
                 </p>
               )}
               <div className="space-y-1">
-                {sortTabs(splitArchived(v.tabs).live).map(renderRow)}
+                {renderGroup(`${v.channelId}-project`, "project", splitGroups(v.tabs).project)}
+                {renderGroup(`${v.channelId}-chat`, "chat", splitGroups(v.tabs).chat)}
               </div>
             </div>
           ))}
 
-          {/* 已归档的项目会话收在最下面一个折叠分组里；一个都没有就不出现 */}
-          {archivedTabs.length > 0 && (
-            <ArchivedGroup tabs={sortTabs(archivedTabs)} selected={selected} renderRow={renderRow} />
-          )}
+          {/* 已归档的项目会话收在最下面一类里；一个都没有就不出现 */}
+          {renderGroup("archived", "archived", archivedTabs)}
         </div>
 
         {/* 底部信息与配对入口 */}

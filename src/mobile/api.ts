@@ -6,6 +6,7 @@ import type { HistoryQuery } from "../shared/app-chat-history-page"
 import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
 import { OLD_DESKTOP_BRANCH, type BranchListResult, type BranchSwitchResult, type BranchTarget } from "../shared/git-branch"
+import type { GroupStatePatch, SessionListGroupId } from "../shared/session-groups"
 import type {
   ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo, ProjectView,
 } from "../shared/project-app-types"
@@ -76,6 +77,8 @@ export interface MobileBootstrapData {
   titles: Record<string, string>
   /** 置顶的会话（appChatSessionId，先置顶的在前）；旧版电脑端没有这个字段 */
   pins?: string[]
+  /** 会话列表各分类的折叠 / 展开状态（原样，用 parseGroupStates 整理）；旧版电脑端没有这个字段 */
+  sessionGroups?: unknown
   lastActive: Record<string, number>
   quickModels: MobileQuickModel[]
   resources: AgentResource[]
@@ -96,6 +99,7 @@ export type MobileStreamMessage =
   | { type: "chat"; event: AppChatEvent }
   | { type: "titles"; titles: Record<string, string> }
   | { type: "pins"; pins: string[] }
+  | { type: "session-groups"; states: unknown }
   | { type: "sessions" }
 
 function trimUrl(raw: string): string {
@@ -421,6 +425,12 @@ export async function renameMobileSession(baseUrl: string, token: string, sessio
 export async function setMobileSessionPinned(baseUrl: string, token: string, sessionKey: string, pinned: boolean): Promise<{ ok: boolean; pins?: string[]; error?: string }> {
   const r = await callApi<{ ok: boolean; pins?: string[]; error?: string }>(baseUrl, token, "/api/mobile/pin-session", { sessionKey, pinned })
   return !r.ok && r.error === "未知接口" ? { ...r, error: "电脑端版本过旧，不支持置顶，请把电脑端升级到最新版本" } : r
+}
+
+/** 折叠 / 展开会话列表的某一类；成功时带回各类最新的状态。旧版电脑端没有这个接口，网关回「未知接口」 */
+export async function setMobileSessionGroup(baseUrl: string, token: string, group: SessionListGroupId, patch: GroupStatePatch): Promise<{ ok: boolean; sessionGroups?: unknown; error?: string }> {
+  const r = await callApi<{ ok: boolean; sessionGroups?: unknown; error?: string }>(baseUrl, token, "/api/mobile/session-group", { group, patch })
+  return !r.ok && r.error === "未知接口" ? { ...r, error: "电脑端版本过旧，不支持记住分类的折叠状态，请把电脑端升级到最新版本" } : r
 }
 
 /** 会话工作目录的分支列表（电脑端现读 git）。旧版电脑端没有这个接口，网关回「未知接口」 */

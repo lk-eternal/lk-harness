@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron"
 import type { AgentResource, MessageChannel, ChannelStatusInfo } from "../src/shared/channel-types"
 import type { AppChatEvent, AppChatResult, AppChatSendPayload } from "../src/shared/app-chat-types"
 import type { HistoryQuery } from "../src/shared/app-chat-history-page"
+import type { GroupStatePatch, SessionGroupStates, SessionListGroupId } from "../src/shared/session-groups"
 import type { BranchListResult, BranchSwitchResult, BranchTarget } from "../src/shared/git-branch"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types"
 import type { InspectRepoResult, ProjectActionResult, ProjectBindingChoice, ProjectBindResult, ProjectChannelOption, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectUnbindResult, ProjectView } from "../src/shared/project-app-types"
@@ -231,6 +232,13 @@ const api = {
     const handler = (_: unknown, pins: string[]) => cb(pins)
     ipcRenderer.on("app-chat:pins", handler)
     return () => ipcRenderer.removeListener("app-chat:pins", handler)
+  },
+  appChatSessionGroups: (): Promise<SessionGroupStates> => ipcRenderer.invoke("app-chat:get-session-groups"),
+  appChatSetSessionGroup: (group: SessionListGroupId, patch: GroupStatePatch): Promise<AppChatResult> => ipcRenderer.invoke("app-chat:set-session-group", group, patch),
+  onAppChatSessionGroups: (cb: (states: SessionGroupStates) => void) => {
+    const handler = (_: unknown, states: SessionGroupStates) => cb(states)
+    ipcRenderer.on("app-chat:session-groups", handler)
+    return () => ipcRenderer.removeListener("app-chat:session-groups", handler)
   },
   /** 会话工作目录的分支列表（现读 git）；项目会话、没选目录的会话返回原因 */
   appChatListBranches: (sessionKey: string): Promise<BranchListResult> => ipcRenderer.invoke("app-chat:list-branches", sessionKey),

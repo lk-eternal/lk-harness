@@ -28,6 +28,7 @@ import { createUploadGate, waitForUploadsBeforeSend, type UploadBatchResult } fr
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { pickDefaultTab } from "../shared/session-archive"
 import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
+import { applyGroupPatch, DEFAULT_GROUP_STATES, groupOf, parseGroupStates, type GroupStatePatch, type SessionGroupStates, type SessionListGroupId } from "../shared/session-groups"
 import { canSwitchBranch, isDetachedLabel, makeBranchOverride, sharedSessionCount, shownBranch, type BranchOverride } from "../shared/git-branch"
 import { activityFromItems, applyActivityItem, isActivityBusy, type SessionActivity } from "./session-activity"
 import {
@@ -43,6 +44,7 @@ import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
 import QueuedStrip from "../renderer/components/chat/QueuedStrip"
 import { sendNowOutcome, type SendNowOutcome } from "../renderer/components/chat/queued-strip-text"
 import { sameChatSession } from "../renderer/components/chat/useAppChatItems"
+import { useSessionGroupControl } from "../renderer/components/chat/session-groups-state"
 import useInlineModal from "../renderer/components/useInlineModal"
 import { currentModelLabel } from "./model-choice"
 import {
@@ -65,6 +67,7 @@ import {
   sendMobileMessage,
   sendMobileQueuedNow,
   setMobileSessionDir,
+  setMobileSessionGroup,
   setMobileSessionModel,
   setMobileSessionPinned,
   stopMobileSession,
@@ -123,6 +126,8 @@ export default function MobileApp() {
   const [titles, setTitles] = useState<Record<string, string>>({})
   /** 置顶的会话：存在电脑端，和桌面端对话页同一份 */
   const [pins, setPins] = useState<readonly string[]>([])
+  /** 会话抽屉里项目 / 会话 / 已归档各类的折叠和展开：同样存在电脑端，和桌面端同一份 */
+  const [groupStates, setGroupStates] = useState<SessionGroupStates>(DEFAULT_GROUP_STATES)
   const [lastActive, setLastActive] = useState<Record<string, number>>({})
   const [quickModels, setQuickModels] = useState<MobileQuickModel[]>([])
   const [resources, setResources] = useState<AgentResource[]>([])
@@ -266,6 +271,7 @@ export default function MobileApp() {
         setServerViews(hideDeletedTabs(data.channels ?? [], deletedRef.current))
         setTitles(data.titles ?? {})
         setPins(parsePinnedIds(data.pins))
+        setGroupStates(parseGroupStates(data.sessionGroups))
         setLastActive((prev) => ({ ...prev, ...(data.lastActive ?? {}) }))
         setQuickModels(data.quickModels ?? [])
         setResources(data.resources ?? [])
@@ -284,6 +290,24 @@ export default function MobileApp() {
     },
     [],
   )
+
+  // 折叠 / 展开一类会话：点了先在界面上生效，电脑端没改成就报错并按电脑端的真实状态刷回来
+  const handleGroupChange = useCallback(
+    (group: SessionListGroupId, patch: GroupStatePatch) => {
+      if (!route.activeUrl || !pairCfg.token) return
+      setGroupStates((prev) => applyGroupPatch(prev, group, patch))
+      void setMobileSessionGroup(route.activeUrl, pairCfg.token, group, patch).then((r) => {
+        if (r.ok) {
+          if (r.sessionGroups) setGroupStates(parseGroupStates(r.sessionGroups))
+          return
+        }
+        setActionError(r.error ?? "保存列表的折叠状态失败")
+        void refreshBootstrap(route.activeUrl, pairCfg.token)
+      })
+    },
+    [route.activeUrl, pairCfg.token, refreshBootstrap],
+  )
+  const groupControl = useSessionGroupControl(groupStates, handleGroupChange, selected, currentTab ? groupOf(currentTab) : undefined)
 
   // 草稿会话不在服务端会话树里，它的模型单独向服务端读（与桌面端 ChatPage 同口径）；草稿增减时重读。
   // 用拼接后的字符串当依赖：refreshBootstrap 每次都会产出新的 drafts 数组，按数组引用会反复请求
@@ -388,6 +412,10 @@ export default function MobileApp() {
       }
       if (msg.type === "pins") {
         setPins(parsePinnedIds(msg.pins))
+        return
+      }
+      if (msg.type === "session-groups") {
+        setGroupStates(parseGroupStates(msg.states))
         return
       }
       if (msg.type === "sessions") {
@@ -1452,6 +1480,7 @@ export default function MobileApp() {
         sessionStatus={sessionStatus}
         activeAt={activeAt}
         pins={pins}
+        groups={groupControl}
         usageBytes={usageBytes}
         onSelect={setSelected}
         onNewTemp={(chId) => void handleNewTempSession(chId)}

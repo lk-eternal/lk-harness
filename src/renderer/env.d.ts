@@ -21,6 +21,11 @@ import type {
 } from "../shared/app-chat-types"
 import type { HistoryQuery as HistoryQueryType } from "../shared/app-chat-history-page"
 import type {
+  GroupStatePatch as GroupStatePatchType,
+  SessionGroupStates as SessionGroupStatesType,
+  SessionListGroupId as SessionListGroupIdType,
+} from "../shared/session-groups"
+import type {
   BranchListResult as BranchListResultType,
   BranchSwitchResult as BranchSwitchResultType,
   BranchTarget as BranchTargetType,
@@ -285,6 +290,10 @@ declare global {
     appChatPins(): Promise<string[]>
     appChatSetPinned(sessionKey: string, pinned: boolean): Promise<AppChatResultType>
     onAppChatPins(cb: (pins: string[]) => void): () => void
+    /** 会话列表各分类（项目 / 会话 / 已归档）的折叠和展开状态：存在电脑端，和手机端同一份 */
+    appChatSessionGroups(): Promise<SessionGroupStatesType>
+    appChatSetSessionGroup(group: SessionListGroupIdType, patch: GroupStatePatchType): Promise<AppChatResultType>
+    onAppChatSessionGroups(cb: (states: SessionGroupStatesType) => void): () => void
     /** 会话工作目录的分支列表（现读 git）；项目会话、没选目录的会话返回原因 */
     appChatListBranches(sessionKey: string): Promise<BranchListResultType>
     appChatSwitchBranch(sessionKey: string, target: BranchTargetType): Promise<BranchSwitchResultType>

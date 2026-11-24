@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Archive, ArchiveRestore, Check, ChevronRight, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Search, Smartphone, Trash2 } from "lucide-react"
+import { Archive, ArchiveRestore, Check, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Search, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
 import TitleActions from "../components/TitleActions"
@@ -29,6 +29,8 @@ import { useSidebarWidthStore } from "../components/chat/sidebar-width"
 import SidebarShell from "../components/chat/SidebarShell"
 import { useScrollActiveIntoView } from "../components/panel-scroll"
 import { usePinnedSessions } from "../components/chat/pinned-sessions"
+import { useSessionGroupControl, useSessionGroupStates } from "../components/chat/session-groups-state"
+import { renderSessionGroup } from "../components/chat/SessionGroupSection"
 import useOutsideClose from "../hooks/useOutsideClose"
 import { useFindShortcut } from "../hooks/useFindShortcut"
 import { appChatSessionDir, appChatSessionId, appChatSessionName, canRebindSessionDir, chatDirOptions, chatStreamItems, isQueuedUserItem, planDirChoice, sameChatDir, visibleChatTabs } from "../../shared/app-chat-types"
@@ -39,7 +41,8 @@ import { describeAppChannelIssue, ensureAppChannel, planAppChannel, type AppChan
 import { emptyChannel } from "../channel-defaults"
 import { notifyChannelsChanged } from "../channel-events"
 import { PROJECT_NAME_MAX, projectDeleteConfirmText, projectIdOfSessionKey, projectNotOwnedHint, type ProjectCreateResult } from "../../shared/project-app-types"
-import { ARCHIVED_GROUP_TITLE, pickDefaultTab, splitArchived } from "../../shared/session-archive"
+import { pickDefaultTab } from "../../shared/session-archive"
+import { groupOf, splitGroups, type SessionListGroupId } from "../../shared/session-groups"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
 import { formatTimeAgo } from "../time-ago"
@@ -124,8 +127,6 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 没有可用的应用内通道时的原因：被停用 / 自动创建失败（下一次刷新会重试） */
   const [channelIssue, setChannelIssue] = useState<AppChannelIssue | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
-  /** 侧栏最下面「已归档」分组是否展开；默认收起，只有一行标题 */
-  const [archivedOpen, setArchivedOpen] = useState(false)
   /** 项目会话改名后加一：让项目栏重读项目信息（里面显示的项目名和会话名是同一个字段） */
   const [projectBarEpoch, setProjectBarEpoch] = useState(0)
   const { quickModels, favorites, refresh: refreshModels, toggleFavorite } = useModelFavorites()
@@ -311,9 +312,9 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
   /** 当前会话是项目会话时的项目 id */
   const projectId = tab?.kind === "project" ? projectIdOfSessionKey(tab.sessionKey) : undefined
-  // 选中的会话在归档分组里（点通知跳过来的、刚把当前项目归档了）：把分组展开，不然列表里找不到自己在哪
-  const selectedArchived = !!tab?.archived
-  useEffect(() => { if (selectedArchived) setArchivedOpen(true) }, [selected, selectedArchived])
+  /** 会话栏里项目 / 会话 / 已归档各类的折叠和展开：存在电脑端，和手机端同一份；刚选中的会话（点通知跳过来的、刚归档了当前项目）会临时撑开它所在的类 */
+  const [groupStates, changeGroup] = useSessionGroupStates(setActionError)
+  const groupControl = useSessionGroupControl(groupStates, changeGroup, selected, tab ? groupOf(tab) : undefined)
   /** 用户给会话选的工作目录：服务端带回来的优先，刚选还没刷新到的用本地的 */
   const boundDirOf = (t: ChatTab): string | undefined => t.boundDir ?? pickedDirs[t.sessionKey]
   /** 会话的工作目录；没选过目录的临时会话没有，它自己的临时文件夹对用户不可见 */
@@ -612,8 +613,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const sidebarListRef = useRef<HTMLDivElement>(null)
   useScrollActiveIntoView(sidebarListRef, selected, 0)
 
-  /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面一个折叠分组里；一个都没有就不出现这个分组 */
-  const archivedTabs = views.flatMap((v) => splitArchived(v.tabs).archived)
+  /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面一个分类里；一个都没有就不出现这一类 */
+  const archivedTabs = views.flatMap((v) => splitGroups(v.tabs).archived)
 
   const renderRow = (t: ChatTab) => {
     const on = sameChatSession(t.sessionKey, selected)
@@ -678,6 +679,18 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     )
   }
 
+  /** 画一类会话：项目 / 会话在各通道下各一份，已归档全局一份；置顶的在前、其余按最近对话排，折叠和展开见 groupControl */
+  const renderGroup = (id: string, group: SessionListGroupId, tabs: ChatTab[]) => renderSessionGroup({
+    id,
+    group,
+    rows: listOrder(tabs),
+    control: groupControl,
+    isPinned: (t) => pins.isPinned(t.sessionKey),
+    statusOf: (t) => sessionStatus(t.sessionKey, t.running),
+    renderRow,
+    variant: "desktop",
+  })
+
   return (
     <PreviewContext.Provider value={preview.api}>
     <div className="flex h-screen flex-col">
@@ -714,27 +727,11 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                       ><FolderKanban size={13} />新项目</button>
                     </div>
                   </div>
-                  <div className="space-y-0.5">
-                    {listOrder(splitArchived(v.tabs).live).map(renderRow)}
-                  </div>
+                  {renderGroup(`${v.channelId}-project`, "project", splitGroups(v.tabs).project)}
+                  {renderGroup(`${v.channelId}-chat`, "chat", splitGroups(v.tabs).chat)}
                 </div>
               ))}
-              {archivedTabs.length > 0 && (
-                <div className="pt-1">
-                  <button
-                    type="button"
-                    onClick={() => setArchivedOpen((o) => !o)}
-                    aria-expanded={archivedOpen}
-                    className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-left text-[12px] text-fg-muted transition hover:bg-strong/25 hover:text-fg-2"
-                  >
-                    <ChevronRight size={12} className={`shrink-0 transition-transform ${archivedOpen ? "rotate-90" : ""}`} />
-                    <Archive size={12} className="shrink-0" />
-                    <span className="min-w-0 flex-1 truncate">{ARCHIVED_GROUP_TITLE}</span>
-                    <span className="shrink-0 text-[11px] text-fg-faint">{archivedTabs.length}</span>
-                  </button>
-                  {archivedOpen && <div className="space-y-0.5">{listOrder(archivedTabs).map(renderRow)}</div>}
-                </div>
-              )}
+              {renderGroup("archived", "archived", archivedTabs)}
               {treeError && <p className="px-2 text-[11px] text-yellow-500">{treeError}</p>}
             </div>
             <div className="flex shrink-0 items-center justify-between border-t border-line-subtle px-3 py-2 text-[11px] text-fg-faint">

@@ -4,6 +4,7 @@ import { normalizeSessionKey, workspaceDirFromSessionKey } from "./channel-types
 import { isTempChatWorkspace } from "./temp-workspace.js";
 import { projectIdOfSessionKey } from "./project-app-types.js";
 import type { ChatSearchHit } from "./app-chat-search.js";
+import type { SessionGroupStates } from "./session-groups.js";
 
 export interface AppChatTool {
   name: string;
@@ -184,6 +185,8 @@ export interface AppChatResult {
   sessionKey?: string;
   /** 置顶 / 取消置顶之后最新的置顶列表（appChatSessionId，先置顶的在前） */
   pins?: string[];
+  /** 改了会话列表某一类的折叠 / 展开之后，各类最新的状态 */
+  sessionGroups?: SessionGroupStates;
 }
 
 /**

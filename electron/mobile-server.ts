@@ -36,10 +36,12 @@ import {
   saveAppChatImage,
   sendAppChatMessage,
   setAppChatSessionDir,
+  setAppChatSessionGroup,
   setAppChatSessionPinned,
   subscribeAppChatEvent,
 } from "./app-chat"
 import { getAppChatPins, subscribeAppChatPins } from "./app-chat-pins"
+import { getSessionGroupStates, subscribeSessionGroupStates } from "./app-chat-session-groups"
 import { listSessionBranches, subscribeBranchChanged, switchSessionBranch } from "./session-branch"
 import { parseBranchTarget } from "../src/shared/git-branch"
 import { getAppChatTitles, subscribeAppChatTitles } from "./app-chat-title"
@@ -266,6 +268,7 @@ async function buildBootstrap() {
     })),
     titles: getAppChatTitles(),
     pins: getAppChatPins(),
+    sessionGroups: getSessionGroupStates(),
     lastActive: activeRes.ok ? (activeRes.times ?? {}) : {},
     quickModels,
     resources: safeResources,
@@ -495,6 +498,10 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       sendJson(res, 200, setAppChatSessionPinned(sessionKey, body.pinned === true))
       return
     }
+    case "/api/mobile/session-group": {
+      sendJson(res, 200, setAppChatSessionGroup(body.group, body.patch))
+      return
+    }
     case "/api/mobile/list-branches": {
       sendJson(res, 200, await listSessionBranches(String(body.sessionKey ?? "")))
       return
@@ -667,6 +674,7 @@ export async function startMobileServer(portInput?: number): Promise<{ ok: boole
         subscribeAppChatEvent((event) => broadcastSse({ type: "chat", event })),
         subscribeAppChatTitles((titles) => broadcastSse({ type: "titles", titles })),
         subscribeAppChatPins((pins) => broadcastSse({ type: "pins", pins })),
+        subscribeSessionGroupStates((states) => broadcastSse({ type: "session-groups", states })),
         subscribeSessionStatus(() => broadcastSse({ type: "sessions" })),
         // 分支切换后手机端重拉会话树，列表上的分支才会变（桌面端切的、手机端自己切的都一样）
         subscribeBranchChanged(() => broadcastSse({ type: "sessions" })),

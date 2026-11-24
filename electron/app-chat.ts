@@ -12,8 +12,10 @@ import { getAgentResource, getChannel } from "./config-store"
 import { deleteUserSession } from "./session-dispatcher"
 import { ensureAppChatTitle, getAppChatTitles, removeAppChatChannelTitles, removeAppChatTitle, renameAppChatTitle } from "./app-chat-title"
 import { getAppChatPins, removeAppChatPin, setAppChatPinned } from "./app-chat-pins"
+import { getSessionGroupStates, setSessionGroupState } from "./app-chat-session-groups"
 import { listSessionBranches, subscribeBranchChanged, switchSessionBranch } from "./session-branch"
 import { parseBranchTarget } from "../src/shared/git-branch"
+import { parseGroupId, parseGroupPatch } from "../src/shared/session-groups"
 import { APP_CHANNEL_CHAT_ID, chatIdFromSessionKey, channelIdFromSessionKey, makeChatKey, resolveChannelResourceId, workspaceDirFromSessionKey } from "../src/shared/channel-types"
 import { initSessionModelStore, seedNewSessionModel } from "../src/shared/session-model-store"
 import { initSessionOverridesStore, patchSessionRecord } from "../src/shared/session-overrides-store"
@@ -92,6 +94,19 @@ export function setAppChatSessionPinned(sessionKey: string, pinned: boolean): Ap
   try {
     setAppChatPinned(sessionKey, pinned)
     return { ok: true, pins: getAppChatPins() }
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/** 折叠 / 展开会话列表的某一类（项目 / 会话 / 已归档）；返回各类最新的状态，调用方（手机端）可以直接用来刷新 */
+export function setAppChatSessionGroup(group: unknown, patch: unknown): AppChatResult {
+  const id = parseGroupId(group)
+  const parsed = parseGroupPatch(patch)
+  if (!id || !parsed) return { ok: false, error: "会话分类的参数不对" }
+  try {
+    setSessionGroupState(id, parsed)
+    return { ok: true, sessionGroups: getSessionGroupStates() }
   } catch (e: unknown) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
@@ -319,6 +334,8 @@ export function initAppChat(): void {
   ipcMain.handle("app-chat:get-titles", () => getAppChatTitles())
   ipcMain.handle("app-chat:get-pins", () => getAppChatPins())
   ipcMain.handle("app-chat:set-pinned", (_e, sessionKey: string, pinned: boolean) => setAppChatSessionPinned(sessionKey, pinned === true))
+  ipcMain.handle("app-chat:get-session-groups", () => getSessionGroupStates())
+  ipcMain.handle("app-chat:set-session-group", (_e, group: unknown, patch: unknown) => setAppChatSessionGroup(group, patch))
   ipcMain.handle("app-chat:list-branches", (_e, sessionKey: string) => listSessionBranches(String(sessionKey ?? "")))
   ipcMain.handle("app-chat:switch-branch", async (_e, sessionKey: string, target: unknown) => {
     const t = parseBranchTarget(target)

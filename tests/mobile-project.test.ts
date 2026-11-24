@@ -8,6 +8,7 @@ import {
 } from "../src/mobile/api"
 import { SessionDrawer } from "../src/mobile/MobileModals"
 import { NewProjectSheet } from "../src/mobile/MobileProject"
+import { NO_GROUP_CONTROL } from "../src/renderer/components/chat/session-groups-state"
 import { projectArtifactDownloadUrl } from "../src/mobile/project-download"
 
 const BASE = "http://192.168.1.5:19529/"
@@ -213,9 +214,10 @@ describe("会话抽屉：项目", () => {
       expect(html.indexOf("已归档")).toBeGreaterThan(html.indexOf("Q4 调研"))
     })
 
-    it("选中的会话就在归档分组里：自动展开，找得到自己在哪", () => {
+    it("选中的会话就在归档分组里（分类状态要求让它看得见）：自动展开，找得到自己在哪", () => {
       const a = archivedTab()
-      const html = render([a, dir("a")], { selected: a.sessionKey })
+      const groups = { ...NO_GROUP_CONTROL, isRevealed: (key: string) => key === a.sessionKey }
+      const html = render([a, dir("a")], { selected: a.sessionKey, groups })
       expect(html).toContain('aria-expanded="true"')
       expect(html).toContain("做完的项目")
       expect(html.indexOf("做完的项目")).toBeGreaterThan(html.indexOf("a<")) // 在普通会话后面
