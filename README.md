@@ -1,13 +1,28 @@
-# LK Harness
+<p align="center">
+  <img src="docs/harness-site/img/logo.png" width="96" alt="LK Harness">
+</p>
 
-**你离开电脑，Agent 不用停。**
+<h1 align="center">LK Harness</h1>
 
-[![最新版本](https://img.shields.io/github/v/release/lk-eternal/lk-harness?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/lk-eternal/lk-harness/releases/latest)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+<p align="center"><b>你离开电脑，Agent 不用停。</b></p>
+
+<p align="center">
+  <a href="https://github.com/lk-eternal/lk-harness/releases/latest"><img src="https://img.shields.io/github/v/release/lk-eternal/lk-harness?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC" alt="最新版本"></a>
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT">
+</p>
 
 LK Harness 是装在你电脑上的桌面应用。Agent 在你自己的目录和仓库里干活；你在应用内对话页、手机、飞书或微信里发一句话就能指挥它，过程实时回传，要拿主意时点一下就继续。
 
-产品介绍：<https://lk-ai.top/harness>
+产品介绍：<https://lk-ai.top/harness> · [联系与赞赏](#联系与赞赏)
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/hero-dark.png">
+    <img src="docs/harness-site/img/hero-light.png" width="860" alt="LK Harness 桌面端：左侧会话列表，中间对话流（工具调用、任务清单、点选问题），右侧预览面板打开着代码文件">
+  </picture>
+  <br>
+  <sub>桌面端：对话、工具调用过程和文件预览在同一个窗口里。截图为示例数据。</sub>
+</p>
 
 ## 它是什么
 
@@ -68,6 +83,15 @@ xattr -cr /Applications/LK\ Harness.app
 ### 手机端
 
 在「设置 → 手机端」开启网关，用 Android APK 或浏览器扫码配对，即可远程和电脑上的 Agent 对话：看进度、发消息和图片、点选问题、切模型、预览文件。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/phones-dark.png">
+    <img src="docs/harness-site/img/phones-light.png" width="720" alt="手机端三个界面：对话与点选问题、会话列表抽屉、代码文件预览">
+  </picture>
+  <br>
+  <sub>手机端：对话和点选问题、会话列表、预览 Agent 产出的文件。截图为示例数据。</sub>
+</p>
 
 - 局域网和公网两条线路自动择优。公网访问需要自备穿透，并在设置里填公网地址（选填）。
 - iOS 暂无安装包：用 Safari 打开配对链接，点「分享 → 添加到主屏幕」。
@@ -178,15 +202,12 @@ xattr -cr /Applications/LK\ Harness.app
 
 ## 工作原理
 
-```
-入口：应用内对话 · 手机 · 飞书 · 微信
-   ↓
-LK Harness（跑在你的电脑上）：消息队列 · 会话调度 · 提示词装配 · 内置 MCP · 定时 · 项目
-   ↓
-Agent 引擎：Cursor SDK / 大模型 API
-   ↓
-你的仓库 · lark-cli · meegle · 你挂上的 MCP
-```
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/architecture-dark.png">
+    <img src="docs/harness-site/img/architecture-light.png" width="860" alt="架构图：应用内对话、手机端、飞书、微信四个入口进入同一条会话；你的电脑上 LK Harness 负责消息队列、会话调度等，交给 Agent 引擎，再作用于你的仓库和工具">
+  </picture>
+</p>
 
 - **Electron 应用**：配置界面、对话页、Agent 会话调度、定时任务、项目管理、手机端网关。
 - **守护进程**：飞书 / 微信长连接收消息，进文件队列，再由本机 HTTP / MCP 交给 Agent。
@@ -229,6 +250,23 @@ npm run dist       # 打包安装包
 | `src/wechat/` | 微信通道 |
 | `tests/` | 单元测试和端到端测试 |
 | `docs/harness-site/` | 官网 <https://lk-ai.top/harness> 的静态页面 |
+
+## 联系与赞赏
+
+LK Harness 是 MIT 协议的开源项目，我在业余时间用爱发电维护。用着有问题、想提需求，欢迎提 [Issue](../../issues)，也可以加我微信聊聊；如果它帮到了你，请我喝杯咖啡，会让我更有动力继续做下去。
+
+<table align="center">
+  <tr>
+    <td align="center" width="260">
+      <img src="docs/harness-site/img/wechat-contact.png" width="220" alt="微信二维码：添加好友">
+      <br>微信 · 加好友
+    </td>
+    <td align="center" width="260">
+      <img src="docs/harness-site/img/wechat-pay.png" width="220" alt="微信收款码：赞赏">
+      <br>微信支付 · 赞赏
+    </td>
+  </tr>
+</table>
 
 ## License
 

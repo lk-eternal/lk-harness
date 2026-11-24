@@ -11,7 +11,7 @@
   <meta property="og:title" content="LK Harness — 你离开电脑，Agent 不用停">
   <meta property="og:description" content="在应用、手机、飞书、微信里指挥你电脑上的 AI Agent：实时进度、点选决策、项目模板、定时任务。开源，MIT。">
   <meta property="og:url" content="https://lk-ai.top/harness/">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236c8dff'/%3E%3Cstop offset='1' stop-color='%239a73ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M10 8v16h12' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" href="img/logo.png">
   <style>
     :root {
       color-scheme: dark;
@@ -42,8 +42,7 @@
     nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px); background: rgba(7,8,13,.74); border-bottom: 1px solid var(--line); }
     .nav-in { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 60px; }
     .logo { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.02em; text-decoration: none; }
-    .logo i { width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent2)); position: relative; }
-    .logo i::after { content: ""; position: absolute; left: 7px; top: 6px; width: 8px; height: 11px; border-left: 2.5px solid #fff; border-bottom: 2.5px solid #fff; border-radius: 1px 0 0 1px; }
+    .logo img { display: block; width: 26px; height: 26px; border-radius: 7px; }
     .nav-links { display: flex; gap: 26px; font-size: .875rem; color: var(--muted); }
     .nav-links a { text-decoration: none; }
     .nav-links a:hover { color: var(--text); }
@@ -64,52 +63,11 @@
     .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .cta-note { margin-top: 16px; font-size: .82rem; color: var(--muted); }
 
-    /* 产品示意（纯 CSS，非真实截图） */
-    .stage { position: relative; max-width: 1020px; margin: 64px auto 0; padding-bottom: 112px; text-align: left; }
-    .app { border: 1px solid var(--line2); border-radius: 14px; background: #0b0f1a; box-shadow: 0 30px 90px rgba(0,0,0,.55); overflow: hidden; }
-    .app-bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: rgba(255,255,255,.03); border-bottom: 1px solid var(--line); font-size: .74rem; color: var(--muted); }
-    .app-bar i { width: 10px; height: 10px; border-radius: 50%; }
-    .app-bar i:nth-child(1) { background: #ff5f57; } .app-bar i:nth-child(2) { background: #febc2e; } .app-bar i:nth-child(3) { background: #28c840; }
-    .app-bar span { margin-left: 8px; }
-    .app-body { display: grid; grid-template-columns: 188px minmax(0, 1fr) 290px; min-height: 372px; font-size: .8rem; }
-    .side { border-right: 1px solid var(--line); padding: 14px 10px; background: rgba(255,255,255,.015); }
-    .side h6 { font-size: .66rem; letter-spacing: .1em; color: var(--muted); font-weight: 600; padding: 0 8px 8px; }
-    .s-item { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .s-item.on { background: rgba(108,141,255,.14); color: var(--text); }
-    .s-item u { width: 7px; height: 7px; border-radius: 50%; background: #3a4258; flex: none; text-decoration: none; }
-    .s-item.on u { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-    .s-item em { font-style: normal; font-size: .62rem; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 5px; margin-left: auto; }
-    .chat { padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-    .msg-user { align-self: flex-end; max-width: 80%; background: #2b4bd6; color: #fff; padding: 8px 13px; border-radius: 14px 14px 4px 14px; }
-    .proc { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .76rem; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.025); }
-    .proc i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.4s infinite; flex: none; }
-    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
-    .msg-ai { color: var(--soft); }
-    .msg-ai code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 5px; font-size: .92em; color: #c9d3ff; }
-    .ask { border: 1px solid var(--line2); border-radius: 12px; padding: 13px; background: rgba(255,255,255,.03); }
-    .ask p { color: var(--text); margin-bottom: 10px; font-weight: 500; }
-    .opts { display: flex; flex-wrap: wrap; gap: 8px; }
-    .opt { padding: 6px 13px; border-radius: 8px; border: 1px solid var(--line2); color: var(--soft); background: rgba(255,255,255,.02); }
-    .opt.sel { border-color: var(--accent); background: rgba(108,141,255,.18); color: #fff; }
-    .pv { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; background: rgba(255,255,255,.012); }
-    .tabs { display: flex; border-bottom: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
-    .tab { padding: 9px 14px; border-right: 1px solid var(--line); white-space: nowrap; }
-    .tab.on { color: var(--text); background: rgba(255,255,255,.04); }
-    .code { padding: 12px 0; font-size: .72rem; line-height: 1.75; overflow: hidden; }
-    .ln { display: flex; white-space: pre; padding-right: 10px; }
-    .ln b { flex: none; width: 34px; text-align: right; padding-right: 12px; color: #4b5470; font-weight: 400; user-select: none; }
-    .ln.add { background: rgba(61,220,151,.1); }
-    .k { color: #c792ea; } .s { color: #a5e075; } .f { color: #7fb4ff; } .c { color: #5d6685; }
-
-    .phone { position: absolute; right: -14px; bottom: 0; width: 214px; border: 6px solid #1c2236; border-radius: 30px; background: #0b0f1a; box-shadow: 0 24px 70px rgba(0,0,0,.6); overflow: hidden; font-size: .72rem; }
-    .ph-top { display: flex; justify-content: space-between; align-items: center; padding: 11px 13px; border-bottom: 1px solid var(--line); }
-    .ph-top b { font-weight: 600; color: var(--text); }
-    .ph-top span { color: var(--ok); }
-    .ph-body { padding: 12px; display: flex; flex-direction: column; gap: 9px; }
-    .ph-body .ask { padding: 10px; }
-    .ph-body .ask p { margin-bottom: 8px; }
-    .ph-body .opt { padding: 5px 10px; }
-    .ph-input { margin: 4px 12px 12px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line2); color: var(--muted); }
+    /* 产品截图（示例数据） */
+    .shot { max-width: 1060px; margin: 56px auto 0; }
+    .shot img { display: block; width: 100%; height: auto; }
+    .shot figcaption { margin-top: 12px; text-align: center; font-size: .8rem; color: var(--muted); }
+    .shot.phones { max-width: 880px; margin: 0 auto; }
 
     /* 通用分节 */
     section { padding: 88px 0; scroll-margin-top: 56px; }
@@ -176,13 +134,20 @@
     .repo p { font-size: .86rem; color: var(--muted); }
     .more { margin-top: 24px; text-align: center; }
 
+    /* 联系与赞赏 */
+    .support { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 56px; align-items: center; }
+    .support .desc { margin-bottom: 28px; }
+    .qrs { display: flex; gap: 20px; }
+    .qr { width: 236px; max-width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); text-align: center; }
+    .qr img { display: block; width: 100%; height: auto; border-radius: 10px; }
+    .qr figcaption { margin-top: 12px; font-size: .84rem; color: var(--muted); }
+    .qr figcaption b { display: block; margin-bottom: 2px; font-size: .94rem; font-weight: 600; color: var(--text); }
+
     footer { border-top: 1px solid var(--line); padding: 32px 0; text-align: center; font-size: .82rem; color: var(--muted); }
     footer a { color: var(--soft); text-decoration: none; margin: 0 6px; }
     footer a:hover { color: var(--text); text-decoration: underline; }
 
     @media (max-width: 980px) {
-      .app-body { grid-template-columns: 168px minmax(0, 1fr); }
-      .pv { display: none; }
       .flow { grid-template-columns: 1fr 1fr; }
       .dl { grid-template-columns: 1fr 1fr; }
     }
@@ -191,23 +156,23 @@
       .tile, .tile.w { grid-column: span 1; }
       .tile.w { grid-column: span 2; }
       .steps, .repos, .twin, .limits { grid-template-columns: 1fr; }
+      .support { grid-template-columns: 1fr; gap: 36px; }
     }
     @media (max-width: 720px) {
       .nav-links { display: none; }
       .hero { padding-top: 56px; }
       section { padding: 60px 0; }
-      .app-body { grid-template-columns: 1fr; min-height: 0; }
-      .side { display: none; }
-      .stage { padding-bottom: 0; }
-      .phone { position: relative; right: auto; width: 230px; margin: 28px auto 0; }
+      .shot { margin-top: 40px; }
+      .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .scroll-x img { min-width: 600px; }
     }
     @media (max-width: 560px) {
       .bento, .flow, .dl { grid-template-columns: 1fr; }
       .tile.w { grid-column: span 1; }
+      .qrs { flex-direction: column; align-items: center; }
     }
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      .proc i { animation: none; }
       .tile, .dl-card, .repo, .btn { transition: none; }
     }
   </style>
@@ -217,13 +182,15 @@
 
   <nav>
     <div class="wrap nav-in">
-      <a class="logo" href="#top"><i></i>LK Harness</a>
+      <a class="logo" href="#top"><img src="img/logo.png" width="26" height="26" alt="">LK Harness</a>
       <div class="nav-links">
         <a href="#how">工作方式</a>
+        <a href="#mobile">手机端</a>
         <a href="#features">能力</a>
         <a href="#principle">原理</a>
         <a href="#limits">边界</a>
         <a href="#download">下载</a>
+        <a href="#support">联系与赞赏</a>
       </div>
       <a class="btn btn-primary btn-sm" href="#download">下载</a>
     </div>
@@ -240,51 +207,11 @@
       </div>
       <p class="cta-note">需要接入一个 Cursor 账号，或任意大模型 API</p>
 
-      <div class="stage" role="img" aria-label="界面示意：桌面端对话页里 Agent 在改代码并抛出一个点选问题，右侧是文件预览；手机上同一个问题已经点选。">
-        <div class="app">
-          <div class="app-bar"><i></i><i></i><i></i><span>LK Harness · 示意</span></div>
-          <div class="app-body">
-            <div class="side">
-              <h6>会话</h6>
-              <div class="s-item on"><u></u>登录接口校验</div>
-              <div class="s-item"><u></u>整理本周周报</div>
-              <div class="s-item"><u></u>每日巡检<em>定时</em></div>
-              <div class="s-item"><u></u>活动策划<em>项目</em></div>
-            </div>
-            <div class="chat">
-              <div class="msg-user">帮我把登录接口的参数校验补上</div>
-              <div class="proc"><i></i>思考 · 读取 3 个文件 · 编辑 2 个文件</div>
-              <div class="msg-ai">校验已经加进 <code>login.ts</code>，有一处要你定：</div>
-              <div class="ask">
-                <p>校验失败时返回哪个状态码？</p>
-                <div class="opts"><span class="opt">1. 400</span><span class="opt sel">2. 422</span><span class="opt">3. 先看现有约定</span></div>
-              </div>
-            </div>
-            <div class="pv">
-              <div class="tabs"><span class="tab on">login.ts</span><span class="tab">README.md</span></div>
-              <div class="code mono">
-                <div class="ln"><b>12</b><span><span class="k">export function</span> <span class="f">validateLogin</span>(body) {</span></div>
-                <div class="ln add"><b>13</b><span>  <span class="k">if</span> (!body.account)</span></div>
-                <div class="ln add"><b>14</b><span>    <span class="k">throw</span> <span class="f">invalid</span>(<span class="s">"账号不能为空"</span>)</span></div>
-                <div class="ln add"><b>15</b><span>  <span class="k">if</span> (body.password.length &lt; 8)</span></div>
-                <div class="ln add"><b>16</b><span>    <span class="k">throw</span> <span class="f">invalid</span>(<span class="s">"密码至少 8 位"</span>)</span></div>
-                <div class="ln"><b>17</b><span>}</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="phone">
-          <div class="ph-top"><b>登录接口校验</b><span>● 运行中</span></div>
-          <div class="ph-body">
-            <div class="msg-ai">校验已经加进 <code>login.ts</code>，有一处要你定：</div>
-            <div class="ask">
-              <p>校验失败时返回哪个状态码？</p>
-              <div class="opts"><span class="opt">1. 400</span><span class="opt sel">2. 422</span><span class="opt">3. 先看现有约定</span></div>
-            </div>
-          </div>
-          <div class="ph-input">说点什么…</div>
-        </div>
-      </div>
+      <figure class="shot">
+        <img src="img/hero-dark.png" width="2000" height="1394" fetchpriority="high"
+             alt="LK Harness 桌面端：左侧会话列表，中间对话流里有工具调用、任务清单和点选问题，右侧预览面板打开着代码文件">
+        <figcaption>桌面端：对话、工具调用过程和文件预览在同一个窗口里。截图为示例数据。</figcaption>
+      </figure>
     </div>
   </header>
 
@@ -307,6 +234,21 @@
           <p>思考和工具调用实时回传。AI 遇到分叉会抛出选项，点一下它就继续；想插话，直接打字。</p>
         </div>
       </div>
+    </div>
+  </section>
+
+  <section id="mobile">
+    <div class="wrap">
+      <div class="label">On your phone</div>
+      <h2>人在外面，会话还在</h2>
+      <p class="desc">用 Android APK 或浏览器扫码配对，就能和电脑上的 Agent 接着聊：看进度、发消息和图片、点选问题、切模型、预览文件。</p>
+      <figure class="shot phones">
+        <div class="scroll-x">
+          <img src="img/phones-dark.png" width="1600" height="1083" loading="lazy"
+               alt="手机端三个界面：对话与点选问题、会话列表抽屉、代码文件预览">
+        </div>
+        <figcaption>手机端：对话和点选问题、会话列表、预览 Agent 产出的文件。截图为示例数据。</figcaption>
+      </figure>
     </div>
   </section>
 
@@ -478,10 +420,31 @@ brew install --cask lk-harness</pre>
     </div>
   </section>
 
+  <section id="support">
+    <div class="wrap support">
+      <div>
+        <div class="label">Support</div>
+        <h2>联系与赞赏</h2>
+        <p class="desc">LK Harness 是 MIT 协议的开源项目，我在业余时间用爱发电维护。用着有问题、想提需求，可以去 GitHub 提 Issue，也可以加我微信聊聊；如果它帮到了你，请我喝杯咖啡，会让我更有动力继续做下去。</p>
+        <a class="btn btn-ghost" href="https://github.com/lk-eternal/lk-harness/issues" rel="noopener">去 GitHub 提 Issue →</a>
+      </div>
+      <div class="qrs">
+        <figure class="qr">
+          <img src="img/wechat-contact.png" width="880" height="960" loading="lazy" alt="微信二维码：添加好友">
+          <figcaption><b>微信 · 加好友</b>聊使用问题、提需求</figcaption>
+        </figure>
+        <figure class="qr">
+          <img src="img/wechat-pay.png" width="880" height="960" loading="lazy" alt="微信收款码：赞赏">
+          <figcaption><b>微信支付 · 赞赏</b>自愿，不影响任何功能</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
   <footer>
     <div class="wrap">
       <p>LK Harness · MIT License
-        <a href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub</a>·<a href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">更新记录</a>·<a href="share/">分享页</a></p>
+        <a href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub</a>·<a href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">更新记录</a>·<a href="share/">分享页</a>·<a href="#support">联系与赞赏</a></p>
     </div>
   </footer>
 
