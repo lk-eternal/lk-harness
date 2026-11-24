@@ -1,6 +1,6 @@
 // ── 对话文字里的路径：rehype 插件，把「长得像路径」的文字包成带标记的 span ──────────────
 //
-// 只做识别和标记（data-lk-path / data-lk-line），能不能点由渲染时向主进程确认的结果决定，见 Markdown.tsx 的 PathLink。
+// 只做识别和标记（data-lk-path / data-lk-line），能不能点由渲染时向主进程确认的结果决定，见 PathLink.tsx。
 // 不碰链接、代码块、行内代码里的文字：链接已经是链接；代码块里是代码；行内代码由 code 组件整体判断（它能认带空格的路径）。
 
 import { findPathMentions } from "../../../shared/preview-paths"

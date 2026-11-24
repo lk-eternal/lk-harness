@@ -4,6 +4,7 @@ import type { AppChatAssistantItem, AppChatSegment, AppChatTodo, AppChatTool } f
 import { buildTurnFooter, type TurnFooterPart } from "../../../shared/turn-footer"
 import { MessageTime } from "./ItemViews"
 import Markdown, { CopyButton } from "./Markdown"
+import { PathText } from "./PathLink"
 import { groupSegments, summarizeGroup, type GroupSummary, type ProcessSegment } from "./segment-groups"
 
 function fmtMs(ms: number): string {
@@ -68,7 +69,7 @@ function ToolsBlock({ tools, live, expanded }: { tools: AppChatTool[]; live: boo
             <li key={i} className="flex items-center gap-2 text-xs">
               <ToolIcon status={t.status} />
               <span className="shrink-0 font-mono text-fg-2">{t.name}</span>
-              {t.summary && <span className="min-w-0 flex-1 truncate text-fg-muted" title={t.summary}>{t.summary}</span>}
+              {t.summary && <span className="min-w-0 flex-1 truncate text-fg-muted" title={t.summary}><PathText key={t.status} text={t.summary} /></span>}
               {t.ms != null && <span className="ml-auto shrink-0 tabular-nums text-fg-faint">{fmtMs(t.ms)}</span>}
             </li>
           ))}
@@ -90,7 +91,7 @@ function GroupTail({ summary, live }: { summary: GroupSummary; live: boolean }) 
     <span className="flex min-w-0 flex-1 items-center gap-1.5">
       <ToolIcon status={status} />
       <span className="shrink-0 font-mono text-fg-3">{tool.name}</span>
-      {tool.summary && <span className="min-w-0 truncate text-fg-faint" title={tool.summary}>{tool.summary}</span>}
+      {tool.summary && <span className="min-w-0 truncate text-fg-faint" title={tool.summary}><PathText key={status} text={tool.summary} stopClick /></span>}
     </span>
   )
 }

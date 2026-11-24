@@ -1,12 +1,12 @@
-import { memo, useEffect, useState, type ReactNode } from "react"
+import { memo, useState, type ReactNode } from "react"
 import ReactMarkdown, { type Components, type Options } from "react-markdown"
 import remarkGfm from "remark-gfm"
 import rehypeHighlight from "rehype-highlight"
 import { Check, Copy } from "lucide-react"
 import { parsePathRef } from "../../../shared/preview-paths"
-import type { PreviewPathCheck } from "../../../shared/preview-types"
 import { opensInApp } from "../preview/link-mode"
 import { usePreview } from "../preview/PreviewContext"
+import { PathLink } from "./PathLink"
 import { rehypePathMentions } from "./path-mentions"
 import { isShortCell } from "./table-cell"
 import "./chat-markdown.css"
@@ -78,40 +78,6 @@ export function SafeLink({ href, className, children }: { href?: string; classNa
     )
   }
   return <span className="text-fg-3">{children}</span>
-}
-
-/**
- * 对话文字里的文件、文件夹路径：向主进程确认「存在且有权限预览」之后才变成可点的，点了在预览面板里打开
- * （文件带行号就定位到那一行；文件夹打开成文件夹标签页）。
- * 确认不了（没有预览面板、路径不存在、不在这个会话的范围内）就原样显示，不能让每个像路径的文字都像个按钮。
- */
-function PathLink({ raw, line, children }: { raw: string; line?: number; children: ReactNode }) {
-  const { available, resolvePath, openFile, openDir } = usePreview()
-  const [resolved, setResolved] = useState<PreviewPathCheck | null>(null)
-  useEffect(() => {
-    setResolved(null)
-    if (!available) return
-    let cancelled = false
-    void resolvePath(raw).then((p) => { if (!cancelled) setResolved(p) })
-    return () => { cancelled = true }
-  }, [available, resolvePath, raw])
-  if (!resolved) return <>{children}</>
-  const open = () => {
-    // 正在拖选路径文字（想复制）时不要跳走
-    if (window.getSelection()?.toString()) return
-    if (resolved.isDir) openDir({ path: resolved.path })
-    else openFile({ path: resolved.path, line })
-  }
-  return (
-    <span
-      role="link"
-      tabIndex={0}
-      className="lk-path"
-      title={line && !resolved.isDir ? `在预览面板打开（第 ${line} 行）：${resolved.path}` : `在预览面板打开：${resolved.path}`}
-      onClick={open}
-      onKeyDown={(e) => { if (e.key === "Enter") open() }}
-    >{children}</span>
-  )
 }
 
 /** 内容很短的单元格加上 lk-nowrap（规则和原因见 table-cell.ts），其余原样 */
