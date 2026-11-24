@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
-import { createPinsController, type PinsApi } from "../src/renderer/components/chat/pinned-sessions"
+import { createPinsController, pinMoveOf, type PinsApi } from "../src/renderer/components/chat/pinned-sessions"
 import { movePinned, type PinPlacement } from "../src/shared/app-chat-pins"
 import { appChatSessionId } from "../src/shared/app-chat-types"
 
@@ -259,6 +259,35 @@ describe("桌面端置顶：拖动调整顺序", () => {
     await tick()
     expect(errors).toEqual([])
     expect(changes).toEqual([])
+  })
+})
+
+describe("桌面端置顶：拖动排好的新顺序换算成移动参数", () => {
+  it("放在最前或中间：挪到后一项的前面；放在最后：挪到前一项的后面", () => {
+    expect(pinMoveOf(["b", "a", "c"], "b")).toEqual({ targetKey: "a", placement: "before" })
+    expect(pinMoveOf(["a", "c", "b"], "c")).toEqual({ targetKey: "b", placement: "before" })
+    expect(pinMoveOf(["a", "c", "b"], "b")).toEqual({ targetKey: "c", placement: "after" })
+  })
+
+  it("只有一项、被拖的不在顺序里：没有可挪的", () => {
+    expect(pinMoveOf(["a"], "a")).toBeUndefined()
+    expect(pinMoveOf([], "a")).toBeUndefined()
+    expect(pinMoveOf(["a", "b"], "x")).toBeUndefined()
+  })
+
+  it("套回 movePinned，同一类里得到的就是排好的顺序（别的类的置顶夹在中间也一样）", () => {
+    const group = ["a", "b", "c"]
+    const all = ["a", "x", "b", "y", "c"]
+    for (const moved of group) {
+      for (let to = 0; to < group.length; to++) {
+        const rest = group.filter((k) => k !== moved)
+        const next = [...rest.slice(0, to), moved, ...rest.slice(to)]
+        const move = pinMoveOf(next, moved)
+        expect(move).toBeDefined()
+        const result = movePinned(all, moved, move!.targetKey, move!.placement)
+        expect(result.filter((k) => group.includes(k))).toEqual(next)
+      }
+    }
   })
 })
 

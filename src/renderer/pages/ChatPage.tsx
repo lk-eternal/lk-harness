@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { Archive, ArchiveRestore, Check, FolderKanban, Loader2, MessageCircle, MoreHorizontal, PanelLeft, PanelRight, Pin, PinOff, Plus, Search, Smartphone, Trash2 } from "lucide-react"
 import TitleBar from "../components/TitleBar"
 import TitleBrand from "../components/TitleBrand"
@@ -28,8 +28,8 @@ import { countUnreadElsewhere, emptySessionHint, sidebarToggleTitle, useSidebarC
 import { useSidebarWidthStore } from "../components/chat/sidebar-width"
 import SidebarShell from "../components/chat/SidebarShell"
 import { useScrollActiveIntoView } from "../components/panel-scroll"
-import { usePinnedSessions } from "../components/chat/pinned-sessions"
-import { usePinDrag } from "../components/chat/pin-drag"
+import { pinMoveOf, usePinnedSessions } from "../components/chat/pinned-sessions"
+import SortableList from "../components/SortableList"
 import { useSessionGroupControl, useSessionGroupStates } from "../components/chat/session-groups-state"
 import { renderSessionGroup } from "../components/chat/SessionGroupSection"
 import useOutsideClose from "../hooks/useOutsideClose"
@@ -308,8 +308,6 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   const sidebarWidth = useSidebarWidthStore()
   /** 置顶的会话：存在电脑端，和手机端同一份 */
   const pins = usePinnedSessions(setActionError)
-  /** 置顶的会话可以在同一类里拖动调整顺序 */
-  const pinDrag = usePinDrag(pins.move)
 
   const ownerView = views.find((v) => v.tabs.some((t) => sameChatSession(t.sessionKey, selected)))
   const tab = ownerView?.tabs.find((t) => sameChatSession(t.sessionKey, selected))
@@ -619,45 +617,54 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
   /** 已归档的项目会话：不跟着各通道排，收在整个列表最下面一个分类里；一个都没有就不出现这一类 */
   const archivedTabs = views.flatMap((v) => splitGroups(v.tabs).archived)
 
-  /** zone：这一行在哪一类里（renderGroup 的 id）；置顶的会话只能在同一个 zone 里拖动换位置 */
-  const renderRow = (t: ChatTab, zone: string) => {
+  /** handle：置顶的行才有（SortableList 给的拖动手柄）；鼠标移到这一行上，手柄顶替行首的图标 */
+  const renderRow = (t: ChatTab, handle?: { grip: ReactNode; isDragging: boolean }) => {
     const on = sameChatSession(t.sessionKey, selected)
     const at = activeAt(t)
     const pinned = pins.isPinned(t.sessionKey)
     const status = sessionStatus(t.sessionKey, t.running)
     const isProject = t.kind === "project"
     const deletable = !!t.removable
-    const drag = pinDrag(zone, t.sessionKey, pinned)
+    const grip = handle?.grip ?? null
+    const dragging = handle?.isDragging ?? false
+    // 拖动中鼠标已经不在这一行上了（列表在拖动时不响应悬停），被拖的这一行要一直显示手柄
+    const leadHidden = grip ? (dragging ? "invisible" : "group-hover/row:invisible") : ""
     return (
       <div
         key={t.sessionKey}
-        {...drag.props}
-        className={`group/row relative ${t.archived ? "opacity-70 transition hover:opacity-100" : ""} ${drag.dragging ? "opacity-40" : ""}`}
+        className={`group/row relative ${t.archived ? "opacity-70 transition hover:opacity-100" : ""}`}
       >
-        {drag.dropAt && <span aria-hidden className={`pointer-events-none absolute inset-x-1 z-10 h-0.5 rounded-full bg-accent ${drag.dropAt === "before" ? "-top-px" : "-bottom-px"}`} />}
         <button
           type="button"
           onClick={() => setSelected(t.sessionKey)}
           aria-current={on ? "true" : undefined}
           title={dirOf(t) ?? sessionName(t)}
-          className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 hover:bg-strong/25 hover:text-fg-soft"}`}
+          className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition ${on ? "bg-strong/50 font-medium text-fg" : "text-fg-3 group-hover/row:bg-strong/25 group-hover/row:text-fg-soft"}`}
         >
-          {status === "working" ? (
-            <Loader2 size={14} className="shrink-0 animate-spin text-accent" />
-          ) : (
-            <span className="relative shrink-0">
-              {t.kind === "project"
-                ? <FolderKanban size={14} className="text-fg-faint" />
-                : <MessageCircle size={14} className="text-fg-faint" />}
-              {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
-            </span>
-          )}
+          <span className={`flex shrink-0 ${leadHidden}`}>
+            {status === "working" ? (
+              <Loader2 size={14} className="animate-spin text-accent" />
+            ) : (
+              <span className="relative">
+                {t.kind === "project"
+                  ? <FolderKanban size={14} className="text-fg-faint" />
+                  : <MessageCircle size={14} className="text-fg-faint" />}
+                {status === "unread" && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-success" />}
+              </span>
+            )}
+          </span>
           <span className="min-w-0 flex-1 truncate">{sessionName(t)}</span>
           {pinned && <Pin size={11} aria-label="已置顶" className="shrink-0 text-accent group-hover/row:invisible" />}
           {at !== undefined && (
             <span className="shrink-0 text-[11px] font-normal text-fg-faint group-hover/row:invisible">{formatTimeAgo(at, now)}</span>
           )}
         </button>
+        {grip && (
+          <span
+            title="拖动调整置顶顺序"
+            className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${dragging ? "flex" : "hidden group-hover/row:flex"}`}
+          >{grip}</span>
+        )}
         <div className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 items-center rounded bg-raised group-hover/row:flex">
           <button
             type="button"
@@ -697,7 +704,20 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     control: groupControl,
     isPinned: (t) => pins.isPinned(t.sessionKey),
     statusOf: (t) => sessionStatus(t.sessionKey, t.running),
-    renderRow: (t) => renderRow(t, id),
+    renderRow: (t) => renderRow(t),
+    // 置顶的几行是一个可拖动换位置的列表，每一类各有一个，所以只能在同一类里拖
+    renderPinned: (pinned) => (
+      <SortableList
+        items={pinned}
+        getId={(t) => t.sessionKey}
+        onReorder={(next, movedKey) => {
+          const move = pinMoveOf(next.map((t) => t.sessionKey), movedKey)
+          if (move) pins.move(movedKey, move.targetKey, move.placement)
+        }}
+        gapClass="space-y-0.5"
+        renderItem={(t, handle) => renderRow(t, handle)}
+      />
+    ),
     variant: "desktop",
   })
 

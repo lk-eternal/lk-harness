@@ -114,6 +114,44 @@ describe("画一类会话：展开按钮", () => {
   })
 })
 
+describe("画一类会话：置顶的几行一起画", () => {
+  const pinnedRows = (): Row[] => [{ sessionKey: "p1", pinned: true }, { sessionKey: "p2", pinned: true }, ...rowsOf(8)]
+
+  function drawWithPinned(rows: Row[], c: SessionGroupControl = NO_GROUP_CONTROL) {
+    const calls: string[][] = []
+    const node = renderSessionGroup({
+      id: "x-chat",
+      group: "chat",
+      rows,
+      control: c,
+      isPinned: (r) => !!r.pinned,
+      statusOf: () => "idle",
+      renderRow,
+      renderPinned: (pinned) => {
+        calls.push(pinned.map((r) => r.sessionKey))
+        return createElement("section", { key: "pinned" }, pinned.map(renderRow))
+      },
+      variant: "desktop",
+    })
+    return { calls, markup: html(node) }
+  }
+
+  it("置顶的几行一次交给 renderPinned，排在其余行前面；其余行仍一行行画，名额照旧只算它们", () => {
+    const { calls, markup } = drawWithPinned(pinnedRows(), control(parseGroupStates({ chat: { level: 0 } })).c)
+    expect(calls).toEqual([["p1", "p2"]])
+    expect(shownRows(markup)).toEqual(["p1", "p2", "s1", "s2", "s3", "s4", "s5"])
+    const block = /<section>(.*?)<\/section>/.exec(markup)
+    expect(shownRows(block?.[1] ?? "")).toEqual(["p1", "p2"])
+    expect(markup).toContain("展开更多（还有 3 个）")
+  })
+
+  it("没有置顶的行、或这一类折着：不调用 renderPinned", () => {
+    expect(drawWithPinned(rowsOf(3)).calls).toEqual([])
+    const folded = control(parseGroupStates({ chat: { collapsed: true } })).c
+    expect(drawWithPinned(pinnedRows(), folded).calls).toEqual([])
+  })
+})
+
 describe("画一类会话：折起来的行里有动静", () => {
   const rowsWith = (status: GroupRowStatus, at: number): Row[] => rowsOf(12).map((r, i) => (i === at ? { ...r, status } : r))
   const WORKING = 'aria-label="有会话正在回复"'

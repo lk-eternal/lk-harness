@@ -20,6 +20,18 @@ export interface PinsController {
   dispose(): void
 }
 
+/**
+ * 拖动排好了新顺序 order，换算成「把 movedKey 挪到谁的前面 / 后面」，也就是 movePin 要的参数。
+ * 挪到最后一位就放在前一项的后面，其余放在后一项的前面。
+ */
+export function pinMoveOf(order: readonly string[], movedKey: string): { targetKey: string; placement: PinPlacement } | undefined {
+  const at = order.indexOf(movedKey)
+  if (at < 0 || order.length < 2) return undefined
+  return at < order.length - 1
+    ? { targetKey: order[at + 1], placement: "before" }
+    : { targetKey: order[at - 1], placement: "after" }
+}
+
 function sameList(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i])
 }

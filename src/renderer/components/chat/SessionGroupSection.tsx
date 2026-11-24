@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Archive, ChevronDown, ChevronRight, ChevronUp, FolderKanban, Loader2, MessageCircle } from "lucide-react"
+import { Archive, ChevronDown, ChevronUp, FolderKanban, Loader2, MessageCircle } from "lucide-react"
 import {
   SESSION_GROUP_TITLES,
   summarizeStatus,
@@ -14,12 +14,33 @@ import type { SessionGroupControl } from "./session-groups-state"
 /** 桌面端会话栏和手机端抽屉共用同一个分类标题和底部按钮，只是触控尺寸不同 */
 export type SessionGroupVariant = "desktop" | "mobile"
 
-const STYLE: Record<SessionGroupVariant, { wrap: string; button: string; icon: number; rows: string }> = {
-  desktop: { wrap: "pt-1", button: "rounded-lg px-2.5 py-1.5 hover:bg-strong/25 hover:text-fg-2", icon: 12, rows: "space-y-0.5" },
-  mobile: { wrap: "", button: "rounded-xl px-3 py-2 active:bg-raised", icon: 13, rows: "space-y-1" },
+const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: string; icon: number; body: string; rows: string }> = {
+  desktop: {
+    wrap: "pt-3",
+    head: "rounded-lg px-2.5 py-1.5 hover:brightness-125",
+    footer: "rounded-lg px-2.5 py-1.5 hover:bg-strong/25 hover:text-fg-2",
+    icon: 12,
+    body: "ml-3 mt-1 border-l-2 pl-1",
+    rows: "space-y-0.5",
+  },
+  mobile: {
+    wrap: "",
+    head: "rounded-xl px-3 py-2 active:brightness-125",
+    footer: "rounded-xl px-3 py-2 active:bg-raised",
+    icon: 13,
+    body: "ml-3 mt-1 border-l-2 pl-1",
+    rows: "space-y-1",
+  },
 }
 
 const GROUP_ICON = { project: FolderKanban, chat: MessageCircle, archived: Archive }
+
+/** 每一类自己的颜色：标题是一条带底色的胶囊，下面的行左边有一道同色竖线，一眼分得出哪几行属于哪一类 */
+const GROUP_LOOK: Record<SessionListGroupId, { head: string; bar: string }> = {
+  project: { head: "bg-accent/20 text-accent", bar: "border-accent/40" },
+  chat: { head: "bg-teal/20 text-teal", bar: "border-teal/40" },
+  archived: { head: "bg-strong/40 text-fg-3", bar: "border-line-strong" },
+}
 
 /** 收起的会话里有在回复的、有新回复没看的：折叠后看不到行上的转圈和绿点，在标题 / 底部按钮上补一个 */
 function HiddenMark({ status }: { status: GroupRowStatus }) {
@@ -48,6 +69,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
   children: ReactNode
 }) {
   const style = STYLE[variant]
+  const look = GROUP_LOOK[group]
   const Icon = GROUP_ICON[group]
   return (
     <div data-session-group={group} className={style.wrap}>
@@ -55,26 +77,30 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className={`flex w-full items-center gap-1.5 text-left text-[12px] text-fg-muted transition ${style.button}`}
+        className={`flex w-full items-center gap-1.5 text-left text-[12px] font-semibold transition ${style.head} ${look.head}`}
       >
-        <ChevronRight size={style.icon} className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-90"}`} />
         <Icon size={style.icon} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">{SESSION_GROUP_TITLES[group]}</span>
         {collapsed && <HiddenMark status={hiddenStatus} />}
-        <span className="shrink-0 text-[11px] text-fg-faint">{count}</span>
+        <span className="shrink-0 text-[11px] font-normal opacity-70">{count}</span>
+        <ChevronDown size={style.icon} className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-180"}`} />
       </button>
-      {!collapsed && <div className={style.rows}>{children}</div>}
-      {!collapsed && footer && (
-        <button
-          type="button"
-          data-session-group-footer={footer.kind}
-          onClick={() => onFooter(footer.to)}
-          className={`flex w-full items-center gap-1.5 text-left text-[11px] text-fg-faint transition ${style.button}`}
-        >
-          {footer.kind === "less" ? <ChevronUp size={style.icon} className="shrink-0" /> : <ChevronDown size={style.icon} className="shrink-0" />}
-          <span className="min-w-0 flex-1 truncate">{footerLabel(footer, hiddenCount)}</span>
-          <HiddenMark status={hiddenStatus} />
-        </button>
+      {!collapsed && (
+        <div className={`${style.body} ${look.bar}`}>
+          <div className={style.rows}>{children}</div>
+          {footer && (
+            <button
+              type="button"
+              data-session-group-footer={footer.kind}
+              onClick={() => onFooter(footer.to)}
+              className={`flex w-full items-center gap-1.5 text-left text-[11px] text-fg-faint transition ${style.footer}`}
+            >
+              {footer.kind === "less" ? <ChevronUp size={style.icon} className="shrink-0" /> : <ChevronDown size={style.icon} className="shrink-0" />}
+              <span className="min-w-0 flex-1 truncate">{footerLabel(footer, hiddenCount)}</span>
+              <HiddenMark status={hiddenStatus} />
+            </button>
+          )}
+        </div>
       )}
     </div>
   )
@@ -85,7 +111,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
  * 调用方（手机端抽屉）才能像以前一样直接当函数调用来测，不必真的渲染。
  * rows 已经排好序（置顶的在前）；这一类没有会话就什么都不画。
  */
-export function renderSessionGroup<T extends { sessionKey: string }>({ id, group, rows, control, isPinned, statusOf, renderRow, variant }: {
+export function renderSessionGroup<T extends { sessionKey: string }>({ id, group, rows, control, isPinned, statusOf, renderRow, renderPinned, variant }: {
   /** React key：同一类在多个通道下各画一份时要不同 */
   id: string
   group: SessionListGroupId
@@ -94,10 +120,22 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
   isPinned: (row: T) => boolean
   statusOf: (row: T) => GroupRowStatus
   renderRow: (row: T) => ReactNode
+  /** 置顶的几行怎么一起画（桌面端是一个可拖动换位置的列表）；不给就和别的行一样一行行画 */
+  renderPinned?: (pinned: T[]) => ReactNode
   variant: SessionGroupVariant
 }): ReactNode {
   if (rows.length === 0) return null
   const view = viewGroup(rows, control.states[group], { isPinned, keep: (row) => control.isRevealed(row.sessionKey) })
+  const drawShown = (): ReactNode => {
+    if (!renderPinned) return view.shown.map(renderRow)
+    const pinned = view.shown.filter(isPinned)
+    return (
+      <>
+        {pinned.length > 0 && renderPinned(pinned)}
+        {view.shown.filter((row) => !isPinned(row)).map(renderRow)}
+      </>
+    )
+  }
   return (
     <SessionGroupSection
       key={id}
@@ -117,7 +155,7 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
         control.change(group, { level: to })
       }}
     >
-      {view.shown.map(renderRow)}
+      {drawShown()}
     </SessionGroupSection>
   )
 }
