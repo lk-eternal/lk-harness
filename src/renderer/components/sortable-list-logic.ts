@@ -1,6 +1,7 @@
 /** 拖拽排序的纯逻辑：不依赖 DOM / React，便于单测。组件见 SortableList.tsx。 */
 
-export type Snapshot = { id: string; midY: number }
+/** 拖动开始时一行的位置（视口坐标）和高度 */
+export type Snapshot = { id: string; top: number; height: number }
 
 export function reorderById<T>(items: T[], activeId: string, overId: string, getId: (t: T) => string): T[] {
   const from = items.findIndex((x) => getId(x) === activeId)
@@ -12,6 +13,8 @@ export function reorderById<T>(items: T[], activeId: string, overId: string, get
   return next
 }
 
+const midY = (s: Snapshot): number => s.top + s.height / 2
+
 /**
  * 指针当前落在哪一行（按拖动开始时的行位置快照判断）。
  * 往下拖：取指针越过的行里最靠下的一行；往上拖：取越过的行里最靠上的一行。
@@ -20,12 +23,30 @@ export function reorderById<T>(items: T[], activeId: string, overId: string, get
 export function resolveOverIndex(clientY: number, fromIdx: number, snaps: Snapshot[]): number {
   let toIdx = fromIdx
   for (let i = fromIdx + 1; i < snaps.length; i++) {
-    if (clientY >= snaps[i].midY) toIdx = i
+    if (clientY >= midY(snaps[i])) toIdx = i
   }
   for (let i = fromIdx - 1; i >= 0; i--) {
-    if (clientY <= snaps[i].midY) toIdx = i
+    if (clientY <= midY(snaps[i])) toIdx = i
   }
   return toIdx
+}
+
+/**
+ * 把 activeId 那一行拖到 overId 那一行的位置时，每一行要从原位置挪多远（纵向，正数往下）。
+ * 拖动中列表本身不换顺序，各行用这个位移滑到新位置；位移为 0 的行不在结果里。
+ * 行距按前两行推出来；各行高度可以不同。
+ */
+export function slideOffsets(snaps: Snapshot[], activeId: string, overId: string): Map<string, number> {
+  const offsets = new Map<string, number>()
+  const moved = reorderById(snaps, activeId, overId, (s) => s.id)
+  if (moved === snaps) return offsets
+  const gap = snaps[1].top - snaps[0].top - snaps[0].height
+  let top = snaps[0].top
+  for (const s of moved) {
+    if (top !== s.top) offsets.set(s.id, top - s.top)
+    top += s.height + gap
+  }
+  return offsets
 }
 
 /**

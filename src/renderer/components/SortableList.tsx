@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { GripVertical } from "lucide-react"
-import { applyOrder, createReorderTracker, reorderById, resolveOverIndex, type Snapshot } from "./sortable-list-logic"
+import { applyOrder, createReorderTracker, reorderById, resolveOverIndex, slideOffsets, type Snapshot } from "./sortable-list-logic"
 
 type SortableListProps<T> = {
   items: T[]
   getId: (item: T) => string
-  onReorder: (items: T[]) => void | Promise<void>
+  /** 松手后调用：next 是排好的新顺序，movedId 是被拖的那一项 */
+  onReorder: (next: T[], movedId: string) => void | Promise<void>
   disabled?: boolean
   gapClass?: string
   renderItem: (item: T, ctx: { grip: ReactNode; isDragging: boolean }) => ReactNode
 }
+
+const NO_OFFSETS: ReadonlyMap<string, number> = new Map()
+/** 拖动中各行换位的动画；系统设了「减少动态效果」就直接跳过去 */
+const SLIDE = "transition-transform duration-150 ease-out motion-reduce:transition-none"
 
 export default function SortableList<T>({ items, getId, onReorder, disabled, gapClass = "space-y-2", renderItem }: SortableListProps<T>) {
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -35,10 +40,9 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
   )
   baseItemsRef.current = baseItems
 
-  const displayItems = useMemo(() => {
-    if (!activeId || !overId || activeId === overId) return baseItems
-    return reorderById(baseItems, activeId, overId, getId)
-  }, [baseItems, activeId, overId, getId])
+  // 拖动中列表不换顺序，被挪动的行用位移滑到新位置（中途改方向交给浏览器的 transition）；
+  // 松手时换顺序和撤掉位移在同一次渲染里完成，行的视觉位置不会跳
+  const slideBy = activeId && overId ? slideOffsets(snapshotRef.current, activeId, overId) : NO_OFFSETS
 
   const takeSnapshot = () => {
     const snaps: Snapshot[] = []
@@ -47,7 +51,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
       const el = refs.current.get(id)
       if (!el) continue
       const { top, height } = el.getBoundingClientRect()
-      snaps.push({ id, midY: top + height / 2 })
+      snaps.push({ id, top, height })
     }
     snapshotRef.current = snaps
   }
@@ -56,6 +60,10 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
   // 当前落点、列表内容都从 ref 读，所以即使父组件在拖动中重渲染，松手也照常生效
   useEffect(() => {
     if (!activeId) return
+
+    // 拖动中行换了位置，指针会离开手柄，光标要在整个窗口里一直保持抓手
+    const cursorBefore = document.body.style.cursor
+    document.body.style.cursor = "grabbing"
 
     const pickOverId = (clientY: number): string => {
       const snaps = snapshotRef.current
@@ -87,7 +95,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
       setPendingOrder(tracker.order)
       void (async () => {
         try {
-          await onReorderRef.current(next)
+          await onReorderRef.current(next, activeId)
         } catch (err) {
           console.error("[SortableList] 保存排序失败", err)
         } finally {
@@ -99,6 +107,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp, { once: true })
     return () => {
+      document.body.style.cursor = cursorBefore
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
     }
@@ -106,7 +115,7 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
 
   return (
     <div className={`${gapClass}${activeId ? " select-none [&_*]:pointer-events-none" : ""}`}>
-      {displayItems.map((item) => {
+      {baseItems.map((item) => {
         const id = getId(item)
         const isDragging = activeId === id
         const grip = sortable ? (
@@ -127,7 +136,8 @@ export default function SortableList<T>({ items, getId, onReorder, disabled, gap
           <div
             key={id}
             ref={(el) => { if (el) refs.current.set(id, el); else refs.current.delete(id) }}
-            className={isDragging ? "opacity-50" : activeId ? "" : "transition-opacity duration-150"}
+            className={isDragging ? `opacity-50 ${SLIDE}` : activeId ? SLIDE : "transition-opacity duration-150"}
+            style={slideBy.has(id) ? { transform: `translateY(${slideBy.get(id)}px)` } : undefined}
           >
             {renderItem(item, { grip, isDragging })}
           </div>
