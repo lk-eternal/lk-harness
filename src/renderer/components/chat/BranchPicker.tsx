@@ -35,7 +35,7 @@ export function BranchMenuView({ data, loading, error, switching, query, onQuery
   return (
     <div className="absolute bottom-full left-0 z-20 mb-2 w-80 overflow-hidden rounded-xl border border-line bg-page p-1.5 shadow-lg">
       {notices.map((n) => (
-        <p key={n.text} className={`px-2.5 pb-1 pt-1 text-[11px] leading-relaxed ${n.tone === "warn" ? "text-yellow-500" : "text-fg-faint"}`}>{n.text}</p>
+        <p key={n.text} className={`px-2.5 pb-1 pt-1 text-[11px] leading-relaxed ${n.tone === "warn" ? "text-warning" : "text-fg-faint"}`}>{n.text}</p>
       ))}
       <div className="relative px-0.5 pb-1.5">
         <Search size={13} className="pointer-events-none absolute left-2.5 top-2 text-fg-faint" />
@@ -142,7 +142,7 @@ export default function BranchPicker({ sessionKey, branch, shared, working, onSw
         type="button"
         onClick={() => { setQuery(""); setOpen((o) => !o) }}
         title={working ? "有会话正在这个目录里回复，暂时不能切换分支" : detached ? "游离 HEAD：不在任何分支上，点开可以切回某个分支" : "切换分支"}
-        className={`inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition ${open ? "border-accent bg-raised" : "border-line hover:border-line-strong"} ${working ? "text-fg-faint" : detached ? "text-yellow-500" : "text-fg-2"}`}
+        className={`inline-flex max-w-[16rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] transition ${open ? "border-accent bg-raised" : "border-line hover:border-line-strong"} ${working ? "text-fg-faint" : detached ? "text-warning" : "text-fg-2"}`}
       >
         <GitBranch size={14} className="shrink-0 text-fg-muted" />
         <span className="truncate">{label}</span>

@@ -120,7 +120,7 @@ export default function QueuedStrip({ items, onEdit, onRemove, onSendNow, touch 
                     if (e.key === "Escape") { e.preventDefault(); setEditingId(null); return }
                     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void save() }
                   }}
-                  className="min-w-0 flex-1 resize-none rounded-md border border-line bg-page px-2 py-1 text-[13px] leading-snug outline-none focus:border-blue-500"
+                  className="min-w-0 flex-1 resize-none rounded-md border border-line bg-page px-2 py-1 text-[13px] leading-snug outline-none focus:border-focus"
                 />
                 <div className="flex shrink-0 flex-col gap-1">
                   <button

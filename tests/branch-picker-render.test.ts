@@ -124,7 +124,7 @@ describe("桌面端分支按钮", () => {
   it("游离 HEAD：黄色并提示可以切回分支", () => {
     const html = picker({ branch: "HEAD(abc1234)" })
     expect(html).toContain(">HEAD(abc1234)<")
-    expect(html).toContain("text-yellow-500")
+    expect(html).toContain("text-warning")
     expect(html).toContain("游离 HEAD")
   })
 

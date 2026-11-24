@@ -308,7 +308,7 @@ export default function ModelPicker({
             type="button"
             onClick={() => void toggleStar(row)}
             title={row.starred ? "取消常用" : "加入常用"}
-            className={`mr-1 shrink-0 rounded p-1 transition hover:bg-strong/60 ${row.starred ? "text-yellow-500" : "text-fg-faint opacity-0 hover:text-yellow-500 focus:opacity-100 group-hover:opacity-100"}`}
+            className={`mr-1 shrink-0 rounded p-1 transition hover:bg-strong/60 ${row.starred ? "text-warning" : "text-fg-faint opacity-0 hover:text-warning focus:opacity-100 group-hover:opacity-100"}`}
           >
             <Star size={13} className={row.starred ? "fill-current" : ""} />
           </button>
@@ -398,9 +398,9 @@ export default function ModelPicker({
   )
 
   const triggerCls = variant === "field"
-    ? `flex h-[34px] w-full items-center gap-1.5 rounded-md border bg-raised px-3 text-left text-sm outline-none transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-blue-500" : "border-line hover:border-line-strong"}`
+    ? `flex h-[34px] w-full items-center gap-1.5 rounded-md border bg-raised px-3 text-left text-sm outline-none transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-focus" : "border-line hover:border-line-strong"}`
     : variant === "compact"
-      ? `inline-flex max-w-[10rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-violet transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-violet-500" : "border-line hover:border-violet-500"}`
+      ? `inline-flex max-w-[10rem] items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] text-fg-3 transition disabled:cursor-not-allowed disabled:opacity-60 ${open ? "border-focus" : "border-line hover:border-focus"}`
       : `inline-flex max-w-[22rem] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[12.5px] text-fg-2 transition ${open ? "border-accent bg-raised" : "border-line hover:border-line-strong"}`
 
   return (

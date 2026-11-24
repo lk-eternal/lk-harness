@@ -103,7 +103,7 @@ export function UserBubble({ item }: { item: AppChatUserItem }) {
           {item.images.map((p) => <LocalImage key={p} path={p} className="h-24 w-24" />)}
         </div>
       )}
-      {item.text && <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-blue-600 px-3.5 py-2 text-sm leading-relaxed text-white">{item.text}</div>}
+      {item.text && <div data-user-flash className="whitespace-pre-wrap [overflow-wrap:anywhere] rounded-2xl rounded-tr-sm bg-raised px-3.5 py-2 text-sm leading-relaxed text-fg">{item.text}</div>}
       <div className="flex items-center gap-2 text-[11px] text-fg-faint">
         <MessageTime ts={item.ts} />
         {item.text && <CopyButton text={item.text} />}
@@ -147,13 +147,13 @@ function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
               onClick={() => setDraft((d) => toggleChoice(item.options, d, o))}
               className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-left text-sm transition ${
                 picked
-                  ? "border-blue-500 bg-blue-600/20 text-accent-bright"
+                  ? "border-focus bg-primary/15 text-accent-bright"
                   : locked
                     ? "border-line-subtle text-fg-faint"
-                    : "border-line text-fg-2 hover:border-blue-500 hover:bg-raised"
+                    : "border-line text-fg-2 hover:border-focus hover:bg-raised"
               }`}
             >
-              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${picked ? "border-blue-500 bg-blue-600 text-white" : "border-line"}`}>
+              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${picked ? "border-primary bg-primary text-on-primary" : "border-line"}`}>
                 {picked && <Check size={12} />}
               </span>
               <span className="min-w-0 flex-1 break-words">{o}</span>
@@ -167,7 +167,7 @@ function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
             type="button"
             disabled={!answer || !dirty}
             onClick={() => onAnswer(item.messageId, answer)}
-            className="rounded-md bg-blue-600 px-3 py-1 text-sm text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-md bg-primary px-3 py-1 text-sm text-on-primary transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
           >
             {waiting ? "更新选择" : "提交"}{draft.length > 0 ? `（${draft.length}）` : ""}
           </button>
@@ -200,10 +200,10 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
               onClick={() => { if (!picked) onAnswer(item.messageId, o) }}
               className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-left text-sm transition ${
                 picked
-                  ? "border-blue-500 bg-blue-600/20 text-accent-bright"
+                  ? "border-focus bg-primary/15 text-accent-bright"
                   : locked
                     ? "border-line-subtle text-fg-faint"
-                    : "border-line text-fg-2 hover:border-blue-500 hover:bg-raised"
+                    : "border-line text-fg-2 hover:border-focus hover:bg-raised"
               }`}
             >
               <span className="w-4 shrink-0 text-xs tabular-nums text-fg-muted">{i + 1}.</span>
@@ -238,15 +238,15 @@ export function FileCard({ item }: { item: AppChatFileItem }) {
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {canPreview && (
-            <button type="button" onClick={() => preview.openFile({ path: item.path, name: item.name })} className="shrink-0 rounded border border-blue-500/60 px-2.5 py-1 text-xs text-accent-soft transition hover:bg-blue-500/10">预览</button>
+            <button type="button" onClick={() => preview.openFile({ path: item.path, name: item.name })} className="shrink-0 rounded border border-focus/60 px-2.5 py-1 text-xs text-accent-soft transition hover:bg-primary/10">预览</button>
           )}
           {(!canPreview || canOpenWithDefaultApp(item.path)) && (
-            <button type="button" onClick={() => void run(() => window.electronAPI.appChatOpenFile(item.path))} className="shrink-0 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">打开</button>
+            <button type="button" onClick={() => void run(() => window.electronAPI.appChatOpenFile(item.path))} className="shrink-0 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft">打开</button>
           )}
           {preview.available && dir && (
-            <button type="button" onClick={() => preview.openDir({ path: dir })} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"><FolderSearch size={12} />预览所在文件夹</button>
+            <button type="button" onClick={() => preview.openDir({ path: dir })} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft"><FolderSearch size={12} />预览所在文件夹</button>
           )}
-          <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(item.path))} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"><FolderOpen size={12} />所在位置</button>
+          <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(item.path))} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-focus hover:text-accent-soft"><FolderOpen size={12} />所在位置</button>
         </div>
       </div>
       {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
@@ -281,7 +281,7 @@ export function NoticePill({ item, onCommand, reveal }: { item: AppChatNoticeIte
         <div key={g.section} className="mt-2 flex flex-wrap items-center justify-start gap-1.5">
           {g.section && <span className="text-fg-faint">{g.section}</span>}
           {g.buttons.map((b) => (
-            <button key={b.cmd} type="button" onClick={() => onCommand(b.cmd)} className="rounded-md border border-line px-2 py-0.5 text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">{b.label}</button>
+            <button key={b.cmd} type="button" onClick={() => onCommand(b.cmd)} className="rounded-md border border-line px-2 py-0.5 text-fg-2 transition hover:border-focus hover:text-accent-soft">{b.label}</button>
           ))}
         </div>
       ))}

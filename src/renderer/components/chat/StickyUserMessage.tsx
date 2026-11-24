@@ -174,7 +174,7 @@ export default function StickyUserMessage({ scrollRef, items, onBeforeJump, supp
           tabIndex={visible ? 0 : -1}
           onClick={jump}
           title="回到这条消息"
-          className="pointer-events-auto inline-flex max-w-[85%] cursor-pointer items-center gap-1.5 rounded-[14px] rounded-tr-[3px] bg-blue-600 px-3 py-1.5 text-left text-[13px] leading-snug text-white transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="pointer-events-auto inline-flex max-w-[85%] cursor-pointer items-center gap-1.5 rounded-[14px] rounded-tr-[3px] bg-raised px-3 py-1.5 text-left text-[13px] leading-snug text-fg transition hover:brightness-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           <ArrowUp size={12} className="shrink-0 opacity-85" />
           <span className="min-w-0 truncate">{shown?.text}</span>

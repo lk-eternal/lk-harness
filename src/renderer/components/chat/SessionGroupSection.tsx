@@ -43,7 +43,7 @@ const GROUP_ICON = { project: FolderKanban, chat: MessageCircle, archived: Archi
 /** 每一类自己的颜色：标题是一条带底色的胶囊，下面的行左边有一道同色竖线，一眼分得出哪几行属于哪一类 */
 const GROUP_LOOK: Record<SessionListGroupId, { head: string; bar: string }> = {
   project: { head: "bg-accent/20 text-accent", bar: "border-accent/40" },
-  chat: { head: "bg-teal/20 text-teal", bar: "border-teal/40" },
+  chat: { head: "bg-raised text-fg-2", bar: "border-line" },
   archived: { head: "bg-strong/40 text-fg-3", bar: "border-line-strong" },
 }
 

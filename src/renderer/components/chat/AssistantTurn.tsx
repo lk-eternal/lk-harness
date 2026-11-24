@@ -137,7 +137,7 @@ function TodosBlock({ items }: { items: AppChatTodo[] }) {
         <span>任务清单</span>
         <span className="tabular-nums text-fg-muted">{done}/{items.length}</span>
         <div className="ml-auto h-1 w-24 overflow-hidden rounded bg-raised">
-          <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-success transition-all" style={{ width: `${pct}%` }} />
         </div>
       </div>
       <ul className="mt-2 space-y-1">
@@ -154,7 +154,7 @@ function TodosBlock({ items }: { items: AppChatTodo[] }) {
 
 function FooterPart({ part }: { part: TurnFooterPart }) {
   switch (part.kind) {
-    case "status": return <span className={part.status === "interrupted" ? "text-yellow-500" : "text-accent"}>{part.text}</span>
+    case "status": return <span className={part.status === "interrupted" ? "text-warning" : "text-accent"}>{part.text}</span>
     case "time": return <MessageTime ts={part.ts} />
     default: return <span>{part.text}</span>
   }

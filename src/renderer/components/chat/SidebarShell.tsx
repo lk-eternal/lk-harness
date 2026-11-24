@@ -60,7 +60,7 @@ function SidebarResizer({ store, width, maxWidth, previewShown }: { store: Sideb
       className="group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize touch-none outline-none"
     >
       <span
-        className={`pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-blue-500/40 group-focus-visible:bg-blue-500/60 ${dragging ? "bg-blue-500/60" : ""}`}
+        className={`pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-focus/40 group-focus-visible:bg-focus/60 ${dragging ? "bg-focus/60" : ""}`}
       />
     </div>
   )

@@ -731,7 +731,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       {noChannel ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-fg-muted">
           <p>{issueText.message}</p>
-          <button type="button" onClick={() => onSettings("channel")} className="rounded-lg bg-blue-600 px-4 py-2 text-xs text-white transition hover:bg-blue-500">{issueText.settingsLabel}</button>
+          <button type="button" onClick={() => onSettings("channel")} className="rounded-lg bg-primary px-4 py-2 text-xs text-on-primary transition hover:bg-primary-hover">{issueText.settingsLabel}</button>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1">
@@ -762,7 +762,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                 </div>
               ))}
               {renderGroup("archived", "archived", archivedTabs)}
-              {treeError && <p className="px-2 text-[11px] text-yellow-500">{treeError}</p>}
+              {treeError && <p className="px-2 text-[11px] text-warning">{treeError}</p>}
             </div>
             <div className="flex shrink-0 items-center justify-between border-t border-line-subtle px-3 py-2 text-[11px] text-fg-faint">
               <div className="flex items-center gap-2.5">
@@ -810,7 +810,7 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
                   >
                     <PanelRight size={15} />
                     {preview.state.tabs.length > 0 && !preview.state.open && (
-                      <span className="absolute -right-1 -top-1 min-w-3.5 rounded-full bg-blue-600 px-1 text-center text-[9px] leading-[14px] text-white">{preview.state.tabs.length}</span>
+                      <span className="absolute -right-1 -top-1 min-w-3.5 rounded-full bg-primary px-1 text-center text-[9px] leading-[14px] text-on-primary">{preview.state.tabs.length}</span>
                     )}
                   </button>
                   <div className="relative shrink-0" ref={moreMenuRef}>

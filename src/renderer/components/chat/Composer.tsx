@@ -148,7 +148,7 @@ export default function Composer({ draftKey, disabled, busy, top, footer, below,
             const files = Array.from(e.dataTransfer.files)
             if (files.some((f) => f.type.startsWith("image/"))) { e.preventDefault(); void addImageFiles(files) }
           }}
-          className={`rounded-2xl border bg-page shadow-sm transition ${dragging ? "border-blue-500" : "border-line focus-within:border-blue-500"} ${disabled ? "opacity-50" : ""}`}
+          className={`rounded-2xl border bg-page shadow-sm transition ${dragging ? "border-focus" : "border-line focus-within:border-focus"} ${disabled ? "opacity-50" : ""}`}
         >
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-3">
@@ -159,7 +159,7 @@ export default function Composer({ draftKey, disabled, busy, top, footer, below,
                     type="button"
                     onClick={() => removeImage(i.path)}
                     title="移除"
-                    className="absolute -right-1.5 -top-1.5 hidden rounded-full bg-strong p-0.5 text-fg-soft hover:bg-red-600 group-hover:block"
+                    className="absolute -right-1.5 -top-1.5 hidden rounded-full bg-strong p-0.5 text-fg-soft hover:bg-danger-solid group-hover:block"
                   ><X size={11} /></button>
                 </div>
               ))}
@@ -201,14 +201,14 @@ export default function Composer({ draftKey, disabled, busy, top, footer, below,
               }}
             />
             {busy && !hasContent ? (
-              <button type="button" onClick={onStop} title="停止并清空排队消息" className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-white transition hover:bg-red-500"><Square size={14} /></button>
+              <button type="button" onClick={onStop} title="停止并清空排队消息" className="flex h-8 w-8 items-center justify-center rounded-full bg-danger-solid text-white transition hover:bg-danger-solid-hover"><Square size={14} /></button>
             ) : (
               <button
                 type="button"
                 onClick={submit}
                 disabled={disabled || !hasContent}
                 title="发送"
-                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${hasContent && !disabled ? "bg-blue-600 text-white hover:bg-blue-500" : "bg-strong text-fg-faint"}`}
+                className={`flex h-8 w-8 items-center justify-center rounded-full transition ${hasContent && !disabled ? "bg-primary text-on-primary hover:bg-primary-hover" : "bg-strong text-fg-faint"}`}
               ><ArrowUp size={16} /></button>
             )}
           </div>

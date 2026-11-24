@@ -102,7 +102,7 @@ describe("AssistantTurn 页脚", () => {
   it("已中断排在模型和耗时之间，黄色，没有 Agent 前缀", () => {
     const html = renderItem({ modelLabel: "gpt-5.5", finishedAt: DONE, interrupted: true })
     expect(text(html)).toBe(`gpt-5.5 · 已中断 · 耗时 2m9s · ${formatMessageTime(DONE)}`)
-    expect(html).toContain('<span class="text-yellow-500">已中断</span>')
+    expect(html).toContain('<span class="text-warning">已中断</span>')
     expect(text(html)).not.toContain("Agent")
   })
 
