@@ -28,9 +28,17 @@
   --color-fg-faint: #8b95a7;
   --color-fg-ghost: #c4cbd6;
 
-  --color-accent: #2563eb;
-  --color-accent-soft: #1d4ed8;
-  --color-accent-bright: #1e40af;
+  --color-accent: #334155;
+  --color-accent-soft: #1e293b;
+  --color-accent-bright: #0f172a;
+  --color-accent-tint: #f0f2f5;
+  --color-accent-tint-strong: #e4e7ec;
+  --color-link: #2563eb;
+  --color-link-soft: #1d4ed8;
+  --color-primary: #0f172a;
+  --color-primary-hover: #334155;
+  --color-on-primary: #ffffff;
+  --color-focus: #475569;
   --color-success: #15803d;
   --color-success-bright: #166534;
   --color-danger: #dc2626;
@@ -61,6 +69,18 @@
   --color-fg-muted: oklch(55.1% 0.027 264.364);
   --color-fg-faint: oklch(44.6% 0.03 256.802);
   --color-fg-ghost: oklch(37.3% 0.034 259.733);
+
+  --color-accent: oklch(87.2% 0.01 258.338);
+  --color-accent-soft: oklch(92.8% 0.006 264.531);
+  --color-accent-bright: oklch(96.7% 0.003 264.542);
+  --color-accent-tint: oklch(27.8% 0.033 256.848);
+  --color-accent-tint-strong: oklch(37.3% 0.034 259.733);
+  --color-link: oklch(70.7% 0.165 254.624);
+  --color-link-soft: oklch(80.9% 0.105 251.813);
+  --color-primary: oklch(96.7% 0.003 264.542);
+  --color-primary-hover: oklch(87.2% 0.01 258.338);
+  --color-on-primary: oklch(13% 0.028 261.692);
+  --color-focus: oklch(70.7% 0.022 261.325);
 }
 
 html, body, #root {

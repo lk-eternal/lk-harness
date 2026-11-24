@@ -39,20 +39,20 @@
 }
 .chat-md hr { border: 0; border-top: 1px solid var(--color-line); margin: 1em 0; }
 
-.chat-md a { color: var(--color-accent); text-decoration: underline; text-underline-offset: 2px; }
-.chat-md a:hover { color: var(--color-accent-soft); }
+.chat-md a { color: var(--color-link); text-decoration: underline; text-underline-offset: 2px; }
+.chat-md a:hover { color: var(--color-link-soft); }
 .chat-md strong { font-weight: 600; color: var(--color-fg); }
 
 /* 文字里确认能预览的文件路径：是 span 不是按钮，这样还能照常选中复制 */
 .chat-md .lk-path {
-  color: var(--color-accent);
+  color: var(--color-link);
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;
   cursor: pointer;
 }
-.chat-md .lk-path:hover { color: var(--color-accent-soft); text-decoration-style: solid; }
-.chat-md .lk-path:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; border-radius: 3px; }
+.chat-md .lk-path:hover { color: var(--color-link-soft); text-decoration-style: solid; }
+.chat-md .lk-path:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-radius: 3px; }
 .chat-md .lk-path > code { color: inherit; }
 
 .chat-md code {
