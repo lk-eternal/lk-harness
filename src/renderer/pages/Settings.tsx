@@ -37,6 +37,7 @@ import useInlineModal from "../components/useInlineModal"
 import ConfigMigratePanel from "../components/ConfigMigratePanel"
 import { REQUIRED_FEISHU_SCOPES, FEISHU_SCOPES_JSON, FEISHU_EVENT_SUBSCRIPTIONS } from "../constants"
 import { THEME_OPTIONS, type Theme } from "../theme-options"
+import logoUrl from "../assets/logo.png"
 import { IDLE_RESTART_USER_IDLE_SEC, silentReadyMessage } from "../../shared/silent-update"
 
 interface Props { onBack: () => void; initialTab?: string; onTabConsumed?: () => void; onReenterWizard?: () => void }
@@ -561,6 +562,11 @@ export default function Settings({ onBack, initialTab, onTabConsumed, onReenterW
             </>)}
 
             {tab === "about" && (<>
+              <div className="flex items-center gap-4">
+                <img src={logoUrl} alt="LK Harness" className="h-16 w-16" />
+                <h2 className="text-xl font-semibold">LK Harness</h2>
+              </div>
+
               <section className="space-y-3">
                 <h3 className="text-sm font-medium text-fg-2">应用更新</h3>
                 <div className="flex items-center justify-between rounded-lg border border-line px-4 py-3">
