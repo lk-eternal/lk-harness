@@ -16,12 +16,11 @@ LK Harness 是装在你电脑上的桌面应用。Agent 在你自己的目录和
 产品介绍：<https://lk-ai.top/harness> · [联系与赞赏](#联系与赞赏)
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/hero-dark.png">
-    <img src="docs/harness-site/img/hero-light.png" width="860" alt="LK Harness 桌面端：左侧会话列表，中间对话流（工具调用、任务清单、点选问题），右侧预览面板打开着代码文件">
-  </picture>
+  <img src="docs/harness-site/img/hero-dark.png" width="860" alt="LK Harness 桌面端，深色主题：左侧会话列表，中间对话流（工具调用、任务清单、点选问题），右侧预览面板打开着代码文件">
   <br>
-  <sub>桌面端：对话、工具调用过程和文件预览在同一个窗口里。截图为示例数据。</sub>
+  <img src="docs/harness-site/img/hero-light.png" width="860" alt="LK Harness 桌面端，浅色主题：左侧会话列表，中间对话流（工具调用、任务清单、点选问题），右侧预览面板打开着代码文件">
+  <br>
+  <sub>桌面端：对话、工具调用过程和文件预览在同一个窗口里，深色、浅色两套主题。截图为示例数据。</sub>
 </p>
 
 ## 它是什么
@@ -85,12 +84,11 @@ xattr -cr /Applications/LK\ Harness.app
 在「设置 → 手机端」开启网关，用 Android APK 或浏览器扫码配对，即可远程和电脑上的 Agent 对话：看进度、发消息和图片、点选问题、切模型、预览文件。
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/phones-dark.png">
-    <img src="docs/harness-site/img/phones-light.png" width="720" alt="手机端三个界面：对话与点选问题、会话列表抽屉、代码文件预览">
-  </picture>
+  <img src="docs/harness-site/img/phones-dark.png" width="720" alt="手机端三个界面，深色主题：对话与点选问题、会话列表抽屉、代码文件预览">
   <br>
-  <sub>手机端：对话和点选问题、会话列表、预览 Agent 产出的文件。截图为示例数据。</sub>
+  <img src="docs/harness-site/img/phones-light.png" width="720" alt="手机端三个界面，浅色主题：对话与点选问题、会话列表抽屉、代码文件预览">
+  <br>
+  <sub>手机端：对话和点选问题、会话列表、预览 Agent 产出的文件，深色、浅色两套主题。截图为示例数据。</sub>
 </p>
 
 - 局域网和公网两条线路自动择优。公网访问需要自备穿透，并在设置里填公网地址（选填）。
@@ -101,10 +99,7 @@ xattr -cr /Applications/LK\ Harness.app
 Agent 干活的过程会实时更新在同一张卡片上：思考、工具调用折叠成一行，要拿主意时出问题卡，点一下就继续。
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/feishu-dark.png">
-    <img src="docs/harness-site/img/feishu-light.png" width="860" alt="飞书消息卡片示意图：左边是 Agent 干活时的卡片，思考和工具调用折叠成一行，展开后每步工具带 Running 或 Succeeded 状态，下面是待选择的问题卡；右边是点选之后，问题卡变成已作答，下面是回复正文和页脚">
-  </picture>
+  <img src="docs/harness-site/img/feishu-light.png" width="860" alt="飞书消息卡片示意图：左边是 Agent 干活时的卡片，思考和工具调用折叠成一行，展开后每步工具带 Running 或 Succeeded 状态，下面是待选择的问题卡；右边是点选之后，问题卡变成已作答，下面是回复正文和页脚">
   <br>
   <sub>飞书里的消息卡片。这是按真实卡片结构绘制的示意图，不是飞书界面截图。</sub>
 </p>
@@ -214,10 +209,7 @@ Agent 干活的过程会实时更新在同一张卡片上：思考、工具调�
 ## 工作原理
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/architecture-dark.png">
-    <img src="docs/harness-site/img/architecture-light.png" width="860" alt="架构图：应用内对话、手机端、飞书、微信四个入口进入同一条会话；你的电脑上 LK Harness 负责消息队列、会话调度等，交给 Agent 引擎，再作用于你的仓库和工具">
-  </picture>
+  <img src="docs/harness-site/img/architecture-light.png" width="860" alt="架构图：应用内对话、手机端、飞书、微信四个入口进入同一条会话；你的电脑上 LK Harness 负责消息队列、会话调度等，交给 Agent 引擎，再作用于你的仓库和工具">
 </p>
 
 - **Electron 应用**：配置界面、对话页、Agent 会话调度、定时任务、项目管理、手机端网关。
