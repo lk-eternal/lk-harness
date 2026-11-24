@@ -3,256 +3,510 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LK Harness — 随时随地 AI 协作</title>
-  <meta name="description" content="LK Harness：通过飞书 / 微信远程驱动 AI Agent，任意设备随时协作，流式进度与项目工作区。">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <meta name="theme-color" content="#07080d">
+  <title>LK Harness — 你离开电脑，Agent 不用停</title>
+  <meta name="description" content="LK Harness 是装在你电脑上的桌面应用：Agent 在你自己的目录和仓库里干活，你在应用、手机、飞书或微信里发一句话就能指挥它，过程实时回传，要拿主意时点一下就继续。开源，MIT。">
+  <link rel="canonical" href="https://lk-ai.top/harness/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="LK Harness — 你离开电脑，Agent 不用停">
+  <meta property="og:description" content="在应用、手机、飞书、微信里指挥你电脑上的 AI Agent：实时进度、点选决策、项目模板、定时任务。开源，MIT。">
+  <meta property="og:url" content="https://lk-ai.top/harness/">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%236c8dff'/%3E%3Cstop offset='1' stop-color='%239a73ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cpath d='M10 8v16h12' fill='none' stroke='white' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <style>
     :root {
-      --bg: #05060a; --text: #f4f6fb; --muted: #8b93a7; --line: rgba(255,255,255,.08);
-      --accent: #5b8cff; --accent2: #7c5cff; --glow: rgba(91, 140, 255, .35); --card: rgba(255,255,255,.04);
+      color-scheme: dark;
+      --bg: #07080d; --panel: #0f1320; --panel2: #141a2b; --line: rgba(255,255,255,.08); --line2: rgba(255,255,255,.15);
+      --text: #eef1f8; --soft: #c3cadb; --muted: #8d96ac;
+      --accent: #6c8dff; --accent2: #9a73ff; --ok: #3ddc97; --warn: #f6c453;
+      --glow: rgba(108,141,255,.32); --max: 1120px;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; }
     body {
-      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
-      background: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.65; overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
     }
-    .mesh {
+    a { color: inherit; }
+    code, pre, .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace; }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+    .glow {
       position: fixed; inset: 0; z-index: -1; pointer-events: none;
       background:
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(91,140,255,.25), transparent 60%),
-        radial-gradient(ellipse 60% 40% at 100% 20%, rgba(124,92,255,.18), transparent 55%),
-        linear-gradient(180deg, #05060a 0%, #0a0d14 40%, #05060a 100%);
+        radial-gradient(ellipse 70% 45% at 50% -10%, rgba(108,141,255,.22), transparent 62%),
+        radial-gradient(ellipse 45% 35% at 95% 12%, rgba(154,115,255,.14), transparent 60%);
     }
-    .grid-bg {
-      position: fixed; inset: 0; z-index: -1; opacity: .4; pointer-events: none;
-      background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
-      background-size: 64px 64px;
-      mask-image: radial-gradient(ellipse 70% 60% at 50% 30%, #000 20%, transparent 75%);
-    }
-    nav {
-      position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px);
-      background: rgba(5,6,10,.72); border-bottom: 1px solid var(--line);
-    }
-    .nav-inner {
-      max-width: 1120px; margin: 0 auto; padding: 16px 24px;
-      display: flex; align-items: center; justify-content: space-between; gap: 16px;
-    }
-    .logo { font-weight: 700; font-size: 1.05rem; letter-spacing: -.02em; }
-    .logo span { color: var(--accent); }
-    .nav-links { display: flex; gap: 28px; font-size: .875rem; color: var(--muted); }
-    .nav-links a { color: inherit; text-decoration: none; }
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+    /* 导航 */
+    nav { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(16px); background: rgba(7,8,13,.74); border-bottom: 1px solid var(--line); }
+    .nav-in { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 60px; }
+    .logo { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -.02em; text-decoration: none; }
+    .logo i { width: 24px; height: 24px; border-radius: 7px; background: linear-gradient(135deg, var(--accent), var(--accent2)); position: relative; }
+    .logo i::after { content: ""; position: absolute; left: 7px; top: 6px; width: 8px; height: 11px; border-left: 2.5px solid #fff; border-bottom: 2.5px solid #fff; border-radius: 1px 0 0 1px; }
+    .nav-links { display: flex; gap: 26px; font-size: .875rem; color: var(--muted); }
+    .nav-links a { text-decoration: none; }
     .nav-links a:hover { color: var(--text); }
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center;
-      padding: 10px 18px; border-radius: 999px; font-size: .875rem; font-weight: 600;
-      text-decoration: none; transition: transform .2s, box-shadow .2s; border: 1px solid transparent;
-    }
-    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 8px 32px var(--glow); }
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 20px; border-radius: 999px; font-size: .9rem; font-weight: 600; text-decoration: none; border: 1px solid transparent; transition: transform .2s, border-color .2s; }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; box-shadow: 0 8px 30px var(--glow); }
     .btn-primary:hover { transform: translateY(-1px); }
-    .btn-ghost { background: rgba(255,255,255,.06); color: var(--text); border-color: var(--line); }
-    .hero { max-width: 1120px; margin: 0 auto; padding: 96px 24px 72px; text-align: center; }
-    .badge {
-      display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
-      font-size: .75rem; color: var(--muted); border: 1px solid var(--line); background: var(--card); margin-bottom: 28px;
+    .btn-ghost { background: rgba(255,255,255,.05); border-color: var(--line2); }
+    .btn-ghost:hover { border-color: rgba(108,141,255,.55); }
+    .btn-sm { padding: 7px 16px; font-size: .84rem; }
+
+    /* 首屏 */
+    .hero { padding: 88px 0 40px; text-align: center; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; font-size: .78rem; color: var(--muted); border: 1px solid var(--line); background: rgba(255,255,255,.03); margin-bottom: 26px; }
+    .pill b { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+    h1 { font-size: clamp(2.6rem, 6.4vw, 4.6rem); font-weight: 800; letter-spacing: -.045em; line-height: 1.06; margin-bottom: 22px; }
+    h1 .grad { background: linear-gradient(120deg, #fff 0%, #b9c6ff 45%, var(--accent) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lead { max-width: 700px; margin: 0 auto 34px; font-size: 1.14rem; color: var(--soft); text-wrap: balance; }
+    .cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+    .cta-note { margin-top: 16px; font-size: .82rem; color: var(--muted); }
+
+    /* 产品示意（纯 CSS，非真实截图） */
+    .stage { position: relative; max-width: 1020px; margin: 64px auto 0; padding-bottom: 112px; text-align: left; }
+    .app { border: 1px solid var(--line2); border-radius: 14px; background: #0b0f1a; box-shadow: 0 30px 90px rgba(0,0,0,.55); overflow: hidden; }
+    .app-bar { display: flex; align-items: center; gap: 7px; padding: 11px 14px; background: rgba(255,255,255,.03); border-bottom: 1px solid var(--line); font-size: .74rem; color: var(--muted); }
+    .app-bar i { width: 10px; height: 10px; border-radius: 50%; }
+    .app-bar i:nth-child(1) { background: #ff5f57; } .app-bar i:nth-child(2) { background: #febc2e; } .app-bar i:nth-child(3) { background: #28c840; }
+    .app-bar span { margin-left: 8px; }
+    .app-body { display: grid; grid-template-columns: 188px minmax(0, 1fr) 290px; min-height: 372px; font-size: .8rem; }
+    .side { border-right: 1px solid var(--line); padding: 14px 10px; background: rgba(255,255,255,.015); }
+    .side h6 { font-size: .66rem; letter-spacing: .1em; color: var(--muted); font-weight: 600; padding: 0 8px 8px; }
+    .s-item { display: flex; align-items: center; gap: 8px; padding: 8px; border-radius: 8px; color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .s-item.on { background: rgba(108,141,255,.14); color: var(--text); }
+    .s-item u { width: 7px; height: 7px; border-radius: 50%; background: #3a4258; flex: none; text-decoration: none; }
+    .s-item.on u { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .s-item em { font-style: normal; font-size: .62rem; color: var(--muted); border: 1px solid var(--line2); border-radius: 4px; padding: 0 5px; margin-left: auto; }
+    .chat { padding: 18px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+    .msg-user { align-self: flex-end; max-width: 80%; background: #2b4bd6; color: #fff; padding: 8px 13px; border-radius: 14px 14px 4px 14px; }
+    .proc { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .76rem; padding: 7px 11px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.025); }
+    .proc i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.4s infinite; flex: none; }
+    @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+    .msg-ai { color: var(--soft); }
+    .msg-ai code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 5px; font-size: .92em; color: #c9d3ff; }
+    .ask { border: 1px solid var(--line2); border-radius: 12px; padding: 13px; background: rgba(255,255,255,.03); }
+    .ask p { color: var(--text); margin-bottom: 10px; font-weight: 500; }
+    .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+    .opt { padding: 6px 13px; border-radius: 8px; border: 1px solid var(--line2); color: var(--soft); background: rgba(255,255,255,.02); }
+    .opt.sel { border-color: var(--accent); background: rgba(108,141,255,.18); color: #fff; }
+    .pv { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; background: rgba(255,255,255,.012); }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); font-size: .72rem; color: var(--muted); }
+    .tab { padding: 9px 14px; border-right: 1px solid var(--line); white-space: nowrap; }
+    .tab.on { color: var(--text); background: rgba(255,255,255,.04); }
+    .code { padding: 12px 0; font-size: .72rem; line-height: 1.75; overflow: hidden; }
+    .ln { display: flex; white-space: pre; padding-right: 10px; }
+    .ln b { flex: none; width: 34px; text-align: right; padding-right: 12px; color: #4b5470; font-weight: 400; user-select: none; }
+    .ln.add { background: rgba(61,220,151,.1); }
+    .k { color: #c792ea; } .s { color: #a5e075; } .f { color: #7fb4ff; } .c { color: #5d6685; }
+
+    .phone { position: absolute; right: -14px; bottom: 0; width: 214px; border: 6px solid #1c2236; border-radius: 30px; background: #0b0f1a; box-shadow: 0 24px 70px rgba(0,0,0,.6); overflow: hidden; font-size: .72rem; }
+    .ph-top { display: flex; justify-content: space-between; align-items: center; padding: 11px 13px; border-bottom: 1px solid var(--line); }
+    .ph-top b { font-weight: 600; color: var(--text); }
+    .ph-top span { color: var(--ok); }
+    .ph-body { padding: 12px; display: flex; flex-direction: column; gap: 9px; }
+    .ph-body .ask { padding: 10px; }
+    .ph-body .ask p { margin-bottom: 8px; }
+    .ph-body .opt { padding: 5px 10px; }
+    .ph-input { margin: 4px 12px 12px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--line2); color: var(--muted); }
+
+    /* 通用分节 */
+    section { padding: 88px 0; scroll-margin-top: 56px; }
+    .label { font-size: .74rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
+    h2 { font-size: clamp(1.8rem, 3.2vw, 2.4rem); font-weight: 750; letter-spacing: -.03em; line-height: 1.2; margin-bottom: 14px; }
+    .desc { color: var(--muted); max-width: 640px; font-size: 1.04rem; margin-bottom: 44px; text-wrap: pretty; }
+
+    /* 工作方式 */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+    .step { position: relative; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); }
+    .step::before { counter-increment: s; content: counter(s); display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 50%; margin-bottom: 18px; font-size: .85rem; font-weight: 700; color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+    .step h3 { font-size: 1.05rem; margin-bottom: 8px; }
+    .step p { font-size: .92rem; color: var(--muted); }
+
+    /* 能力 */
+    .bento { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; }
+    .tile { grid-column: span 2; padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: linear-gradient(150deg, var(--panel2), var(--panel)); transition: border-color .25s, transform .25s; }
+    .tile.w { grid-column: span 3; }
+    .tile:hover { border-color: rgba(108,141,255,.4); transform: translateY(-3px); }
+    .ico { width: 40px; height: 40px; border-radius: 11px; margin-bottom: 16px; display: flex; align-items: center; justify-content: center; color: #b9c6ff; background: rgba(108,141,255,.13); border: 1px solid rgba(108,141,255,.28); }
+    .ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+    .tile h3 { font-size: 1.06rem; margin-bottom: 8px; }
+    .tile p { font-size: .9rem; color: var(--muted); }
+    .tile p + p { margin-top: 8px; }
+    .tile code { font-size: .84em; padding: 1px 6px; border-radius: 6px; background: rgba(255,255,255,.08); color: #c9d3ff; }
+    .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .tags span { font-size: .74rem; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--line2); color: var(--soft); }
+
+    /* 原理 */
+    .flow { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--line); gap: 1px; }
+    .node { padding: 28px 24px; background: var(--panel); position: relative; }
+    .node small { display: block; font-size: .68rem; letter-spacing: .12em; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+    .node h3 { font-size: 1rem; margin-bottom: 8px; }
+    .node p { font-size: .84rem; color: var(--muted); }
+    .node.host { background: linear-gradient(160deg, rgba(108,141,255,.16), rgba(154,115,255,.07)), var(--panel); }
+    .principle { margin-top: 24px; padding: 20px 24px; border-radius: 14px; border: 1px solid rgba(108,141,255,.28); background: rgba(108,141,255,.07); color: var(--soft); }
+    .principle b { color: #fff; }
+
+    /* 边界 */
+    .limits { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; list-style: none; }
+    .limits li { padding: 16px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--muted); font-size: .92rem; }
+    .limits li b { color: var(--text); font-weight: 600; }
+
+    /* 下载 */
+    .dl { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .dl-card { display: flex; flex-direction: column; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); text-decoration: none; transition: border-color .25s, transform .25s; }
+    .dl-card:hover { border-color: rgba(108,141,255,.5); transform: translateY(-3px); }
+    .dl-card h3 { font-size: 1.04rem; margin-bottom: 4px; }
+    .dl-card .fmt { font-size: .82rem; color: #b9c6ff; margin-bottom: 12px; }
+    .dl-card p { font-size: .84rem; color: var(--muted); }
+    .twin { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+    .box { padding: 22px 24px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); min-width: 0; }
+    .box h3 { font-size: .95rem; margin-bottom: 10px; }
+    .box p { font-size: .86rem; color: var(--muted); margin-bottom: 10px; }
+    pre { padding: 14px 16px; border-radius: 10px; background: #070a12; border: 1px solid var(--line); font-size: .8rem; line-height: 1.7; color: #cdd6f4; overflow-x: auto; }
+
+    /* 来历 */
+    .repos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .repo { display: flex; flex-direction: column; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); text-decoration: none; transition: border-color .25s, transform .25s; }
+    .repo:hover { border-color: rgba(108,141,255,.5); transform: translateY(-3px); }
+    .repo.now { border-color: rgba(108,141,255,.45); background: linear-gradient(150deg, rgba(108,141,255,.15), var(--panel)); }
+    .repo small { font-size: .68rem; letter-spacing: .12em; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+    .repo h3 { font-size: 1rem; margin-bottom: 8px; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+    .repo p { font-size: .86rem; color: var(--muted); }
+    .more { margin-top: 24px; text-align: center; }
+
+    footer { border-top: 1px solid var(--line); padding: 32px 0; text-align: center; font-size: .82rem; color: var(--muted); }
+    footer a { color: var(--soft); text-decoration: none; margin: 0 6px; }
+    footer a:hover { color: var(--text); text-decoration: underline; }
+
+    @media (max-width: 980px) {
+      .app-body { grid-template-columns: 168px minmax(0, 1fr); }
+      .pv { display: none; }
+      .flow { grid-template-columns: 1fr 1fr; }
+      .dl { grid-template-columns: 1fr 1fr; }
     }
-    .badge-dot { width: 6px; height: 6px; border-radius: 50%; background: #34d399; box-shadow: 0 0 12px #34d399; animation: pulse 2s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
-    h1 { font-size: clamp(2.5rem, 6vw, 4.25rem); font-weight: 700; letter-spacing: -.04em; line-height: 1.08; margin-bottom: 24px; }
-    h1 .grad { background: linear-gradient(135deg, #fff, #a5b4fc 45%, #5b8cff); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .hero-lead { max-width: 640px; margin: 0 auto 40px; font-size: 1.125rem; color: var(--muted); }
-    .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin-bottom: 64px; }
-    .demo-window {
-      max-width: 920px; margin: 0 auto; border-radius: 16px; border: 1px solid var(--line);
-      background: rgba(12,15,24,.85); box-shadow: 0 24px 80px rgba(0,0,0,.5); overflow: hidden; text-align: left;
+    @media (max-width: 860px) {
+      .bento { grid-template-columns: 1fr 1fr; }
+      .tile, .tile.w { grid-column: span 1; }
+      .tile.w { grid-column: span 2; }
+      .steps, .repos, .twin, .limits { grid-template-columns: 1fr; }
     }
-    .demo-bar {
-      display: flex; align-items: center; gap: 8px; padding: 12px 16px;
-      border-bottom: 1px solid var(--line); background: rgba(0,0,0,.25);
+    @media (max-width: 720px) {
+      .nav-links { display: none; }
+      .hero { padding-top: 56px; }
+      section { padding: 60px 0; }
+      .app-body { grid-template-columns: 1fr; min-height: 0; }
+      .side { display: none; }
+      .stage { padding-bottom: 0; }
+      .phone { position: relative; right: auto; width: 230px; margin: 28px auto 0; }
     }
-    .dot { width: 10px; height: 10px; border-radius: 50%; }
-    .dot-r { background: #ff5f57; } .dot-y { background: #febc2e; } .dot-g { background: #28c840; }
-    .demo-body { padding: 24px; font-size: .875rem; }
-    .demo-row {
-      display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,.04);
-      opacity: 0; animation: fadeUp .5s ease forwards;
+    @media (max-width: 560px) {
+      .bento, .flow, .dl { grid-template-columns: 1fr; }
+      .tile.w { grid-column: span 1; }
     }
-    .demo-row:last-child { border-bottom: none; }
-    .demo-row:nth-child(1) { animation-delay: .15s; }
-    .demo-row:nth-child(2) { animation-delay: .35s; }
-    .demo-row:nth-child(3) { animation-delay: .55s; }
-    .demo-row:nth-child(4) { animation-delay: .75s; }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-    .demo-label { min-width: 56px; font-size: .75rem; font-weight: 600; color: var(--accent); }
-    .demo-text { color: var(--muted); flex: 1; }
-    .demo-text strong { color: var(--text); font-weight: 500; }
-    .ok { color: #86efac; }
-    section { max-width: 1120px; margin: 0 auto; padding: 80px 24px; }
-    .section-label { font-size: .75rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 12px; }
-    h2 { font-size: clamp(1.75rem, 3vw, 2.25rem); font-weight: 700; letter-spacing: -.03em; margin-bottom: 16px; }
-    .section-desc { color: var(--muted); max-width: 560px; margin-bottom: 48px; font-size: 1.05rem; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
-    .card {
-      padding: 28px; border-radius: 16px; border: 1px solid var(--line);
-      background: linear-gradient(145deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
-      transition: border-color .25s, transform .25s;
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .proc i { animation: none; }
+      .tile, .dl-card, .repo, .btn { transition: none; }
     }
-    .card:hover { border-color: rgba(91,140,255,.35); transform: translateY(-4px); }
-    .card-icon {
-      width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
-      font-size: 1.25rem; margin-bottom: 16px;
-      background: linear-gradient(135deg, rgba(91,140,255,.2), rgba(124,92,255,.15)); border: 1px solid rgba(91,140,255,.25);
-    }
-    .card h3 { font-size: 1.05rem; margin-bottom: 8px; }
-    .card p { font-size: .9rem; color: var(--muted); }
-    .stats {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 24px;
-      padding: 48px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 48px 0;
-    }
-    .stat-num { font-size: 2rem; font-weight: 700; }
-    .stat-label { font-size: .8rem; color: var(--muted); margin-top: 4px; }
-    .flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); }
-    @media (max-width: 768px) { .flow { grid-template-columns: 1fr; } .nav-links { display: none; } }
-    .flow-step { padding: 32px 28px; background: var(--card); }
-    .flow-step strong { display: block; font-size: .7rem; letter-spacing: .1em; color: var(--accent); margin-bottom: 8px; }
-    .flow-step h3 { font-size: 1rem; margin-bottom: 8px; }
-    .flow-step p { font-size: .85rem; color: var(--muted); }
-    .cta-block { text-align: center; padding: 80px 24px 100px; border-top: 1px solid var(--line); }
-    .cta-block p { color: var(--muted); margin-bottom: 28px; }
-    footer { border-top: 1px solid var(--line); padding: 32px 24px; text-align: center; font-size: .8rem; color: var(--muted); }
-    footer a { color: var(--accent); text-decoration: none; }
   </style>
 </head>
 <body>
-  <div class="mesh"></div>
-  <div class="grid-bg"></div>
+  <div class="glow"></div>
 
   <nav>
-    <div class="nav-inner">
-      <div class="logo">LK <span>Harness</span></div>
+    <div class="wrap nav-in">
+      <a class="logo" href="#top"><i></i>LK Harness</a>
       <div class="nav-links">
+        <a href="#how">工作方式</a>
         <a href="#features">能力</a>
-        <a href="#flow">组成</a>
-        <a href="#start">开始</a>
+        <a href="#principle">原理</a>
+        <a href="#limits">边界</a>
+        <a href="#download">下载</a>
       </div>
-      <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">下载</a>
+      <a class="btn btn-primary btn-sm" href="#download">下载</a>
     </div>
   </nav>
 
-  <header class="hero">
-    <div class="badge"><span class="badge-dot"></span>飞书 · 微信 · 桌面 Agent</div>
-    <h1>AI 在电脑上干活<br><span class="grad">你在任何地方都能接手</span></h1>
-    <p class="hero-lead">LK Harness 把 Agent 会话接到飞书与微信：实时进度、一键决策、项目协作与定时任务，应用在后台持续运行。</p>
-    <div class="hero-cta">
-      <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">获取安装包</a>
-      <a class="btn btn-ghost" href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub 源码</a>
-    </div>
-
-    <div class="demo-window">
-      <div class="demo-bar">
-        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-        <span style="margin-left:8px;font-size:.75rem;color:var(--muted)">飞书 · 任务进度</span>
+  <header class="hero" id="top">
+    <div class="wrap">
+      <div class="pill"><b></b>开源 · MIT · Windows / macOS / Linux / Android</div>
+      <h1>你离开电脑，<br><span class="grad">Agent 不用停</span></h1>
+      <p class="lead">LK Harness 是装在你电脑上的桌面应用。Agent 在你自己的目录和仓库里干活；你在应用、手机、飞书或微信里发一句话就能指挥它，过程实时回传，要拿主意时点一下就继续。</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases/latest" rel="noopener">下载最新版<span data-ver></span></a>
+        <a class="btn btn-ghost" href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub 源码</a>
       </div>
-      <div class="demo-body">
-        <div class="demo-row">
-          <span class="demo-label">进度</span>
-          <span class="demo-text">正在分析你的需求，并准备回复…</span>
+      <p class="cta-note">需要接入一个 Cursor 账号，或任意大模型 API</p>
+
+      <div class="stage" role="img" aria-label="界面示意：桌面端对话页里 Agent 在改代码并抛出一个点选问题，右侧是文件预览；手机上同一个问题已经点选。">
+        <div class="app">
+          <div class="app-bar"><i></i><i></i><i></i><span>LK Harness · 示意</span></div>
+          <div class="app-body">
+            <div class="side">
+              <h6>会话</h6>
+              <div class="s-item on"><u></u>登录接口校验</div>
+              <div class="s-item"><u></u>整理本周周报</div>
+              <div class="s-item"><u></u>每日巡检<em>定时</em></div>
+              <div class="s-item"><u></u>活动策划<em>项目</em></div>
+            </div>
+            <div class="chat">
+              <div class="msg-user">帮我把登录接口的参数校验补上</div>
+              <div class="proc"><i></i>思考 · 读取 3 个文件 · 编辑 2 个文件</div>
+              <div class="msg-ai">校验已经加进 <code>login.ts</code>，有一处要你定：</div>
+              <div class="ask">
+                <p>校验失败时返回哪个状态码？</p>
+                <div class="opts"><span class="opt">1. 400</span><span class="opt sel">2. 422</span><span class="opt">3. 先看现有约定</span></div>
+              </div>
+            </div>
+            <div class="pv">
+              <div class="tabs"><span class="tab on">login.ts</span><span class="tab">README.md</span></div>
+              <div class="code mono">
+                <div class="ln"><b>12</b><span><span class="k">export function</span> <span class="f">validateLogin</span>(body) {</span></div>
+                <div class="ln add"><b>13</b><span>  <span class="k">if</span> (!body.account)</span></div>
+                <div class="ln add"><b>14</b><span>    <span class="k">throw</span> <span class="f">invalid</span>(<span class="s">"账号不能为空"</span>)</span></div>
+                <div class="ln add"><b>15</b><span>  <span class="k">if</span> (body.password.length &lt; 8)</span></div>
+                <div class="ln add"><b>16</b><span>    <span class="k">throw</span> <span class="f">invalid</span>(<span class="s">"密码至少 8 位"</span>)</span></div>
+                <div class="ln"><b>17</b><span>}</span></div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="demo-row">
-          <span class="demo-label">操作</span>
-          <span class="demo-text"><strong>发送消息</strong> · 已完成</span>
-        </div>
-        <div class="demo-row">
-          <span class="demo-label">操作</span>
-          <span class="demo-text"><strong>检查项目</strong> · 编译通过</span>
-        </div>
-        <div class="demo-row">
-          <span class="demo-label">结果</span>
-          <span class="demo-text"><span class="ok">任务已完成，等待你的下一步指示</span></span>
+        <div class="phone">
+          <div class="ph-top"><b>登录接口校验</b><span>● 运行中</span></div>
+          <div class="ph-body">
+            <div class="msg-ai">校验已经加进 <code>login.ts</code>，有一处要你定：</div>
+            <div class="ask">
+              <p>校验失败时返回哪个状态码？</p>
+              <div class="opts"><span class="opt">1. 400</span><span class="opt sel">2. 422</span><span class="opt">3. 先看现有约定</span></div>
+            </div>
+          </div>
+          <div class="ph-input">说点什么…</div>
         </div>
       </div>
     </div>
   </header>
 
+  <section id="how">
+    <div class="wrap">
+      <div class="label">How it works</div>
+      <h2>三步：装好、开口、点一下</h2>
+      <p class="desc">它不是新的模型，也不是把 IDE 搬进聊天窗口。它让你已有的 Agent 在你自己的电脑上持续运转，而你可以随时接手。</p>
+      <div class="steps">
+        <div class="step">
+          <h3>装在你的电脑上</h3>
+          <p>Agent 在你自己的目录和仓库里运行，应用常驻后台。接入 Cursor 账号，或 OpenAI、Anthropic、DeepSeek 等大模型 API 就能用。</p>
+        </div>
+        <div class="step">
+          <h3>在任何入口开口</h3>
+          <p>应用内对话页、手机、飞书、微信，指向同一条会话。文字、图片、文件都能双向收发。</p>
+        </div>
+        <div class="step">
+          <h3>看着它干，该拍板时点一下</h3>
+          <p>思考和工具调用实时回传。AI 遇到分叉会抛出选项，点一下它就继续；想插话，直接打字。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="features">
-    <div class="section-label">Capabilities</div>
-    <h2>为真实协作场景设计</h2>
-    <p class="section-desc">面向日常工作的 Agent 调度与消息桥接——不必守在电脑前，也不必把 IDE 搬进聊天窗口。</p>
-
-    <div class="stats">
-      <div><div class="stat-num">IM</div><div class="stat-label">飞书 + 微信</div></div>
-      <div><div class="stat-num">24/7</div><div class="stat-label">后台持续运行</div></div>
-      <div><div class="stat-num">多会话</div><div class="stat-label">私聊 / 群聊 / 项目</div></div>
-      <div><div class="stat-num">可扩展</div><div class="stat-label">规则与技能管理</div></div>
-    </div>
-
-    <div class="cards">
-      <article class="card">
-        <div class="card-icon">⚡</div>
-        <h3>实时进度</h3>
-        <p>长任务也能看清 AI 在做什么：思考与操作步骤在一张卡片里持续更新。</p>
-      </article>
-      <article class="card">
-        <div class="card-icon">📱</div>
-        <h3>随时决策</h3>
-        <p>需要选择时收到选项按钮；也可直接打字补充说明。图片与文件双向收发。</p>
-      </article>
-      <article class="card">
-        <div class="card-icon">🗂️</div>
-        <h3>项目工作区</h3>
-        <p>独立目录与分支、节点化研发流程，可选专属群聊，任务互不干扰。</p>
-      </article>
-      <article class="card">
-        <div class="card-icon">⏰</div>
-        <h3>定时任务</h3>
-        <p>按 Cron 自动执行巡检、日报等；临时会话用完自动收尾。</p>
-      </article>
-      <article class="card">
-        <div class="card-icon">🔌</div>
-        <h3>飞书工具箱</h3>
-        <p>可选安装 lark-cli、meegle，让 AI 直接读写文档、日程与项目数据。</p>
-      </article>
-      <article class="card">
-        <div class="card-icon">🔒</div>
-        <h3>凭据安全</h3>
-        <p>密钥与 Token 由系统密钥链加密保存，支持多实例数据隔离。</p>
-      </article>
-    </div>
-  </section>
-
-  <section id="flow">
-    <div class="section-label">How it works</div>
-    <h2>三个部分，各司其职</h2>
-    <p class="section-desc">桌面端负责调度与配置，消息服务负责连接 IM，工作目录开箱即用。</p>
-    <div class="flow">
-      <div class="flow-step">
-        <strong>01</strong>
-        <h3>桌面应用</h3>
-        <p>可视化配置、Agent 调度、项目管理与运行日志。</p>
-      </div>
-      <div class="flow-step">
-        <strong>02</strong>
-        <h3>消息服务</h3>
-        <p>连接飞书与微信，可靠收发消息，断线后自动恢复会话。</p>
-      </div>
-      <div class="flow-step">
-        <strong>03</strong>
-        <h3>工作目录</h3>
-        <p>选定文件夹后自动完成环境配置，AI 即可在项目中执行任务。</p>
+    <div class="wrap">
+      <div class="label">Capabilities</div>
+      <h2>为「人不在电脑前」设计</h2>
+      <p class="desc">能看、能插话、能叫停、能定时，让一件事不必守着也能跑完。</p>
+      <div class="bento">
+        <article class="tile w">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="14" height="10" rx="2"/><path d="M6 18h6"/><rect x="18" y="8" width="4" height="9" rx="1.2"/></svg></div>
+          <h3>四个入口，同一条会话</h3>
+          <p>应用内对话不用接任何 IM。手机用 Android APK 或浏览器扫码配对，局域网和公网线路自动择优（公网需自备穿透）。飞书走长连接，不需要公网回调；微信扫码接入，仅限自己使用。</p>
+          <div class="tags"><span>应用内对话</span><span>手机端</span><span>飞书</span><span>微信</span></div>
+        </article>
+        <article class="tile w">
+          <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg></div>
+          <h3>过程看得见，决策点一下</h3>
+          <p>思考与工具调用按时间线实时展示。AI 抛出的问题是点选卡片，支持多选，你选完它再带着答案继续。</p>
+          <p>AI 回复期间你再发的消息先进暂存区，可以编辑、撤回，或「立即发送」只打断这一轮。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></div>
+          <h3>内置预览面板</h3>
+          <p>文件和网页直接在应用里打开：代码（高亮、行号）、Markdown、HTML（沙箱，脚本默认关）、表格、图片、PDF、音视频、Word、Excel、压缩包清单。聊天里的路径点一下就开，<code>file.ts:42</code> 直接定位到行。手机端同样能看。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></div>
+          <h3>项目与模板</h3>
+          <p>一个需求一个项目：选模板、填信息、选目录。内置通用任务、调研分析、文档写作、周报月报、活动策划、开发、测试，也可自定义。模板里的快捷操作，点一下让 AI 做这一步。</p>
+          <p>开发类可以克隆一份仓库副本，AI 在副本里改，不碰你本机那份。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+          <h3>定时任务与 AI 自排程</h3>
+          <p>Cron 任务由全新 Agent 独立运行，结果可以通知到 IM 或会话，设置页留有运行记录。</p>
+          <p>AI 也能给自己排程，比如「半小时后再看一眼构建结果」，次数、间隔和时限都有上限。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></div>
+          <h3>换模型，不换工作流</h3>
+          <p>Cursor SDK，或 OpenAI、Anthropic、DeepSeek、Google Gemini、Groq、Mistral、xAI、OpenRouter，以及自定义的兼容网关。会话里用 <code>/model</code> 随时切换；长会话里的关键信息由会话记忆带进新一轮。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg></div>
+          <h3>访客与权限</h3>
+          <p>其他人默认只是受限的「访客」：能用网页搜索、抓取、待办和提问，碰不到你的 MCP、Skill 和管理能力，需要时再点名放行。飞书私聊和群聊分别开放，群按群开通。</p>
+          <p>凭据在系统支持时用系统密钥链加密保存。</p>
+        </article>
+        <article class="tile">
+          <div class="ico"><svg viewBox="0 0 24 24"><path d="M5 8l5 4-5 4"/><path d="M13 17h6"/></svg></div>
+          <h3>接你的工具，让 AI 管应用</h3>
+          <p>挂任意 MCP，Skill 名单会告诉 AI；一键安装 lark-cli、meegle，让它读写飞书文档、日程和飞书项目。</p>
+          <p>另有 22 个内置工具，分五组、按会话和身份最小授权：建项目、改模板、排定时任务，直接对 AI 说一句就行。</p>
+        </article>
       </div>
     </div>
   </section>
 
-  <section id="start" class="cta-block">
-    <h2>开始使用 LK Harness</h2>
-    <p>支持 Windows · macOS · Linux</p>
-    <a class="btn btn-primary" href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">前往 Releases 下载</a>
+  <section id="principle">
+    <div class="wrap">
+      <div class="label">How it's built</div>
+      <h2>宿主确定，AI 概率</h2>
+      <p class="desc">应用跑在你自己的电脑上，负责路由、队列、会话、提示词装配和内置工具；AI 只负责干活的那一轮。</p>
+      <div class="flow">
+        <div class="node">
+          <small>01 · 入口</small>
+          <h3>应用 · 手机 · 飞书 · 微信</h3>
+          <p>微信不支持按钮时，点选问题自动降级为文字选项。</p>
+        </div>
+        <div class="node host">
+          <small>02 · 宿主</small>
+          <h3>LK Harness（本机）</h3>
+          <p>消息队列、会话调度、提示词装配、内置 MCP、流式卡片、定时任务、项目、手机端网关。</p>
+        </div>
+        <div class="node">
+          <small>03 · 引擎</small>
+          <h3>Cursor SDK / 大模型 API</h3>
+          <p>同一套会话、规则和项目，引擎可换。</p>
+        </div>
+        <div class="node">
+          <small>04 · 干活的地方</small>
+          <h3>你的仓库与工具</h3>
+          <p>你的 git 仓库、lark-cli、meegle，以及你挂上的 MCP。</p>
+        </div>
+      </div>
+      <p class="principle"><b>消息至少投递一次。</b>整轮跑完才算「收到」，Agent 异常退出或应用重启后，没确认的消息会重投。打断、续聊和重试都由代码保证，不靠提示词去求 AI 记得。</p>
+    </div>
+  </section>
+
+  <section id="limits">
+    <div class="wrap">
+      <div class="label">Limits</div>
+      <h2>先说清边界</h2>
+      <p class="desc">这些在用之前就该知道。</p>
+      <ul class="limits">
+        <li><b>电脑要开机，应用要在运行。</b>Agent 跑在你的电脑上，不是云端服务。</li>
+        <li><b>能力取决于你接的引擎。</b>它不会让模型变聪明，只是让你随时接得上手。</li>
+        <li><b>iOS 暂无安装包。</b>用 Safari 打开配对链接，点「分享 → 添加到主屏幕」即可。</li>
+        <li><b>微信通道只能自己用。</b>没有群聊，也不会回复别人的消息。</li>
+        <li><b>macOS 版没有 Apple 公证。</b>首次打开要手动放行，下面有步骤。</li>
+        <li><b>预览不支持 pptx。</b>旧版 doc、xls、ppt 也不行，会提示改用默认程序打开。</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="download">
+    <div class="wrap">
+      <div class="label">Download</div>
+      <h2>下载</h2>
+      <p class="desc">安装包都在 GitHub Releases。装好后按三步引导走：接入 AI、选消息通道、装点工具（可跳过）。应用常驻托盘，之后可以在应用内更新。</p>
+      <div class="dl">
+        <a class="dl-card" href="https://github.com/lk-eternal/lk-harness/releases/latest" rel="noopener">
+          <h3>Windows</h3><div class="fmt">.exe 安装包 · x64</div>
+          <p>新版在后台下载，退出时静默安装。</p>
+        </a>
+        <a class="dl-card" href="https://github.com/lk-eternal/lk-harness/releases/latest" rel="noopener">
+          <h3>macOS</h3><div class="fmt">.dmg · Intel / Apple 芯片</div>
+          <p>dmg 版支持应用内更新；也可以用 Homebrew 安装，见下方。</p>
+        </a>
+        <a class="dl-card" href="https://github.com/lk-eternal/lk-harness/releases/latest" rel="noopener">
+          <h3>Linux</h3><div class="fmt">.AppImage / .deb · x64</div>
+          <p>任选一种格式。</p>
+        </a>
+        <a class="dl-card" href="https://github.com/lk-eternal/lk-harness/releases/latest" rel="noopener">
+          <h3>Android 手机端</h3><div class="fmt">.apk</div>
+          <p>也内置在桌面安装包里，手机可以直接从电脑下载。</p>
+        </a>
+      </div>
+      <div class="twin">
+        <div class="box">
+          <h3>Homebrew（macOS）</h3>
+          <pre>brew tap lk-eternal/tap
+brew trust --cask lk-eternal/tap/lk-harness
+brew install --cask lk-harness</pre>
+        </div>
+        <div class="box">
+          <h3>macOS 首次打开被拦截时</h3>
+          <p>应用未经 Apple 公证。先执行下面这行；仍打不开，就到「系统设置 → 隐私与安全性」点「仍要打开」。</p>
+          <pre>xattr -cr /Applications/LK\ Harness.app</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="origin">
+    <div class="wrap">
+      <div class="label">Origin</div>
+      <h2>从一座飞书桥长成现在这样</h2>
+      <p class="desc">每一步都是被真实的不方便推出来的。</p>
+      <div class="repos">
+        <a class="repo" href="https://github.com/lk-eternal/feishu-cursor-bridge" rel="noopener">
+          <small>01</small>
+          <h3>feishu-cursor-bridge</h3>
+          <p>飞书里一句话，电脑里的 Cursor 开干。本机常驻进程加飞书长连接，不需要公网。</p>
+        </a>
+        <a class="repo" href="https://github.com/lk-eternal/cursor-claw" rel="noopener">
+          <small>02</small>
+          <h3>cursor-claw</h3>
+          <p>换成 Cursor SDK，加入微信、点选提问、流式进度卡和定时任务。</p>
+        </a>
+        <a class="repo now" href="https://github.com/lk-eternal/lk-harness" rel="noopener">
+          <small>03 · 现在</small>
+          <h3>lk-harness</h3>
+          <p>把「收消息」的循环从提示词搬进宿主代码，之后有了多供应商、应用内对话、手机端、项目模板和 AI 自排程。</p>
+        </a>
+      </div>
+      <p class="more"><a class="btn btn-ghost" href="share/">看分享页：设计与演进 →</a></p>
+    </div>
   </section>
 
   <footer>
-    <p>LK Harness · MIT License · <a href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub</a></p>
+    <div class="wrap">
+      <p>LK Harness · MIT License
+        <a href="https://github.com/lk-eternal/lk-harness" rel="noopener">GitHub</a>·<a href="https://github.com/lk-eternal/lk-harness/releases" rel="noopener">更新记录</a>·<a href="share/">分享页</a></p>
+    </div>
   </footer>
+
+  <script>
+    // 版本号不写死：能连上 GitHub 就补上最新版本，连不上保持「下载最新版」
+    (function () {
+      var nodes = document.querySelectorAll("[data-ver]")
+      var key = "lk-harness-latest"
+      function show(v) { nodes.forEach(function (n) { n.textContent = " · v" + v }) }
+      var cached = null
+      try { cached = sessionStorage.getItem(key) } catch (e) { cached = null }
+      if (cached) { show(cached); return }
+      var ctl = new AbortController()
+      var timer = setTimeout(function () { ctl.abort() }, 4000)
+      fetch("https://api.github.com/repos/lk-eternal/lk-harness/releases/latest", { signal: ctl.signal })
+        .then(function (r) { return r.ok ? r.json() : null })
+        .then(function (j) {
+          var v = j && typeof j.tag_name === "string" ? j.tag_name.replace(/^v/, "") : ""
+          if (!/^\d+\.\d+\.\d+/.test(v)) return
+          try { sessionStorage.setItem(key, v) } catch (e) { /* 隐私模式不能存，不影响显示 */ }
+          show(v)
+        })
+        .catch(function () { /* 离线或被墙：保持默认文字 */ })
+        .finally(function () { clearTimeout(timer) })
+    })()
+  </script>
 </body>
 </html>
