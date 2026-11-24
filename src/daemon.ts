@@ -4329,7 +4329,7 @@ function registerMediaOutboundTools(s: McpServer): void {
 function registerQuestionOutboundTool(s: McpServer): void {
   s.tool(
     "send_question",
-    "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。",
+    "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。答案不会在本次调用里返回：要等本轮结束、且本轮的题都选完，才会合成一条带题干的消息交给你。所以本轮要问的问题一次发完（可以多张卡）再结束本轮；后一个问题依赖前一个答案时，拿到答案后下一轮再问。需要用户做事、而你要继续等结果时，用文字说明，不要发选项卡。",
     {
       text: z.string().describe("问题内容（支持 markdown）"),
       options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）。多选时选项文本里不要含「、」，多选答案用它连接"),
