@@ -32,6 +32,7 @@ import { NO_GROUP_CONTROL, type SessionGroupControl } from "../renderer/componen
 import { useBranchMenu } from "../renderer/components/chat/useBranchMenu"
 import { modelSlug } from "../renderer/model-utils"
 import { formatTimeAgo } from "../renderer/time-ago"
+import logoUrl from "../renderer/assets/logo.png"
 import {
   listMobileBranches,
   listMobileProviderModels,
@@ -286,9 +287,7 @@ export function SessionDrawer({
         <div className="border-b border-line-subtle px-4 pb-3 pt-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary text-xs font-bold text-on-primary shadow-sm">
-                LK
-              </div>
+              <img src={logoUrl} alt="LK Harness" className="h-8 w-8 shrink-0" />
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-sm font-semibold text-fg">
