@@ -8,17 +8,18 @@ import { usePreview } from "../preview/PreviewContext"
  * （文件带行号就定位到那一行；文件夹打开成文件夹标签页）。
  * 确认不了（没有预览面板、路径不存在、不在这个会话的范围内）就原样显示，不能让每个像路径的文字都像个按钮。
  * stopClick：链接放在一个整块可点的容器里（折叠的工具行是个按钮）时，点路径只开预览，不触发容器自己的点击。
+ * fresh：不采信缓存里「查不到」的结果。Agent 正在写的文件，工具行出现时文件还没有，工具结束时才有，缓存的旧结果会让它一直不是链接。
  */
-export function PathLink({ raw, line, stopClick, children }: { raw: string; line?: number; stopClick?: boolean; children: ReactNode }) {
+export function PathLink({ raw, line, stopClick, fresh, children }: { raw: string; line?: number; stopClick?: boolean; fresh?: boolean; children: ReactNode }) {
   const { available, resolvePath, openFile, openDir } = usePreview()
   const [resolved, setResolved] = useState<PreviewPathCheck | null>(null)
   useEffect(() => {
     setResolved(null)
     if (!available) return
     let cancelled = false
-    void resolvePath(raw).then((p) => { if (!cancelled) setResolved(p) })
+    void resolvePath(raw, { fresh }).then((p) => { if (!cancelled) setResolved(p) })
     return () => { cancelled = true }
-  }, [available, resolvePath, raw])
+  }, [available, resolvePath, raw, fresh])
   if (!resolved) return <>{children}</>
   const open = () => {
     // 正在拖选路径文字（想复制）时不要跳走
@@ -67,14 +68,14 @@ export function splitPathText(text: string): PathTextPart[] {
   return parts
 }
 
-/** 一行文字，里面的路径确认能预览后变成可点的 */
+/** 工具行的一行摘要，里面的路径确认能预览后变成可点的；工具还在跑时文件可能刚出现，所以每次都重新确认 */
 export function PathText({ text, stopClick }: { text: string; stopClick?: boolean }) {
   return (
     <>
       {splitPathText(text).map((part, i) => (
         part.path === undefined
           ? <Fragment key={i}>{part.text}</Fragment>
-          : <PathLink key={i} raw={part.path} line={part.line} stopClick={stopClick}>{part.text}</PathLink>
+          : <PathLink key={i} raw={part.path} line={part.line} stopClick={stopClick} fresh>{part.text}</PathLink>
       ))}
     </>
   )

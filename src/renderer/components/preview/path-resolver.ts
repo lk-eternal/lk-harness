@@ -14,6 +14,13 @@ export interface PathResolverOptions {
   now?: () => number
 }
 
+export interface ResolveOptions {
+  /** 忽略缓存里「查不到」的结果，重新问一次（Agent 正在写的文件，工具结束时才刚出现）；还在查的、已确认能预览的照常复用 */
+  fresh?: boolean
+}
+
+export type ResolvePath = (raw: string, options?: ResolveOptions) => Promise<PreviewPathCheck | null>
+
 interface Entry {
   promise: Promise<PreviewPathCheck | null>
   settle: (checked: PreviewPathCheck | null) => void
@@ -21,7 +28,7 @@ interface Entry {
   expires: number
 }
 
-export function createPathResolver(check: CheckPaths, options: PathResolverOptions = {}): (raw: string) => Promise<PreviewPathCheck | null> {
+export function createPathResolver(check: CheckPaths, options: PathResolverOptions = {}): ResolvePath {
   const missTtl = options.missTtlMs ?? 5000
   const now = options.now ?? Date.now
   const cache = new Map<string, Entry>()
@@ -52,9 +59,10 @@ export function createPathResolver(check: CheckPaths, options: PathResolverOptio
     }
   }
 
-  return (raw) => {
+  return (raw, { fresh = false } = {}) => {
     const hit = cache.get(raw)
-    if (hit && hit.expires > now()) return hit.promise
+    // 「查不到」是唯一带过期时间的结果：fresh 只跳过它，其余（还在查的、确认能预览的）都是 Infinity
+    if (hit && (fresh ? hit.expires === Infinity : hit.expires > now())) return hit.promise
     let settle!: (checked: PreviewPathCheck | null) => void
     const promise = new Promise<PreviewPathCheck | null>((resolve) => { settle = resolve })
     cache.set(raw, { promise, settle, expires: Infinity })

@@ -1,9 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { baseName } from "../../../shared/preview-kinds"
-import type { PreviewPathCheck } from "../../../shared/preview-types"
 import { normalizeAddressInput } from "../../../shared/preview-url"
 import type { LinkMode } from "./link-mode"
-import { createPathResolver } from "./path-resolver"
+import { createPathResolver, type ResolvePath } from "./path-resolver"
 import { createPreviewStore, previewSessionId, type PreviewHost } from "./preview-store"
 import type { PreviewState } from "./preview-tabs"
 
@@ -17,7 +16,7 @@ export interface PreviewApi {
   openDir(dir: { path: string }): void
   openUrl(url: string): void
   /** 对话文字里出现的路径能不能预览：能就返回绝对路径和「是文件还是文件夹」，不能返回 null（带缓存，同一时刻的多个请求合并成一次主进程调用） */
-  resolvePath(raw: string): Promise<PreviewPathCheck | null>
+  resolvePath: ResolvePath
 }
 
 const UNAVAILABLE: PreviewApi = {

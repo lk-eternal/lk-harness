@@ -43,17 +43,16 @@
 .chat-md a:hover { color: var(--color-link-soft); }
 .chat-md strong { font-weight: 600; color: var(--color-fg); }
 
-/* 文字里确认能预览的文件路径（回复文字、工具行）：是 span 不是按钮，这样还能照常选中复制 */
-.lk-path {
-  color: var(--color-link);
+/* 文字里确认能预览的文件路径（回复文字、工具行）：是 span 不是按钮，这样还能照常选中复制。
+   工具行里只有手指光标；回复文字里再加一条虚线下划线（悬停变实线），颜色都不变 */
+.lk-path { cursor: pointer; }
+.lk-path:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-radius: 3px; }
+.chat-md .lk-path {
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;
-  cursor: pointer;
 }
-.lk-path:hover { color: var(--color-link-soft); text-decoration-style: solid; }
-.lk-path:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 1px; border-radius: 3px; }
-.chat-md .lk-path > code { color: inherit; }
+.chat-md .lk-path:hover { text-decoration-style: solid; }
 
 .chat-md code {
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;

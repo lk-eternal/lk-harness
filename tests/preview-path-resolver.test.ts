@@ -98,6 +98,53 @@ describe("缓存", () => {
   })
 })
 
+describe("fresh（不采信缓存里的「查不到」）", () => {
+  it("缓存期内文件出现了：fresh 重新问并拿到结果，之后普通请求也用这个新结果", async () => {
+    let t = 1000
+    let exists = false
+    const { check, calls } = fakeCheck(() => (exists ? "/abs/late.ts" : null))
+    const resolve = createPathResolver(check, { now: () => t, missTtlMs: 5000 })
+    expect(await resolve("late.ts")).toBeNull()
+    exists = true
+    t += 10
+    expect(await resolve("late.ts")).toBeNull()
+    expect(await resolve("late.ts", { fresh: true })).toEqual(at("/abs/late.ts"))
+    expect(await resolve("late.ts")).toEqual(at("/abs/late.ts"))
+    expect(calls).toHaveLength(2)
+  })
+
+  it("确认能预览的不重查：fresh 也直接用缓存", async () => {
+    const { check, calls } = fakeCheck()
+    const resolve = createPathResolver(check)
+    expect(await resolve("ok/a.ts")).toEqual(at("/abs/ok/a.ts"))
+    expect(await resolve("ok/a.ts", { fresh: true })).toEqual(at("/abs/ok/a.ts"))
+    expect(calls).toHaveLength(1)
+  })
+
+  it("同一个路径还在查：fresh 不重复发起检查", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => { release = r })
+    const calls: string[][] = []
+    const check: CheckPaths = async (paths) => { calls.push(paths); await gate; return paths.map((p) => at(`/abs/${p}`)) }
+    const resolve = createPathResolver(check)
+    const first = resolve("ok/a.ts")
+    await Promise.resolve()
+    await Promise.resolve()
+    const second = resolve("ok/a.ts", { fresh: true })
+    release()
+    expect(await Promise.all([first, second])).toEqual([at("/abs/ok/a.ts"), at("/abs/ok/a.ts")])
+    expect(calls).toHaveLength(1)
+  })
+
+  it("同一时刻多个 fresh 请求同一个查不到的路径：只查一次", async () => {
+    const { check, calls } = fakeCheck()
+    const resolve = createPathResolver(check)
+    expect(await resolve("no/a.ts")).toBeNull()
+    expect(await Promise.all([resolve("no/a.ts", { fresh: true }), resolve("no/a.ts", { fresh: true })])).toEqual([null, null])
+    expect(calls).toEqual([["no/a.ts"], ["no/a.ts"]])
+  })
+})
+
 describe("出错", () => {
   it("检查本身抛错：这一批都当查不到，且不缓存，下次还会再问", async () => {
     let fail = true
