@@ -98,6 +98,17 @@ xattr -cr /Applications/LK\ Harness.app
 
 ### 飞书
 
+Agent 干活的过程会实时更新在同一张卡片上：思考、工具调用折叠成一行，要拿主意时出问题卡，点一下就继续。
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/harness-site/img/feishu-dark.png">
+    <img src="docs/harness-site/img/feishu-light.png" width="860" alt="飞书消息卡片示意图：左边是 Agent 干活时的卡片，思考和工具调用折叠成一行，展开后每步工具带 Running 或 Succeeded 状态，下面是待选择的问题卡；右边是点选之后，问题卡变成已作答，下面是回复正文和页脚">
+  </picture>
+  <br>
+  <sub>飞书里的消息卡片。这是按真实卡片结构绘制的示意图，不是飞书界面截图。</sub>
+</p>
+
 推荐在引导或「设置 → 消息通道」里点「一键创建」，用飞书 App 扫码，应用会自动创建并回填凭据。
 
 已有飞书应用时手动接入：

@@ -99,6 +99,7 @@
     .shot img { display: block; width: 100%; height: auto; }
     .shot figcaption { margin-top: 12px; text-align: center; font-size: .8rem; color: var(--muted); }
     .shot.phones { max-width: 880px; margin: 0 auto; }
+    .shot.wide { margin: 0 auto; }
 
     /* 通用分节 */
     section { padding: 88px 0; scroll-margin-top: 56px; }
@@ -196,6 +197,7 @@
       .shot { margin-top: 40px; }
       .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
       .scroll-x img { min-width: 600px; }
+      .shot.wide .scroll-x img { min-width: 900px; }
     }
     @media (max-width: 560px) {
       .bento, .flow, .dl { grid-template-columns: 1fr; }
@@ -217,6 +219,7 @@
       <div class="nav-links">
         <a href="#how">工作方式</a>
         <a href="#mobile">手机端</a>
+        <a href="#feishu">飞书</a>
         <a href="#features">能力</a>
         <a href="#principle">原理</a>
         <a href="#limits">边界</a>
@@ -289,6 +292,23 @@
                alt="手机端三个界面：对话与点选问题、会话列表抽屉、代码文件预览">
         </div>
         <figcaption>手机端：对话和点选问题、会话列表、预览 Agent 产出的文件。截图为示例数据。</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="feishu">
+    <div class="wrap">
+      <div class="label">In Feishu</div>
+      <h2>在飞书里，过程看得见</h2>
+      <p class="desc">Agent 干活的过程实时更新在同一张卡片上：思考和工具调用折叠成一行，点开才看细节。要拿主意时出问题卡，点一下它就继续。</p>
+      <figure class="shot wide">
+        <div class="scroll-x">
+          <img class="only-dark" src="img/feishu-dark.png" width="1800" height="1334" loading="lazy"
+               alt="飞书消息卡片示意图：左边是 Agent 干活时的卡片，思考和工具调用折叠成一行，展开后每步工具带 Running 或 Succeeded 状态，下面是待选择的问题卡；右边是点选之后，问题卡变成已作答，下面是回复正文和页脚">
+          <img class="only-light" src="img/feishu-light.png" width="1800" height="1334" loading="lazy"
+               alt="飞书消息卡片示意图：左边是 Agent 干活时的卡片，思考和工具调用折叠成一行，展开后每步工具带 Running 或 Succeeded 状态，下面是待选择的问题卡；右边是点选之后，问题卡变成已作答，下面是回复正文和页脚">
+        </div>
+        <figcaption>飞书里的消息卡片。这是按真实卡片结构绘制的示意图，不是飞书界面截图。</figcaption>
       </figure>
     </div>
   </section>
