@@ -43,13 +43,6 @@
   --color-warning: oklch(82.8% 0.189 84.429);
   --color-warning-soft: oklch(90.5% 0.182 98.111);
   --color-warning-bright: oklch(92.4% 0.12 95.746);
-  --color-violet: oklch(89.4% 0.057 293.283);
-  --color-purple: oklch(71.4% 0.203 305.504);
-  --color-indigo: oklch(67.3% 0.182 276.935);
-  --color-sky: oklch(74.6% 0.16 232.661);
-  --color-cyan: oklch(78.9% 0.154 211.53);
-  --color-orange: oklch(75% 0.183 55.934);
-  --color-teal: oklch(77.7% 0.152 181.912);
 
   /* 实心色：主按钮反白（浅色下反黑）、输入框聚焦和卡片悬停的描边、状态色的实心按钮 */
   --color-primary: oklch(96.7% 0.003 264.542);
@@ -72,9 +65,6 @@
   --color-warning-tint: oklch(27.9% 0.077 45.635);
   --color-warning-tint-strong: oklch(41.4% 0.112 45.904);
   --color-warning-line: oklch(47.3% 0.137 46.201);
-  --color-violet-tint: oklch(28.3% 0.141 291.089);
-  --color-purple-tint: oklch(38.1% 0.176 304.987);
-  --color-indigo-tint: oklch(35.9% 0.144 278.697);
 }
 
 @media (prefers-color-scheme: light) {
@@ -112,14 +102,6 @@
     --color-warning: #b45309;
     --color-warning-soft: #92400e;
     --color-warning-bright: #78350f;
-    --color-violet: #6d28d9;
-    --color-purple: #7e22ce;
-    --color-indigo: #4338ca;
-    --color-sky: #0369a1;
-    --color-cyan: #0e7490;
-    --color-orange: #c2410c;
-    --color-teal: #0f766e;
-
     --color-primary: #0f172a;
     --color-primary-hover: #334155;
     --color-on-primary: #ffffff;
@@ -139,9 +121,6 @@
     --color-warning-tint: #fef3c7;
     --color-warning-tint-strong: #fde68a;
     --color-warning-line: #fcd34d;
-    --color-violet-tint: #ede9fe;
-    --color-purple-tint: #e9d5ff;
-    --color-indigo-tint: #c7d2fe;
   }
 }
 

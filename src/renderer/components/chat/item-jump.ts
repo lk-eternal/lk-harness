@@ -8,8 +8,8 @@ const FLASH_MS = 900
 
 /** 光圈沿着被闪的那块自己的圆角扩散，所以这里不写 borderRadius */
 const FLASH_FRAMES: Keyframe[] = [
-  { boxShadow: "0 0 0 0 rgba(37, 99, 235, 0.55)" },
-  { boxShadow: "0 0 0 10px rgba(37, 99, 235, 0)" },
+  { boxShadow: "0 0 0 0 var(--color-focus)" },
+  { boxShadow: "0 0 0 10px transparent" },
 ]
 
 export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
