@@ -7,7 +7,7 @@ import { canOpenWithDefaultApp, isPreviewable, parentPath, previewTypeOf } from 
 import { imageFailureView } from "../../../shared/app-chat-image"
 import { usePreview } from "../preview/PreviewContext"
 import { ImageLightbox, LIGHTBOX_ICON_SIZE, LIGHTBOX_TOOL_BUTTON } from "./ImageLightbox"
-import { CopyButton } from "./Markdown"
+import Markdown, { CopyButton } from "./Markdown"
 
 // ── 本地图片：经主进程读成 data URL（渲染层不直接访问文件系统），带小缓存 ──
 
@@ -133,7 +133,7 @@ function MultiQuestionCard({ item, onAnswer, waiting, locked }: {
   const dirty = answer !== (item.answered ?? "")
   return (
     <div className="rounded-lg border border-line bg-surface/60 p-3">
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>
+      <Markdown text={item.text} />
       <div className="mt-3 flex flex-col gap-1.5">
         {item.options.map((o, i) => {
           const picked = shown.includes(o)
@@ -188,7 +188,7 @@ export function QuestionCard({ item, onAnswer }: { item: AppChatQuestionItem; on
   if (item.multi) return <MultiQuestionCard item={item} onAnswer={onAnswer} waiting={waiting} locked={locked} />
   return (
     <div className="rounded-lg border border-line bg-surface/60 p-3">
-      <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg-soft">{item.text}</p>
+      <Markdown text={item.text} />
       <div className="mt-3 flex flex-col gap-1.5">
         {item.options.map((o, i) => {
           const picked = item.answered === o
