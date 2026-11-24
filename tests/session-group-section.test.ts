@@ -1,6 +1,7 @@
 import { createElement, Fragment, type ReactElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
+import Collapsible from "../src/renderer/components/chat/Collapsible"
 import { renderSessionGroup } from "../src/renderer/components/chat/SessionGroupSection"
 import { NO_GROUP_CONTROL, type SessionGroupControl } from "../src/renderer/components/chat/session-groups-state"
 import { parseGroupStates, type GroupRowStatus, type SessionGroupStates, type SessionListGroupId } from "../src/shared/session-groups"
@@ -247,5 +248,77 @@ describe("画一类会话：点击", () => {
 
   it("没接分类状态（默认的 NO_GROUP_CONTROL）：点了也没有任何效果，不报错", () => {
     expect(() => element(draw("chat", rowsOf(3))).props.onToggle()).not.toThrow()
+  })
+})
+
+describe("画一类会话：展开更多 / 展开全部 / 收起的滑动（档位多出来的行分块，各块自己滑开滑合）", () => {
+  const level = (n: 0 | 1 | 2) => control(parseGroupStates({ chat: { level: n } })).c
+  const OPEN = "grid-rows-[1fr]"
+  const CLOSED = "grid-rows-[0fr]"
+  const count = (markup: string, part: string): number => markup.split(part).length - 1
+  const tiersOf = (node: ReactNode) => (node as ReactElement<{ moreTiers: { tier: number; open: boolean; draw: () => ReactNode }[] }>).props.moreTiers
+
+  it("前 5 个档位：多出来的两块都关着，里面的行不画", () => {
+    const markup = html(draw("chat", rowsOf(12), level(0)))
+    expect(count(markup, CLOSED)).toBe(2)
+    expect(shownRows(markup)).toEqual(["s1", "s2", "s3", "s4", "s5"])
+  })
+
+  it("10 个档位：第一块开着、画出第 6 到 10 个，第二块关着", () => {
+    const markup = html(draw("chat", rowsOf(12), level(1)))
+    expect(count(markup, CLOSED)).toBe(1)
+    expect(count(markup, OPEN)).toBe(2)
+    expect(shownRows(markup)).toHaveLength(10)
+  })
+
+  it("全部档位：两块都开着", () => {
+    const markup = html(draw("chat", rowsOf(12), level(2)))
+    expect(count(markup, CLOSED)).toBe(0)
+    expect(shownRows(markup)).toHaveLength(12)
+  })
+
+  it("不超过 5 个：没有块", () => {
+    expect(count(html(draw("chat", rowsOf(5), level(0))), CLOSED)).toBe(0)
+  })
+
+  it("行距放在块里面：关着的块不画行、也就没有这个间距，不会在底部多出空白", () => {
+    expect(html(draw("chat", rowsOf(12), level(0)))).not.toContain("pt-0.5")
+    expect(html(draw("chat", rowsOf(12), level(1)))).toContain("space-y-0.5 pt-0.5")
+  })
+
+  it("关着的块仍然带着它的行：收起时要先滑合、滑完才摘掉，行得还能画出来", () => {
+    const tiers = tiersOf(draw("chat", rowsOf(12), level(0)))
+    expect(tiers.map((t) => [t.tier, t.open])).toEqual([[1, false], [2, false]])
+    const drawn = (tiers[0].draw() as ReactElement[]).map((row) => row.key)
+    expect(drawn).toEqual(["s6", "s7", "s8", "s9", "s10"])
+  })
+
+  it("整类折着：块也按展开后的档位给出（折起是整体滑合，里面各块的高度要和展开时一致）", () => {
+    const folded = control(parseGroupStates({ chat: { collapsed: true, level: 1 } })).c
+    expect(tiersOf(draw("chat", rowsOf(12), folded)).map((t) => t.open)).toEqual([true, false])
+  })
+
+  it("置顶的不算进块：它们不占名额，块的边界只数其余的行", () => {
+    const rows: Row[] = [{ sessionKey: "p1", pinned: true }, ...rowsOf(12)]
+    const tiers = tiersOf(draw("chat", rows, level(0)))
+    expect((tiers[0].draw() as ReactElement[]).map((row) => row.key)).toEqual(["s6", "s7", "s8", "s9", "s10"])
+  })
+})
+
+describe("折叠块：内容只在要画的时候才生成", () => {
+  it("关着：不调用 children，只有一个高度为 0 的壳", () => {
+    let calls = 0
+    const markup = renderToStaticMarkup(createElement(Collapsible, { open: false, children: () => { calls++; return "内容" } }))
+    expect(calls).toBe(0)
+    expect(markup).not.toContain("内容")
+    expect(markup).toContain("grid-rows-[0fr]")
+  })
+
+  it("开着：调用 children 画出内容", () => {
+    let calls = 0
+    const markup = renderToStaticMarkup(createElement(Collapsible, { open: true, children: () => { calls++; return "内容" } }))
+    expect(calls).toBe(1)
+    expect(markup).toContain("内容")
+    expect(markup).toContain("grid-rows-[1fr]")
   })
 })

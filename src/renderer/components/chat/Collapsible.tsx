@@ -7,9 +7,10 @@ const UNMOUNT_DELAY_MS = COLLAPSE_MS + 50
 /**
  * 内容跟着 open 滑开 / 滑合。折着的时候不画内容（折起来的行不占界面）：
  * 展开时先画出来再滑开，折起时先滑合、滑完再摘掉，所以折起的那一刻 children 还要继续给。
+ * children 是函数，只在内容要画的时候才调用：折着的块不用为里面的行白建元素。
  * 系统设了「减少动态效果」就不做动画，内容照样稍后摘掉。
  */
-export default function Collapsible({ open, children }: { open: boolean; children: ReactNode }) {
+export default function Collapsible({ open, children }: { open: boolean; children: () => ReactNode }) {
   const [mounted, setMounted] = useState(open)
   if (open && !mounted) setMounted(true)
 
@@ -21,7 +22,7 @@ export default function Collapsible({ open, children }: { open: boolean; childre
 
   return (
     <div className={`grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-      <div className="min-h-0 overflow-hidden">{mounted && children}</div>
+      <div className="min-h-0 overflow-hidden">{mounted && children()}</div>
     </div>
   )
 }

@@ -7,6 +7,7 @@ import {
   parseGroupPatch,
   parseGroupStates,
   splitGroups,
+  splitTiers,
   summarizeStatus,
   viewGroup,
   type GroupViewState,
@@ -248,5 +249,59 @@ describe("这一类此刻该显示哪些行", () => {
       view(rows, state(0), (row) => row === "r8")
       expect(rows).toEqual(ids(8))
     })
+  })
+})
+
+describe("按档位分块（展开更多 / 展开全部 / 收起时整块滑开滑合）", () => {
+  const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `r${i + 1}`)
+  const range = (from: number, to: number): string[] => ids(to).slice(from - 1)
+
+  it("前 5 个是 head，第 6 到 10 个是第一块，其余是第二块", () => {
+    const { head, more } = splitTiers(ids(30), 5)
+    expect(head).toEqual(ids(5))
+    expect(more.map((m) => [m.tier, m.rows])).toEqual([[1, range(6, 10)], [2, range(11, 30)]])
+  })
+
+  it("块跟着显示个数开：5 个都关，10 个开第一块，再多两块都开", () => {
+    const opens = (shown: number) => splitTiers(ids(30), shown).more.map((m) => m.open)
+    expect(opens(5)).toEqual([false, false])
+    expect(opens(10)).toEqual([true, false])
+    expect(opens(30)).toEqual([true, true])
+  })
+
+  it("关着的块也给出：收起时它要先滑合、滑完才摘掉，行得还在", () => {
+    const { more } = splitTiers(ids(30), 5)
+    expect(more.every((m) => !m.open && m.rows.length > 0)).toBe(true)
+  })
+
+  it("不到 6 个：没有块；6 到 10 个：只有第一块", () => {
+    expect(splitTiers(ids(5), 5)).toEqual({ head: ids(5), more: [] })
+    expect(splitTiers(ids(8), 8).more).toEqual([{ tier: 1, rows: range(6, 8), open: true }])
+    expect(splitTiers(ids(10), 5).more).toEqual([{ tier: 1, rows: range(6, 10), open: false }])
+  })
+
+  it("没有行：什么都没有", () => {
+    expect(splitTiers([], 0)).toEqual({ head: [], more: [] })
+  })
+
+  it("和 viewGroup 对得上：head 加开着的块，就是此刻要显示的行（含为选中会话撑开的）", () => {
+    const keeps = [undefined, "r2", "r8", "r25"]
+    for (const n of [0, 3, 5, 6, 10, 11, 30]) {
+      for (const level of [0, 1, 2] as const) {
+        for (const keepKey of keeps) {
+          const rows = ids(n)
+          const v = viewGroup(rows, { collapsed: false, level }, { isPinned: () => false, keep: (row) => row === keepKey })
+          const { head, more } = splitTiers(rows, rows.length - v.hidden.length)
+          const drawn = [...head, ...more.filter((m) => m.open).flatMap((m) => m.rows)]
+          expect(drawn, `n=${n} level=${level} keep=${keepKey}`).toEqual(v.shown)
+        }
+      }
+    }
+  })
+
+  it("不改传入的数组", () => {
+    const rows = ids(12)
+    splitTiers(rows, 12)
+    expect(rows).toEqual(ids(12))
   })
 })

@@ -2,6 +2,7 @@ import type { ReactNode } from "react"
 import { Archive, ChevronDown, ChevronUp, FolderKanban, Loader2, MessageCircle } from "lucide-react"
 import {
   SESSION_GROUP_TITLES,
+  splitTiers,
   summarizeStatus,
   viewGroup,
   type GroupFooter,
@@ -15,7 +16,7 @@ import type { SessionGroupControl } from "./session-groups-state"
 /** 桌面端会话栏和手机端抽屉共用同一个分类标题和底部按钮，只是触控尺寸不同 */
 export type SessionGroupVariant = "desktop" | "mobile"
 
-const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: string; icon: number; body: string; rows: string }> = {
+const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: string; icon: number; body: string; rows: string; tier: string }> = {
   desktop: {
     wrap: "pt-3",
     head: "rounded-lg px-2.5 py-1.5 hover:brightness-125",
@@ -23,6 +24,8 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
     icon: 12,
     body: "mt-1 border-l-2 pl-1",
     rows: "space-y-0.5",
+    // 和上面的行隔一个行距。放在块里面：块收起时整块高度归零，间距不会留在外面
+    tier: "space-y-0.5 pt-0.5",
   },
   mobile: {
     wrap: "",
@@ -31,6 +34,7 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
     icon: 13,
     body: "mt-1 border-l-2 pl-1",
     rows: "space-y-1",
+    tier: "space-y-1 pt-1",
   },
 }
 
@@ -55,8 +59,18 @@ function footerLabel(footer: GroupFooter, hiddenCount: number): string {
   return `${footer.kind === "more" ? "展开更多" : "展开全部"}（还有 ${hiddenCount} 个）`
 }
 
-/** 一类会话：标题（点了整类折叠 / 展开）+ 行 + 底部的展开按钮。要画哪些行由 viewGroup 算好，见 renderSessionGroup */
-export default function SessionGroupSection({ group, count, collapsed, footer, hiddenCount, hiddenStatus, variant, onToggle, onFooter, children }: {
+/** 档位多出来的一块行：open 变化时整块滑开 / 滑合；draw 只在这块要画的时候才调用 */
+export interface MoreTier {
+  tier: number
+  open: boolean
+  draw: () => ReactNode
+}
+
+/**
+ * 一类会话：标题（点了整类折叠 / 展开）+ 行 + 底部的展开按钮。要画哪些行由 viewGroup 算好，见 renderSessionGroup。
+ * children 是总在的那几行（置顶的加前 5 个），moreTiers 是「展开更多 / 展开全部」多出来的行，点按钮时它们滑开 / 滑合。
+ */
+export default function SessionGroupSection({ group, count, collapsed, footer, hiddenCount, hiddenStatus, variant, onToggle, onFooter, moreTiers, children }: {
   group: SessionListGroupId
   /** 这一类一共几个会话（折叠、收起的也算） */
   count: number
@@ -67,6 +81,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
   variant: SessionGroupVariant
   onToggle: () => void
   onFooter: (to: GroupLevel) => void
+  moreTiers: readonly MoreTier[]
   children: ReactNode
 }) {
   const style = STYLE[variant]
@@ -87,21 +102,28 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
         <ChevronDown size={style.icon} className={`shrink-0 transition-transform ${collapsed ? "" : "rotate-180"}`} />
       </button>
       <Collapsible open={!collapsed}>
-        <div className={`${style.body} ${look.bar}`}>
-          <div className={style.rows}>{children}</div>
-          {footer && (
-            <button
-              type="button"
-              data-session-group-footer={footer.kind}
-              onClick={() => onFooter(footer.to)}
-              className={`flex w-full items-center gap-1.5 text-left text-[11px] text-fg-faint transition ${style.footer}`}
-            >
-              {footer.kind === "less" ? <ChevronUp size={style.icon} className="shrink-0" /> : <ChevronDown size={style.icon} className="shrink-0" />}
-              <span className="min-w-0 flex-1 truncate">{footerLabel(footer, hiddenCount)}</span>
-              <HiddenMark status={hiddenStatus} />
-            </button>
-          )}
-        </div>
+        {() => (
+          <div className={`${style.body} ${look.bar}`}>
+            <div className={style.rows}>{children}</div>
+            {moreTiers.map((more) => (
+              <Collapsible key={more.tier} open={more.open}>
+                {() => <div className={style.tier}>{more.draw()}</div>}
+              </Collapsible>
+            ))}
+            {footer && (
+              <button
+                type="button"
+                data-session-group-footer={footer.kind}
+                onClick={() => onFooter(footer.to)}
+                className={`flex w-full items-center gap-1.5 text-left text-[11px] text-fg-faint transition ${style.footer}`}
+              >
+                {footer.kind === "less" ? <ChevronUp size={style.icon} className="shrink-0" /> : <ChevronDown size={style.icon} className="shrink-0" />}
+                <span className="min-w-0 flex-1 truncate">{footerLabel(footer, hiddenCount)}</span>
+                <HiddenMark status={hiddenStatus} />
+              </button>
+            )}
+          </div>
+        )}
       </Collapsible>
     </div>
   )
@@ -129,15 +151,17 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
   const state = control.states[group]
   const opts = { isPinned, keep: (row: T) => control.isRevealed(row.sessionKey) }
   const view = viewGroup(rows, state, opts)
-  // 整类折着时也算出展开后的行：折起来是先滑合再摘掉，滑的过程中这些行还得画着
-  const bodyRows = view.collapsed ? viewGroup(rows, { ...state, collapsed: false }, opts).shown : view.shown
-  const drawBody = (): ReactNode => {
-    if (!renderPinned) return bodyRows.map(renderRow)
-    const pinned = bodyRows.filter(isPinned)
+  // 整类折着时也算出展开后的样子：折起来是先滑合再摘掉，滑的过程中这些行还得画着
+  const expanded = view.collapsed ? viewGroup(rows, { ...state, collapsed: false }, opts) : view
+  const pinned = rows.filter(isPinned)
+  const rest = rows.filter((row) => !isPinned(row))
+  const { head, more } = splitTiers(rest, rest.length - expanded.hidden.length)
+  const drawHead = (): ReactNode => {
+    if (!renderPinned) return [...pinned, ...head].map(renderRow)
     return (
       <>
         {pinned.length > 0 && renderPinned(pinned)}
-        {bodyRows.filter((row) => !isPinned(row)).map(renderRow)}
+        {head.map(renderRow)}
       </>
     )
   }
@@ -159,8 +183,9 @@ export function renderSessionGroup<T extends { sessionKey: string }>({ id, group
         control.clearReveal()
         control.change(group, { level: to })
       }}
+      moreTiers={more.map((m) => ({ tier: m.tier, open: m.open, draw: () => m.rows.map(renderRow) }))}
     >
-      {drawBody()}
+      {drawHead()}
     </SessionGroupSection>
   )
 }

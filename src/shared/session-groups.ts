@@ -154,3 +154,26 @@ function footerOf(level: GroupLevel, hiddenCount: number, restCount: number): Gr
   if (hiddenCount > 0) return level === 0 ? { kind: "more", to: 1 } : { kind: "all", to: 2 }
   return restCount > GROUP_PAGE_SIZE ? { kind: "less", to: 0 } : null
 }
+
+/** 非置顶行里档位多出来的一块：第 6 到 10 个（tier 1）、其余（tier 2）。展开 / 收起时整块滑开 / 滑合 */
+export interface GroupTier<T> {
+  tier: 1 | 2
+  rows: T[]
+  open: boolean
+}
+
+/**
+ * 把非置顶的行按档位切成块：head 是前 5 个（整类展开时总在），more 是后面各档多出来的行，
+ * 点「展开更多 / 展开全部 / 收起」时 more 里每一块跟着档位滑开 / 滑合，所以收起的块也要给出（open 为 false）。
+ * shownCount 是此刻显示几个非置顶行（viewGroup 算出的：档位加上为选中会话撑开的部分）。
+ */
+export function splitTiers<T>(rest: readonly T[], shownCount: number): { head: T[]; more: GroupTier<T>[] } {
+  const firstEnd = LEVEL_LIMITS[0]
+  const secondEnd = LEVEL_LIMITS[1]
+  const more: GroupTier<T>[] = []
+  const second = rest.slice(firstEnd, secondEnd)
+  if (second.length > 0) more.push({ tier: 1, rows: second, open: shownCount > firstEnd })
+  const third = rest.slice(secondEnd)
+  if (third.length > 0) more.push({ tier: 2, rows: third, open: shownCount > secondEnd })
+  return { head: rest.slice(0, firstEnd), more }
+}
