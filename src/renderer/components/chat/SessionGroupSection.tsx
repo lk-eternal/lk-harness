@@ -19,7 +19,7 @@ export type SessionGroupVariant = "desktop" | "mobile"
 const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: string; icon: number; body: string; rows: string; tier: string }> = {
   desktop: {
     wrap: "pt-3",
-    head: "rounded-lg px-2.5 py-1.5 hover:brightness-125",
+    head: "rounded-lg px-2.5 py-1.5",
     footer: "rounded-lg px-2.5 py-1.5 hover:bg-strong/25 hover:text-fg-2",
     icon: 12,
     body: "mt-1 border-l-2 pl-1",
@@ -29,7 +29,7 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
   },
   mobile: {
     wrap: "",
-    head: "rounded-xl px-3 py-2 active:brightness-125",
+    head: "rounded-xl px-3 py-2",
     footer: "rounded-xl px-3 py-2 active:bg-raised",
     icon: 13,
     body: "mt-1 border-l-2 pl-1",
@@ -40,11 +40,32 @@ const STYLE: Record<SessionGroupVariant, { wrap: string; head: string; footer: s
 
 const GROUP_ICON = { project: FolderKanban, chat: MessageCircle, archived: Archive }
 
-/** 每一类自己的颜色：标题是一条带底色的胶囊，下面的行左边有一道同色竖线，一眼分得出哪几行属于哪一类 */
-const GROUP_LOOK: Record<SessionListGroupId, { head: string; bar: string }> = {
-  project: { head: "bg-accent/20 text-accent", bar: "border-accent/40" },
-  chat: { head: "bg-raised text-fg-2", bar: "border-line" },
-  archived: { head: "bg-strong/40 text-fg-3", bar: "border-line-strong" },
+/**
+ * 每一类的颜色：标题是一条带底色的胶囊，下面的行左边有一道同色竖线，一眼分得出哪几行属于哪一类。
+ * 悬停（手机端是按下）换深一档的底色，不用 brightness：浅色主题下调亮会变成纯白，融进侧栏。
+ */
+interface GroupLook {
+  head: string
+  press: Record<SessionGroupVariant, string>
+  bar: string
+}
+
+const COMMON_LOOK: GroupLook = {
+  head: "bg-strong text-fg",
+  press: { desktop: "hover:bg-stronger", mobile: "active:bg-stronger" },
+  bar: "border-stronger",
+}
+
+const QUIET_LOOK: GroupLook = {
+  head: "bg-raised text-fg-3",
+  press: { desktop: "hover:bg-strong", mobile: "active:bg-strong" },
+  bar: "border-strong",
+}
+
+const GROUP_LOOK: Record<SessionListGroupId, GroupLook> = {
+  project: COMMON_LOOK,
+  chat: COMMON_LOOK,
+  archived: QUIET_LOOK,
 }
 
 /** 收起的会话里有在回复的、有新回复没看的：折叠后看不到行上的转圈和绿点，在标题 / 底部按钮上补一个 */
@@ -93,7 +114,7 @@ export default function SessionGroupSection({ group, count, collapsed, footer, h
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className={`flex w-full items-center gap-1.5 text-left text-[12px] font-semibold transition ${style.head} ${look.head}`}
+        className={`flex w-full items-center gap-1.5 text-left text-[12px] font-semibold transition ${style.head} ${look.head} ${look.press[variant]}`}
       >
         <Icon size={style.icon} className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">{SESSION_GROUP_TITLES[group]}</span>
