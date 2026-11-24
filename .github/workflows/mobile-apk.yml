@@ -93,12 +93,14 @@ jobs:
               text = text.replace("<application", camera, 1)
           manifest.write_text(text, encoding="utf-8")
           PY
-          # 3) 桌面端同款图标：cap add 生成的是 Capacitor 自带的默认图标，用 resources/icon.png 覆盖。
-          #    自适应图标 = 原图当前景 + 纯白底（与图标自身的白底融为一体，圆形/圆角方形遮罩下都不会露边）。
+          # 3) 桌面端同款图标：cap add 生成的是 Capacitor 自带的默认图标，用 resources 里的 LK 图标覆盖。
+          #    旧版安卓图标（icon-only）用桌面的 icon.png；
+          #    自适应图标 = 透明底的 LK 字（android-icon-foreground.png，字已缩进安全区）+ 与 icon.png 底板同色系的深色底，
+          #    圆形/圆角方形遮罩下都不会露边。
           #    背景图必须给：不给的话生成的 XML 仍会引用 @mipmap/ic_launcher_background，打包会找不到资源。
           mkdir -p .icon-assets
           cp resources/icon.png .icon-assets/icon-only.png
-          cp resources/icon.png .icon-assets/icon-foreground.png
+          cp resources/android-icon-foreground.png .icon-assets/icon-foreground.png
           python3 - <<'PY'
           import struct, zlib
           from pathlib import Path
@@ -111,10 +113,10 @@ jobs:
               ihdr = struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0)
               Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
 
-          solid_png(".icon-assets/icon-background.png", 1024, (255, 255, 255))
+          solid_png(".icon-assets/icon-background.png", 1024, (15, 17, 23))
           PY
           # 只给图标源图、不给启动图源图：不会改动默认启动画面
-          npx capacitor-assets generate --android --assetPath .icon-assets --iconBackgroundColor '#ffffff'
+          npx capacitor-assets generate --android --assetPath .icon-assets --iconBackgroundColor '#0f1117'
 
       # 输入法弹出时把底部输入框顶上来。
       # 安卓 15 起应用强制边到边（模板 targetSdk=35），系统不再在键盘弹出时缩小 WebView，键盘会直接盖住输入框，
