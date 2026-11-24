@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react"
-import type { PreviewBytesResult, PreviewTextResult, PreviewZipResult } from "../../../shared/preview-types"
+import type { PreviewBytesResult, PreviewDirResult, PreviewTextResult, PreviewZipResult } from "../../../shared/preview-types"
 
 /**
  * 查看器读文件内容的方式。电脑端经主进程 IPC 读；手机端走网关的 HTTP 接口。
@@ -9,6 +9,8 @@ export interface PreviewHost {
   fileText(token: string): Promise<PreviewTextResult>
   fileBytes(token: string): Promise<PreviewBytesResult>
   fileZip(token: string): Promise<PreviewZipResult>
+  /** 列出文件夹里的内容（只一层）；校验在主进程，凭会话键判断这个会话能不能看 */
+  dirList(sessionKey: string, dir: string): Promise<PreviewDirResult>
 }
 
 /** 电脑端的实现；方法里才取 electronAPI，手机端打包引入这个文件时不会在加载时出错 */
@@ -16,6 +18,7 @@ export const desktopPreviewHost: PreviewHost = {
   fileText: (token) => window.electronAPI.previewFileText(token),
   fileBytes: (token) => window.electronAPI.previewFileBytes(token),
   fileZip: (token) => window.electronAPI.previewFileZip(token),
+  dirList: (sessionKey, dir) => window.electronAPI.previewDirList(sessionKey, dir),
 }
 
 const PreviewHostContext = createContext<PreviewHost>(desktopPreviewHost)

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, Trash2 } from "lucide-react"
+import { parentPath } from "../../../shared/preview-kinds"
 import { projectDeleteConfirmText, type ProjectView } from "../../../shared/project-app-types"
 import { splitTextLinks } from "../../../shared/text-links"
 import useOutsideClose from "../../hooks/useOutsideClose"
@@ -127,6 +128,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
   }
 
   const art = view.artifact
+  const artDir = art ? parentPath(art.path) : undefined
 
   return (
     <div ref={rootRef} className="relative mb-2">
@@ -182,6 +184,9 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
                 {art.exists && (
                   <>
                     <button type="button" onClick={() => preview.openFile({ path: art.path, name: art.name })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览</button>
+                    {artDir && (
+                      <button type="button" onClick={() => preview.openDir({ path: artDir })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览所在文件夹</button>
+                    )}
                     <button type="button" onClick={() => void window.electronAPI.appChatShowInFolder(art.path)} className="shrink-0 rounded border border-line px-2 py-0.5 text-[11.5px] text-fg-3 transition hover:bg-raised/50">所在位置</button>
                   </>
                 )}
@@ -194,6 +199,7 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
           <Section title={view.externalDir ? "项目文件夹（你选的）" : "项目文件夹"}>
             <div className="flex items-center gap-2">
               <p className="min-w-0 flex-1 truncate text-[12.5px] text-fg-2" title={view.dir}>{view.dir}</p>
+              <button type="button" onClick={() => preview.openDir({ path: view.dir })} disabled={!preview.available} className="shrink-0 rounded border border-blue-500/60 px-2 py-0.5 text-[11.5px] text-accent-soft transition hover:bg-blue-500/10 disabled:opacity-40">预览</button>
               <button type="button" onClick={() => void window.electronAPI.appChatShowInFolder(view.dir)} className="inline-flex shrink-0 items-center gap-1 rounded border border-line px-2 py-0.5 text-[11.5px] text-fg-3 transition hover:bg-raised/50"><FolderOpen size={12} />打开</button>
             </div>
           </Section>

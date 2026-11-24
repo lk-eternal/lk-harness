@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest"
 import { opensInApp } from "../src/renderer/components/preview/link-mode"
 import {
-  INITIAL_PREVIEW_STATE, MAX_PREVIEW_TABS, NO_SESSIONS, ownerSession, pickDiscards, previewReducer, previewSessionsReducer, releasedWebTabIds,
+  INITIAL_PREVIEW_STATE, NO_SESSIONS, ownerSession, previewReducer, previewSessionsReducer, releasedWebTabIds,
   sessionPreview, tabTitle,
   type PreviewAction, type PreviewSessions, type PreviewSessionsAction, type PreviewState, type WebTab,
 } from "../src/renderer/components/preview/preview-tabs"
 
 const run = (actions: PreviewAction[], from: PreviewState = INITIAL_PREVIEW_STATE) => actions.reduce(previewReducer, from)
 const file = (id: string, path: string, sessionKey = "s1"): PreviewAction => ({ type: "openFile", id, sessionKey, path, name: path.split(/[\\/]/).pop()! })
+const dir = (id: string, path: string, sessionKey = "s1"): PreviewAction => ({ type: "openDir", id, sessionKey, path })
 const web = (id: string, url: string): PreviewAction => ({ type: "openWeb", id, url })
 const ids = (s: PreviewState) => s.tabs.map((t) => t.id)
 const webTab = (s: PreviewState, id: string) => s.tabs.find((t): t is WebTab => t.id === id && t.kind === "web")!
@@ -51,6 +52,45 @@ describe("打开文件", () => {
     s = run([open("y")], s)
     expect((s.tabs[0] as { line?: number }).line).toBeUndefined()
     expect(s.tabs[0]).toMatchObject({ reload: 2 })
+  })
+})
+
+describe("文件夹标签页", () => {
+  it("openDir：新开一个文件夹标签页并展开面板、切过去", () => {
+    const s = run([dir("d", "D:\\x\\docs")])
+    expect(s.tabs).toEqual([{ id: "d", kind: "dir", sessionKey: "s1", path: "D:\\x\\docs", reload: 0 }])
+    expect(s).toMatchObject({ activeId: "d", open: true })
+  })
+
+  it("再次点开同一个文件夹（大小写、斜杠不同也算同一个）：不新增标签页，切过去、重新读取，授权跟着最近一次的会话走", () => {
+    const s = run([dir("a", "D:\\x\\docs"), file("f", "/w/a.md"), dir("b", "d:/X/Docs", "s2")])
+    expect(ids(s)).toEqual(["a", "f"])
+    expect(s.activeId).toBe("a")
+    expect(s.tabs[0]).toMatchObject({ kind: "dir", reload: 1, sessionKey: "s2" })
+  })
+
+  it("文件夹和文件各开各的标签页，互不合并", () => {
+    expect(ids(run([dir("d", "/w/a"), file("f", "/w/a")]))).toEqual(["d", "f"])
+  })
+
+  it("navigateDir：在这个标签页里换成另一个文件夹（标签页、会话、顺序不变），不动别的标签页", () => {
+    const s = run([dir("d", "/w/docs"), file("f", "/w/a.md"), { type: "navigateDir", id: "d", path: "/w/docs/img" }])
+    expect(s.tabs[0]).toMatchObject({ id: "d", kind: "dir", sessionKey: "s1", path: "/w/docs/img", reload: 0 })
+    expect(s.tabs[1]).toMatchObject({ id: "f", path: "/w/a.md" })
+    expect(s.activeId).toBe("f")
+  })
+
+  it("navigateDir：已经在那个文件夹、标签页不存在、不是文件夹标签页：原样（订阅它的界面不用重绘）", () => {
+    const s = run([dir("d", "/w/docs"), file("f", "/w/a.md")])
+    expect(run([{ type: "navigateDir", id: "d", path: "/W/docs" }], s)).toBe(s)
+    expect(run([{ type: "navigateDir", id: "nope", path: "/w" }], s)).toBe(s)
+    expect(run([{ type: "navigateDir", id: "f", path: "/w" }], s)).toBe(s)
+  })
+
+  it("reloadFile 让文件夹重新读取；asText 对文件夹无效", () => {
+    const s = run([dir("d", "/w/docs"), { type: "reloadFile", id: "d" }])
+    expect(s.tabs[0]).toMatchObject({ reload: 1 })
+    expect(run([{ type: "asText", id: "d" }], s)).toEqual(s)
   })
 })
 
@@ -155,16 +195,6 @@ describe("切换、关闭、收起", () => {
   })
 })
 
-describe("标签页数量上限", () => {
-  it("超过上限丢最早打开的，新开的（当前正看的）一定留下", () => {
-    const opens = Array.from({ length: MAX_PREVIEW_TABS + 3 }, (_, i) => file(`t${i}`, `/f/${i}.txt`))
-    const s = run(opens)
-    expect(s.tabs).toHaveLength(MAX_PREVIEW_TABS)
-    expect(ids(s)[0]).toBe("t3")
-    expect(s.activeId).toBe(`t${MAX_PREVIEW_TABS + 2}`)
-  })
-})
-
 describe("webState 的重绘开销", () => {
   const push = (id: string, patch: Partial<{ url: string; title: string; loading: boolean; canGoBack: boolean; error: string }> = {}): PreviewAction => ({
     type: "webState", state: { tabId: id, url: "https://a.com", title: "A", loading: false, canGoBack: false, canGoForward: false, ...patch },
@@ -186,57 +216,6 @@ describe("webState 的重绘开销", () => {
   it("不认识的标签页：原样", () => {
     const s = run([web("w1", "https://a.com")])
     expect(run([push("nope")], s)).toBe(s)
-  })
-})
-
-describe("换出去和换回来（discard / revive）", () => {
-  const live = () => run([web("w1", "https://a.com"), web("w2", "https://b.com"), file("f", "/a.txt"), { type: "openBlankWeb", id: "blank" }])
-
-  it("discard：只换出有页面的网页标签页，网址和标题留着，清掉加载中、待加载、前进后退和错误", () => {
-    let s = live()
-    s = run([{ type: "webState", state: { tabId: "w1", url: "https://a.com/p", title: "标题", loading: true, canGoBack: true, canGoForward: true, error: "x" } }], s)
-    s = run([{ type: "discard", ids: ["w1", "f", "blank", "nope"] }], s)
-    expect(webTab(s, "w1")).toMatchObject({ discarded: true, url: "https://a.com/p", title: "标题", loading: false, canGoBack: false, canGoForward: false })
-    expect(webTab(s, "w1").pendingUrl).toBeUndefined()
-    expect(webTab(s, "w1").error).toBeUndefined()
-    // 文件标签页、空白标签页（主进程里没有视图）、没点名的不动
-    expect(s.tabs.find((t) => t.id === "f")).toEqual(live().tabs.find((t) => t.id === "f"))
-    expect(webTab(s, "blank").discarded).toBeUndefined()
-    expect(webTab(s, "w2").discarded).toBeUndefined()
-  })
-
-  it("discard 没有可换的：原样；已经换出去的不重复", () => {
-    const s = live()
-    expect(run([{ type: "discard", ids: ["f", "blank"] }], s)).toBe(s)
-    const once = run([{ type: "discard", ids: ["w1"] }], s)
-    expect(run([{ type: "discard", ids: ["w1"] }], once)).toBe(once)
-  })
-
-  it("换出去的标签页：晚到的网页状态不能盖掉它", () => {
-    const s = run([{ type: "discard", ids: ["w1"] }], live())
-    expect(run([{ type: "webState", state: { tabId: "w1", url: "https://a.com", title: "晚到", loading: true, canGoBack: true, canGoForward: false } }], s)).toBe(s)
-  })
-
-  it("revive：换回来，重新加载它最后停留的网址", () => {
-    const s = run([{ type: "discard", ids: ["w1"] }, { type: "revive", id: "w1" }], live())
-    expect(webTab(s, "w1")).toMatchObject({ url: "https://a.com", pendingUrl: "https://a.com", loading: true })
-    expect(webTab(s, "w1").discarded).toBeUndefined()
-  })
-
-  it("revive 没有可换回的（没换出去、不是网页、不存在）：原样", () => {
-    const s = live()
-    expect(run([{ type: "revive", id: "w1" }, { type: "revive", id: "f" }, { type: "revive", id: "nope" }], s)).toBe(s)
-  })
-
-  it("换出去的标签页在地址栏里跳转：当作新的加载，不再是换出状态", () => {
-    const s = run([{ type: "discard", ids: ["w1"] }, { type: "navigateWeb", id: "w1", url: "https://new.com" }], live())
-    expect(webTab(s, "w1")).toMatchObject({ url: "https://new.com", pendingUrl: "https://new.com", loading: true })
-    expect(webTab(s, "w1").discarded).toBeUndefined()
-  })
-
-  it("关掉换出去的标签页：和关别的一样", () => {
-    const s = run([{ type: "discard", ids: ["w1"] }, { type: "close", id: "w1" }], live())
-    expect(ids(s)).toEqual(["w2", "f", "blank"])
   })
 })
 
@@ -279,13 +258,6 @@ describe("标签页跟着会话走", () => {
     s = runAll([onTab("a1", { type: "close", id: "a1" })], s)
     expect(idsIn(s, A)).toEqual(["a2"])
     expect(idsIn(s, B)).toEqual(["b1"])
-  })
-
-  it("标签页数量上限按会话算：A 开满了不占 B 的名额", () => {
-    const fill = Array.from({ length: MAX_PREVIEW_TABS + 2 }, (_, i) => inS(A, file(`a${i}`, `/f/${i}`)))
-    const s = runAll([...fill, inS(B, file("b0", "/b/0"))])
-    expect(idsIn(s, A)).toHaveLength(MAX_PREVIEW_TABS)
-    expect(idsIn(s, B)).toEqual(["b0"])
   })
 
   it("byTab：按标签页 id 找到它所在的会话；找不到的忽略", () => {
@@ -331,71 +303,16 @@ describe("标签页跟着会话走", () => {
     expect(runAll([{ type: "drop", session: "nope" }], s)).toBe(s)
   })
 
-  it("discard 跨会话：点名的标签页不管在哪个会话里都换出去，别的不动", () => {
-    const s = runAll([inS(A, web("a1", "https://a.com")), inS(B, web("b1", "https://b.com")), inS(B, web("b2", "https://c.com"))])
-    const next = runAll([{ type: "discard", ids: ["a1", "b2"] }], s)
-    expect((sessionPreview(next, A).tabs[0] as WebTab).discarded).toBe(true)
-    expect(sessionPreview(next, B).tabs.map((t) => (t as WebTab).discarded)).toEqual([undefined, true])
-    expect(runAll([{ type: "discard", ids: ["nope"] }], s)).toBe(s)
-  })
 })
 
 describe("releasedWebTabIds（主进程里的网页视图要销毁哪些）", () => {
   const two = () => runAll([inS(A, web("a1", "https://a.com")), inS(A, file("af", "/a")), inS(B, web("b1", "https://b.com")), inS(B, { type: "openBlankWeb", id: "bb" })])
 
-  it("关掉的、会话没了的、换出去的网页标签页；文件标签页和没有页面的空白标签页不算", () => {
+  it("关掉的、会话没了的网页标签页；文件标签页和没有页面的空白标签页不算", () => {
     const prev = two()
     expect(releasedWebTabIds(prev, runAll([onTab("a1", { type: "close", id: "a1" }), onTab("af", { type: "close", id: "af" })], prev))).toEqual(["a1"])
     expect(releasedWebTabIds(prev, runAll([{ type: "drop", session: B }], prev))).toEqual(["b1"])
-    expect(releasedWebTabIds(prev, runAll([{ type: "discard", ids: ["a1", "bb"] }], prev))).toEqual(["a1"])
     expect(releasedWebTabIds(prev, prev)).toEqual([])
-  })
-
-  it("标签页被上限淘汰也算", () => {
-    const prev = runAll([inS(A, web("w0", "https://w0.com")), ...Array.from({ length: MAX_PREVIEW_TABS - 1 }, (_, i) => inS(A, file(`f${i}`, `/f/${i}`)))])
-    const next = runAll([inS(A, file("extra", "/f/extra"))], prev)
-    expect(releasedWebTabIds(prev, next)).toEqual(["w0"])
-  })
-
-  it("换出去的标签页再被关掉：视图早就销毁了，不重复销毁", () => {
-    const prev = runAll([{ type: "discard", ids: ["a1"] }], two())
-    expect(releasedWebTabIds(prev, runAll([onTab("a1", { type: "close", id: "a1" })], prev))).toEqual([])
-  })
-
-  it("换回来（revive）不算销毁", () => {
-    const prev = runAll([{ type: "discard", ids: ["a1"] }], two())
-    expect(releasedWebTabIds(prev, runAll([onTab("a1", { type: "revive", id: "a1" })], prev))).toEqual([])
-  })
-})
-
-describe("pickDiscards（网页视图超过上限时换出谁）", () => {
-  const many = (n: number, spread = false) => runAll(Array.from({ length: n }, (_, i) => inS(spread && i % 2 ? B : A, web(`w${i}`, `https://w${i}.com`))))
-  const used = (...pairs: Array<[string, number]>) => new Map(pairs)
-
-  it("没超上限：不换", () => {
-    expect(pickDiscards(many(4), used(), null, 4)).toEqual([])
-  })
-
-  it("超几个换几个，最久没看的先走（跨会话比）", () => {
-    const s = many(5, true)
-    expect(pickDiscards(s, used(["w0", 10], ["w1", 3], ["w2", 7], ["w3", 1], ["w4", 9]), null, 3)).toEqual(["w3", "w1"])
-  })
-
-  it("没有记录的按最久没看算；同样久的按先开的先走", () => {
-    expect(pickDiscards(many(4), used(["w0", 5]), null, 2)).toEqual(["w1", "w2"])
-  })
-
-  it("正在看的那个一定留下，哪怕它最久没被记录", () => {
-    expect(pickDiscards(many(3), used(["w0", 9], ["w1", 8], ["w2", 7]), "w2", 2)).toEqual(["w1"])
-  })
-
-  it("已经换出去的、文件标签页、空白标签页不占名额", () => {
-    const s = runAll([
-      ...Array.from({ length: 3 }, (_, i) => inS(A, web(`w${i}`, `https://w${i}.com`))),
-      inS(A, file("f", "/f")), inS(A, { type: "openBlankWeb", id: "blank" }),
-      { type: "discard", ids: ["w0"] },
-    ])
-    expect(pickDiscards(s, used(), null, 2)).toEqual([])
   })
 })
 
@@ -407,6 +324,13 @@ describe("tabTitle", () => {
     expect(tabTitle(s.tabs[2])).toBe("新标签页")
     const titled = run([{ type: "webState", state: { tabId: "w", url: "", title: "示例站点", loading: false, canGoBack: false, canGoForward: false } }], s)
     expect(tabTitle(titled.tabs[1])).toBe("示例站点")
+  })
+
+  it("文件夹用它自己的名字，进入子文件夹后跟着变", () => {
+    let s = run([dir("d", "D:\\x\\docs")])
+    expect(tabTitle(s.tabs[0])).toBe("docs")
+    s = run([{ type: "navigateDir", id: "d", path: "D:\\x\\docs\\img" }], s)
+    expect(tabTitle(s.tabs[0])).toBe("img")
   })
 })
 

@@ -1,32 +1,55 @@
-import { useMemo, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { ArrowLeft, Download, Loader2 } from "lucide-react"
 import { baseName } from "../shared/preview-kinds"
 import { formatBytes } from "../shared/preview-text"
 import type { PreviewFileInfo } from "../shared/preview-types"
+import DirView from "../renderer/components/preview/DirView"
 import FileBody from "../renderer/components/preview/FileBody"
+import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { PreviewHostProvider, useLoaded } from "../renderer/components/preview/preview-host"
 import { CenterMessage, FileNotice, Loading, NOTICE_BUTTON, NOTICE_BUTTON_PRIMARY } from "../renderer/components/preview/preview-ui"
 import { createMobilePreviewHost, openMobilePreview, requestMobileFileDownloadUrl, requestMobilePreviewDownloadUrl } from "./api"
 import { useBackToClose } from "./back-stack"
 import { useFileDownload } from "./use-file-download"
 
-export interface PreviewTarget {
-  path: string
-  name?: string
-  line?: number
-}
+export type FilePreviewTarget = { kind: "file"; path: string; name?: string; line?: number }
+export type DirPreviewTarget = { kind: "dir"; path: string }
+export type PreviewTarget = FilePreviewTarget | DirPreviewTarget
 
-/**
- * 全屏预览页：先向电脑端打开文件（校验权限、发令牌），再用和电脑端同一套查看器显示。
- * 这个文件体积不小（带着 Markdown / 代码高亮 / 各种查看器），由 MobilePreview.tsx 按需懒加载，不进手机端的主包。
- */
-export default function MobilePreviewPage({ baseUrl, token, sessionKey, target, onClose }: {
+interface PageProps {
   baseUrl: string
   token: string
   sessionKey: string
-  target: PreviewTarget
   onClose: () => void
-}) {
+}
+
+/**
+ * 全屏预览页：文件先向电脑端打开（校验权限、发令牌），再用和电脑端同一套查看器显示；文件夹显示里面的内容。
+ * 这个文件体积不小（带着 Markdown / 代码高亮 / 各种查看器），由 MobilePreview.tsx 按需懒加载，不进手机端的主包。
+ */
+export default function MobilePreviewPage({ target, ...page }: PageProps & { target: PreviewTarget }) {
+  return target.kind === "dir" ? <MobileDirPage {...page} target={target} /> : <MobileFilePage {...page} target={target} />
+}
+
+/**
+ * 文件夹页：进入子文件夹、上一级、点面包屑都在本页里换内容，点文件交给外层在它上面再叠一层预览页（返回回到这个列表）。
+ * 返回键关掉整个文件夹页，不是回到上一级文件夹。
+ */
+function MobileDirPage({ baseUrl, token, sessionKey, target, onClose }: PageProps & { target: DirPreviewTarget }) {
+  useBackToClose(true, onClose)
+  const host = useMemo(() => createMobilePreviewHost(baseUrl, token), [baseUrl, token])
+  const preview = usePreview()
+  const [dir, setDir] = useState(target.path)
+  return (
+    <PreviewFrame title={baseName(dir)} onClose={onClose}>
+      <PreviewHostProvider value={host}>
+        <DirView sessionKey={sessionKey} path={dir} onOpenFile={preview.openFile} onOpenDir={setDir} />
+      </PreviewHostProvider>
+    </PreviewFrame>
+  )
+}
+
+function MobileFilePage({ baseUrl, token, sessionKey, target, onClose }: PageProps & { target: FilePreviewTarget }) {
   useBackToClose(true, onClose)
   const host = useMemo(() => createMobilePreviewHost(baseUrl, token), [baseUrl, token])
   const download = useFileDownload()

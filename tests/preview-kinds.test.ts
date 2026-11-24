@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
-  baseName, canOpenWithDefaultApp, fileExt, isDocumentKind, isPreviewable, isTextKind, previewLanguages, previewMime, previewTypeOf,
+  baseName, canOpenWithDefaultApp, fileExt, isDocumentKind, isPreviewable, isTextKind, pathCrumbs, previewLanguages, previewMime, previewTypeOf,
   unsupportedReason,
 } from "../src/shared/preview-kinds"
 
@@ -70,6 +70,50 @@ describe("fileExt / baseName", () => {
     expect(baseName("C:\\a\\b.txt")).toBe("b.txt")
     expect(baseName("/a/b/")).toBe("b")
     expect(baseName("plain")).toBe("plain")
+  })
+})
+
+describe("pathCrumbs（文件夹面包屑）", () => {
+  it("Windows 盘符：盘符自己是第一级，每一级都是能直接交给主进程的绝对路径", () => {
+    expect(pathCrumbs("D:\\work\\docs\\img")).toEqual([
+      { name: "D:", path: "D:\\" },
+      { name: "work", path: "D:\\work" },
+      { name: "docs", path: "D:\\work\\docs" },
+      { name: "img", path: "D:\\work\\docs\\img" },
+    ])
+  })
+  it("盘符根目录只有一级", () => {
+    expect(pathCrumbs("D:\\")).toEqual([{ name: "D:", path: "D:\\" }])
+  })
+  it("盘符用正斜杠写：分隔符沿用原来的写法", () => {
+    expect(pathCrumbs("d:/work/docs")).toEqual([
+      { name: "d:", path: "d:/" },
+      { name: "work", path: "d:/work" },
+      { name: "docs", path: "d:/work/docs" },
+    ])
+  })
+  it("UNC 共享：\\\\server\\share 是第一级", () => {
+    expect(pathCrumbs("\\\\srv\\share\\a\\b")).toEqual([
+      { name: "\\\\srv\\share", path: "\\\\srv\\share\\" },
+      { name: "a", path: "\\\\srv\\share\\a" },
+      { name: "b", path: "\\\\srv\\share\\a\\b" },
+    ])
+  })
+  it("POSIX：根 / 是第一级", () => {
+    expect(pathCrumbs("/Users/lk/docs")).toEqual([
+      { name: "/", path: "/" },
+      { name: "Users", path: "/Users" },
+      { name: "lk", path: "/Users/lk" },
+      { name: "docs", path: "/Users/lk/docs" },
+    ])
+    expect(pathCrumbs("/")).toEqual([{ name: "/", path: "/" }])
+  })
+  it("多余的分隔符不产生空的一级", () => {
+    expect(pathCrumbs("/a//b/")).toEqual([
+      { name: "/", path: "/" },
+      { name: "a", path: "/a" },
+      { name: "b", path: "/a/b" },
+    ])
   })
 })
 

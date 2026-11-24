@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest"
 import { createPathResolver, type CheckPaths } from "../src/renderer/components/preview/path-resolver"
-import { PREVIEW_CHECK_MAX_PATHS } from "../src/shared/preview-types"
+import { PREVIEW_CHECK_MAX_PATHS, type PreviewPathCheck } from "../src/shared/preview-types"
 
-/** 记录每次批量检查的参数；结果由 answer 决定（默认：以 ok/ 开头的能预览，返回 /abs/<原路径>） */
+const at = (path: string, isDir = false): PreviewPathCheck => ({ path, isDir })
+
+/** 记录每次批量检查的参数；结果由 answer 决定（默认：以 ok/ 开头的是能预览的文件，路径是 /abs/<原路径>） */
 function fakeCheck(answer: (raw: string) => string | null = (raw) => (raw.startsWith("ok/") ? `/abs/${raw}` : null)) {
   const calls: string[][] = []
   const check: CheckPaths = async (paths) => {
     calls.push(paths)
-    return paths.map(answer)
+    return paths.map((raw) => {
+      const found = answer(raw)
+      return found === null ? null : at(found)
+    })
   }
   return { check, calls }
 }
@@ -17,7 +22,7 @@ describe("合并请求", () => {
     const { check, calls } = fakeCheck()
     const resolve = createPathResolver(check)
     const out = await Promise.all([resolve("ok/a.ts"), resolve("no/b.ts"), resolve("ok/c.ts")])
-    expect(out).toEqual(["/abs/ok/a.ts", null, "/abs/ok/c.ts"])
+    expect(out).toEqual([at("/abs/ok/a.ts"), null, at("/abs/ok/c.ts")])
     expect(calls).toEqual([["ok/a.ts", "no/b.ts", "ok/c.ts"]])
   })
 
@@ -25,7 +30,7 @@ describe("合并请求", () => {
     const { check, calls } = fakeCheck()
     const resolve = createPathResolver(check)
     const out = await Promise.all([resolve("ok/a.ts"), resolve("ok/a.ts"), resolve("ok/a.ts")])
-    expect(out).toEqual(["/abs/ok/a.ts", "/abs/ok/a.ts", "/abs/ok/a.ts"])
+    expect(out).toEqual([at("/abs/ok/a.ts"), at("/abs/ok/a.ts"), at("/abs/ok/a.ts")])
     expect(calls).toEqual([["ok/a.ts"]])
   })
 
@@ -33,14 +38,14 @@ describe("合并请求", () => {
     let release!: () => void
     const gate = new Promise<void>((r) => { release = r })
     const calls: string[][] = []
-    const check: CheckPaths = async (paths) => { calls.push(paths); await gate; return paths.map((p) => `/abs/${p}`) }
+    const check: CheckPaths = async (paths) => { calls.push(paths); await gate; return paths.map((p) => at(`/abs/${p}`)) }
     const resolve = createPathResolver(check)
     const first = resolve("ok/a.ts")
     await Promise.resolve()
     await Promise.resolve()
     const second = resolve("ok/a.ts")
     release()
-    expect(await Promise.all([first, second])).toEqual(["/abs/ok/a.ts", "/abs/ok/a.ts"])
+    expect(await Promise.all([first, second])).toEqual([at("/abs/ok/a.ts"), at("/abs/ok/a.ts")])
     expect(calls).toHaveLength(1)
   })
 
@@ -49,7 +54,7 @@ describe("合并请求", () => {
     const resolve = createPathResolver(check)
     const raws = Array.from({ length: PREVIEW_CHECK_MAX_PATHS * 2 + 5 }, (_, i) => `ok/f${i}.ts`)
     const out = await Promise.all(raws.map(resolve))
-    expect(out.every((p) => p === "/x")).toBe(true)
+    expect(out.every((p) => p?.path === "/x")).toBe(true)
     expect(calls.map((c) => c.length)).toEqual([PREVIEW_CHECK_MAX_PATHS, PREVIEW_CHECK_MAX_PATHS, 5])
     expect(calls.flat()).toEqual(raws)
   })
@@ -60,9 +65,20 @@ describe("缓存", () => {
     let t = 0
     const { check, calls } = fakeCheck()
     const resolve = createPathResolver(check, { now: () => t })
-    expect(await resolve("ok/a.ts")).toBe("/abs/ok/a.ts")
+    expect(await resolve("ok/a.ts")).toEqual(at("/abs/ok/a.ts"))
     t += 3_600_000
-    expect(await resolve("ok/a.ts")).toBe("/abs/ok/a.ts")
+    expect(await resolve("ok/a.ts")).toEqual(at("/abs/ok/a.ts"))
+    expect(calls).toHaveLength(1)
+  })
+
+  it("文件夹：isDir 原样带给调用方，同样一直有效", async () => {
+    let t = 0
+    const calls: string[][] = []
+    const check: CheckPaths = async (paths) => { calls.push(paths); return paths.map((p) => at(`/abs/${p}`, true)) }
+    const resolve = createPathResolver(check, { now: () => t })
+    expect(await resolve("src")).toEqual(at("/abs/src", true))
+    t += 3_600_000
+    expect(await resolve("src")).toEqual(at("/abs/src", true))
     expect(calls).toHaveLength(1)
   })
 
@@ -77,7 +93,7 @@ describe("缓存", () => {
     expect(calls).toHaveLength(1)
     exists = true
     t += 2
-    expect(await resolve("late.ts")).toBe("/abs/late.ts")
+    expect(await resolve("late.ts")).toEqual(at("/abs/late.ts"))
     expect(calls).toHaveLength(2)
   })
 })
@@ -89,31 +105,31 @@ describe("出错", () => {
     const check: CheckPaths = async (paths) => {
       calls.push(paths)
       if (fail) throw new Error("ipc down")
-      return paths.map((p) => `/abs/${p}`)
+      return paths.map((p) => at(`/abs/${p}`))
     }
     const resolve = createPathResolver(check)
     expect(await Promise.all([resolve("a.ts"), resolve("b.ts")])).toEqual([null, null])
     fail = false
-    expect(await resolve("a.ts")).toBe("/abs/a.ts")
+    expect(await resolve("a.ts")).toEqual(at("/abs/a.ts"))
     expect(calls).toHaveLength(2)
   })
 
   it("返回的数组比输入短：缺的当查不到", async () => {
-    const check: CheckPaths = async () => ["/abs/a.ts"]
+    const check: CheckPaths = async () => [at("/abs/a.ts")]
     const resolve = createPathResolver(check)
-    expect(await Promise.all([resolve("a.ts"), resolve("b.ts")])).toEqual(["/abs/a.ts", null])
+    expect(await Promise.all([resolve("a.ts"), resolve("b.ts")])).toEqual([at("/abs/a.ts"), null])
   })
 
   it("某一批出错不影响后面的批次", async () => {
     let n = 0
     const check: CheckPaths = async (paths) => {
       if (n++ === 0) throw new Error("first batch fails")
-      return paths.map((p) => `/abs/${p}`)
+      return paths.map((p) => at(`/abs/${p}`))
     }
     const resolve = createPathResolver(check)
     const raws = Array.from({ length: PREVIEW_CHECK_MAX_PATHS + 1 }, (_, i) => `f${i}.ts`)
     const out = await Promise.all(raws.map(resolve))
     expect(out.slice(0, PREVIEW_CHECK_MAX_PATHS).every((p) => p === null)).toBe(true)
-    expect(out[PREVIEW_CHECK_MAX_PATHS]).toBe(`/abs/f${PREVIEW_CHECK_MAX_PATHS}.ts`)
+    expect(out[PREVIEW_CHECK_MAX_PATHS]).toEqual(at(`/abs/f${PREVIEW_CHECK_MAX_PATHS}.ts`))
   })
 })

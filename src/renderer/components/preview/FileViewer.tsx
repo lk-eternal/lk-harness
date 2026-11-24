@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
-import { FolderOpen } from "lucide-react"
-import { canOpenWithDefaultApp, type PreviewKind } from "../../../shared/preview-kinds"
+import { FolderOpen, FolderSearch } from "lucide-react"
+import { canOpenWithDefaultApp, parentPath, type PreviewKind } from "../../../shared/preview-kinds"
 import type { PreviewFileInfo } from "../../../shared/preview-types"
 import FileBody from "./FileBody"
+import { usePreview } from "./PreviewContext"
 import { CenterMessage, Loading, NOTICE_BUTTON, NOTICE_BUTTON_PRIMARY } from "./preview-ui"
 import type { FileTab } from "./preview-tabs"
 
@@ -31,10 +32,12 @@ export function useFileTicket(tab: FileTab): Ticket {
 /** 电脑端能对文件做的事：用默认程序打开、在文件夹里显示；暂不支持的类型还可以强行按文本看 */
 function DesktopActions({ tab, kind, onAsText }: { tab: FileTab; kind: PreviewKind; onAsText: () => void }) {
   const [error, setError] = useState("")
+  const preview = usePreview()
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
     const r = await fn()
     setError(r.ok ? "" : (r.error ?? "操作失败"))
   }
+  const dir = parentPath(tab.path)
   const openable = canOpenWithDefaultApp(tab.path)
   // 应用内看不了的办公文档，默认程序是最合适的出路，所以按钮做成主操作
   const primary = openable && kind === "unsupported"
@@ -47,6 +50,9 @@ function DesktopActions({ tab, kind, onAsText }: { tab: FileTab; kind: PreviewKi
             onClick={() => void run(() => window.electronAPI.appChatOpenFile(tab.path))}
             className={primary ? NOTICE_BUTTON_PRIMARY : NOTICE_BUTTON}
           >用默认程序打开</button>
+        )}
+        {dir && (
+          <button type="button" onClick={() => preview.openDir({ path: dir })} className={NOTICE_BUTTON}><FolderSearch size={12} />预览所在文件夹</button>
         )}
         <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(tab.path))} className={NOTICE_BUTTON}><FolderOpen size={12} />所在位置</button>
         {kind === "unsupported" && (

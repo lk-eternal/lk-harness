@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { baseName } from "../../../shared/preview-kinds"
+import type { PreviewPathCheck } from "../../../shared/preview-types"
 import { normalizeAddressInput } from "../../../shared/preview-url"
 import type { LinkMode } from "./link-mode"
 import { createPathResolver } from "./path-resolver"
@@ -13,13 +14,14 @@ export interface PreviewApi {
   available: boolean
   linkMode: LinkMode
   openFile(file: { path: string; name?: string; line?: number }): void
+  openDir(dir: { path: string }): void
   openUrl(url: string): void
-  /** 对话文字里出现的路径能不能预览：能就返回绝对路径，不能返回 null（带缓存，同一时刻的多个请求合并成一次主进程调用） */
-  resolvePath(raw: string): Promise<string | null>
+  /** 对话文字里出现的路径能不能预览：能就返回绝对路径和「是文件还是文件夹」，不能返回 null（带缓存，同一时刻的多个请求合并成一次主进程调用） */
+  resolvePath(raw: string): Promise<PreviewPathCheck | null>
 }
 
 const UNAVAILABLE: PreviewApi = {
-  available: false, linkMode: "external", openFile: () => undefined, openUrl: () => undefined, resolvePath: async () => null,
+  available: false, linkMode: "external", openFile: () => undefined, openDir: () => undefined, openUrl: () => undefined, resolvePath: async () => null,
 }
 
 export const PreviewContext = createContext<PreviewApi>(UNAVAILABLE)
@@ -68,6 +70,9 @@ export interface PreviewController {
   setOpen(open: boolean): void
   /** 地址栏提交；返回错误提示，成功返回 null */
   navigate(id: string, input: string): string | null
+  /** 文件夹标签页里换成另一个文件夹 */
+  navigateDir(id: string, path: string): void
+  /** 文件、文件夹标签页重新读取 */
   reloadFile(id: string): void
   openAsText(id: string): void
   /** 会话被删了：它的标签页全部关掉，网页视图一并销毁 */
@@ -100,9 +105,6 @@ export function usePreviewController(sessionKey: string | null): PreviewControll
   // 对话页卸载：主进程里的网页视图不能留下
   useEffect(() => () => store.dispose(), [store])
 
-  // 告诉仓库正看着哪个会话：它的网页标签页不会被换出去，已经被换出去的立刻换回来（在绘制前，不闪空白）
-  useLayoutEffect(() => { store.setViewing(sessionId) }, [store, sessionId])
-
   const sessionRef = useRef(sessionKey)
   sessionRef.current = sessionKey
 
@@ -120,6 +122,11 @@ export function usePreviewController(sessionKey: string | null): PreviewControll
     if (!key) return
     store.openFile(key, { path: file.path, name: file.name || baseName(file.path), line: file.line })
   }, [store])
+  const openDir = useCallback((dir: { path: string }) => {
+    const key = sessionRef.current
+    if (!key) return
+    store.openDir(key, dir)
+  }, [store])
   const openUrl = useCallback((url: string) => {
     const key = sessionRef.current
     if (key) store.openWeb(key, url)
@@ -130,7 +137,7 @@ export function usePreviewController(sessionKey: string | null): PreviewControll
     [sessionKey],
   )
 
-  const api = useMemo<PreviewApi>(() => ({ available: true, linkMode, openFile, openUrl, resolvePath }), [linkMode, openFile, openUrl, resolvePath])
+  const api = useMemo<PreviewApi>(() => ({ available: true, linkMode, openFile, openDir, openUrl, resolvePath }), [linkMode, openFile, openDir, openUrl, resolvePath])
 
   const openBlankBrowser = useCallback(() => {
     const key = sessionRef.current
@@ -164,6 +171,7 @@ export function usePreviewController(sessionKey: string | null): PreviewControll
     close: useCallback((id: string) => store.close(id), [store]),
     setOpen,
     navigate,
+    navigateDir: useCallback((id: string, path: string) => store.navigateDir(id, path), [store]),
     reloadFile: useCallback((id: string) => store.reloadFile(id), [store]),
     openAsText: useCallback((id: string) => store.openAsText(id), [store]),
     dropSession: useCallback((key: string) => store.dropSession(previewSessionId(key)), [store]),

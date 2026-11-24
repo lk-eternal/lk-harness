@@ -61,12 +61,22 @@ describe("openMobilePreview", () => {
 })
 
 describe("checkMobilePreviewPaths", () => {
-  it("原样返回电脑端的结果，一一对应", async () => {
-    const calls = stubFetch(json({ ok: true, paths: ["D:\\w\\a.ts", null, "D:\\w\\b.md"] }))
-    const r = await checkMobilePreviewPaths(BASE, TOKEN, "app::s1", ["a.ts", "nope.ts", "b.md"])
-    expect(r).toEqual(["D:\\w\\a.ts", null, "D:\\w\\b.md"])
+  it("paths 里的是文件、dirs 里的是文件夹，结果带上是文件还是文件夹，和输入一一对应", async () => {
+    const calls = stubFetch(json({ ok: true, paths: ["D:\\w\\a.ts", null, "D:\\w\\b.md", null], dirs: [null, null, null, "D:\\w\\src"] }))
+    const r = await checkMobilePreviewPaths(BASE, TOKEN, "app::s1", ["a.ts", "nope.ts", "b.md", "src"])
+    expect(r).toEqual([
+      { path: "D:\\w\\a.ts", isDir: false },
+      null,
+      { path: "D:\\w\\b.md", isDir: false },
+      { path: "D:\\w\\src", isDir: true },
+    ])
     expect(calls[0].url).toBe("http://192.168.1.5:19529/api/mobile/preview-check")
-    expect(sent(calls[0])).toEqual({ sessionKey: "app::s1", paths: ["a.ts", "nope.ts", "b.md"] })
+    expect(sent(calls[0])).toEqual({ sessionKey: "app::s1", paths: ["a.ts", "nope.ts", "b.md", "src"] })
+  })
+
+  it("旧版电脑端没有 dirs：文件照常，文件夹路径当不能预览", async () => {
+    stubFetch(json({ ok: true, paths: ["D:\\w\\a.ts", null] }))
+    expect(await checkMobilePreviewPaths(BASE, TOKEN, "s", ["a.ts", "src"])).toEqual([{ path: "D:\\w\\a.ts", isDir: false }, null])
   })
 
   it("失败（旧版电脑端、断网、返回异常）一律当都不能预览，长度对得上", async () => {
@@ -104,6 +114,18 @@ describe("createMobilePreviewHost", () => {
     expect(await host.fileZip(FILE_TOKEN)).toEqual(listing)
     expect(calls[0].url).toBe("http://192.168.1.5:19529/api/mobile/preview-zip")
     expect(sent(calls[0])).toEqual({ token: FILE_TOKEN })
+  })
+
+  it("dirList：POST preview-dir，body 里是会话键和文件夹路径；旧版电脑端给升级提示", async () => {
+    const listing = { ok: true, path: "D:\\w", entries: [{ name: "a.ts", path: "D:\\w\\a.ts", isDir: false, size: 3, mtimeMs: 1 }], total: 1 }
+    const calls = stubFetch(json(listing))
+    expect(await host.dirList("app::s1", "D:\\w")).toEqual(listing)
+    expect(calls[0].url).toBe("http://192.168.1.5:19529/api/mobile/preview-dir")
+    expect(sent(calls[0])).toEqual({ sessionKey: "app::s1", path: "D:\\w" })
+    expect(headersOf(calls[0]).Authorization).toBe("Bearer bearer-token")
+    stubFetch(json({ ok: false, error: "未知接口" }, 404))
+    const r = await host.dirList("app::s1", "D:\\w")
+    expect(!r.ok && r.error).toContain("升级")
   })
 
   describe("fileBytes", () => {

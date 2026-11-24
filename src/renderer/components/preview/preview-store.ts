@@ -5,12 +5,12 @@
 // 别的会话里的变化不会引起任何重绘。
 //
 // 副作用（让主进程加载网页、销毁网页视图）也在这里做，不依赖界面渲染：
-// 每次状态变化后「落定」一次——换回正在看的网页、兜住网页视图总数、把待加载的网址交给主进程、销毁不要的视图。
+// 每次状态变化后「落定」一次——把待加载的网址交给主进程、销毁不要的视图。
 
 import { appChatSessionId } from "../../../shared/app-chat-types"
 import type { PreviewWebState } from "../../../shared/preview-types"
 import {
-  liveWebTabIds, MAX_LIVE_WEB_TABS, NO_SESSIONS, pickDiscards, previewSessionsReducer, releasedWebTabIds, sessionPreview,
+  NO_SESSIONS, previewSessionsReducer, releasedWebTabIds, sessionPreview,
   type PreviewAction, type PreviewSessions, type PreviewSessionsAction, type PreviewState,
 } from "./preview-tabs"
 
@@ -23,8 +23,6 @@ export interface PreviewHost {
 }
 
 export interface PreviewStoreOptions {
-  /** 同时活着的网页视图上限 */
-  maxLiveWeb?: number
   newId?: () => string
 }
 
@@ -34,11 +32,10 @@ export interface PreviewStore {
   view(sessionId: string | null): PreviewState
   /** 全部会话（测试和排查用） */
   all(): PreviewSessions
-  /** 「最近看过」的记录条数：只该有活着视图的网页标签页（测试和排查用，防止记录一直攒） */
-  trackedTabCount(): number
-  /** 界面正在看哪个会话。它当前的网页标签页不会被换出去；换出去的话立刻换回来 */
-  setViewing(sessionId: string | null): void
   openFile(sessionKey: string, file: { path: string; name: string; line?: number }): void
+  openDir(sessionKey: string, dir: { path: string }): void
+  /** 文件夹标签页里换成另一个文件夹（进入子文件夹、回上一级、点面包屑） */
+  navigateDir(tabId: string, path: string): void
   openWeb(sessionKey: string, url: string): void
   openBlankWeb(sessionKey: string): void
   /** 网页里要求新开窗口：开在发起它的那个标签页所在的会话里，不管用户现在看着哪个会话 */
@@ -61,42 +58,16 @@ export interface PreviewStore {
 export const previewSessionId = appChatSessionId
 
 export function createPreviewStore(host: PreviewHost, options: PreviewStoreOptions = {}): PreviewStore {
-  const maxLive = options.maxLiveWeb ?? MAX_LIVE_WEB_TABS
   let idSeq = 0
   const newId = options.newId ?? (() => `pv${Date.now().toString(36)}${(idSeq++).toString(36)}`)
 
   let sessions: PreviewSessions = NO_SESSIONS
-  let viewing: string | null = null
-  /** 标签页最近一次被看的序号，换出网页视图时用：最小的先走 */
-  const lastUsed = new Map<string, number>()
-  let clock = 0
   const listeners = new Set<() => void>()
 
   const reduce = (action: PreviewSessionsAction) => { sessions = previewSessionsReducer(sessions, action) }
-  const touch = (tabId: string | null | undefined) => { if (tabId) lastUsed.set(tabId, ++clock) }
-  const viewedActiveId = (): string | null => sessionPreview(sessions, viewing).activeId
 
   /** 状态变了之后的善后；before 是变化之前的状态 */
   function settle(before: PreviewSessions): void {
-    // 正在看的标签页是换出去的：马上换回来（面板收起时没人看，不换）
-    const viewed = sessionPreview(sessions, viewing)
-    if (viewed.open) {
-      const active = viewed.tabs.find((t) => t.id === viewed.activeId)
-      if (active?.kind === "web" && active.discarded) reduce({ type: "byTab", tabId: active.id, action: { type: "revive", id: active.id } })
-    }
-    // 哪个会话换了当前标签页（新开、点选），新的当前标签页就是刚被看过的；
-    // 换的是正在看的会话，被换下去的那个直到刚才还在看，同样算刚看过
-    for (const key of Object.keys(sessions)) {
-      if (sessions[key] === before[key]) continue
-      const prevActive = before[key]?.activeId
-      const activeId = sessions[key].activeId
-      if (activeId === prevActive) continue
-      if (key === viewing) touch(prevActive)
-      touch(activeId)
-    }
-    // 同时活着的网页视图不能超过上限
-    const victims = pickDiscards(sessions, lastUsed, viewedActiveId(), maxLive)
-    if (victims.length > 0) reduce({ type: "discard", ids: victims })
     // 待加载的网址交给主进程，只交一次
     const started: string[] = []
     for (const key of Object.keys(sessions)) {
@@ -107,11 +78,8 @@ export function createPreviewStore(host: PreviewHost, options: PreviewStoreOptio
       }
     }
     for (const id of started) reduce({ type: "byTab", tabId: id, action: { type: "webStarted", id } })
-    // 关掉的、淘汰的、会话没了的、换出去的：主进程里的视图一并销毁
+    // 关掉的、会话没了的：主进程里的视图一并销毁
     for (const id of releasedWebTabIds(before, sessions)) host.webClose(id)
-    // 看过的记录只留给还活着视图的网页标签页，别的（文件标签页、关掉的、换出去的）不能一直攒着
-    const alive = new Set(liveWebTabIds(sessions))
-    for (const id of [...lastUsed.keys()]) if (!alive.has(id)) lastUsed.delete(id)
   }
 
   function emit(): void {
@@ -136,19 +104,11 @@ export function createPreviewStore(host: PreviewHost, options: PreviewStoreOptio
     },
     view: (sessionId) => sessionPreview(sessions, sessionId),
     all: () => sessions,
-    trackedTabCount: () => lastUsed.size,
-    setViewing(sessionId) {
-      if (sessionId === viewing) return
-      const before = sessions
-      touch(viewedActiveId()) // 离开的这个会话，它当前的标签页直到刚才还在看
-      viewing = sessionId
-      touch(viewedActiveId())
-      settle(before)
-      if (sessions !== before) emit()
-    },
     openFile(sessionKey, file) {
       inSession(previewSessionId(sessionKey), { type: "openFile", id: newId(), sessionKey, path: file.path, name: file.name, line: file.line })
     },
+    openDir: (sessionKey, dir) => inSession(previewSessionId(sessionKey), { type: "openDir", id: newId(), sessionKey, path: dir.path }),
+    navigateDir: (tabId, path) => onTab(tabId, { type: "navigateDir", id: tabId, path }),
     openWeb: (sessionKey, url) => inSession(previewSessionId(sessionKey), { type: "openWeb", id: newId(), url }),
     openBlankWeb: (sessionKey) => inSession(previewSessionId(sessionKey), { type: "openBlankWeb", id: newId() }),
     openWebFrom: (fromTabId, url) => onTab(fromTabId, { type: "openWeb", id: newId(), url }),
@@ -163,9 +123,7 @@ export function createPreviewStore(host: PreviewHost, options: PreviewStoreOptio
     dispose() {
       const before = sessions
       sessions = NO_SESSIONS
-      viewing = null
       for (const id of releasedWebTabIds(before, sessions)) host.webClose(id)
-      lastUsed.clear()
       if (before !== sessions) emit()
     },
   }

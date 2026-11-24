@@ -23,20 +23,22 @@ function PageLoadFailed({ onClose }: { onClose: () => void }) {
 }
 
 /**
- * 手机端的文件预览：给里面的消息提供 PreviewContext（文件卡的「预览」按钮、文字里可点的路径都经它打开），
- * 点开后在最上层显示全屏预览页。查看器和电脑端同一套，读内容的方式换成走网关的接口。
+ * 手机端的文件、文件夹预览：给里面的消息提供 PreviewContext（文件卡的「预览」按钮、文字里可点的路径都经它打开），
+ * 点开后在最上层显示全屏预览页，已经开着预览页时再打开的叠在它上面，返回一层层退回去（文件夹列表里点文件就是这样）。
+ * 查看器和电脑端同一套，读内容的方式换成走网关的接口。
  * 手机上没有内置浏览器，网址仍然交给系统浏览器，所以 linkMode 固定是 external。
  */
 export function MobilePreviewProvider({ baseUrl, token, sessionKey, children }: { baseUrl: string; token: string; sessionKey: string; children: ReactNode }) {
-  const [target, setTarget] = useState<PreviewTarget | null>(null)
-  const close = useCallback(() => setTarget(null), [])
+  const [targets, setTargets] = useState<PreviewTarget[]>([])
+  const closeTop = useCallback(() => setTargets((all) => all.slice(0, -1)), [])
   // 换了会话，上一个会话里打开的预览就不该还盖在上面
-  useEffect(() => { setTarget(null) }, [sessionKey])
+  useEffect(() => { setTargets([]) }, [sessionKey])
 
   const api = useMemo<PreviewApi>(() => ({
     available: true,
     linkMode: "external",
-    openFile: (file) => setTarget({ path: file.path, name: file.name, line: file.line }),
+    openFile: (file) => setTargets((all) => [...all, { kind: "file", path: file.path, name: file.name, line: file.line }]),
+    openDir: (dir) => setTargets((all) => [...all, { kind: "dir", path: dir.path }]),
     openUrl: () => undefined,
     resolvePath: createPathResolver((paths) => checkMobilePreviewPaths(baseUrl, token, sessionKey, paths)),
   }), [baseUrl, token, sessionKey])
@@ -45,12 +47,15 @@ export function MobilePreviewProvider({ baseUrl, token, sessionKey, children }: 
     <PreviewContext.Provider value={api}>
       {children}
       {/* 挂到 body 上：消息列表外层有变换/模糊时，fixed 会相对它定位而不是整个屏幕 */}
-      {target && createPortal(
-        <LoadBoundary fallback={<PageLoadFailed onClose={close} />}>
-          <Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-page text-fg-muted"><Loader2 size={20} className="animate-spin" /></div>}>
-            <MobilePreviewPage baseUrl={baseUrl} token={token} sessionKey={sessionKey} target={target} onClose={close} />
-          </Suspense>
-        </LoadBoundary>,
+      {targets.length > 0 && createPortal(
+        // 都是 fixed inset-0 z-40：后面的盖在前面的上面
+        targets.map((target, i) => (
+          <LoadBoundary key={i} fallback={<PageLoadFailed onClose={closeTop} />}>
+            <Suspense fallback={<div className="fixed inset-0 z-40 flex items-center justify-center bg-page text-fg-muted"><Loader2 size={20} className="animate-spin" /></div>}>
+              <MobilePreviewPage baseUrl={baseUrl} token={token} sessionKey={sessionKey} target={target} onClose={closeTop} />
+            </Suspense>
+          </LoadBoundary>
+        )),
         document.body,
       )}
     </PreviewContext.Provider>

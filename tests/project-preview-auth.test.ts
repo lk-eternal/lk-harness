@@ -11,6 +11,9 @@ import { APP_CHANNEL_CHAT_ID, makeChatKey } from "../src/shared/channel-types"
  * 范围之外的文件、不是应用内通道的会话，仍然不行。真实的 file-preview + preview-open + project-store。
  */
 
+type IpcHandler = (event: unknown, ...args: unknown[]) => unknown
+/** 主进程注册的 ipcMain.handle 处理函数：电脑端的预览接口只能这样调到 */
+const handlers = new Map<string, IpcHandler>()
 let userData = ""
 let disk: Record<string, unknown> = {}
 vi.mock("electron-store", () => ({
@@ -25,7 +28,7 @@ vi.mock("electron-store", () => ({
 vi.mock("electron", () => ({
   app: { getPath: () => userData, getVersion: () => "0", isPackaged: false },
   BrowserWindow: { getAllWindows: () => [] },
-  ipcMain: { handle: () => {}, on: () => {} },
+  ipcMain: { handle: (name: string, fn: IpcHandler) => { handlers.set(name, fn) }, on: () => {} },
   protocol: { registerSchemesAsPrivileged: () => {}, handle: () => {} },
   shell: {},
   dialog: {},
@@ -81,12 +84,15 @@ async function boot() {
   })
   const store = await import("../src/shared/project-store")
   store.initProjectStore(userData)
-  const { mobilePreview } = await import("../electron/file-preview")
+  const { mobilePreview, initFilePreview } = await import("../electron/file-preview")
+  initFilePreview()
+  /** 调电脑端界面用的预览接口（和界面经 IPC 调的是同一个处理函数） */
+  const desktop = (channel: string, ...args: unknown[]) => handlers.get(channel)!(null, ...args)
   const p = store.createProject({
     name: "写作", goal: "", repoPath: "", baseBranch: "", featureBranch: "",
     worktreePath: projectDir, groupIds: ["writing"], groupId: "writing", workspaceType: "plain",
   })
-  return { mobilePreview, project: p }
+  return { mobilePreview, desktop, project: p }
 }
 
 describe("项目会话预览自己工作目录里的成果", () => {
@@ -119,5 +125,45 @@ describe("项目会话预览自己工作目录里的成果", () => {
     const store = await import("../src/shared/project-store")
     store.deleteProject(project.id)
     expect((await mobilePreview.open(`${APP_CHAT}::project_${project.id}`, art)).ok).toBe(false)
+  })
+})
+
+describe("文件夹预览的可见范围：电脑端不限制，手机端限定在项目目录", () => {
+  it("手机端：项目目录里的文件夹能列、能检查；目录之外的不行；检查结果里 paths 只有文件、文件夹在 dirs", async () => {
+    const { mobilePreview, project } = await boot()
+    const sk = `${APP_CHAT}::project_${project.id}`
+    const inside = path.join(projectDir, "成果.md")
+    fs.writeFileSync(inside, "x")
+    const other = path.join(outside, "别处.md")
+    fs.writeFileSync(other, "x")
+
+    const listed = await mobilePreview.dir(sk, projectDir)
+    expect(listed.ok && listed.entries.map((e) => e.name)).toEqual(["成果.md"])
+    expect((await mobilePreview.dir(sk, outside)).ok).toBe(false)
+    expect(await mobilePreview.check(sk, [inside, projectDir, other, outside])).toEqual({
+      paths: [inside, null, null, null],
+      dirs: [null, projectDir, null, null],
+    })
+  })
+
+  it("电脑端：项目目录之外的文件、文件夹也能预览、列出、检查", async () => {
+    const { desktop, project } = await boot()
+    const sk = `${APP_CHAT}::project_${project.id}`
+    const other = path.join(outside, "别处.md")
+    fs.writeFileSync(other, "x")
+
+    expect(await desktop("preview:file-open", sk, other)).toMatchObject({ ok: true, name: "别处.md" })
+    const listed = await desktop("preview:dir-list", sk, outside) as { ok: boolean; entries?: { name: string }[] }
+    expect(listed.ok && listed.entries?.map((e) => e.name)).toEqual(["别处.md"])
+    expect(await desktop("preview:file-check", sk, [other, outside])).toEqual([
+      { path: other, isDir: false },
+      { path: path.resolve(outside), isDir: true },
+    ])
+  })
+
+  it("电脑端也只给应用内通道的会话", async () => {
+    const { desktop, project } = await boot()
+    const sk = `${makeChatKey(FEISHU, "ou_main")}::project_${project.id}`
+    expect(await desktop("preview:dir-list", sk, projectDir)).toEqual({ ok: false, error: "不是应用内对话的会话" })
   })
 })

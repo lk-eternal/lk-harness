@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react"
 import {
-  ArrowLeft, ArrowRight, Check, ChevronsRight, Copy, ExternalLink, FileArchive, FileCode, FileText, Film, FolderOpen,
+  ArrowLeft, ArrowRight, Check, ChevronsRight, Copy, ExternalLink, FileArchive, FileCode, FileText, Film, Folder, FolderOpen, FolderSearch,
   Globe, Image as ImageIcon, Loader2, MoreHorizontal, Music, Plus, RotateCw, Table, X,
 } from "lucide-react"
-import { canOpenWithDefaultApp, previewTypeOf, type PreviewKind } from "../../../shared/preview-kinds"
+import { canOpenWithDefaultApp, parentPath, previewTypeOf, type PreviewKind } from "../../../shared/preview-kinds"
 import { acquireOverlay } from "../overlay-presence"
 import useOutsideClose from "../../hooks/useOutsideClose"
 import useWindowWidth from "../../hooks/useWindowWidth"
 import { clampPreviewWidth, shownSidebarWidth, type SidebarWidthStore } from "../chat/sidebar-width"
+import DirView from "./DirView"
 import FileViewer from "./FileViewer"
 import WebViewer from "./WebViewer"
 import { BarButton } from "./preview-ui"
-import { tabTitle, type FileTab, type PreviewTab, type WebTab } from "./preview-tabs"
+import { tabTitle, type DirTab, type FileTab, type PreviewTab, type WebTab } from "./preview-tabs"
 import type { PreviewController } from "./PreviewContext"
 
 const KIND_ICON: Record<PreviewKind, typeof FileText> = {
@@ -26,6 +27,7 @@ function TabIcon({ tab }: { tab: PreviewTab }) {
     if (tab.favicon) return <img src={tab.favicon} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm" onError={(e) => { e.currentTarget.style.display = "none" }} />
     return <Globe size={13} className="shrink-0 text-fg-muted" />
   }
+  if (tab.kind === "dir") return <Folder size={13} className="shrink-0 text-accent" />
   const Icon = KIND_ICON[previewTypeOf(tab.name).kind]
   return <Icon size={13} className="shrink-0 text-accent" />
 }
@@ -54,7 +56,7 @@ function TabStrip({ controller }: { controller: PreviewController }) {
               onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); controller.close(tab.id) } }}
               className={`group/tab flex max-w-[180px] shrink-0 items-center border-r border-line-subtle ${on ? "bg-page text-fg" : "text-fg-muted hover:bg-raised/50 hover:text-fg-2"}`}
             >
-              <button type="button" onClick={() => controller.activate(tab.id)} title={tab.kind === "file" ? tab.path : tab.url || "新标签页"} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-2.5 pr-1 text-xs">
+              <button type="button" onClick={() => controller.activate(tab.id)} title={tab.kind === "web" ? tab.url || "新标签页" : tab.path} className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pl-2.5 pr-1 text-xs">
                 <TabIcon tab={tab} />
                 <span className="truncate">{tabTitle(tab)}</span>
               </button>
@@ -156,25 +158,44 @@ function WebToolbar({ tab, controller }: { tab: WebTab; controller: PreviewContr
   )
 }
 
-function FileToolbar({ tab, controller }: { tab: FileTab; controller: PreviewController }) {
+/**
+ * 文件和文件夹标签页共用的按钮：重新读取、复制路径、用默认程序打开、在预览里打开所在文件夹、在文件夹中显示。
+ * 出错的提示在按钮后面另起一行，所以放进的那一行要允许换行（flex-wrap）
+ */
+function PathActions({ tab, controller }: { tab: FileTab | DirTab; controller: PreviewController }) {
   const [copied, copy] = useCopied()
   const [error, setError] = useState("")
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>) => {
     const r = await fn()
     setError(r.ok ? "" : (r.error ?? "操作失败"))
   }
+  const dir = tab.kind === "file" ? parentPath(tab.path) : undefined
   return (
-    <div className="shrink-0 border-b border-line-subtle">
-      <div className="flex h-10 items-center gap-1 px-2">
-        <p className="mx-1 min-w-0 flex-1 truncate text-xs text-fg-muted" title={tab.path}>{tab.path}</p>
-        <BarButton title="重新读取文件" onClick={() => controller.reloadFile(tab.id)}><RotateCw size={14} /></BarButton>
+    <>
+      <div className="flex shrink-0 items-center gap-1">
+        <BarButton title={tab.kind === "dir" ? "重新读取文件夹" : "重新读取文件"} onClick={() => controller.reloadFile(tab.id)}><RotateCw size={14} /></BarButton>
         <BarButton title={copied ? "已复制" : "复制路径"} onClick={() => copy(tab.path)}>{copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}</BarButton>
-        {canOpenWithDefaultApp(tab.path) && (
+        {tab.kind === "file" && canOpenWithDefaultApp(tab.path) && (
           <BarButton title="用默认程序打开" onClick={() => void run(() => window.electronAPI.appChatOpenFile(tab.path))}><ExternalLink size={14} /></BarButton>
+        )}
+        {dir && (
+          <BarButton title="在预览中打开所在文件夹" onClick={() => controller.api.openDir({ path: dir })}><FolderSearch size={14} /></BarButton>
         )}
         <BarButton title="在文件夹中显示" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(tab.path))}><FolderOpen size={14} /></BarButton>
       </div>
-      {error && <p className="px-3 pb-1 text-[11px] text-danger">{error}</p>}
+      {error && <p className="basis-full text-[11px] text-danger">{error}</p>}
+    </>
+  )
+}
+
+/** 文件标签页的工具栏：路径加一排按钮。文件夹标签页没有这一行，按钮放在它自己的面包屑那一行里（路径在面包屑上已经有了） */
+function FileToolbar({ tab, controller }: { tab: FileTab; controller: PreviewController }) {
+  return (
+    <div className="shrink-0 border-b border-line-subtle">
+      <div className="flex min-h-10 flex-wrap items-center gap-1 px-2">
+        <p className="mx-1 min-w-0 flex-1 truncate text-xs text-fg-muted" title={tab.path}>{tab.path}</p>
+        <PathActions tab={tab} controller={controller} />
+      </div>
     </div>
   )
 }
@@ -241,11 +262,22 @@ export default function PreviewPanel({ controller, visible, sidebarStore, sideba
       />
       <aside style={{ width }} className="flex shrink-0 flex-col border-l border-line-subtle bg-page">
         <TabStrip controller={controller} />
-        {tab.kind === "web" ? <WebToolbar key={tab.id} tab={tab} controller={controller} /> : <FileToolbar tab={tab} controller={controller} />}
+        {tab.kind === "web" && <WebToolbar key={tab.id} tab={tab} controller={controller} />}
+        {tab.kind === "file" && <FileToolbar tab={tab} controller={controller} />}
         <div className="min-h-0 flex-1">
-          {tab.kind === "web"
-            ? <WebViewer key={tab.id} tab={tab} visible={visible} dragging={dragging} />
-            : <FileViewer key={tab.id} tab={tab} onAsText={() => controller.openAsText(tab.id)} />}
+          {tab.kind === "web" && <WebViewer key={tab.id} tab={tab} visible={visible} dragging={dragging} />}
+          {tab.kind === "dir" && (
+            <DirView
+              key={tab.id}
+              sessionKey={tab.sessionKey}
+              path={tab.path}
+              reload={tab.reload}
+              onOpenFile={controller.api.openFile}
+              onOpenDir={(path) => controller.navigateDir(tab.id, path)}
+              actions={<PathActions tab={tab} controller={controller} />}
+            />
+          )}
+          {tab.kind === "file" && <FileViewer key={tab.id} tab={tab} onAsText={() => controller.openAsText(tab.id)} />}
         </div>
       </aside>
     </>

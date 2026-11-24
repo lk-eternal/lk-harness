@@ -42,7 +42,9 @@ import type {
 } from "../shared/project-app-types"
 import type {
   PreviewBytesResult as PreviewBytesResultType,
+  PreviewDirResult as PreviewDirResultType,
   PreviewOpenResult as PreviewOpenResultType,
+  PreviewPathCheck as PreviewPathCheckType,
   PreviewRect as PreviewRectType,
   PreviewTextResult as PreviewTextResultType,
   PreviewWebNav as PreviewWebNavType,
@@ -263,8 +265,10 @@ declare global {
     previewFileText(token: string): Promise<PreviewTextResultType>
     previewFileBytes(token: string): Promise<PreviewBytesResultType>
     previewFileZip(token: string): Promise<PreviewZipResultType>
-    /** 批量检查对话里出现的路径能不能预览（相对路径按工作目录解析）：能的是绝对路径，不能的是 null，和输入一一对应 */
-    previewFileCheck(sessionKey: string, paths: string[]): Promise<(string | null)[]>
+    /** 批量检查对话里出现的路径能不能预览（相对路径按工作目录解析）：能的是绝对路径加「是文件还是文件夹」，不能的是 null，和输入一一对应 */
+    previewFileCheck(sessionKey: string, paths: string[]): Promise<(PreviewPathCheckType | null)[]>
+    /** 列出一个文件夹里的内容（只一层） */
+    previewDirList(sessionKey: string, dir: string): Promise<PreviewDirResultType>
     /** 打开（或让已有标签页跳转到）网页；加载结果经 onPreviewWebState 推回 */
     previewWebOpen(tabId: string, url: string): Promise<{ ok: boolean; error?: string }>
     previewWebNav(tabId: string, action: PreviewWebNavType): Promise<{ ok: boolean }>

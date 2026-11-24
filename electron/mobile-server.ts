@@ -575,7 +575,11 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     }
     case "/api/mobile/preview-check": {
       const paths = Array.isArray(body.paths) ? body.paths.slice(0, PREVIEW_CHECK_MAX_PATHS).map(String) : []
-      sendJson(res, 200, { ok: true, paths: await mobilePreview.check(String(body.sessionKey ?? ""), paths) })
+      sendJson(res, 200, { ok: true, ...await mobilePreview.check(String(body.sessionKey ?? ""), paths) })
+      return
+    }
+    case "/api/mobile/preview-dir": {
+      sendJson(res, 200, await mobilePreview.dir(String(body.sessionKey ?? ""), String(body.path ?? "")))
       return
     }
     case "/api/mobile/preview-text": {

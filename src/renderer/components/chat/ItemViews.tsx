@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
-import { Check, Copy, Download, FileText, FolderOpen, ImageOff, Loader2 } from "lucide-react"
+import { Check, Copy, Download, FileText, FolderOpen, FolderSearch, ImageOff, Loader2 } from "lucide-react"
 import type { AppChatFileItem, AppChatNoticeItem, AppChatQuestionItem, AppChatUserItem } from "../../../shared/app-chat-types"
 import { joinChoices, splitChoices, toggleChoice } from "../../../shared/question-multi"
 import { formatFullTime, formatMessageTime } from "../../time-ago"
-import { canOpenWithDefaultApp, isPreviewable, previewTypeOf } from "../../../shared/preview-kinds"
+import { canOpenWithDefaultApp, isPreviewable, parentPath, previewTypeOf } from "../../../shared/preview-kinds"
 import { imageFailureView } from "../../../shared/app-chat-image"
 import { usePreview } from "../preview/PreviewContext"
 import { ImageLightbox, LIGHTBOX_ICON_SIZE, LIGHTBOX_TOOL_BUTTON } from "./ImageLightbox"
@@ -227,6 +227,7 @@ export function FileCard({ item }: { item: AppChatFileItem }) {
     setError(r.ok ? "" : (r.error ?? "操作失败"))
   }
   const canPreview = preview.available && isPreviewable(previewTypeOf(item.path).kind)
+  const dir = parentPath(item.path)
   return (
     <div className="rounded-lg border border-line bg-surface/60 px-3 py-2">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -241,6 +242,9 @@ export function FileCard({ item }: { item: AppChatFileItem }) {
           )}
           {(!canPreview || canOpenWithDefaultApp(item.path)) && (
             <button type="button" onClick={() => void run(() => window.electronAPI.appChatOpenFile(item.path))} className="shrink-0 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft">打开</button>
+          )}
+          {preview.available && dir && (
+            <button type="button" onClick={() => preview.openDir({ path: dir })} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"><FolderSearch size={12} />预览所在文件夹</button>
           )}
           <button type="button" onClick={() => void run(() => window.electronAPI.appChatShowInFolder(item.path))} className="flex shrink-0 items-center gap-1 rounded border border-line px-2.5 py-1 text-xs text-fg-2 transition hover:border-blue-500 hover:text-accent-soft"><FolderOpen size={12} />所在位置</button>
         </div>

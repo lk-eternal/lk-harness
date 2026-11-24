@@ -109,6 +109,37 @@ export function fileExt(file: string): string {
   return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase();
 }
 
+export interface PathCrumb {
+  name: string;
+  /** 走到这一级的绝对路径 */
+  path: string;
+}
+
+/**
+ * 把绝对路径拆成从根到自己的每一级（文件夹顶部的面包屑）。盘符（D:）、UNC 共享（\\server\share）、POSIX 的根（/）各算第一级；
+ * 分隔符沿用路径里原来的写法，拼出来的路径可以直接交给主进程。
+ */
+export function pathCrumbs(file: string): PathCrumb[] {
+  const sep = file.includes("\\") ? "\\" : "/";
+  const unc = /^[\\/]{2}[^\\/]+[\\/]+[^\\/]+/.exec(file);
+  const drive = /^[A-Za-z]:/.exec(file);
+  const rootName = unc ? unc[0] : drive ? drive[0] : sep;
+  const rootPath = unc || drive ? rootName + sep : sep;
+  const crumbs: PathCrumb[] = [{ name: rootName, path: rootPath }];
+  let at = rootPath;
+  for (const part of file.slice(unc || drive ? rootName.length : 0).split(/[\\/]+/).filter(Boolean)) {
+    at = at.endsWith(sep) ? at + part : at + sep + part;
+    crumbs.push({ name: part, path: at });
+  }
+  return crumbs;
+}
+
+/** 路径的上一级（文件所在的文件夹，或文件夹的父文件夹）；已经是根了返回 undefined */
+export function parentPath(file: string): string | undefined {
+  const crumbs = pathCrumbs(file);
+  return crumbs.length > 1 ? crumbs[crumbs.length - 2].path : undefined;
+}
+
 /** 按文件名判断用什么方式预览；不认识的一律 unsupported（不当文本读，避免把二进制灌进界面） */
 export function previewTypeOf(file: string): PreviewType {
   const name = baseName(file).toLowerCase();

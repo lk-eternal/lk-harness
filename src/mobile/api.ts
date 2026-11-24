@@ -13,7 +13,7 @@ import { challengeMessage } from "../shared/mobile-challenge"
 import { mobilePreviewPath } from "../shared/mobile-preview"
 import {
   PREVIEW_MAX_DOCUMENT_BYTES, documentTooLargeMessage,
-  type PreviewBytesResult, type PreviewOpenResult, type PreviewTextResult, type PreviewZipResult,
+  type PreviewBytesResult, type PreviewDirResult, type PreviewOpenResult, type PreviewPathCheck, type PreviewTextResult, type PreviewZipResult,
 } from "../shared/preview-types"
 import type { PreviewHost } from "../renderer/components/preview/preview-host"
 import { drainSseFrames } from "./sse-parse"
@@ -606,19 +606,26 @@ export async function openMobilePreview(baseUrl: string, token: string, sessionK
 }
 
 /**
- * 批量确认对话文字里的路径能不能预览：返回和输入一一对应的数组，能预览的是电脑上的绝对路径，不能的是 null。
+ * 批量确认对话文字里的路径能不能预览：返回和输入一一对应的数组，能预览的是电脑上的绝对路径加「是文件还是文件夹」，不能的是 null。
  * 失败（断网、旧版电脑端）一律当作都不能预览：路径只是显示成普通文字，不打扰对话。
  */
-export async function checkMobilePreviewPaths(baseUrl: string, token: string, sessionKey: string, paths: string[]): Promise<(string | null)[]> {
-  const r = await callApi<{ ok: boolean; paths?: (string | null)[] }>(baseUrl, token, "/api/mobile/preview-check", { sessionKey, paths })
-  return r.ok && Array.isArray(r.paths) ? r.paths : paths.map(() => null)
+export async function checkMobilePreviewPaths(baseUrl: string, token: string, sessionKey: string, paths: string[]): Promise<(PreviewPathCheck | null)[]> {
+  const r = await callApi<{ ok: boolean; paths?: (string | null)[]; dirs?: (string | null)[] }>(baseUrl, token, "/api/mobile/preview-check", { sessionKey, paths })
+  if (!r.ok || !Array.isArray(r.paths)) return paths.map(() => null)
+  // paths 里是文件，文件夹在 dirs 里；旧版电脑端没有 dirs，文件夹路径就当作不能预览
+  return r.paths.map((file, i) => {
+    if (file) return { path: file, isDir: false }
+    const dir = r.dirs?.[i]
+    return dir ? { path: dir, isDir: true } : null
+  })
 }
 
-/** 查看器读文件内容的方式（手机端）：文本、压缩包清单走接口；docx / xlsx 要整个文件，直接按预览链接下载 */
+/** 查看器读文件内容的方式（手机端）：文本、压缩包清单、文件夹列表走接口；docx / xlsx 要整个文件，直接按预览链接下载 */
 export function createMobilePreviewHost(baseUrl: string, token: string): PreviewHost {
   return {
     fileText: async (fileToken) => previewError(await callApi<PreviewTextResult>(baseUrl, token, "/api/mobile/preview-text", { token: fileToken })),
     fileZip: async (fileToken) => previewError(await callApi<PreviewZipResult>(baseUrl, token, "/api/mobile/preview-zip", { token: fileToken })),
+    dirList: async (sessionKey, dir) => previewError(await callApi<PreviewDirResult>(baseUrl, token, "/api/mobile/preview-dir", { sessionKey, path: dir })),
     fileBytes: async (fileToken): Promise<PreviewBytesResult> => {
       let res: Response
       try {

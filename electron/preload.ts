@@ -5,7 +5,7 @@ import type { HistoryQuery } from "../src/shared/app-chat-history-page"
 import type { BranchListResult, BranchSwitchResult, BranchTarget } from "../src/shared/git-branch"
 import type { ProjectNodeGroupDef } from "../src/shared/project-types"
 import type { InspectRepoResult, ProjectActionResult, ProjectBindingChoice, ProjectBindResult, ProjectChannelOption, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectUnbindResult, ProjectView } from "../src/shared/project-app-types"
-import type { PreviewBytesResult, PreviewOpenResult, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
+import type { PreviewBytesResult, PreviewDirResult, PreviewOpenResult, PreviewPathCheck, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import type { SessionScheduleItem } from "../src/shared/session-schedule"
 import type { TaskRunLog } from "../src/shared/task-run-log-rules"
@@ -200,7 +200,8 @@ const api = {
   previewFileText: (token: string): Promise<PreviewTextResult> => ipcRenderer.invoke("preview:file-text", token),
   previewFileBytes: (token: string): Promise<PreviewBytesResult> => ipcRenderer.invoke("preview:file-bytes", token),
   previewFileZip: (token: string): Promise<PreviewZipResult> => ipcRenderer.invoke("preview:file-zip", token),
-  previewFileCheck: (sessionKey: string, paths: string[]): Promise<(string | null)[]> => ipcRenderer.invoke("preview:file-check", sessionKey, paths),
+  previewFileCheck: (sessionKey: string, paths: string[]): Promise<(PreviewPathCheck | null)[]> => ipcRenderer.invoke("preview:file-check", sessionKey, paths),
+  previewDirList: (sessionKey: string, dir: string): Promise<PreviewDirResult> => ipcRenderer.invoke("preview:dir-list", sessionKey, dir),
   previewWebOpen: (tabId: string, url: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("preview-web:open", tabId, url),
   previewWebNav: (tabId: string, action: PreviewWebNav): Promise<{ ok: boolean }> => ipcRenderer.invoke("preview-web:nav", tabId, action),
   previewWebBounds: (tabId: string | null, rect: PreviewRect | null): void => ipcRenderer.send("preview-web:bounds", tabId, rect),

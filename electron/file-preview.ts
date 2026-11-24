@@ -13,8 +13,8 @@ import { MOBILE_PREVIEW_TOKEN_TTL_MS, mobilePreviewPath } from "../src/shared/mo
 import { PREVIEW_SCHEME, createPreviewFileStore } from "../src/shared/preview-file-store"
 import type { PreviewOpenResult } from "../src/shared/preview-types"
 import {
-  createPreviewChecker, createPreviewOpener, listZipByToken, readPreviewBytesByToken, readPreviewTextByToken,
-  type PreviewOpenDeps,
+  createPreviewChecker, createPreviewDirLister, createPreviewOpener, createScopedViewPolicy, listZipByToken,
+  readPreviewBytesByToken, readPreviewTextByToken, type PreviewOpenDeps,
 } from "../src/shared/preview-open"
 
 const store = createPreviewFileStore()
@@ -43,33 +43,56 @@ function sessionWorkDir(sessionKey: string): string | undefined {
   return workspaceDirFromSessionKey(sessionKey) || undefined
 }
 
-const openDeps: PreviewOpenDeps = {
-  isAppSession: (sessionKey) => {
+const sessionDeps = {
+  isAppSession: (sessionKey: string) => {
     const channelId = channelIdFromSessionKey(sessionKey)
     return !!channelId && getChannel(channelId)?.type === "app"
   },
-  isReferenced: async (sessionKey, file) => {
-    const r = await callAppChatDaemon("references-path", { sessionKey, path: file })
-    return r.ok && r.owned === true
-  },
   workDir: sessionWorkDir,
 }
-const openPreviewFile = createPreviewOpener(store, openDeps)
-const checkPreviewPaths = createPreviewChecker(openDeps)
+
+/** 电脑端：使用者对本机有完整权限，应用内对话的会话想预览哪个文件、文件夹都可以 */
+const desktopDeps: PreviewOpenDeps = { ...sessionDeps, canView: async () => true }
+
+/** 手机端：经局域网/公网网关远程访问，只放行会话工作目录里的路径，和会话记录里出现过的文件 */
+const mobileDeps: PreviewOpenDeps = {
+  ...sessionDeps,
+  canView: createScopedViewPolicy({
+    workDir: sessionWorkDir,
+    isReferenced: async (sessionKey, file) => {
+      const r = await callAppChatDaemon("references-path", { sessionKey, path: file })
+      return r.ok && r.owned === true
+    },
+  }),
+}
+
+const openPreviewFile = createPreviewOpener(store, desktopDeps)
+const checkPreviewPaths = createPreviewChecker(desktopDeps)
+const listPreviewDir = createPreviewDirLister(desktopDeps)
 
 // 手机端：另起一个令牌仓库。令牌要写进 HTTP 链接（经局域网/公网网关访问），所以有有效期，
 // 也不能和电脑端界面里用的 lkfile 令牌混在一起——后者没有有效期，也不该能被网关读到
 const mobileStore = createPreviewFileStore(300, { ttlMs: MOBILE_PREVIEW_TOKEN_TTL_MS })
-const openMobilePreviewFile = createPreviewOpener(mobileStore, openDeps)
+const openMobilePreviewFile = createPreviewOpener(mobileStore, mobileDeps)
+const checkMobilePreviewPaths = createPreviewChecker(mobileDeps)
+const listMobilePreviewDir = createPreviewDirLister(mobileDeps)
 
-/** 手机网关用：权限校验、路径确认、读取都和电脑端同一套逻辑，只是令牌仓库和链接格式不同 */
+/** 手机网关用：校验、路径确认、读取是同一套逻辑，可见范围换成手机端的规则，令牌仓库和链接格式也不同 */
 export const mobilePreview = {
   /** 返回的 url 是网关上的路径（不含地址），手机端自己拼上当前连接的地址 */
   async open(sessionKey: string, file: string): Promise<PreviewOpenResult> {
     const r = await openMobilePreviewFile(sessionKey, file)
     return r.ok ? { ...r, url: mobilePreviewPath(r.token, r.name) } : r
   },
-  check: checkPreviewPaths,
+  /** paths 里只放文件：旧版手机端把它里面的路径都当文件去打开；文件夹单独放在 dirs 里。两个数组都和输入一一对应，不是的位置是 null */
+  async check(sessionKey: string, paths: string[]): Promise<{ paths: (string | null)[]; dirs: (string | null)[] }> {
+    const checks = await checkMobilePreviewPaths(sessionKey, paths)
+    return {
+      paths: checks.map((c) => (c && !c.isDir ? c.path : null)),
+      dirs: checks.map((c) => (c?.isDir ? c.path : null)),
+    }
+  },
+  dir: listMobilePreviewDir,
   /** 预览令牌对应的真实文件；令牌失效返回 undefined（预览页里的「下载」凭它换下载票据） */
   fileOf: (token: string) => mobileStore.lookup(token)?.file,
   text: (token: string) => readPreviewTextByToken(mobileStore, token),
@@ -86,6 +109,7 @@ export function initFilePreview(): void {
   })
   ipcMain.handle("preview:file-open", (_e, sessionKey: string, file: string) => openPreviewFile(sessionKey, file))
   ipcMain.handle("preview:file-check", (_e, sessionKey: string, paths: string[]) => checkPreviewPaths(sessionKey, paths))
+  ipcMain.handle("preview:dir-list", (_e, sessionKey: string, dir: string) => listPreviewDir(sessionKey, dir))
   ipcMain.handle("preview:file-text", (_e, token: string) => readPreviewTextByToken(store, token))
   ipcMain.handle("preview:file-bytes", (_e, token: string) => readPreviewBytesByToken(store, token))
   ipcMain.handle("preview:file-zip", (_e, token: string) => listZipByToken(store, token))

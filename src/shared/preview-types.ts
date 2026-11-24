@@ -35,6 +35,28 @@ export type PreviewZipResult =
   | ({ ok: true; size: number } & ZipListing)
   | { ok: false; error: string };
 
+/** 文件夹里的一项 */
+export interface PreviewDirEntry {
+  name: string;
+  /** 这一项的绝对路径：界面凭它去打开文件或进入子文件夹 */
+  path: string;
+  isDir: boolean;
+  /** 文件夹为 0 */
+  size: number;
+  mtimeMs: number;
+}
+
+/** 文件夹的内容（只列一层）。条目超过 PREVIEW_DIR_MAX_ENTRIES 时 entries 只有前面的部分，total 是实际总数 */
+export type PreviewDirResult =
+  | { ok: true; path: string; entries: PreviewDirEntry[]; total: number }
+  | { ok: false; error: string };
+
+/** 对话文字里一个路径确认能预览之后的结果：绝对路径，以及它是文件还是文件夹 */
+export interface PreviewPathCheck {
+  path: string;
+  isDir: boolean;
+}
+
 /** 内置浏览器一个标签页当前的状态，主进程在变化时推给界面 */
 export interface PreviewWebState {
   tabId: string;
@@ -73,6 +95,9 @@ export const PREVIEW_MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export function documentTooLargeMessage(size: number, maxBytes = PREVIEW_MAX_DOCUMENT_BYTES): string {
   return `文件有 ${(size / 1024 / 1024).toFixed(1)} MB，超过应用内预览的上限（${Math.round(maxBytes / 1024 / 1024)} MB），请用其他程序打开`;
 }
+
+/** 一个文件夹最多列出多少项：node_modules 这种有几万项，全列出来既卡又没人看 */
+export const PREVIEW_DIR_MAX_ENTRIES = 2000;
 
 /** 一次最多检查多少个路径（对话文字里认出来的路径交给主进程确认能不能预览）：一条回复里能冒出来的数量有限，超出的直接当没有 */
 export const PREVIEW_CHECK_MAX_PATHS = 60;

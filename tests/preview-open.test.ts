@@ -5,9 +5,10 @@ import AdmZip from "adm-zip"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createPreviewFileStore } from "../src/shared/preview-file-store"
 import {
-  createPreviewChecker, createPreviewOpener, listZipByToken, readPreviewBytesByToken, readPreviewTextByToken, type PreviewOpenDeps,
+  createPreviewChecker, createPreviewDirLister, createPreviewOpener, createScopedViewPolicy, listZipByToken,
+  readPreviewBytesByToken, readPreviewTextByToken, type PreviewOpenDeps,
 } from "../src/shared/preview-open"
-import { PREVIEW_CHECK_MAX_PATHS, PREVIEW_MAX_DOCUMENT_BYTES, PREVIEW_MAX_TEXT_BYTES } from "../src/shared/preview-types"
+import { PREVIEW_CHECK_MAX_PATHS, PREVIEW_DIR_MAX_ENTRIES, PREVIEW_MAX_DOCUMENT_BYTES, PREVIEW_MAX_TEXT_BYTES } from "../src/shared/preview-types"
 
 let root: string
 let work: string
@@ -42,6 +43,10 @@ beforeAll(() => {
   fs.writeFileSync(path.join(work, "notes.txt"), "hello")
   fs.writeFileSync(path.join(elsewhere, "c.txt"), "outside")
   fs.writeFileSync(path.join(root, "work-evil", "x.txt"), "evil sibling")
+  fs.mkdirSync(path.join(work, "list", "b-dir"), { recursive: true })
+  fs.mkdirSync(path.join(work, "list", "a-dir"))
+  fs.mkdirSync(path.join(work, "empty"))
+  for (const name of ["beta.txt", "Alpha.txt", "file10.txt", "file2.txt"]) fs.writeFileSync(path.join(work, "list", name), name)
   if (canLink) fs.symlinkSync(elsewhere, path.join(work, "escape"), "junction")
 })
 
@@ -49,17 +54,31 @@ afterAll(() => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-function setup(over: Partial<PreviewOpenDeps> & { referenced?: string[] } = {}) {
+/** 手机端的可见范围（工作目录之内或会话记录里出现过）下的依赖；over 用来替换其中的某一项 */
+interface ScopedOver {
+  isAppSession?: PreviewOpenDeps["isAppSession"]
+  workDir?: PreviewOpenDeps["workDir"]
+  isReferenced?: (sessionKey: string, file: string) => Promise<boolean>
+  /** 会话记录里出现过的路径 */
+  referenced?: string[]
+}
+
+function scopedDeps(over: ScopedOver = {}, asked: [string, string][] = []): PreviewOpenDeps {
+  const workDir = over.workDir ?? (() => work)
+  const isReferenced = over.isReferenced ?? (async (key: string, file: string) => { asked.push([key, file]); return (over.referenced ?? []).includes(file) })
+  return {
+    isAppSession: over.isAppSession ?? ((key) => key === SESSION),
+    workDir,
+    canView: createScopedViewPolicy({ workDir, isReferenced }),
+  }
+}
+
+function setup(over: ScopedOver = {}) {
   const store = createPreviewFileStore()
   let registered = 0
   const counting = { ...store, register: (...args: Parameters<typeof store.register>) => { registered++; return store.register(...args) } }
   const asked: [string, string][] = []
-  const deps: PreviewOpenDeps = {
-    isAppSession: over.isAppSession ?? ((key) => key === SESSION),
-    isReferenced: over.isReferenced ?? (async (key, file) => { asked.push([key, file]); return (over.referenced ?? []).includes(file) }),
-    workDir: over.workDir ?? (() => work),
-  }
-  return { store, open: createPreviewOpener(counting, deps), registered: () => registered, asked }
+  return { store, open: createPreviewOpener(counting, scopedDeps(over, asked)), registered: () => registered, asked }
 }
 
 describe("createPreviewOpener：参数和文件本身", () => {
@@ -162,33 +181,42 @@ describe("createPreviewOpener：能不能看", () => {
 })
 
 describe("createPreviewChecker", () => {
-  function checker(over: Partial<PreviewOpenDeps> & { referenced?: string[] } = {}) {
-    const asked: string[] = []
-    const check = createPreviewChecker({
-      isAppSession: over.isAppSession ?? ((key) => key === SESSION),
-      isReferenced: over.isReferenced ?? (async (_key, file) => { asked.push(file); return (over.referenced ?? []).includes(file) }),
-      workDir: over.workDir ?? (() => work),
-    })
-    return { check, asked }
+  const file = (p: string) => ({ path: p, isDir: false })
+  const dir = (p: string) => ({ path: p, isDir: true })
+
+  function checker(over: ScopedOver = {}) {
+    const asked: [string, string][] = []
+    return { check: createPreviewChecker(scopedDeps(over, asked)), asked }
   }
 
-  it("相对路径按工作目录解析，返回绝对路径；不存在的、目录、工作目录之外的是 null，数量和顺序与输入一致", async () => {
+  it("相对路径按工作目录解析，返回绝对路径和是文件还是文件夹；不存在的、工作目录之外的是 null，数量和顺序与输入一致", async () => {
     const { check } = checker()
     const out = await check(SESSION, ["notes.txt", "./sub/main.ts", "gone.txt", "dir", path.join(elsewhere, "c.txt"), path.join(work, "a.md")])
     expect(out).toEqual([
-      path.join(work, "notes.txt"),
-      path.join(work, "sub", "main.ts"),
+      file(path.join(work, "notes.txt")),
+      file(path.join(work, "sub", "main.ts")),
       null,
+      dir(path.join(work, "dir")),
       null,
-      null,
-      path.join(work, "a.md"),
+      file(path.join(work, "a.md")),
     ])
+  })
+
+  it("文件夹的路径去掉结尾的分隔符（「sub/」和「sub」是同一个）", async () => {
+    const { check } = checker()
+    const expected = dir(path.join(work, "sub"))
+    expect(await check(SESSION, ["sub/", "sub", `${path.join(work, "sub")}${path.sep}`, path.join(work, "sub")])).toEqual([expected, expected, expected, expected])
+  })
+
+  it("工作目录之外的文件夹：按手机端的范围拒绝", async () => {
+    const { check } = checker()
+    expect(await check(SESSION, [elsewhere, path.join(root, "work-evil")])).toEqual([null, null])
   })
 
   it("绝对路径里的 .. 和多余分隔符先规整，返回规整后的路径（界面拿它去开文件、去重）", async () => {
     const { check } = checker()
     const messy = `${work}${path.sep}sub${path.sep}..${path.sep}${path.sep}notes.txt`
-    expect(await check(SESSION, [messy])).toEqual([path.join(work, "notes.txt")])
+    expect(await check(SESSION, [messy])).toEqual([file(path.join(work, "notes.txt"))])
   })
 
   it("..  跳出工作目录的相对路径：不放行", async () => {
@@ -197,9 +225,9 @@ describe("createPreviewChecker", () => {
   })
 
   it("工作目录之外但会话记录里出现过的绝对路径：放行", async () => {
-    const file = path.join(elsewhere, "c.txt")
-    const { check } = checker({ referenced: [file] })
-    expect(await check(SESSION, [file])).toEqual([file])
+    const target = path.join(elsewhere, "c.txt")
+    const { check } = checker({ referenced: [target] })
+    expect(await check(SESSION, [target])).toEqual([file(target)])
   })
 
   it("工作目录里的文件不用查会话记录（批量检查时省掉守护进程的往返）", async () => {
@@ -211,7 +239,7 @@ describe("createPreviewChecker", () => {
   it("工作目录之外的才去查记录，查出错就当没有", async () => {
     const boom = async () => { throw new Error("daemon down") }
     const { check } = checker({ isReferenced: boom })
-    expect(await check(SESSION, [path.join(elsewhere, "c.txt"), "notes.txt"])).toEqual([null, path.join(work, "notes.txt")])
+    expect(await check(SESSION, [path.join(elsewhere, "c.txt"), "notes.txt"])).toEqual([null, file(path.join(work, "notes.txt"))])
   })
 
   it("不是应用内会话、没有工作目录时的相对路径：全是 null，不抛错", async () => {
@@ -229,7 +257,7 @@ describe("createPreviewChecker", () => {
     const many = Array.from({ length: PREVIEW_CHECK_MAX_PATHS + 5 }, () => "notes.txt")
     const out = await check(SESSION, many)
     expect(out).toHaveLength(many.length)
-    expect(out.slice(0, PREVIEW_CHECK_MAX_PATHS).every((p) => p === path.join(work, "notes.txt"))).toBe(true)
+    expect(out.slice(0, PREVIEW_CHECK_MAX_PATHS).every((p) => p?.path === path.join(work, "notes.txt"))).toBe(true)
     expect(out.slice(PREVIEW_CHECK_MAX_PATHS)).toEqual([null, null, null, null, null])
     expect(await check(SESSION, "notes.txt" as unknown as string[])).toEqual([])
   })
@@ -385,5 +413,91 @@ describe("listZipByToken", () => {
     const { store, token, file } = registerZip("z-gone.zip", (z) => z.addFile("a", Buffer.from("x")))
     fs.rmSync(file)
     expect(await listZipByToken(store, token)).toEqual({ ok: false, error: "读取文件失败，可能已被移动或删除" })
+  })
+})
+
+describe("createPreviewDirLister", () => {
+  const lister = (over: ScopedOver = {}) => createPreviewDirLister(scopedDeps(over))
+
+  it("只列一层：文件夹在前、文件在后，各按名字排（大小写不敏感，file2 在 file10 前面）；文件夹大小为 0", async () => {
+    const dirPath = path.join(work, "list")
+    const r = await lister()(SESSION, dirPath)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.entries.map((e) => [e.name, e.isDir])).toEqual([
+      ["a-dir", true], ["b-dir", true], ["Alpha.txt", false], ["beta.txt", false], ["file2.txt", false], ["file10.txt", false],
+    ])
+    expect(r.total).toBe(6)
+    expect(r.entries.find((e) => e.name === "beta.txt")).toMatchObject({ size: 8, path: path.join(dirPath, "beta.txt") })
+    expect(r.entries.find((e) => e.name === "a-dir")).toMatchObject({ size: 0, path: path.join(dirPath, "a-dir") })
+    expect(r.entries.every((e) => e.mtimeMs > 0)).toBe(true)
+  })
+
+  it("返回的路径去掉结尾的分隔符；条目的路径可以直接拿来再列、再打开", async () => {
+    const dirPath = path.join(work, "list")
+    const r = await lister()(SESSION, `${dirPath}${path.sep}`)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.path).toBe(dirPath)
+    const sub = r.entries.find((e) => e.name === "a-dir")!
+    expect((await lister()(SESSION, sub.path)).ok).toBe(true)
+  })
+
+  it("空文件夹：空列表", async () => {
+    expect(await lister()(SESSION, path.join(work, "empty"))).toEqual({ ok: true, path: path.join(work, "empty"), entries: [], total: 0 })
+  })
+
+  it("超过上限只返回排在前面的部分，total 是实际总数", async () => {
+    const many = path.join(root, "many")
+    fs.mkdirSync(many)
+    for (let i = 0; i < PREVIEW_DIR_MAX_ENTRIES + 5; i++) fs.writeFileSync(path.join(many, `f${String(i).padStart(5, "0")}.txt`), "")
+    const r = await lister({ workDir: () => root })(SESSION, many)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.entries).toHaveLength(PREVIEW_DIR_MAX_ENTRIES)
+    expect(r.total).toBe(PREVIEW_DIR_MAX_ENTRIES + 5)
+    expect(r.entries[0].name).toBe("f00000.txt")
+    expect(r.entries.at(-1)?.name).toBe(`f${String(PREVIEW_DIR_MAX_ENTRIES - 1).padStart(5, "0")}.txt`)
+  })
+
+  it("是文件、不存在、相对路径、不是应用内会话：说清楚原因", async () => {
+    expect(await lister()(SESSION, path.join(work, "notes.txt"))).toEqual({ ok: false, error: "不是文件夹" })
+    expect(await lister()(SESSION, path.join(work, "gone"))).toEqual({ ok: false, error: "文件不存在，可能已被移动或删除" })
+    expect(await lister()(SESSION, "list")).toEqual({ ok: false, error: "文件路径无效" })
+    expect(await lister()("feishu:x:dir:work", path.join(work, "list"))).toEqual({ ok: false, error: "不是应用内对话的会话" })
+  })
+
+  it("手机端的范围：工作目录之外、名字前缀相同的兄弟目录不能列", async () => {
+    for (const outside of [elsewhere, path.join(root, "work-evil")]) {
+      const r = await lister()(SESSION, outside)
+      expect(r.ok, outside).toBe(false)
+      expect(r.ok === false && r.error).toContain("不能预览")
+    }
+  })
+
+  it.runIf(canLink)("指向目录外的链接：在列表里是个文件夹，进去时按真实位置判断，被拒绝", async () => {
+    const r = await lister()(SESSION, work)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.entries.find((e) => e.name === "escape")).toMatchObject({ isDir: true })
+    expect((await lister()(SESSION, path.join(work, "escape"))).ok).toBe(false)
+  })
+})
+
+describe("电脑端的可见范围（不限制）：应用内会话想看哪个文件、文件夹都行", () => {
+  const unrestricted = (): PreviewOpenDeps => ({ isAppSession: (key) => key === SESSION, workDir: () => work, canView: async () => true })
+
+  it("工作目录之外、会话记录里也没出现过的文件和文件夹：能预览、能列出、能检查", async () => {
+    const outside = path.join(elsewhere, "c.txt")
+    expect((await createPreviewOpener(createPreviewFileStore(), unrestricted())(SESSION, outside)).ok).toBe(true)
+    expect(await createPreviewChecker(unrestricted())(SESSION, [outside, elsewhere])).toEqual([
+      { path: outside, isDir: false },
+      { path: elsewhere, isDir: true },
+    ])
+    const r = await createPreviewDirLister(unrestricted())(SESSION, elsewhere)
+    if (!r.ok) throw new Error(r.error)
+    expect(r.entries.map((e) => e.name)).toEqual(["c.txt"])
+  })
+
+  it("仍然只给应用内对话的会话，不存在的路径照样失败", async () => {
+    const lister = createPreviewDirLister(unrestricted())
+    expect(await lister("feishu:x:dir:work", elsewhere)).toEqual({ ok: false, error: "不是应用内对话的会话" })
+    expect((await lister(SESSION, path.join(root, "no-such-dir"))).ok).toBe(false)
   })
 })
