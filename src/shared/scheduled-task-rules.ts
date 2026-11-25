@@ -132,6 +132,21 @@ export function resolveTaskOutboundChatKey(
   return makeChatKey(channelId, main);
 }
 
+/**
+ * 新建任务时写进任务的默认模型：所属通道现在的供应商 + 主模型 + 参数。
+ * 显式写进任务（不是留空跟随通道），之后通道的配置再改，已建的任务不会跟着变。
+ * 通道没配主模型就什么都不写（没有可写的）；通道没配供应商就只写模型，供应商运行时仍取通道的。
+ */
+export function defaultTaskModel(
+  channel: { agentResourceId?: string; model?: string; modelParams?: string } | undefined,
+): Pick<ScheduledTask, "resourceId" | "model" | "modelParams"> {
+  const model = channel?.model?.trim();
+  if (!channel || !model) return {};
+  const resourceId = channel.agentResourceId?.trim();
+  const modelParams = channel.modelParams?.trim();
+  return { ...(resourceId ? { resourceId } : {}), model, ...(modelParams ? { modelParams } : {}) };
+}
+
 /** 是否 AI 给自己排的程（createdBy=ai） */
 export function isAiTask(task: Pick<ScheduledTask, "createdBy">): boolean {
   return task.createdBy === "ai";

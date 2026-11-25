@@ -472,23 +472,21 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
     [
       "管理全局定时任务（和设置页里的一样）。支持列出、添加/更新、删除、启用/禁用。",
       "注意：这不是「给当前会话定时」。要让你当前所在的会话到点自己做事、或过一阵回来跟进，用 schedule_create（它绑定调用者所在的会话），不要用本工具。",
-      "本工具建的任务先定「是否独立运行」，再定「完成后通知谁」（notify）：",
-      "- 独立运行（默认）：每次由全新 Agent 执行，它用 send_result 提交结果，没提交就静默。notify=agent（通知 AI）把结果投进会话并唤醒它；notify=im（通知我）以 AI 口吻发给用户，不唤醒任何 Agent；notify=none 不通知。",
-      "- independent=false：不启动新 Agent，把任务内容直接送出去。notify=agent（默认）送进会话的 AI，占用它的上下文；notify=im 把任务内容以 AI 口吻直接发给用户。此时 notify=none 无效，按 agent 处理。",
-      "通道默认是你当前所在的通道。应用内通道里，目标会话默认就是你当前所在的会话（项目会话除外：通知 AI 落到主会话，通知我没有默认会话，返回的去向会写「未选会话」，要如实告诉用户到设置页选）；飞书/微信里，通知 AI 投给主会话（主用户私聊，回复会发到飞书/微信，不一定是你当前所在的会话），通知我发到主用户私聊。要换通道、指定别的会话或飞书群，请用户到设置页改。",
-      "创建 / 修改 / 启用后会返回任务实际的去向，如实转述给用户，不要自己推断。",
+      "本工具建的任务一律是「独立运行 + 通知我」，没有别的交付方式可选：到点由全新 Agent 执行（不占用任何会话的上下文），它用 send_result 提交结果，结果以 AI 口吻发给用户，不唤醒任何 Agent；没提交就静默。",
+      "通道默认是你当前所在的通道，任务按这个通道的规则运行、结果也从它发出：飞书发到主用户私聊（chat_id 可指定飞书会话 / 群 ID），微信发到主用户私聊，应用内发到这个任务专属的会话（没有就自动创建，一个任务一个）。模型默认写入这个通道现在的供应商 + 主模型，你不用选。要换通道、换模型，请用户到设置页改。",
+      "更新旧版交付方式的任务（非独立运行 / 通知 AI / 不通知）时会一并改成「独立运行 + 通知我」，返回里会注明。",
+      "创建 / 修改 / 启用后会返回任务实际的去向和模型，如实转述给用户，不要自己推断。",
     ].join("\n"),
     {
       action: z.enum(["list", "add", "update", "delete", "toggle"]).describe("操作：list=列出, add=新增, update=更新, delete=删除, toggle=切换启用状态"),
       id: z.string().optional().describe("任务 ID（update/delete/toggle 时必填）"),
       name: z.string().optional().describe("任务名称（add 时必填）"),
       cron: z.string().optional().describe("Cron 表达式（add 时必填，update 时可选）"),
-      content: z.string().optional().describe("任务消息内容（add 时必填，update 时可选）"),
+      content: z.string().optional().describe("任务内容：给独立 Agent 的指令，到点它照做并用 send_result 提交结果（add 时必填，update 时可选）"),
       enabled: z.boolean().optional().describe("是否启用（add 时默认 true）"),
-      independent: z.boolean().optional().describe("是否独立运行（add 时默认 true）。true = 每次由全新 Agent 执行；false = 不启动新 Agent，直接把任务内容送给 notify 指定的对象（agent：进会话 AI 的上下文并占用它；im：以 AI 口吻发给用户）"),
-      notify: z.enum(["none", "agent", "im"]).optional().describe("完成后通知谁：agent=通知 AI（独立运行：把 send_result 的结果投进会话并唤醒它；非独立：把任务内容投进会话），im=通知我（独立运行：send_result 的结果以 AI 口吻发给用户；非独立：任务内容直接发给用户，不唤醒 Agent），none=不通知（仅独立运行有效，非独立按 agent 处理）。add 默认：独立运行 im，非独立运行 agent。独立运行的 AI 在任务里用 send_result 提交结果"),
+      chat_id: z.string().optional().describe("飞书会话（群）ID，结果发到那个会话；不填 = 主用户私聊。只对飞书通道有效，别的通道填了会报错。update 时传空串 = 改回主用户私聊"),
     },
-    async ({ action, id, name, cron, content, enabled, independent, notify }) => {
+    async ({ action, id, name, cron, content, enabled, chat_id }) => {
       try {
         // 调用者所在的会话：新建任务默认挂在它所在的通道，并据此告诉 AI「任务是不是投给了它自己」
         const invokerSessionKey = getMcpInvokerSessionKey();
@@ -508,8 +506,7 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
         if (cron !== undefined) body.cron = cron;
         if (content !== undefined) body.content = content;
         if (enabled !== undefined) body.enabled = enabled;
-        if (independent !== undefined) body.independent = independent;
-        if (notify !== undefined) body.notify = notify;
+        if (chat_id !== undefined) body.chatId = chat_id;
         const res = await daemonPost("/api/tasks", body);
         if (res.ok) {
           const where = res.summary ? `\n${res.summary}` : "";

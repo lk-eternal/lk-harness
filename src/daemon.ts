@@ -73,7 +73,7 @@ import { admitChat, denyReasonText, shouldSendDenyNotice, type AdmitResult } fro
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { isTempChatWorkspace } from "./shared/temp-workspace.js";
 import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, formatScheduledTaskLabel, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, isDirectNotifyTask, sendsStandaloneMessages, taskAgentSessionKey, taskNotifyChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, formatScheduledTaskLabel, defaultTaskModel, resolveTaskOutboundChatKey, resolveTaskNotify, isDirectNotifyTask, sendsStandaloneMessages, taskAgentSessionKey, taskNotifyChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import {
   TASK_RESULT_TOOL,
   TaskRunTracker,
@@ -82,7 +82,10 @@ import {
   formatAiSelfReminder,
   formatTaskImMessage,
   formatTaskResultForAgent,
+  isLegacyDelivery,
   normalizeTaskDelivery,
+  taskChatIdProblem,
+  toUserNotifyTask,
 } from "./shared/task-delivery.js";
 import { resolveProjectAgentTarget } from "./shared/task-agent-target.js";
 import {
@@ -5024,16 +5027,13 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
   }
   if (method === "POST") {
     const body = JSON.parse(await readBody(req));
-    const { action, id, name, cron, content, enabled, independent, channelId, model, modelParams, notify, invokerSessionKey } = body as {
-      action: string; id?: string; name?: string; cron?: string; content?: string; enabled?: boolean; independent?: boolean
-      channelId?: string; model?: string; modelParams?: string; notify?: string
+    const { action, id, name, cron, content, enabled, chatId, invokerSessionKey } = body as {
+      action: string; id?: string; name?: string; cron?: string; content?: string; enabled?: boolean
+      /** 飞书会话（群）ID：不填 = 主用户私聊；只对飞书通道有效 */
+      chatId?: string
       /** 调用 manage_tasks 的会话（admin MCP 带来）：用来选所属通道、判断「是不是当前会话」 */
       invokerSessionKey?: string
     };
-    if (notify !== undefined && !isTaskNotify(notify)) {
-      json(res, { ok: false, error: "notify 只能是 none / agent / im" }, 400);
-      return true;
-    }
     let tasks: ScheduledTask[];
     try {
       tasks = readTasks();
@@ -5044,25 +5044,19 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
 
     if (action === "add") {
       if (!name || !cron || !content) { json(res, { ok: false, error: "name, cron, content required" }, 400); return true; }
-      // 默认通知谁：独立任务「通知我」（对话里让 AI 建的任务，用户期望做完能收到结果）；非独立任务「通知 AI」（内容投进会话）
-      // 通道：AI 没法指定，默认是它自己所在的通道，不是「第一个通道」（见 chooseNewTaskChannel）
+      // 用 manage_tasks 建的任务和设置页一样，只有「独立运行 + 通知我」一种（toUserNotifyTask）：对话里让 AI 建的任务，用户期望做完能收到结果。
+      // 通道：AI 没法指定，默认是它自己所在的通道，不是「第一个通道」（见 chooseNewTaskChannel）；
+      // 模型：AI 不选，写入通道现在的供应商 + 主模型；应用内的专属会话在第一次投递时建（ensureTaskAppSession）
       const invokerChannelId = invokerSessionKey ? channelIdFromSessionKey(normalizeSessionKey(invokerSessionKey)) : undefined;
-      const newChannelId = chooseNewTaskChannel({ explicit: channelId, invokerChannelId, channelIds: [...channels.keys()] });
-      const newNotify = notify ?? (independent === false ? "agent" : "im");
-      // 应用内通道没有「主用户私聊」：要送到哪必须有会话，默认就是调用者自己所在的会话（项目会话除外，它走项目绑定）
-      const owner = classifyScheduleOwner(invokerSessionKey);
-      const ownSession = owner.ok && owner.owner.kind !== "project" ? owner.owner.sessionKey : undefined;
-      const defaultSession = newNotify !== "none" && ownSession && newChannelId && channels.get(newChannelId)?.cfg.type === "app"
-        && channelIdFromSessionKey(ownSession) === newChannelId
-        ? ownSession
-        : undefined;
-      const newTask: ScheduledTask = normalizeTaskDelivery({
+      const newChannelId = chooseNewTaskChannel({ explicit: undefined, invokerChannelId, channelIds: [...channels.keys()] });
+      const chatProblem = taskChatIdProblem(newChannelId ? channels.get(newChannelId)?.cfg.type : undefined, chatId);
+      if (chatProblem) { json(res, { ok: false, error: chatProblem }, 400); return true; }
+      const newTask: ScheduledTask = toUserNotifyTask({
         id: crypto.randomUUID(), name: name.trim(), cron: cron.trim(), content,
-        enabled: enabled ?? true, independent: independent ?? true,
+        enabled: enabled ?? true,
         channelId: newChannelId,
-        model, modelParams,
-        notify: newNotify,
-        ...(defaultSession ? { notifyChatId: defaultSession } : {}),
+        ...defaultTaskModel(newChannelId ? channels.get(newChannelId)?.cfg : undefined),
+        ...(chatId?.trim() ? { notifyChatId: chatId.trim() } : {}),
       });
       tasks.push(newTask);
       writeTasks(tasks);
@@ -5078,14 +5072,22 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
       if (cron !== undefined) tasks[idx].cron = cron.trim();
       if (content !== undefined) tasks[idx].content = content;
       if (enabled !== undefined) tasks[idx].enabled = enabled;
-      if (independent !== undefined) tasks[idx].independent = independent;
-      if (channelId !== undefined) tasks[idx].channelId = channelId;
-      if (model !== undefined) tasks[idx].model = model;
-      if (modelParams !== undefined) tasks[idx].modelParams = modelParams;
-      if (notify !== undefined) tasks[idx].notify = notify;
-      tasks[idx] = normalizeTaskDelivery(tasks[idx]);
+      const ai = isAiTask(tasks[idx]);
+      const channelCfg = channels.get(taskNotifyChannelId(withResolvedChannel(tasks[idx])) ?? "")?.cfg;
+      const chatProblem = taskChatIdProblem(channelCfg?.type, chatId);
+      if (chatProblem) { json(res, { ok: false, error: chatProblem }, 400); return true; }
+      // 只有飞书通道的 notifyChatId 是用户填的会话 ID；应用内通道里它存的是任务的专属会话键，不能被清空
+      if (chatId !== undefined && !ai && channelCfg?.type === "feishu") tasks[idx].notifyChatId = chatId.trim() || undefined;
+      // 改过的任务一律落成「独立运行 + 通知我」（旧版交付方式在这里转过来）；没写过模型的补上通道现在的默认。AI 自排程不动它的投递方式
+      const converted = !ai && isLegacyDelivery(tasks[idx]);
+      if (ai) {
+        tasks[idx] = normalizeTaskDelivery(tasks[idx]);
+      } else {
+        tasks[idx] = toUserNotifyTask(tasks[idx].model?.trim() ? tasks[idx] : { ...tasks[idx], ...defaultTaskModel(channelCfg) });
+      }
       writeTasks(tasks);
-      json(res, { ok: true, task: tasks[idx], summary: describeManagedTask(tasks[idx], invokerSessionKey) });
+      const note = converted ? "\n注意：这是旧版交付方式的任务，已一并改成「独立运行 + 通知我」（每次全新 Agent 执行，结果发给用户）。" : "";
+      json(res, { ok: true, task: tasks[idx], summary: describeManagedTask(tasks[idx], invokerSessionKey) + note });
       return true;
     }
     if (action === "delete") {

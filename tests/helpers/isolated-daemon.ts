@@ -39,6 +39,8 @@ export interface IsolatedDaemonOptions {
    * 用来复现「第一个通道不是用户所在的通道」：多通道时 daemon 取第一个通道当默认，任务就会悄悄投到别的通道。
    */
   leadingChannels?: Array<{ id: string; name: string }>
+  /** 额外写进 ch_test 通道配置的字段（比如 agentResourceId / model：测试任务默认模型取自通道） */
+  testChannelExtra?: Record<string, unknown>
   /**
    * 把 HOME / USERPROFILE 指到数据目录下的临时目录。
    * daemon 里有些接口读写用户目录（比如 manage_skills 的 ~/.cursor/skills），不隔离就会动到真实目录。
@@ -98,6 +100,7 @@ export async function startIsolatedDaemon(opts: IsolatedDaemonOptions = {}): Pro
     {
       id: "ch_test", name: "测试", type: "app", enabled: true,
       mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: wsDir,
+      ...opts.testChannelExtra,
     },
   ]
 

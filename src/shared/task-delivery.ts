@@ -142,7 +142,7 @@ export interface ManagedTaskPlacement {
  * 只写「已创建」，AI 就会凭 independent=false 自己编出「在当前会话中运行」——实际投给的是通道的主会话。
  */
 export function describeManagedTaskOutcome(
-  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
+  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy" | "model">,
   labels: TaskDeliveryLabels,
   placement: ManagedTaskPlacement,
 ): string {
@@ -150,6 +150,14 @@ export function describeManagedTaskOutcome(
     ? `「${placement.channelName}」${placement.channelKind ? `（${placement.channelKind}）` : ""}`
     : "（通道已不存在）";
   const lines = [`通道：${channel}`, `去向：${describeTaskDelivery(task, labels)}`];
+  // 独立运行的任务才有自己的模型（AI 排程用创建它的会话，不在这里说）
+  if (task.independent !== false && !isAiTask(task)) {
+    lines.push(
+      task.model?.trim()
+        ? `模型：${task.model.trim()}（取自通道当时的默认，要换请用户到设置页改）`
+        : "模型：没有显式写入（通道没配主模型），运行时按通道的默认",
+    );
+  }
 
   // 选了具体会话（含 AI 默认选的「它自己所在的会话」）和通道主会话，措辞不同
   const picked = !!taskAgentSessionKey(task);
@@ -278,6 +286,17 @@ export function toUserNotifyTask<T extends ScheduledTask>(task: T): T {
   if (resolveTaskNotify(task) !== "im") delete next.notifyChatId;
   delete next.targetProjectId;
   return normalizeTaskDelivery(next);
+}
+
+/**
+ * manage_tasks 传的飞书会话 ID 能不能用：只有飞书通道有「会话 ID」这个概念
+ * （应用内每个任务有专属会话、微信只发主用户私聊）。别的通道填了就明说，不悄悄丢；没填永远没问题。
+ */
+export function taskChatIdProblem(channelType: string | undefined, chatId: string | undefined): string | undefined {
+  if (!chatId?.trim()) return undefined;
+  return channelType === "feishu"
+    ? undefined
+    : "chat_id 只对飞书通道有效（应用内每个任务有专属会话，微信发到主用户私聊）；要换通道请用户到设置页改";
 }
 
 /**

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   buildNotifySessionKey,
+  defaultTaskModel,
   isDirectNotifyTask,
   resolveTaskNotify,
   resolveTaskOutboundChatKey,
@@ -23,6 +24,7 @@ import {
   isLegacyDelivery,
   keepTaskAppSessions,
   normalizeTaskDelivery,
+  taskChatIdProblem,
   toUserNotifyTask,
   validateTaskDelivery,
   type TaskDeliveryCheckEnv,
@@ -818,5 +820,56 @@ describe("describeManagedTaskOutcome：AI 建 / 改任务后，工具返回里�
     expect(direct).toContain("不启动 Agent")
     expect(direct).toContain("发到这个任务专属的会话")
     expect(direct).not.toContain("当前所在的会话")
+  })
+})
+
+describe("defaultTaskModel：manage_tasks 新建任务写入的默认模型", () => {
+  it("通道现在的供应商 + 主模型 + 参数，显式写进任务", () => {
+    expect(defaultTaskModel({ agentResourceId: "r1", model: "composer-2", modelParams: "fast=true" }))
+      .toEqual({ resourceId: "r1", model: "composer-2", modelParams: "fast=true" })
+  })
+
+  it("没配供应商只写模型；没配参数不写参数（不留空串）", () => {
+    expect(defaultTaskModel({ model: "m1" })).toEqual({ model: "m1" })
+    expect(defaultTaskModel({ agentResourceId: " ", model: "m1", modelParams: " " })).toEqual({ model: "m1" })
+  })
+
+  it("通道没配主模型 / 通道不存在：什么都不写，不编一个", () => {
+    expect(defaultTaskModel({ agentResourceId: "r1" })).toEqual({})
+    expect(defaultTaskModel({ agentResourceId: "r1", model: "  " })).toEqual({})
+    expect(defaultTaskModel(undefined)).toEqual({})
+  })
+})
+
+describe("taskChatIdProblem：manage_tasks 的 chat_id 只对飞书通道有效", () => {
+  it("飞书通道可以填；没填永远没问题", () => {
+    expect(taskChatIdProblem("feishu", "oc_group")).toBeUndefined()
+    expect(taskChatIdProblem("app", undefined)).toBeUndefined()
+    expect(taskChatIdProblem("wechat", "  ")).toBeUndefined()
+  })
+
+  it("应用内 / 微信 / 通道不存在填了：明说原因，不悄悄丢", () => {
+    for (const type of ["app", "wechat", undefined]) {
+      expect(taskChatIdProblem(type, "oc_group")).toContain("只对飞书通道有效")
+    }
+  })
+})
+
+describe("describeManagedTaskOutcome：模型一行", () => {
+  const app = { channelName: "应用内", channelKind: "应用内对话" }
+
+  it("独立运行的任务：写明用的模型，并说清是取自通道、要换去设置页", () => {
+    const s = describeManagedTaskOutcome(task({ channelId: "ch_app", notify: "im", model: "composer-2" }), labels, app)
+    expect(s).toContain("模型：composer-2")
+    expect(s).toContain("设置页改")
+  })
+
+  it("没写模型：如实说没写，运行时按通道默认", () => {
+    expect(describeManagedTaskOutcome(task({ channelId: "ch_app", notify: "im" }), labels, app)).toContain("模型：没有显式写入")
+  })
+
+  it("非独立（旧版）和 AI 排程：不涉及自己的模型，不写这一行", () => {
+    expect(describeManagedTaskOutcome(task({ channelId: "ch_app", independent: false }), labels, app)).not.toContain("模型：")
+    expect(describeManagedTaskOutcome(task({ channelId: "ch_app", createdBy: "ai", notify: "agent" }), labels, app)).not.toContain("模型：")
   })
 })
