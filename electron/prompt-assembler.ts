@@ -152,6 +152,7 @@ function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey
     return buildTaskProtocolSection(task, {
       channelName: (id) => (id ? getChannel(id)?.name : undefined),
       projectName: (id) => getProject(id)?.name,
+      isAppChannel: (id) => !!id && getChannel(id)?.type === "app",
     })
   } catch {
     return ""

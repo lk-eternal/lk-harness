@@ -136,8 +136,10 @@ export default function TaskPanel() {
   const labels: TaskDeliveryLabels = {
     channelName: (id) => taskChannels.find((c) => c.id === id)?.name,
     projectName: (id) => projects.find((p) => p.id === id)?.name,
+    isAppChannel: (id) => taskChannels.find((c) => c.id === id)?.type === "app",
   }
   const checkEnv: TaskDeliveryCheckEnv = {
+    channelIsApp: (id) => taskChannels.find((c) => c.id === id)?.type === "app",
     projectExists: (id) => projects.some((p) => p.id === id),
     channelExists: (id) => taskChannels.some((c) => c.id === id),
     channelMainUserBound: (id) => {

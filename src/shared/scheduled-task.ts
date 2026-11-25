@@ -4,7 +4,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { atomicWriteUtf8 } from "./atomic-json.js";
-import type { ScheduledTask } from "./scheduled-task-rules.js";
+import { sendsStandaloneMessages, type ScheduledTask } from "./scheduled-task-rules.js";
 
 // 类型与纯规则在 scheduled-task-rules.ts（渲染进程也要用，不能带 node 依赖）；这里转出，旧的 import 路径照常可用
 export * from "./scheduled-task-rules.js";
@@ -145,7 +145,7 @@ export function taskCardFooter(input: {
  * 独立任务不是任何一个会话的回合。它的出站目标是聊天键、不带会话，
  * 头部如果照常借「这个聊天当前的活跃会话」，结果就会被标成某个项目 / 目录会话发的
  * （活跃会话想指哪就指哪，比如一个已经归档的项目）。
- * 只管独立任务；其余返回 undefined，调用方照旧按会话取头部。
+ * 只管独立发消息的任务（独立运行，或直接通知用户的非独立任务）；其余返回 undefined，调用方照旧按会话取头部。
  */
 export function taskCardHeader(input: {
   sessionKey?: string;
@@ -155,6 +155,6 @@ export function taskCardHeader(input: {
   const key = (input.invokerSessionKey || input.sessionKey)?.trim();
   if (!key) return undefined;
   const task = findScheduledTaskBySessionKey(key, input.tasks);
-  if (!task || task.independent === false) return undefined;
+  if (!task || !sendsStandaloneMessages(task)) return undefined;
   return { title: formatScheduledTaskLabel(task.name?.trim() || "定时任务"), colorKey: task.id };
 }

@@ -7,8 +7,8 @@ import { formatFireTime } from "./session-schedule.js";
  * 一次到点的结果：
  *  - triggered：已触发。独立运行的任务结果还没回来（或这一轮没有走到出结果就中断了）；直投 Agent 会话的任务到这里就是终点；
  *  - reported：已汇报，AI 提交了结果；
- *  - quiet：无需汇报，AI 说没事可报，或运行结束时没提交结果而这个任务本来就不要求汇报；
- *  - no-result：执行完了却没提交结果，而任务要求通知到 IM；
+ *  - quiet：无需汇报，AI 说没事可报，或运行结束时没提交结果（没提交就静默，不再给用户发提示）；
+ *  - no-result：旧版本留下的记录（执行完了却没提交结果，而任务要求通知到 IM），现在不再产生；
  *  - undelivered：没送出去（没投进队列，或结果发不出去），detail 写原因；
  *  - skipped：AI 排程本次跳过，detail 写原因；
  *  - missed：错过，电脑休眠 / 关机 / 应用没开，没触发。

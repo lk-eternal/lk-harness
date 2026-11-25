@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest"
 import {
   buildNotifySessionKey,
+  isDirectNotifyTask,
   resolveTaskNotify,
   resolveTaskOutboundChatKey,
-  taskImChannelId,
-  taskOutboundChannelId,
+  sendsStandaloneMessages,
+  taskAgentSessionKey,
+  taskNotifyChannelId,
   type ScheduledTask,
 } from "../src/shared/scheduled-task.js"
 import {
-  TASK_MISSING_RESULT_BODY,
   TaskRunTracker,
   buildTaskProtocolSection,
   chooseNewTaskChannel,
@@ -20,8 +21,6 @@ import {
   formatTaskImResult,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
-  shouldNoticeMissingResult,
-  taskMissingResultText,
   validateTaskDelivery,
   type TaskDeliveryCheckEnv,
   type TaskDeliveryLabels,
@@ -32,9 +31,14 @@ function task(over: Partial<ScheduledTask> = {}): ScheduledTask {
   return { id: "t1", name: "周报编写", cron: "0 9 * * 5", content: "写周报", enabled: true, channelId: "ch_a", ...over }
 }
 
+/** 应用内通道的会话键：ch_app 通道下的一个目录会话 */
+const APP_SESSION = "ch_app|app_main::D:\\work\\docs"
+
 const labels: TaskDeliveryLabels = {
-  channelName: (id) => ({ ch_a: "安若流年", ch_b: "测试通道" } as Record<string, string>)[id ?? ""],
+  channelName: (id) => ({ ch_a: "安若流年", ch_b: "测试通道", ch_app: "应用内" } as Record<string, string>)[id ?? ""],
   projectName: (id) => (id === "p1" ? "数英满班率" : undefined),
+  isAppChannel: (id) => id === "ch_app",
+  sessionName: (key) => (key === APP_SESSION ? "docs" : undefined),
 }
 
 describe("resolveTaskNotify：通知方式", () => {
@@ -50,8 +54,21 @@ describe("resolveTaskNotify：通知方式", () => {
     expect(resolveTaskNotify({})).toBe("none")
   })
 
-  it("非独立运行恒为不通知，不管配了什么", () => {
-    expect(resolveTaskNotify({ independent: false, notify: "im", notifyChatId: "oc_x" })).toBe("none")
+  it("非独立运行只有通知 AI / 通知我两种：没配过（旧任务）和配成不通知的都按通知 AI", () => {
+    expect(resolveTaskNotify({ independent: false })).toBe("agent")
+    expect(resolveTaskNotify({ independent: false, notify: "agent" })).toBe("agent")
+    expect(resolveTaskNotify({ independent: false, notify: "none" })).toBe("agent")
+    expect(resolveTaskNotify({ independent: false, notifyChatId: "oc_x" })).toBe("agent")
+    expect(resolveTaskNotify({ independent: false, notify: "im", notifyChatId: "oc_x" })).toBe("im")
+  })
+
+  it("直接通知用户的任务（非独立 + 通知我）：不启动 Agent，消息是独立发出的", () => {
+    expect(isDirectNotifyTask({ independent: false, notify: "im" })).toBe(true)
+    expect(isDirectNotifyTask({ independent: false, notify: "agent" })).toBe(false)
+    expect(isDirectNotifyTask({ independent: true, notify: "im" })).toBe(false)
+    expect(sendsStandaloneMessages({ independent: true })).toBe(true)
+    expect(sendsStandaloneMessages({ independent: false, notify: "im" })).toBe(true)
+    expect(sendsStandaloneMessages({ independent: false, notify: "agent" })).toBe(false)
   })
 
   it("notify 是脏值时回落到旧规则", () => {
@@ -61,16 +78,25 @@ describe("resolveTaskNotify：通知方式", () => {
 })
 
 describe("发送通道与出站目标", () => {
-  it("发送通道：专门选的 > 所属通道", () => {
-    expect(taskImChannelId({ channelId: "ch_a" })).toBe("ch_a")
-    expect(taskImChannelId({ channelId: "ch_a", notifyChannelId: "ch_b" })).toBe("ch_b")
-    expect(taskImChannelId({ channelId: "ch_a", notifyChannelId: "  " })).toBe("ch_a")
+  it("通知通道：旧任务专门存的 notifyChannelId > channelId（设置页只写 channelId）", () => {
+    expect(taskNotifyChannelId({ channelId: "ch_a" })).toBe("ch_a")
+    expect(taskNotifyChannelId({ channelId: "ch_a", notifyChannelId: "ch_b" })).toBe("ch_b")
+    expect(taskNotifyChannelId({ channelId: "ch_a", notifyChannelId: "  " })).toBe("ch_a")
+    expect(taskNotifyChannelId({})).toBeUndefined()
   })
 
-  it("通知到 IM 时出站通道是发送通道；其余是所属通道", () => {
-    expect(taskOutboundChannelId({ channelId: "ch_a", notify: "im", notifyChannelId: "ch_b" })).toBe("ch_b")
-    expect(taskOutboundChannelId({ channelId: "ch_a", notify: "agent", notifyChannelId: "ch_b" })).toBe("ch_a")
-    expect(taskOutboundChannelId({ channelId: "ch_a", notify: "none", notifyChannelId: "ch_b" })).toBe("ch_a")
+  it("通知 AI 所选的具体会话：只有通知 AI 且没绑项目时才算", () => {
+    expect(taskAgentSessionKey({ notify: "agent", notifyChatId: APP_SESSION })).toBe(APP_SESSION)
+    expect(taskAgentSessionKey({ independent: false, notifyChatId: APP_SESSION })).toBe(APP_SESSION)
+    expect(taskAgentSessionKey({ notify: "agent", notifyChatId: APP_SESSION, targetProjectId: "p1" })).toBeUndefined()
+    expect(taskAgentSessionKey({ notify: "agent" })).toBeUndefined()
+    expect(taskAgentSessionKey({ notify: "im", notifyChatId: APP_SESSION })).toBeUndefined()
+    expect(taskAgentSessionKey({ notify: "none", notifyChatId: APP_SESSION })).toBeUndefined()
+  })
+
+  it("通知我 + 应用内通道：聊天 ID 就是接收结果的会话键，原样当出站目标", () => {
+    expect(resolveTaskOutboundChatKey({ channelId: "ch_app", notify: "im", notifyChatId: APP_SESSION }, "ignored")).toBe(APP_SESSION)
+    expect(buildNotifySessionKey({ channelId: "ch_app", notify: "im", notifyChatId: APP_SESSION })).toBe(APP_SESSION)
   })
 
   it("通知到 IM + 填了聊天 ID：发到那个聊天，通道用发送通道", () => {
@@ -130,12 +156,37 @@ describe("normalizeTaskDelivery：保存前清理", () => {
     expect("targetProjectId" in normalizeTaskDelivery(task({ notify: "agent", targetProjectId: " " }))).toBe(false)
   })
 
-  it("非独立运行：只保留项目绑定，通知相关字段全清", () => {
-    const out = normalizeTaskDelivery(task({ independent: false, notify: "im", notifyChatId: "oc_x", notifyChannelId: "ch_b", targetProjectId: "p1" }))
-    expect(out).not.toHaveProperty("notify")
-    expect(out).not.toHaveProperty("notifyChatId")
-    expect(out).not.toHaveProperty("notifyChannelId")
-    expect(out.targetProjectId).toBe("p1")
+  it("通知 AI：选了具体会话就保留会话键；绑了项目则项目优先、会话键作废", () => {
+    const picked = normalizeTaskDelivery(task({ notify: "agent", notifyChatId: APP_SESSION }))
+    expect(picked.notifyChatId).toBe(APP_SESSION)
+    expect(picked).not.toHaveProperty("targetProjectId")
+    const both = normalizeTaskDelivery(task({ notify: "agent", notifyChatId: APP_SESSION, targetProjectId: "p1" }))
+    expect(both.targetProjectId).toBe("p1")
+    expect(both).not.toHaveProperty("notifyChatId")
+  })
+
+  it("非独立运行：清掉模型相关字段，通知方式只剩通知 AI / 通知我，没配过的写成通知 AI", () => {
+    const withModel = task({ independent: false, model: "m1", modelParams: "{}", resourceId: "r1" })
+    const out = normalizeTaskDelivery(withModel)
+    expect(out.notify).toBe("agent")
+    expect(out).not.toHaveProperty("model")
+    expect(out).not.toHaveProperty("modelParams")
+    expect(out).not.toHaveProperty("resourceId")
+    // 不通知对非独立运行没意义：写成通知 AI，并保留它选的会话
+    const none = normalizeTaskDelivery(task({ independent: false, notify: "none", notifyChatId: APP_SESSION }))
+    expect(none.notify).toBe("agent")
+    expect(none.notifyChatId).toBe(APP_SESSION)
+    // 通知我照常保留
+    const im = normalizeTaskDelivery(task({ independent: false, notify: "im", notifyChatId: "oc_x", targetProjectId: "p1" }))
+    expect(im.notify).toBe("im")
+    expect(im.notifyChatId).toBe("oc_x")
+    expect(im).not.toHaveProperty("targetProjectId")
+  })
+
+  it("独立运行不动模型", () => {
+    const out = normalizeTaskDelivery(task({ notify: "none", model: "m1", resourceId: "r1" }))
+    expect(out.model).toBe("m1")
+    expect(out.resourceId).toBe("r1")
   })
 
   it("不改原对象", () => {
@@ -148,9 +199,10 @@ describe("normalizeTaskDelivery：保存前清理", () => {
 describe("validateTaskDelivery：能不能送达", () => {
   const env = (over: Partial<TaskDeliveryCheckEnv> = {}): TaskDeliveryCheckEnv => ({
     projectExists: (id) => id === "p1",
-    channelExists: (id) => id === "ch_a" || id === "ch_b",
+    channelExists: (id) => id === "ch_a" || id === "ch_b" || id === "ch_app",
     channelMainUserBound: (id) => (id === "ch_a" ? true : id === "ch_b" ? false : undefined),
     channelName: (id) => labels.channelName(id),
+    channelIsApp: (id) => id === "ch_app",
     ...over,
   })
 
@@ -187,6 +239,27 @@ describe("validateTaskDelivery：能不能送达", () => {
   it("不通知时残留的项目绑定不拦保存（保存时会被清掉）", () => {
     expect(validateTaskDelivery(task({ notify: "none", targetProjectId: "p_gone" }), env())).toBeUndefined()
   })
+
+  it("应用内通道没有主用户私聊：通知我必须选会话", () => {
+    expect(validateTaskDelivery(task({ channelId: "ch_app", notify: "im" }), env())).toContain("请选择接收结果的会话")
+    expect(validateTaskDelivery(task({ channelId: "ch_app", notify: "im", notifyChatId: APP_SESSION }), env())).toBeUndefined()
+    // 非独立 + 通知我同样要选
+    expect(validateTaskDelivery(task({ channelId: "ch_app", independent: false, notify: "im" }), env())).toContain("请选择接收结果的会话")
+  })
+
+  it("所选会话必须属于这个通道（换了通道，旧会话键会指到别的通道里去）", () => {
+    expect(validateTaskDelivery(task({ channelId: "ch_a", notify: "im", notifyChatId: APP_SESSION }), env({ channelIsApp: () => true }))).toContain("不属于这个通道")
+    expect(validateTaskDelivery(task({ channelId: "ch_a", notify: "agent", notifyChatId: APP_SESSION }), env())).toContain("不属于这个通道")
+    expect(validateTaskDelivery(task({ channelId: "ch_app", notify: "agent", notifyChatId: APP_SESSION }), env())).toBeUndefined()
+  })
+
+  it("通知 AI：不选会话 = 通道主会话，不要求主用户私聊（主会话解析失败是投递时的事）", () => {
+    expect(validateTaskDelivery(task({ channelId: "ch_b", notify: "agent" }), env())).toBeUndefined()
+  })
+
+  it("通知 AI 选了项目：会话键不参与检查", () => {
+    expect(validateTaskDelivery(task({ channelId: "ch_a", notify: "agent", targetProjectId: "p1", notifyChatId: APP_SESSION }), env())).toBeUndefined()
+  })
 })
 
 describe("describeTaskDelivery：设置页文案", () => {
@@ -209,12 +282,41 @@ describe("describeTaskDelivery：设置页文案", () => {
     expect(s).toContain("队列")
   })
 
-  it("独立 + 通知到 IM：说清走哪个通道、发到哪、和 Agent 会话无关", () => {
+  it("独立 + 通知我：说清走哪个通道、发到哪、不唤醒 Agent、没提交结果就不通知", () => {
     const priv = describeTaskDelivery(task({ notify: "im" }), labels)
     expect(priv).toContain("通过「安若流年」发到主用户私聊")
-    expect(priv).toContain("和 Agent 会话无关")
+    expect(priv).toContain("不唤醒任何 Agent")
+    expect(priv).toContain("没提交结果就不通知")
     const grp = describeTaskDelivery(task({ notify: "im", notifyChannelId: "ch_b", notifyChatId: "oc_32cb78537b97c685e29f8a77e8a510cc" }), labels)
     expect(grp).toContain("通过「测试通道」发到聊天 oc_32cb785…10cc")
+  })
+
+  it("通知我 + 应用内通道：发到所选会话（认得出名字就写名字），没选会话明说", () => {
+    expect(describeTaskDelivery(task({ channelId: "ch_app", notify: "im", notifyChatId: APP_SESSION }), labels))
+      .toContain("通过「应用内」发到会话「docs」")
+    expect(describeTaskDelivery(task({ channelId: "ch_app", notify: "im", notifyChatId: "ch_app|app_main::D:\\other" }), labels))
+      .toContain("发到所选会话")
+    expect(describeTaskDelivery(task({ channelId: "ch_app", notify: "im" }), labels)).toContain("发到（未选会话）")
+  })
+
+  it("通知 AI 选了具体会话：写会话名，不再写主会话", () => {
+    const run = describeTaskDelivery(task({ channelId: "ch_app", notify: "agent", notifyChatId: APP_SESSION }), labels)
+    expect(run).toContain("会话「docs」")
+    expect(run).not.toContain("主会话")
+    expect(run).toContain("没提交结果就不通知")
+    const direct = describeTaskDelivery(task({ channelId: "ch_app", independent: false, notifyChatId: APP_SESSION }), labels)
+    expect(direct).toContain("发给「会话「docs」」")
+    expect(direct).toContain("占用该会话的上下文")
+  })
+
+  it("非独立 + 通知我：不启动 Agent，任务内容以 AI 口吻直接发给用户", () => {
+    const s = describeTaskDelivery(task({ independent: false, notify: "im" }), labels)
+    expect(s).toContain("不启动 Agent")
+    expect(s).toContain("以 AI 口吻")
+    expect(s).toContain("通过「安若流年」发到主用户私聊")
+    expect(s).not.toContain("占用")
+    expect(describeTaskDelivery(task({ channelId: "ch_app", independent: false, notify: "im", notifyChatId: APP_SESSION }), labels))
+      .toContain("发到会话「docs」")
   })
 
   it("引用的项目 / 通道已不存在时明说", () => {
@@ -303,43 +405,21 @@ describe("消息文案", () => {
     expect(formatTaskImResult({ name: "周报编写" }, " 周报已更新 ")).toBe("⏰ **周报编写**\n\n周报已更新")
   })
 
-  it("AI 没提交结果的提示：一句话点名任务", () => {
-    const t = taskMissingResultText({ name: "周报编写" })
-    expect(t).toBe("⏰ **周报编写** 已运行结束，但没有提交结果。")
-  })
-
   it("IM 任务消息有两份写法：带任务名的 text（没有任务横幅的通道用）、不带的 titledText（飞书横幅已是任务名时用）", () => {
-    expect(formatTaskImMessage({ name: "周报编写" }, "result", " 周报已更新 ")).toEqual({
+    expect(formatTaskImMessage({ name: "周报编写" }, " 周报已更新 ")).toEqual({
       text: "⏰ **周报编写**\n\n周报已更新",
       titledText: "周报已更新",
-    })
-    expect(formatTaskImMessage({ name: "周报编写" }, "notice", TASK_MISSING_RESULT_BODY)).toEqual({
-      text: "⏰ **周报编写** 已运行结束，但没有提交结果。",
-      titledText: "已运行结束，但没有提交结果。",
     })
   })
 
   it("不带任务名的那份确实没有任务名：横幅已经写了，正文再来一遍就是重复（回归：飞书私聊里「⏰ 周报编写」出现两次）", () => {
-    const result = formatTaskImMessage({ name: "周报编写" }, "result", "周报已更新")
-    const notice = formatTaskImMessage({ name: "周报编写" }, "notice", TASK_MISSING_RESULT_BODY)
-    expect(result.titledText).not.toContain("周报编写")
-    expect(notice.titledText).not.toContain("周报编写")
-    expect(result.text).toContain("周报编写")
-    expect(notice.text).toContain("周报编写")
+    const msg = formatTaskImMessage({ name: "周报编写" }, "周报已更新")
+    expect(msg.titledText).not.toContain("周报编写")
+    expect(msg.text).toContain("周报编写")
   })
 
-  it("旧入口输出不变：formatTaskImResult / taskMissingResultText 就是新函数的 text（两处文案不会各改各的）", () => {
-    expect(formatTaskImResult({ name: "x" }, " 内容 ")).toBe(formatTaskImMessage({ name: "x" }, "result", "内容").text)
-    expect(taskMissingResultText({ name: "x" })).toBe(formatTaskImMessage({ name: "x" }, "notice", TASK_MISSING_RESULT_BODY).text)
-  })
-
-  it("没提交结果要不要提示：只有通知到 IM（含旧任务按聊天 ID 推断为 IM）；Agent / 不通知 / 非独立都不提示", () => {
-    expect(shouldNoticeMissingResult({ notify: "im" })).toBe(true)
-    expect(shouldNoticeMissingResult({ notifyChatId: "oc_x" })).toBe(true)
-    expect(shouldNoticeMissingResult({ notify: "agent" })).toBe(false)
-    expect(shouldNoticeMissingResult({ notify: "none" })).toBe(false)
-    expect(shouldNoticeMissingResult({})).toBe(false)
-    expect(shouldNoticeMissingResult({ independent: false, notify: "im" })).toBe(false)
+  it("旧入口输出不变：formatTaskImResult 就是新函数的 text（两处文案不会各改各的）", () => {
+    expect(formatTaskImResult({ name: "x" }, " 内容 ")).toBe(formatTaskImMessage({ name: "x" }, "内容").text)
   })
 })
 
@@ -357,22 +437,31 @@ describe("buildTaskProtocolSection：独立任务的提示词", () => {
     }
   })
 
-  it("IM / 不通知：没事可报用 quiet（IM 里什么都不交会收到「没有提交结果」）", () => {
-    for (const notify of ["none", "im"] as const) {
-      expect(buildTaskProtocolSection(task({ notify }), labels)).toContain("quiet=true")
+  it("不通知：做完要提交（没事可报用 quiet）", () => {
+    const s = buildTaskProtocolSection(task({ notify: "none" }), labels)
+    expect(s).toContain("quiet=true")
+    expect(s).not.toContain("没有就直接结束")
+  })
+
+  it("通知我 / 通知 AI：没有要汇报的就直接结束，不用提交任何东西（没提交就静默）", () => {
+    for (const notify of ["agent", "im"] as const) {
+      const s = buildTaskProtocolSection(task({ notify }), labels)
+      expect(s).toContain("没有就直接结束")
+      expect(s).not.toContain("quiet")
     }
   })
 
-  it("通知到 Agent：没有要汇报的就直接结束，不用提交任何东西", () => {
-    const s = buildTaskProtocolSection(task({ notify: "agent" }), labels)
-    expect(s).toContain("没有就直接结束")
-    expect(s).not.toContain("quiet")
-  })
-
-  it("通知到 IM：说清发到哪", () => {
+  it("通知我：说清发到哪", () => {
     const s = buildTaskProtocolSection(task({ notify: "im", notifyChannelId: "ch_b", notifyChatId: "oc_grp" }), labels)
     expect(s).toContain("通过「测试通道」发到聊天 oc_grp")
     expect(s).toContain("send_image")
+    expect(buildTaskProtocolSection(task({ channelId: "ch_app", notify: "im", notifyChatId: APP_SESSION }), labels))
+      .toContain("通过「应用内」发到会话「docs」")
+  })
+
+  it("通知 AI 选了具体会话：结果投进那个会话", () => {
+    expect(buildTaskProtocolSection(task({ channelId: "ch_app", notify: "agent", notifyChatId: APP_SESSION }), labels))
+      .toContain("结果会投进「会话「docs」」")
   })
 
   it("通知到 Agent：说清投进哪个会话，文件写路径", () => {
@@ -557,7 +646,7 @@ describe("describeManagedTaskOutcome：AI 建 / 改任务后，工具返回里�
       labels,
       { ...feishu, mainSessionKey: "ch_a|oc_x::D:\\proj", mainSessionIsInvoker: false },
     )
-    expect(s).toContain("所属通道：「安若流年」（飞书）")
+    expect(s).toContain("通道：「安若流年」（飞书）")
     expect(s).toContain("不是你当前所在的会话")
     expect(s).toContain("回复会发到飞书里")
     expect(s).toContain("schedule_create")
@@ -592,7 +681,7 @@ describe("describeManagedTaskOutcome：AI 建 / 改任务后，工具返回里�
       { ...feishu, mainSessionKey: "ch_a|oc_x::D:\\proj" },
     )
     expect(s).not.toContain("当前所在的会话")
-    expect(s).toContain("所属通道：「安若流年」")
+    expect(s).toContain("通道：「安若流年」")
   })
 
   it("通道没有主用户私聊 / 没配工作目录：直接说会投递失败", () => {
@@ -618,6 +707,29 @@ describe("describeManagedTaskOutcome：AI 建 / 改任务后，工具返回里�
 
   it("通道不存在：写明，不编一个通道名", () => {
     const s = describeManagedTaskOutcome(task({ independent: true, notify: "none", channelId: "ch_gone" }), labels, {})
-    expect(s).toContain("所属通道：（通道已不存在）")
+    expect(s).toContain("通道：（通道已不存在）")
+  })
+
+  it("通知 AI 选了具体会话（含 AI 默认选的自己所在的会话）：措辞写「所选会话」，不写「主会话」", () => {
+    const picked = task({ channelId: "ch_app", independent: false, notifyChatId: APP_SESSION })
+    const self = describeManagedTaskOutcome(picked, labels, { ...app, mainSessionKey: APP_SESSION, mainSessionIsInvoker: true })
+    expect(self).toContain("所选会话就是你当前所在的会话")
+    expect(self).not.toContain("主会话")
+    expect(self).not.toContain("⚠")
+    const other = describeManagedTaskOutcome(picked, labels, { ...app, mainSessionKey: APP_SESSION, mainSessionIsInvoker: false })
+    expect(other).toContain("⚠ 所选会话不是你当前所在的会话")
+    expect(other).toContain("schedule_create")
+    const gone = describeManagedTaskOutcome(picked, labels, { ...app, mainSessionKey: null })
+    expect(gone).toContain("没能找到所选会话")
+    expect(gone).toContain("到点会投递失败")
+  })
+
+  it("通知我（非独立：内容直接发给用户；独立：结果发给用户）：不涉及 Agent 会话，不出现「当前会话」的说明", () => {
+    const direct = describeManagedTaskOutcome(
+      task({ channelId: "ch_app", independent: false, notify: "im", notifyChatId: APP_SESSION }), labels, { ...app },
+    )
+    expect(direct).toContain("不启动 Agent")
+    expect(direct).toContain("发到会话「docs」")
+    expect(direct).not.toContain("当前所在的会话")
   })
 })

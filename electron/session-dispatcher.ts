@@ -54,7 +54,7 @@ import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
-import { findScheduledTaskBySessionKey, isOrphanTaskSessionKey, formatScheduledTaskLabel, resolveTaskChannelId, resolveTaskOutboundChatKey, taskOutboundChannelId, type ScheduledTask } from "../src/shared/scheduled-task"
+import { findScheduledTaskBySessionKey, isOrphanTaskSessionKey, formatScheduledTaskLabel, resolveTaskChannelId, resolveTaskOutboundChatKey, taskNotifyChannelId, type ScheduledTask } from "../src/shared/scheduled-task"
 import {
   clearLaunchFailStreak,
   clearAllLaunchFailStreaks,
@@ -665,9 +665,9 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
   const channel: MessageChannel | undefined = getChannel(p.channelId)
     ?? resolveChannelForSession(sessionKey)
     ?? (meta?.chatId ? getChannel(parseChatKey(meta.chatId).channelId) : undefined)
-  // 任务结果的出站通道：通知到 IM 时是「发送通道」（可能不是所属通道），其余是所属通道
+  // 任务结果的出站通道：通知通道（旧任务可能单独存了 notifyChannelId），没有就是任务的通道
   const taskTarget = scheduledTask ? { ...scheduledTask, channelId: scheduledTask.channelId || channel?.id } : undefined
-  const outboundChannel = taskTarget ? getChannel(taskOutboundChannelId(taskTarget)) : undefined
+  const outboundChannel = taskTarget ? getChannel(taskNotifyChannelId(taskTarget)) : undefined
   const notifySessionKey = p.notifySessionKey?.trim()
     || (taskTarget ? resolveTaskOutboundChatKey(taskTarget, (outboundChannel ?? channel)?.mainUserChatId) : undefined)
   // 供应商与模型的解析规则在 resolveLaunchModel（会话管理页显示的有效模型和这里共用同一份）：

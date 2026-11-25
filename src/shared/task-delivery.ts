@@ -1,15 +1,17 @@
 // ── 定时任务「结果交付」的纯逻辑 ─────────────────────────
-// 通知方式（不通知 / 通知到 Agent 会话 / 通知到 IM）涉及：
+// 通知谁（不通知 / 通知 AI / 通知我）涉及：
 //   - 设置页的文案、校验、保存前清理（renderer 用）
 //   - 独立任务会话的提示词（告诉 AI 怎么用 send_result）
-//   - daemon 把结果投到哪、投成什么样（Agent 队列消息 / IM 卡片 / 兜底提示）
+//   - daemon 把结果投到哪、投成什么样（Agent 队列消息 / IM 卡片 / 应用内会话消息）
 //   - 「这次运行有没有提交结果」的记账
 // 全是无副作用函数，便于单测；真正的发送在 daemon / electron 里。
 // 设置页（渲染进程）也 import 本文件：不许引入带 node 依赖的模块（project-types / scheduled-task 等）。
 
+import { channelIdFromSessionKey } from "./channel-types.js";
 import {
   resolveTaskNotify,
-  taskImChannelId,
+  taskAgentSessionKey,
+  taskNotifyChannelId,
   type ScheduledTask,
   type TaskNotify,
 } from "./scheduled-task-rules.js";
@@ -22,32 +24,48 @@ export interface TaskDeliveryLabels {
   channelName(channelId?: string): string | undefined;
   /** 项目名；项目不存在返回 undefined */
   projectName(projectId: string): string | undefined;
+  /** 是不是应用内对话通道：它没有「主用户私聊」，要选具体会话 */
+  isAppChannel(channelId?: string): boolean;
+  /** 会话在界面上的名字；认不出（或调用方列不出会话名）返回 undefined */
+  sessionName?(sessionKey: string): string | undefined;
 }
 
 // ── 目标描述 ───────────────────────────────────────────
 
 /**
- * 「Agent 会话」目标的显示名：绑了项目 = 该项目的会话；
- * AI 自己排的程 = 创建它的会话（可能是主会话，也可能是应用内的其他会话）；其余 = 所属通道的主会话。
+ * 「通知 AI」目标的显示名：绑了项目 = 该项目的会话；选了具体会话 = 那个会话；
+ * AI 自己排的程 = 创建它的会话（可能是主会话，也可能是应用内的其他会话）；其余 = 通道的主会话。
  */
 export function taskAgentTargetLabel(
-  task: Pick<ScheduledTask, "targetProjectId" | "createdBy">,
-  labels: Pick<TaskDeliveryLabels, "projectName">,
+  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "targetProjectId" | "createdBy">,
+  labels: Pick<TaskDeliveryLabels, "projectName" | "sessionName">,
 ): string {
   const pid = task.targetProjectId?.trim();
-  if (!pid) return task.createdBy === "ai" ? "创建它的会话" : "主会话";
-  const name = labels.projectName(pid);
-  return name ? `项目「${name}」的会话` : "项目（已不存在）的会话";
+  if (pid) {
+    const name = labels.projectName(pid);
+    return name ? `项目「${name}」的会话` : "项目（已不存在）的会话";
+  }
+  const session = taskAgentSessionKey(task);
+  if (session) {
+    const name = labels.sessionName?.(session);
+    return name ? `会话「${name}」` : "所选会话";
+  }
+  return task.createdBy === "ai" ? "创建它的会话" : "主会话";
 }
 
-/** 「IM」目标的显示名：通过哪个通道，发到哪个聊天 */
-export function taskImTargetLabel(
+/** 「通知我」目标的显示名：通过哪个通道，发到哪个聊天 / 会话 */
+export function taskUserTargetLabel(
   task: Pick<ScheduledTask, "channelId" | "notifyChannelId" | "notifyChatId">,
-  labels: Pick<TaskDeliveryLabels, "channelName">,
+  labels: Pick<TaskDeliveryLabels, "channelName" | "isAppChannel" | "sessionName">,
 ): string {
-  const channelId = taskImChannelId(task);
+  const channelId = taskNotifyChannelId(task);
   const channel = channelId ? (labels.channelName(channelId) ?? "（通道已不存在）") : "（未选通道）";
   const chat = task.notifyChatId?.trim();
+  if (labels.isAppChannel(channelId)) {
+    if (!chat) return `通过「${channel}」发到（未选会话）`;
+    const name = labels.sessionName?.(chat);
+    return `通过「${channel}」发到${name ? `会话「${name}」` : "所选会话"}`;
+  }
   const where = chat ? `聊天 ${shortChatId(chat)}` : "主用户私聊";
   return `通过「${channel}」发到${where}`;
 }
@@ -62,26 +80,29 @@ export function describeTaskDelivery(
   task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
   labels: TaskDeliveryLabels,
 ): string {
+  const mode = resolveTaskNotify(task);
   if (task.independent === false) {
-    return `触发时把任务内容发给「${taskAgentTargetLabel(task, labels)}」，由它自己执行；会占用该会话的上下文。`;
+    return mode === "im"
+      ? `触发时不启动 Agent，直接把任务内容以 AI 口吻${taskUserTargetLabel(task, labels)}。`
+      : `触发时把任务内容发给「${taskAgentTargetLabel(task, labels)}」，由它自己执行；会占用该会话的上下文。`;
   }
   const base = "每次由全新 Agent 执行，不占用任何会话上下文。";
-  switch (resolveTaskNotify(task)) {
+  switch (mode) {
     case "agent":
-      return `${base}完成后 AI 提交的结果会作为一条消息投进「${taskAgentTargetLabel(task, labels)}」的队列，并唤醒它处理。`;
+      return `${base}完成后 AI 提交的结果会作为一条消息投进「${taskAgentTargetLabel(task, labels)}」的队列，并唤醒它处理；没提交结果就不通知。`;
     case "im":
-      return `${base}完成后 AI 提交的结果会${taskImTargetLabel(task, labels)}，和 Agent 会话无关。`;
+      return `${base}完成后 AI 提交的结果会以 AI 口吻${taskUserTargetLabel(task, labels)}，不唤醒任何 Agent；没提交结果就不通知。`;
     default:
-      return `${base}不通知：结果不会发给任何人（AI 仍可自己发图片 / 文件到所属通道的主用户私聊）。`;
+      return `${base}不通知：结果不会发给任何人（AI 仍可自己发图片 / 文件到通道的主用户私聊）。`;
   }
 }
 
-// ── 对话里 AI 用 manage_tasks 建 / 改任务：所属通道怎么选、去向怎么告诉它 ──
+// ── 对话里 AI 用 manage_tasks 建 / 改任务：通道怎么选、去向怎么告诉它 ──
 
 /**
- * AI 新建任务时没法指定通道，所属通道按「显式指定 > 调用者自己所在的通道 > 第一个通道」取。
+ * AI 新建任务时没法指定通道，通道按「显式指定 > 调用者自己所在的通道 > 第一个通道」取。
  * 不能直接取第一个通道：多通道时它多半不是用户正在用的那个，
- * 非独立任务又是投给「所属通道的主会话」，结果任务悄悄投进了别的通道（比如飞书私聊）。
+ * 通知 AI 又是投给「通道的主会话」，结果任务悄悄投进了别的通道（比如飞书私聊）。
  */
 export function chooseNewTaskChannel(opts: {
   explicit?: string;
@@ -99,26 +120,26 @@ export function chooseNewTaskChannel(opts: {
 
 /** 任务实际会去的位置（daemon 解析后传进来，本文件只管措辞） */
 export interface ManagedTaskPlacement {
-  /** 所属通道的显示名；通道不存在为 undefined */
+  /** 通道的显示名；通道不存在为 undefined */
   channelName?: string;
-  /** 所属通道的类型名：飞书 / 微信 / 应用内对话 */
+  /** 通道的类型名：飞书 / 微信 / 应用内对话 */
   channelKind?: string;
-  /** 所属通道是飞书 / 微信这类外部 IM：投进它的主会话，回复会发到 IM 里 */
+  /** 通道是飞书 / 微信这类外部 IM：投进它的主会话，回复会发到 IM 里 */
   channelIsExternalIm?: boolean;
   /**
-   * 「投主会话」时解析出的会话：
-   *  - undefined = 这个任务不是投主会话（独立且不通知到 Agent，或绑了项目），不需要说明
-   *  - null = 想投主会话，但没解析出来（通道没有主用户 / 没配工作目录）
+   * 「投会话」（通道主会话 / 所选的具体会话）时解析出的会话：
+   *  - undefined = 这个任务不投会话（不通知 AI，或绑了项目），不需要说明
+   *  - null = 想投会话，但没解析出来（主会话：通道没有主用户 / 没配工作目录；所选会话：已被删除 / 不属于这个通道）
    *  - 字符串 = 解析出的会话 key
    */
   mainSessionKey?: string | null;
-  /** 解析出的主会话是不是调用者当前所在的会话；undefined = 不知道调用者是谁（不下结论） */
+  /** 解析出的会话是不是调用者当前所在的会话；undefined = 不知道调用者是谁（不下结论） */
   mainSessionIsInvoker?: boolean;
 }
 
 /**
  * AI 用 manage_tasks 新建 / 修改 / 启用任务后，工具返回里写明「这个任务实际会去哪」。
- * 只写「已创建」，AI 就会凭 independent=false 自己编出「在当前会话中运行」——实际投给的是所属通道的主会话。
+ * 只写「已创建」，AI 就会凭 independent=false 自己编出「在当前会话中运行」——实际投给的是通道的主会话。
  */
 export function describeManagedTaskOutcome(
   task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId" | "createdBy">,
@@ -128,16 +149,23 @@ export function describeManagedTaskOutcome(
   const channel = placement.channelName
     ? `「${placement.channelName}」${placement.channelKind ? `（${placement.channelKind}）` : ""}`
     : "（通道已不存在）";
-  const lines = [`所属通道：${channel}`, `去向：${describeTaskDelivery(task, labels)}`];
+  const lines = [`通道：${channel}`, `去向：${describeTaskDelivery(task, labels)}`];
 
+  // 选了具体会话（含 AI 默认选的「它自己所在的会话」）和通道主会话，措辞不同
+  const picked = !!taskAgentSessionKey(task);
+  const subject = picked ? "所选会话" : "这个主会话";
   if (placement.mainSessionKey === null) {
-    lines.push("⚠ 没能解析出这个通道的主会话（通道没有主用户私聊，或没配置工作目录），到点会投递失败。");
+    lines.push(
+      picked
+        ? "⚠ 没能找到所选会话（已被删除，或不属于这个通道），到点会投递失败。"
+        : "⚠ 没能解析出这个通道的主会话（通道没有主用户私聊，或没配置工作目录），到点会投递失败。",
+    );
   } else if (placement.mainSessionKey !== undefined && placement.mainSessionIsInvoker !== undefined) {
     if (placement.mainSessionIsInvoker) {
-      lines.push("这个主会话就是你当前所在的会话。");
+      lines.push(`${subject}就是你当前所在的会话。`);
     } else {
       lines.push(
-        `⚠ 这个主会话不是你当前所在的会话${placement.channelIsExternalIm ? `，它的回复会发到${placement.channelKind ?? "IM"}里` : ""}。` +
+        `⚠ ${subject}不是你当前所在的会话${placement.channelIsExternalIm ? `，它的回复会发到${placement.channelKind ?? "IM"}里` : ""}。` +
         "如果用户要的是「当前会话」自己到点做事 / 过一阵回来看，请删除这个任务，改用 schedule_create（它绑定调用者所在的会话）。",
       );
     }
@@ -164,6 +192,8 @@ export interface TaskDeliveryCheckEnv {
   /** 通道是否已绑定主用户私聊；通道不存在时返回 undefined */
   channelMainUserBound(channelId: string): boolean | undefined;
   channelName(channelId: string): string | undefined;
+  /** 是不是应用内对话通道 */
+  channelIsApp(channelId: string): boolean;
 }
 
 /** 保存前检查「结果能不能送达」；返回错误说明，没问题返回 undefined */
@@ -171,17 +201,24 @@ export function validateTaskDelivery(
   task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "channelId" | "notifyChannelId" | "targetProjectId">,
   env: TaskDeliveryCheckEnv,
 ): string | undefined {
-  const projectId = task.targetProjectId?.trim();
   const mode = resolveTaskNotify(task);
-  const needsProject = task.independent === false || mode === "agent";
-  if (needsProject && projectId && !env.projectExists(projectId)) {
+  if (mode === "none") return undefined;
+
+  const projectId = task.targetProjectId?.trim();
+  if (mode === "agent" && projectId && !env.projectExists(projectId)) {
     return "绑定的项目已不存在，请重新选择 Agent 会话";
   }
-  if (mode === "im") {
-    const channelId = taskImChannelId(task);
-    if (!channelId) return "请选择发送结果的消息通道";
-    if (!env.channelExists(channelId)) return "发送通道已不存在，请重新选择";
-    if (!task.notifyChatId?.trim() && env.channelMainUserBound(channelId) !== true) {
+  const channelId = taskNotifyChannelId(task);
+  if (!channelId) return "请选择通知的通道";
+  if (!env.channelExists(channelId)) return "通知的通道已不存在，请重新选择";
+
+  const chat = task.notifyChatId?.trim();
+  const isApp = env.channelIsApp(channelId);
+  const sessionKey = mode === "agent" ? taskAgentSessionKey(task) : isApp ? chat : undefined;
+  if (sessionKey && channelIdFromSessionKey(sessionKey) !== channelId) return "所选会话不属于这个通道，请重新选择";
+  if (mode === "im" && !chat) {
+    if (isApp) return "请选择接收结果的会话";
+    if (env.channelMainUserBound(channelId) !== true) {
       const name = env.channelName(channelId) ?? channelId;
       return `通道「${name}」还没有绑定主用户私聊：请填写飞书群 / 聊天 ID，或先在通道设置里绑定主用户`;
     }
@@ -191,30 +228,32 @@ export function validateTaskDelivery(
 
 /**
  * 保存前把「当前方式用不到的字段」清掉，并把推断出来的通知方式写实：
- * 不清的话，切换方式后残留的聊天 ID / 项目绑定会在不该生效的地方悄悄生效。
+ * 不清的话，切换方式后残留的聊天 ID / 项目绑定 / 模型会在不该生效的地方悄悄生效。
  */
 export function normalizeTaskDelivery<T extends ScheduledTask>(task: T): T {
   const next: T = { ...task };
-  if (next.independent === false) {
-    delete next.notify;
-    delete next.notifyChannelId;
-    delete next.notifyChatId;
-    if (!next.targetProjectId?.trim()) delete next.targetProjectId;
-    return next;
-  }
   const mode = resolveTaskNotify(next);
   next.notify = mode;
-  if (mode !== "im") {
+  // 模型只属于独立运行：非独立运行的内容进别人的会话，用的是那个会话自己的模型
+  if (next.independent === false) {
+    delete next.model;
+    delete next.modelParams;
+    delete next.resourceId;
+  }
+  if (mode === "none") {
     delete next.notifyChatId;
     delete next.notifyChannelId;
-  } else {
-    if (!next.notifyChatId?.trim()) delete next.notifyChatId;
-    // 和所属通道一样就不用单独存：之后改所属通道，发送通道自然跟着走
-    if (!next.notifyChannelId?.trim() || next.notifyChannelId.trim() === next.channelId?.trim()) {
-      delete next.notifyChannelId;
-    }
+    delete next.targetProjectId;
+    return next;
   }
+  if (!next.notifyChatId?.trim()) delete next.notifyChatId;
+  // 项目会话和具体会话二选一：绑了项目，会话键就是残留
+  if (mode === "agent" && next.targetProjectId?.trim()) delete next.notifyChatId;
   if (mode !== "agent" || !next.targetProjectId?.trim()) delete next.targetProjectId;
+  // 和通道一样就不用单独存：之后改通道，通知通道自然跟着走
+  if (!next.notifyChannelId?.trim() || next.notifyChannelId.trim() === next.channelId?.trim()) {
+    delete next.notifyChannelId;
+  }
   return next;
 }
 
@@ -244,45 +283,23 @@ export function formatAiSelfReminder(
   return `⏰ 定时任务「${task.name}」（${stamp(now)}，${n}）\n\n${prompt}`;
 }
 
-/** AI 没提交结果时发给接收方的一句话（不含任务名；只在通知到 IM 时发） */
-export const TASK_MISSING_RESULT_BODY = "已运行结束，但没有提交结果。";
-
 /**
- * 发到 IM 的任务消息，同一条消息的两种写法：
+ * 发给用户的任务消息，同一条消息的两种写法：
  *  - text：正文第一行带任务名（⏰ **任务名**）。微信、应用内、飞书群聊这些没有任务横幅的地方用这份，收到的人才知道是哪个任务；
  *  - titledText：不带任务名。飞书主用户私聊的卡片横幅已经是「⏰ 任务名」，再带一遍就重复了。
  * 用哪份由发送处看横幅有没有真的显示来定（daemon 的 resolveSendCardText），这里只负责把两份写对。
- * kind=result 是 AI 交的结果（任务名单独一行）；kind=notice 是系统提示（任务名接在句首）。
  */
 export function formatTaskImMessage(
   task: Pick<ScheduledTask, "name">,
-  kind: "result" | "notice",
   text: string,
 ): { text: string; titledText: string } {
   const bare = text.trim();
-  return {
-    text: kind === "result" ? `⏰ **${task.name}**\n\n${bare}` : `⏰ **${task.name}** ${bare}`,
-    titledText: bare,
-  };
+  return { text: `⏰ **${task.name}**\n\n${bare}`, titledText: bare };
 }
 
-/** 发到 IM 的结果：带上任务名，收到的人才知道是哪个任务 */
+/** 发给用户的结果：带上任务名，收到的人才知道是哪个任务 */
 export function formatTaskImResult(task: Pick<ScheduledTask, "name">, text: string): string {
-  return formatTaskImMessage(task, "result", text).text;
-}
-
-/** AI 没提交结果时发给接收方的一句话（只在通知到 IM 时发） */
-export function taskMissingResultText(task: Pick<ScheduledTask, "name">): string {
-  return formatTaskImMessage(task, "notice", TASK_MISSING_RESULT_BODY).text;
-}
-
-/**
- * 跑完却没提交结果，要不要给接收方发 {@link taskMissingResultText}。
- * 只有 IM：那里有人等着看结果，什么都没收到就分不清是「没事」还是「没跑成」。
- * 通知到 Agent 的任务多是盯进度 / 查缺陷，没事就不用汇报；兜底提示会白白唤醒目标会话、让它在聊天里回一句废话。
- */
-export function shouldNoticeMissingResult(task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId">): boolean {
-  return resolveTaskNotify(task) === "im";
+  return formatTaskImMessage(task, text).text;
 }
 
 // ── 独立任务会话的提示词 ───────────────────────────────
@@ -300,12 +317,12 @@ export function buildTaskProtocolSection(
   const lines = [
     `# 定时任务「${task.name}」`,
     "",
-    mode === "agent"
-      ? `独立运行：你的回复不会直接发给任何人。有要汇报的调用 \`${TASK_RESULT_TOOL}\` 提交（\`text\` 是结果正文）；没有就直接结束。`
-      : `独立运行：你的回复不会直接发给任何人，做完后调用 \`${TASK_RESULT_TOOL}\` 提交结果（\`text\` 是结果正文；没什么要汇报的传 \`quiet=true\`）。`,
+    mode === "none"
+      ? `独立运行：你的回复不会直接发给任何人，做完后调用 \`${TASK_RESULT_TOOL}\` 提交结果（\`text\` 是结果正文；没什么要汇报的传 \`quiet=true\`）。`
+      : `独立运行：你的回复不会直接发给任何人。有要汇报的调用 \`${TASK_RESULT_TOOL}\` 提交（\`text\` 是结果正文）；没有就直接结束。`,
   ];
   if (mode === "im") {
-    lines.push(`结果会${taskImTargetLabel(task, labels)}。图片 / 文件可用 \`send_image\` / \`send_file\` 发到同一处。`);
+    lines.push(`结果会${taskUserTargetLabel(task, labels)}。图片 / 文件可用 \`send_image\` / \`send_file\` 发到同一处。`);
   } else if (mode === "agent") {
     lines.push(`结果会投进「${taskAgentTargetLabel(task, labels)}」。图片 / 文件发不过去，路径写在 \`text\` 里。`);
   } else {

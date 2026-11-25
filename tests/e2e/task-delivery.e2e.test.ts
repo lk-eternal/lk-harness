@@ -43,6 +43,15 @@ const task = (id: string, extra: Record<string, unknown> = {}) => ({
   id, name: `任务-${id}`, cron: NEVER, content: `内容-${id}`, enabled: true, independent: true, channelId: "ch_test", ...extra,
 })
 
+/** 应用内的临时会话键（<数据目录>/workspaces/temp_<时间戳>）：目录没建 = 用户已经把这个会话删了 */
+const deadTempKey = (ts: string) => `ch_test|app_main::${path.join(d.dataDir, "workspaces", `temp_${ts}`)}`
+/** 还在的临时会话：目录在磁盘上 */
+const liveTempKey = (ts: string) => {
+  const key = deadTempKey(ts)
+  fs.mkdirSync(path.join(d.dataDir, "workspaces", `temp_${ts}`), { recursive: true })
+  return key
+}
+
 const GROUP = "ch_test|app_group"
 const addProject = (id: string, archived = false, name = `项目${id}`): string => {
   const sessionKey = projectSessionKey(GROUP, id)
@@ -147,12 +156,100 @@ describe("手动触发（立即执行）：任务投到绑定的 Agent 会话", 
     expect(r.ok).toBe(false)
   })
 
-  it("通知到 IM，但发送通道不存在：不启动任务（跑了结果也送不到）", async () => {
+  it("通知我，但通道不存在：不启动任务（跑了结果也送不到）", async () => {
     writeTasks([task("t-nochan", { notify: "im", notifyChannelId: "ch_missing" })])
     const r = await trigger("t-nochan")
     expect(r.ok).toBe(false)
-    expect(r.error).toContain("结果发送目标")
+    expect(r.error).toContain("发送目标")
     expect(await pollKey("t-nochan")).toEqual([])
+  })
+
+  it("通知我 + 应用内通道没选会话：不启动任务，原因写明要选会话", async () => {
+    writeTasks([task("t-nosession", { notify: "im" })])
+    const r = await trigger("t-nosession")
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("没选接收结果的会话")
+    expect(await pollKey("t-nosession")).toEqual([])
+  })
+
+  it("通知 AI 选了会话但已被删除（临时会话目录没了）：不启动任务，原因写明", async () => {
+    const gone = deadTempKey("1700000000100") // 目录不存在 = 用户把这个临时会话删了
+    writeTasks([task("t-gone-session", { notify: "agent", notifyChatId: gone })])
+    const r = await trigger("t-gone-session")
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("已被删除")
+    expect(await pollKey("t-gone-session")).toEqual([])
+    expect(await pollKey(gone)).toEqual([])
+  })
+
+  it("通知 AI 选的会话不属于任务的通道：不投", async () => {
+    writeTasks([task("t-other-channel", { independent: false, notifyChatId: `ch_ghost|app_main::${d.wsDir}` })])
+    const r = await trigger("t-other-channel")
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("不属于任务的通道")
+  })
+})
+
+// ── 通知谁：四种组合 ────────────────────────────────────────────────
+// 非独立 + 通知 AI：任务内容直接进所选会话；非独立 + 通知我：任务内容直接发给用户，不启动 Agent；
+// 独立 + 通知 AI：AI 的结果投进所选会话；独立 + 通知我：AI 的结果发给用户，不唤醒任何 Agent。
+
+describe("通知谁：选了具体会话", () => {
+  it("非独立 + 通知 AI + 所选会话：内容进那个会话的队列，主会话不受打扰", async () => {
+    const key = liveTempKey("1700000000200")
+    writeTasks([task("n-agent", { independent: false, notifyChatId: key })])
+    expect((await trigger("n-agent")).ok).toBe(true)
+    const msgs = await pollKey(key)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]).toContain("内容-n-agent")
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("独立 + 通知 AI + 所选会话：Agent 在任务自己的会话里跑，提交的结果投进所选会话并唤醒它", async () => {
+    const key = liveTempKey("1700000000201")
+    writeTasks([task("n-agent-ind", { notify: "agent", notifyChatId: key })])
+    expect((await trigger("n-agent-ind")).ok).toBe(true)
+    expect((await pollKey("n-agent-ind")).length).toBeGreaterThan(0)
+    expect(await pollKey(key)).toEqual([]) // 任务内容不进所选会话
+    expect(await sendResult("n-agent-ind", { text: "给所选会话的结论" })).toContain("结果已处理")
+    const msgs = await pollKey(key)
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0]).toContain("给所选会话的结论")
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("非独立 + 通知我 + 应用内会话：任务内容以 AI 口吻直接发进所选会话，不启动 Agent、不进任何队列", async () => {
+    writeTasks([task("n-me", { independent: false, notify: "im", notifyChatId: d.sessionKey })])
+    expect((await trigger("n-me")).ok).toBe(true)
+    expect(await waitFor(() => chatHas("内容-n-me"))).toBe(true)
+    expect(await chatHas("⏰ **任务-n-me**")).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+    expect(await pollKey("n-me")).toEqual([])
+  })
+
+  it("独立 + 通知我 + 应用内会话：AI 的结果发进所选会话，所选会话的队列里没有任何消息", async () => {
+    writeTasks([task("n-me-ind", { notify: "im", notifyChatId: d.sessionKey })])
+    await trigger("n-me-ind")
+    expect(await sendResult("n-me-ind", { text: "给用户看的结论" })).toContain("结果已处理")
+    expect(await waitFor(() => chatHas("给用户看的结论"))).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("通知我 + 所选会话是没登记过的临时会话：照样能发进去（不依赖 daemon 的路由登记）", async () => {
+    const key = liveTempKey("1700000000202")
+    writeTasks([task("n-me-fresh", { independent: false, notify: "im", notifyChatId: key })])
+    expect((await trigger("n-me-fresh")).ok).toBe(true)
+    const r = await d.post("/api/app-chat/history", { sessionKey: key })
+    expect(JSON.stringify(r.items ?? [])).toContain("内容-n-me-fresh")
+  })
+
+  it("通知我 + 所选临时会话已被删除：没送出去，原因写明", async () => {
+    const gone = deadTempKey("1700000000203")
+    writeTasks([task("n-me-gone", { independent: false, notify: "im", notifyChatId: gone })])
+    const r = await trigger("n-me-gone")
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain("已被删除")
+    expect((await d.post("/api/app-chat/history", { sessionKey: gone })).items ?? []).toEqual([])
   })
 })
 
@@ -206,8 +303,8 @@ describe("send_result：独立任务交付结果", () => {
     expect(msgs[0]).toContain("恢复后重试")
   })
 
-  it("通知到 IM（不填聊天 ID）：发到所属通道主用户的私聊", async () => {
-    writeTasks([task("r-im", { notify: "im" })])
+  it("通知我（应用内通道：发到所选会话）：以 AI 口吻带任务名", async () => {
+    writeTasks([task("r-im", { notify: "im", notifyChatId: d.sessionKey })])
     await trigger("r-im")
     expect(await sendResult("r-im", { text: "IM 结论" })).toContain("结果已处理")
     expect(await waitFor(() => chatHas("IM 结论"))).toBe(true)
@@ -216,8 +313,8 @@ describe("send_result：独立任务交付结果", () => {
     expect(await chatHas("⏰ **任务-r-im**")).toBe(true)
   })
 
-  it("旧任务（没有 notify 字段）：有聊天 ID 视为通知到 IM，照常送达", async () => {
-    writeTasks([task("r-legacy", { notifyChatId: "app_main" })])
+  it("旧任务（没有 notify 字段）：有聊天 ID 视为通知我，照常送达", async () => {
+    writeTasks([task("r-legacy", { notifyChatId: d.sessionKey })])
     await trigger("r-legacy")
     expect(await sendResult("r-legacy", { text: "旧任务结论" })).toContain("结果已处理")
     expect(await waitFor(() => chatHas("旧任务结论"))).toBe(true)
@@ -265,22 +362,20 @@ describe("send_result：独立任务交付结果", () => {
 // ── 出站目标：只是投递地址，不是会话 ─────────────────────────────────
 
 describe("独立任务的出站目标（聊天）", () => {
-  const MAIN_CHAT = "ch_test|app_main"
   const routedSessions = (): Record<string, string> => {
     const file = globalRoutingPath(d.dataDir)
     if (!fs.existsSync(file)) return {}
     return (JSON.parse(fs.readFileSync(file, "utf8")) as { sessionToChat?: Record<string, string> }).sessionToChat ?? {}
   }
 
-  it("触发后路由表只记「任务 → 聊天」，聊天键本身不登记成会话（否则侧边栏多出一个叫聊天键的空会话）", async () => {
-    writeTasks([task("o-route", { notify: "im" })])
+  it("触发后路由表记「任务 → 所选会话」（应用内通道的出站目标就是那个会话）", async () => {
+    writeTasks([task("o-route", { notify: "im", notifyChatId: d.sessionKey })])
     await trigger("o-route")
-    expect(await waitFor(() => routedSessions()["o-route"] === MAIN_CHAT)).toBe(true)
-    expect(Object.keys(routedSessions())).not.toContain(MAIN_CHAT)
+    expect(await waitFor(() => routedSessions()["o-route"] === d.sessionKey)).toBe(true)
   })
 
-  it("任务会话照样能发图片和文件：出站校验认通道里的聊天键，不靠路由表登记", async () => {
-    writeTasks([task("o-send", { notify: "im" })])
+  it("任务会话照样能发图片和文件：出站校验认通道里的会话，不靠路由表登记", async () => {
+    writeTasks([task("o-send", { notify: "im", notifyChatId: d.sessionKey })])
     await trigger("o-send")
     const file = path.join(d.dataDir, "o-send-report.txt")
     const image = path.join(d.dataDir, "o-send-chart.png")
@@ -292,9 +387,9 @@ describe("独立任务的出站目标（聊天）", () => {
   })
 })
 
-// ── 兜底：AI 没提交结果 ──────────────────────────────────────────────
+// ── AI 没提交结果：一律静默 ───────────────────────────────────────────
 
-describe("兜底提示：独立任务跑完却没有提交结果", () => {
+describe("独立任务跑完却没有提交结果：静默，不给任何人发提示", () => {
   /** 扮演一次回合：领取任务消息 → （可选：提交结果）→ 回合成功结束 */
   const runTurn = async (id: string, submit?: Record<string, unknown>) => {
     await trigger(id)
@@ -320,11 +415,13 @@ describe("兜底提示：独立任务跑完却没有提交结果", () => {
     expect(msgs[0]).toContain("这次有缺陷")
   })
 
-  it("通知到 IM：没提交 → 聊天里收到提示", async () => {
-    writeTasks([task("f-im", { notify: "im" })])
+  it("通知我：没提交也静默（不再发「没有提交结果」的提示）", async () => {
+    writeTasks([task("f-im", { notify: "im", notifyChatId: d.sessionKey })])
     await runTurn("f-im")
-    expect(await waitFor(() => chatHas("没有提交结果"))).toBe(true)
-    expect(await chatHas("⏰ **任务-f-im** 已运行结束，但没有提交结果。")).toBe(true)
+    await sleep(800)
+    expect(await chatHas("没有提交结果")).toBe(false)
+    expect(await chatHas("任务-f-im")).toBe(false)
+    expect(await pollKey(d.sessionKey)).toEqual([])
   })
 
   it("不通知：没提交也不发任何东西", async () => {
@@ -387,15 +484,28 @@ describe("运行记录：设置页「上次什么时候跑、结果怎样」", (
     expect(runsOf("l-quiet").map((r) => r.kind)).toEqual(["quiet"])
   })
 
-  it("跑完没提交结果：通知到 IM 记「没提交结果」，通知到 Agent 视为「无需汇报」", async () => {
-    writeTasks([task("l-im", { notify: "im" }), task("l-agent", { notify: "agent" })])
+  it("跑完没提交结果：不管通知谁，都记「无需汇报」（静默）", async () => {
+    writeTasks([task("l-im", { notify: "im", notifyChatId: d.sessionKey }), task("l-agent", { notify: "agent" })])
     for (const id of ["l-im", "l-agent"]) {
       await trigger(id)
       expect((await pollKey(id)).length).toBeGreaterThan(0)
       await confirm(id)
     }
-    expect(await waitFor(() => runsOf("l-im")[0]?.kind === "no-result")).toBe(true)
+    expect(await waitFor(() => runsOf("l-im")[0]?.kind === "quiet")).toBe(true)
+    expect(runsOf("l-im")[0].detail).toContain("send_result")
     expect(runsOf("l-agent").map((r) => r.kind)).toEqual(["quiet"])
+  })
+
+  it("非独立 + 通知我：内容直接发出去就是终点，记「已汇报」；没发出去记「没送出去」", async () => {
+    writeTasks([
+      task("l-direct", { independent: false, notify: "im", notifyChatId: d.sessionKey }),
+      task("l-direct-bad", { independent: false, notify: "im" }),
+    ])
+    await trigger("l-direct")
+    await trigger("l-direct-bad")
+    expect(runsOf("l-direct")).toMatchObject([{ kind: "reported", manual: true }])
+    expect(runsOf("l-direct-bad")[0]).toMatchObject({ kind: "undelivered" })
+    expect(runsOf("l-direct-bad")[0].detail).toContain("没选接收结果的会话")
   })
 
   it("结果送不出去：记「没送出去」，之后跑完没提交也不会被改成别的", async () => {

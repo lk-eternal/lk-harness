@@ -74,17 +74,33 @@ describe("manage_tasks 建任务：所属通道 = 调用者所在的通道", () 
     expect(await pollKey(d.leading[0].sessionKey)).toEqual([])
   })
 
-  it("工具返回如实说明去向：所属通道、主会话就是调用者自己的会话", async () => {
+  it("应用内通道：任务默认投给调用者自己所在的会话（写进任务），不是笼统的「主会话」", async () => {
+    await manageTasks(d.sessionKey, { ...ADD, independent: false })
+    expect(readTasks()[0]).toMatchObject({ independent: false, notify: "agent", notifyChatId: d.sessionKey })
+  })
+
+  it("工具返回如实说明去向：通道、所选会话就是调用者自己的会话", async () => {
     const out = await manageTasks(d.sessionKey, { ...ADD, independent: false })
-    expect(out).toContain("所属通道：「测试」（应用内对话）")
-    expect(out).toContain("这个主会话就是你当前所在的会话")
+    expect(out).toContain("通道：「测试」（应用内对话）")
+    expect(out).toContain("所选会话就是你当前所在的会话")
     expect(out).not.toContain("⚠")
   })
 
-  it("调用者是主会话之外的会话：任务仍挂在它所在的通道，但返回里明说「不是当前会话」并指向 schedule_create", async () => {
+  it("调用者是主会话之外的会话（别的目录）：任务挂在它所在的通道，默认投给它自己的那个会话，而不是主会话", async () => {
     const other = `ch_test|app_main::${path.join(d.dataDir, "other-ws")}`
     const out = await manageTasks(other, { ...ADD, independent: false })
-    expect(readTasks()[0]).toMatchObject({ channelId: "ch_test" })
+    expect(readTasks()[0]).toMatchObject({ channelId: "ch_test", notifyChatId: other })
+    expect(out).toContain("所选会话就是你当前所在的会话")
+    const r = await d.post("/api/task-trigger", { taskId: readTasks()[0].id })
+    expect(r.ok).toBe(true)
+    expect(await pollKey(other)).toHaveLength(1)
+    expect(await pollKey(d.sessionKey)).toEqual([])
+  })
+
+  it("别的会话列出任务：明说「不是当前会话」并指向 schedule_create", async () => {
+    await manageTasks(d.sessionKey, { ...ADD, independent: false })
+    const other = `ch_test|app_main::${path.join(d.dataDir, "other-ws")}`
+    const out = await manageTasks(other, { action: "list" })
     expect(out).toContain("不是你当前所在的会话")
     expect(out).toContain("schedule_create")
   })
@@ -97,15 +113,32 @@ describe("manage_tasks 建任务：所属通道 = 调用者所在的通道", () 
   it("没有调用者身份（旧调用方）：退回第一个通道，且不对「是不是当前会话」下结论", async () => {
     const out = await manageTasks(undefined, { ...ADD, independent: false })
     expect(readTasks()[0]).toMatchObject({ channelId: "ch_first" })
-    expect(out).toContain("所属通道：「排第一的通道」")
+    expect(out).toContain("通道：「排第一的通道」")
     expect(out).not.toContain("当前所在的会话")
   })
 
-  it("独立运行（默认）：通知默认发到所属通道的主用户私聊，返回里不出现主会话的警告", async () => {
+  it("独立运行（默认）：结果默认发给用户——应用内通道发到调用者自己所在的会话，返回里不出现警告", async () => {
     const out = await manageTasks(d.sessionKey, { ...ADD })
-    expect(readTasks()[0]).toMatchObject({ independent: true, channelId: "ch_test", notify: "im" })
-    expect(out).toContain("通过「测试」发到主用户私聊")
+    expect(readTasks()[0]).toMatchObject({ independent: true, channelId: "ch_test", notify: "im", notifyChatId: d.sessionKey })
+    expect(out).toContain("通过「测试」发到所选会话")
     expect(out).not.toContain("⚠")
+  })
+
+  it("独立运行 + 不通知：不写会话", async () => {
+    await manageTasks(d.sessionKey, { ...ADD, notify: "none" })
+    const saved = readTasks()[0]
+    expect(saved).toMatchObject({ independent: true, notify: "none" })
+    expect(saved.notifyChatId).toBeUndefined()
+  })
+
+  it("非独立 + 通知我：不启动 Agent，任务内容直接发进调用者的会话", async () => {
+    await manageTasks(d.sessionKey, { ...ADD, independent: false, notify: "im" })
+    expect(readTasks()[0]).toMatchObject({ independent: false, notify: "im", notifyChatId: d.sessionKey })
+    const r = await d.post("/api/task-trigger", { taskId: readTasks()[0].id })
+    expect(r.ok).toBe(true)
+    expect(await pollKey(d.sessionKey)).toEqual([]) // 没有投进 Agent 的队列
+    const history = await d.post("/api/app-chat/history", { sessionKey: d.sessionKey })
+    expect(JSON.stringify(history.items ?? [])).toContain("当前会话定时任务测试")
   })
 })
 
@@ -115,8 +148,8 @@ describe("manage_tasks list / toggle：也带上去向", () => {
 
     const fromOwner = await manageTasks(d.sessionKey, { action: "list" })
     expect(fromOwner).toContain("测试定时任务(当前会话)")
-    expect(fromOwner).toContain("所属通道：「测试」")
-    expect(fromOwner).toContain("这个主会话就是你当前所在的会话")
+    expect(fromOwner).toContain("通道：「测试」")
+    expect(fromOwner).toContain("所选会话就是你当前所在的会话")
 
     const fromOther = await manageTasks(d.leading[0].sessionKey, { action: "list" })
     expect(fromOther).toContain("不是你当前所在的会话")
@@ -128,10 +161,10 @@ describe("manage_tasks list / toggle：也带上去向", () => {
 
     const off = await manageTasks(d.sessionKey, { action: "toggle", id })
     expect(off).toContain("已禁用")
-    expect(off).not.toContain("所属通道")
+    expect(off).not.toContain("通道：")
 
     const on = await manageTasks(d.sessionKey, { action: "toggle", id })
     expect(on).toContain("已启用")
-    expect(on).toContain("所属通道：「测试」")
+    expect(on).toContain("通道：「测试」")
   })
 })

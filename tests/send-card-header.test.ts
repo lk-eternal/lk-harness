@@ -15,7 +15,7 @@ import { createProject, initProjectStore, setProjectArchived } from "../src/shar
 import { projectSessionKey, type Project } from "../src/shared/project-types.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 import { sessionHeaderTemplate } from "../src/shared/session-label.js"
-import { TASK_MISSING_RESULT_BODY, formatTaskImMessage } from "../src/shared/task-delivery.js"
+import { formatTaskImMessage } from "../src/shared/task-delivery.js"
 
 const CHANNEL = "ch_hdr_test"
 const MAIN = "oc_main_hdr"
@@ -115,9 +115,9 @@ describe("独立任务的头部：只认任务自己", () => {
  * 看最终发出去的那份：有横幅的只出现一次任务名；没有横幅的（群聊、含 @ 的纯文本消息）任务名留在正文里。
  */
 describe("任务消息的正文：横幅有任务名就不再重复", () => {
-  const sent = (chatId: string, kind: "result" | "notice", body: string, over: Partial<ScheduledTask> = {}) => {
+  const sent = (chatId: string, body: string, over: Partial<ScheduledTask> = {}) => {
     const header = resolveSendCardHeader(feishu(chatId), { sessionKey: `${CHANNEL}|${chatId}`, invokerSessionKey: TASK_ID, tasks: [task(over)] })
-    const msg = formatTaskImMessage({ name: "周报编写" }, kind, body)
+    const msg = formatTaskImMessage({ name: "周报编写" }, body)
     return { header, text: resolveSendCardText(header, msg.text, msg.titledText) }
   }
   /** 横幅标题 + 正文里，任务名一共出现几次 */
@@ -125,32 +125,34 @@ describe("任务消息的正文：横幅有任务名就不再重复", () => {
     (JSON.stringify(s.header.title ?? "") + s.text).split("周报编写").length - 1
 
   it("主用户私聊：横幅显示任务名，正文不带——任务名只出现一次", () => {
-    const r = sent(MAIN, "result", "周报已更新")
+    const r = sent(MAIN, "周报已更新")
     expect(r.header.title).toBe("⏰ 周报编写")
     expect(r.text).toBe("周报已更新")
     expect(nameCount(r)).toBe(1)
   })
 
-  it("主用户私聊的兜底提示（没提交结果）也一样", () => {
-    const r = sent(MAIN, "notice", TASK_MISSING_RESULT_BODY)
-    expect(r.text).toBe("已运行结束，但没有提交结果。")
-    expect(nameCount(r)).toBe(1)
+  it("非独立运行 + 通知我（不启动 Agent，内容直接发给用户）：和独立任务一样是独立消息，有任务横幅", () => {
+    const r = sent(MAIN, "周报已更新", { independent: false, notify: "im" })
+    expect(r.header.title).toBe("⏰ 周报编写")
+    expect(r.header.taskTitled).toBe(true)
+    expect(r.text).toBe("周报已更新")
+    // 非独立 + 通知 AI 是会话的回合，头部照旧按会话取
+    expect(sent(MAIN, "周报已更新", { independent: false, notify: "agent" }).header.taskTitled).toBe(false)
   })
 
   it("群聊没有横幅：任务名留在正文里，收到的人才知道是哪个任务", () => {
-    const r = sent(GROUP, "result", "周报已更新")
+    const r = sent(GROUP, "周报已更新")
     expect(r.header.title).toBeUndefined()
     expect(r.text).toBe("⏰ **周报编写**\n\n周报已更新")
     expect(nameCount(r)).toBe(1)
-    expect(sent(GROUP, "notice", TASK_MISSING_RESULT_BODY).text).toBe("⏰ **周报编写** 已运行结束，但没有提交结果。")
   })
 
   it("结果里含 @：发送端会降级成纯文本、没有横幅，任务名必须留在正文里", () => {
-    const r = sent(MAIN, "result", '请 <at user_id="ou_x">张三</at> 看一下')
+    const r = sent(MAIN, '请 <at user_id="ou_x">张三</at> 看一下')
     expect(r.header.title).toBe("⏰ 周报编写") // 头部判断本身没变，是发送端不画
     expect(r.text.startsWith("⏰ **周报编写**\n\n")).toBe(true)
     // @ 写在代码块里不算（发送端也不当 @ 处理），横幅照常显示，正文就不再带任务名
-    expect(sent(MAIN, "result", "`<at user_id=\"ou_x\">张三</at>`").text).toBe("`<at user_id=\"ou_x\">张三</at>`")
+    expect(sent(MAIN, "`<at user_id=\"ou_x\">张三</at>`").text).toBe("`<at user_id=\"ou_x\">张三</at>`")
   })
 
   it("不是独立任务发出的（没有任务头部）：不管有没有 titledText 都原样用 text", () => {
@@ -158,7 +160,7 @@ describe("任务消息的正文：横幅有任务名就不再重复", () => {
     expect(header.taskTitled).toBe(false)
     expect(resolveSendCardText(header, "项目会话的回复", "不该被换掉")).toBe("项目会话的回复")
     // 任务已被删（invoker 认不出）：头部退回会话头部，这时也不能把任务名丢掉
-    const gone = sent(MAIN, "result", "周报已更新", { id: "another-task" })
+    const gone = sent(MAIN, "周报已更新", { id: "another-task" })
     expect(gone.header.taskTitled).toBe(false)
     expect(gone.text).toBe("⏰ **周报编写**\n\n周报已更新")
   })

@@ -44,9 +44,9 @@ export interface SessionScheduleItem {
   expiresAt?: number;
 }
 
-/** 任务到点是不是要投给某个 Agent 会话（非独立运行，或独立运行 + 通知到 Agent 会话） */
+/** 任务到点是不是要投给某个 Agent 会话（通知 AI：非独立运行投内容，独立运行投结果） */
 export function deliversToAgentSession(task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId">): boolean {
-  return task.independent === false || resolveTaskNotify(task) === "agent";
+  return resolveTaskNotify(task) === "agent";
 }
 
 export function scheduleDelivery(task: Pick<ScheduledTask, "independent">): SessionScheduleDelivery {

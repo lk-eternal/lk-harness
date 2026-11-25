@@ -60,6 +60,7 @@ import {
   parseChatKey,
   chatIdFromSessionKey,
   channelIdFromSessionKey,
+  workspaceDirFromSessionKey,
   normalizeSessionKey,
   resolveChannelAudience,
   resolveDaemonSessionFlags,
@@ -70,10 +71,10 @@ import {
 } from "./shared/channel-types.js";
 import { admitChat, denyReasonText, shouldSendDenyNotice, type AdmitResult } from "./shared/channel-access.js";
 import { disambiguatePathLabel } from "./shared/path-label.js";
+import { isTempChatWorkspace } from "./shared/temp-workspace.js";
 import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, taskOutboundChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, isDirectNotifyTask, sendsStandaloneMessages, taskAgentSessionKey, taskNotifyChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import {
-  TASK_MISSING_RESULT_BODY,
   TASK_RESULT_TOOL,
   TaskRunTracker,
   chooseNewTaskChannel,
@@ -82,7 +83,6 @@ import {
   formatTaskImMessage,
   formatTaskResultForAgent,
   normalizeTaskDelivery,
-  shouldNoticeMissingResult,
 } from "./shared/task-delivery.js";
 import { resolveProjectAgentTarget } from "./shared/task-agent-target.js";
 import {
@@ -2536,11 +2536,13 @@ function isGroupFeishuChat(ch: Extract<ResolvedChannel, { type: "feishu" }>): bo
 }
 
 /**
- * send_text/send_question 是否来自独立定时任务。任务没有会话回合去收口流式卡，出站只能是独立消息。
+ * send_text/send_question 是否来自独立发消息的定时任务（独立运行，或直接通知用户的非独立任务）。
+ * 任务没有会话回合去收口流式卡，出站只能是独立消息。
  * 出站目标会被换成通知群的 chatKey，任务身份只能看调用方 key；无调用方时 sessionKey 本身就是调用方（Electron 宿主直发）。
  */
 function isIndependentTaskSend(sessionKey: string, invokerSessionKey: string | undefined): boolean {
-  return isIndependentTaskSessionKey(invokerSessionKey || sessionKey, readTasksSafe());
+  const task = findScheduledTaskBySessionKey(invokerSessionKey || sessionKey, readTasksSafe());
+  return !!task && sendsStandaloneMessages(task);
 }
 
 /** 无活跃流式卡时先建卡，供 send_text/send_question 抢先合并（ACK 早于思考/工具）。整体入全序链。 */
@@ -4626,8 +4628,7 @@ function startHttpServer(): Promise<number> {
           const task = taskId ? readTasksSafe().find((t) => t.id === taskId) : undefined;
           if (!task) { json(res, { ok: false, error: "任务不存在" }); return; }
           const nowStr = new Date().toLocaleString("zh-CN");
-          const r = enqueueScheduledTaskMessage(task, `[定时任务: ${task.name}] (手动触发: ${nowStr})\n\n${task.content}`);
-          noteTaskEnqueued(task, Date.now(), r, true);
+          const r = await startScheduledTask(task, `[定时任务: ${task.name}] (手动触发: ${nowStr})\n\n${task.content}`, Date.now(), true);
           json(res, r);
           return;
         }
@@ -4969,8 +4970,10 @@ async function handleSkillsAdmin(method: string, req: http.IncomingMessage, res:
  */
 function describeManagedTask(task: ScheduledTask, invokerSessionKey?: string): string {
   const t = withResolvedChannel(task);
-  const rt = t.channelId ? channels.get(t.channelId) : undefined;
-  const toMainSession = !t.targetProjectId?.trim() && (t.independent === false || resolveTaskNotify(t) === "agent");
+  const notifyChannelId = taskNotifyChannelId(t);
+  const rt = notifyChannelId ? channels.get(notifyChannelId) : undefined;
+  // 通知 AI 且没绑项目：投进通道主会话或所选会话，要告诉 AI 它是不是自己所在的会话
+  const toMainSession = !t.targetProjectId?.trim() && resolveTaskNotify(t) === "agent";
   let mainSessionKey: string | null | undefined;
   let mainSessionIsInvoker: boolean | undefined;
   if (toMainSession) {
@@ -4988,6 +4991,7 @@ function describeManagedTask(task: ScheduledTask, invokerSessionKey?: string): s
     {
       channelName: (id) => (id ? channels.get(id)?.cfg.name : undefined),
       projectName: (id) => getProject(id)?.name,
+      isAppChannel: (id) => !!id && channels.get(id)?.cfg.type === "app",
     },
     {
       channelName: rt?.cfg.name,
@@ -5032,15 +5036,25 @@ async function handleTasksAdmin(method: string, req: http.IncomingMessage, res: 
 
     if (action === "add") {
       if (!name || !cron || !content) { json(res, { ok: false, error: "name, cron, content required" }, 400); return true; }
-      // 独立任务默认「通知到 IM」（发到所属通道的主用户私聊）：对话里让 AI 建的任务，用户期望做完能收到结果
-      // 所属通道：AI 没法指定，默认是它自己所在的通道，不是「第一个通道」（见 chooseNewTaskChannel）
+      // 默认通知谁：独立任务「通知我」（对话里让 AI 建的任务，用户期望做完能收到结果）；非独立任务「通知 AI」（内容投进会话）
+      // 通道：AI 没法指定，默认是它自己所在的通道，不是「第一个通道」（见 chooseNewTaskChannel）
       const invokerChannelId = invokerSessionKey ? channelIdFromSessionKey(normalizeSessionKey(invokerSessionKey)) : undefined;
+      const newChannelId = chooseNewTaskChannel({ explicit: channelId, invokerChannelId, channelIds: [...channels.keys()] });
+      const newNotify = notify ?? (independent === false ? "agent" : "im");
+      // 应用内通道没有「主用户私聊」：要送到哪必须有会话，默认就是调用者自己所在的会话（项目会话除外，它走项目绑定）
+      const owner = classifyScheduleOwner(invokerSessionKey);
+      const ownSession = owner.ok && owner.owner.kind !== "project" ? owner.owner.sessionKey : undefined;
+      const defaultSession = newNotify !== "none" && ownSession && newChannelId && channels.get(newChannelId)?.cfg.type === "app"
+        && channelIdFromSessionKey(ownSession) === newChannelId
+        ? ownSession
+        : undefined;
       const newTask: ScheduledTask = normalizeTaskDelivery({
         id: crypto.randomUUID(), name: name.trim(), cron: cron.trim(), content,
         enabled: enabled ?? true, independent: independent ?? true,
-        channelId: chooseNewTaskChannel({ explicit: channelId, invokerChannelId, channelIds: [...channels.keys()] }),
+        channelId: newChannelId,
         model, modelParams,
-        ...(notify ? { notify } : { notify: "im" as const }),
+        notify: newNotify,
+        ...(defaultSession ? { notifyChatId: defaultSession } : {}),
       });
       tasks.push(newTask);
       writeTasks(tasks);
@@ -6369,9 +6383,9 @@ function withResolvedChannel(task: ScheduledTask): ScheduledTask {
   return rt ? { ...task, channelId: rt.cfg.id } : task;
 }
 
-/** 任务出站（结果 / 图片 / 文件）用的通道：通知到 IM 时是发送通道，其余是所属通道；通道不存在返回 null */
+/** 任务出站（结果 / 图片 / 文件）用的通道 = 通知通道（旧任务可能单独存了 notifyChannelId）；通道不存在返回 null */
 function taskOutboundRuntime(task: ScheduledTask): ChannelRuntime | null {
-  const channelId = taskOutboundChannelId(task);
+  const channelId = taskNotifyChannelId(task);
   return channelId ? (channels.get(channelId) ?? null) : null;
 }
 
@@ -6386,6 +6400,21 @@ function taskOutboundChatKey(task: ScheduledTask): string | undefined {
   return resolveTaskOutboundChatKey(t, taskOutboundMainChatId(t));
 }
 
+/** 「通知我」的目标有没有问题（有问题返回原因，没问题返回 undefined）。应用内通道必须选了会话，且会话还在 */
+function userNotifyProblem(task: ScheduledTask): string | undefined {
+  const t = withResolvedChannel(task);
+  const rt = taskOutboundRuntime(t);
+  if (!rt) return "找不到发送目标：通知的通道不存在，请在设置里重新选择";
+  if (rt.cfg.type !== "app") {
+    return taskOutboundChatKey(t) ? undefined : "找不到发送目标：没填聊天 ID，且该通道未绑定主用户";
+  }
+  const sessionKey = normalizeSessionKey(t.notifyChatId?.trim() ?? "");
+  if (!sessionKey) return "没选接收结果的会话，请在设置里选择";
+  if (channelIdFromSessionKey(sessionKey) !== rt.cfg.id) return "所选会话不属于通知的通道，请在设置里重新选择";
+  if (pickedSessionGone(sessionKey)) return "所选会话已被删除，请在设置里重新选择";
+  return undefined;
+}
+
 type TaskAgentTarget =
   | { ok: true; sessionKey: string; chatKey: string; chatType: "p2p" | "project"; label: string }
   | { ok: false; error: string; /** 目标永久失效（项目没了 / 已归档 / 创建排程的会话被删） */ retire: boolean };
@@ -6397,16 +6426,24 @@ function aiChatOwnerSessionKey(task: ScheduledTask): string {
   return c.ok && c.owner.kind === "chat" ? c.owner.sessionKey : "";
 }
 
+/** 设置页给任务选的会话是不是已经没了：只有临时会话会被删（目录没了），其余目录 / 项目会话不会消失 */
+function pickedSessionGone(sessionKey: string): boolean {
+  const dir = workspaceDirFromSessionKey(sessionKey);
+  return !!dir && isTempChatWorkspace(dir) && !fs.existsSync(dir);
+}
+
 /**
- * 任务绑定的 Agent 会话：
+ * 任务绑定的 Agent 会话（通知 AI 的目标）：
  *  - 项目会话的排程 = 该项目的会话；
  *  - 主用户聊天下的其他会话（其他目录 / 临时会话）建的 AI 排程 = 创建它的那个会话，那个会话被删了就作废；
- *  - 其余（含用户建的任务）= 所属通道的主会话（不跟随当前 active 的项目会话）。
+ *  - 设置页选了具体会话的任务 = 那个会话（临时会话被删了就投递失败，等用户重新选）；
+ *  - 其余 = 通知通道的主会话（不跟随当前 active 的项目会话）。
  */
 function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
+  const notifyChannelId = taskNotifyChannelId(withResolvedChannel(task));
   const projectId = task.targetProjectId?.trim();
   if (projectId) {
-    const r = resolveProjectAgentTarget(projectId, getProject(projectId), withResolvedChannel(task).channelId);
+    const r = resolveProjectAgentTarget(projectId, getProject(projectId), notifyChannelId);
     return r.ok ? { ...r, chatType: "project" } : r;
   }
   const ownerKey = aiChatOwnerSessionKey(task);
@@ -6415,7 +6452,17 @@ function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
     if (!hasSessionQueueDir(ownerKey)) return { ok: false, retire: true, error: "创建这个排程的会话已被删除" };
     return { ok: true, sessionKey: ownerKey, chatKey: chatIdFromSessionKey(ownerKey), chatType: "p2p", label: "创建它的会话" };
   }
-  const rt = pickChannel(task.channelId);
+  const picked = taskAgentSessionKey(task);
+  if (picked) {
+    const sessionKey = normalizeSessionKey(picked) || picked;
+    const owner = channelIdFromSessionKey(sessionKey);
+    if (!owner || !channels.has(owner) || (notifyChannelId && owner !== notifyChannelId)) {
+      return { ok: false, retire: false, error: "所选会话不属于任务的通道（通道已不存在或换过），请在设置里重新选择" };
+    }
+    if (pickedSessionGone(sessionKey)) return { ok: false, retire: false, error: "所选会话已被删除，请在设置里重新选择" };
+    return { ok: true, sessionKey, chatKey: chatIdFromSessionKey(sessionKey), chatType: "p2p", label: "所选会话" };
+  }
+  const rt = pickChannel(notifyChannelId);
   const target = rt ? channelDefaultChatId(rt) : null;
   if (!rt || !target) return { ok: false, retire: false, error: "通道无主用户且无私聊记录，找不到主会话" };
   const wsDir = channelWorkspaceDir(rt);
@@ -6437,10 +6484,11 @@ function pushToAgentSession(target: Extract<TaskAgentTarget, { ok: true }>, cont
 }
 
 /**
- * 定时任务入队：
- *  - 非独立运行：任务内容直接投进绑定的 Agent 会话（主会话 / 项目会话 / 创建 AI 排程的那个会话）。
+ * 定时任务入队（要启动 / 唤醒 Agent 的两种）：
+ *  - 非独立运行 + 通知 AI：任务内容直接投进绑定的 Agent 会话（所选会话 / 项目会话 / 主会话 / 创建 AI 排程的那个会话）。
  *  - 独立运行：投进任务自己的会话队列（会话 key = task.id），由全新 Agent 执行；
  *    结果由 AI 调 send_result 交付，出站目标见 taskOutboundChatKey。
+ * 非独立运行 + 通知我不经过这里（不启动 Agent），见 startScheduledTask。
  * 失败重试共用调度器；返回值给手动触发用，cron 触发只看日志。
  */
 function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok: boolean; error?: string } {
@@ -6460,12 +6508,21 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
 
   const t = withResolvedChannel(task);
   const outboundChatKey = taskOutboundChatKey(t);
-  if (resolveTaskNotify(t) === "im" && !outboundChatKey) {
-    return fail("跳过: 找不到结果发送目标（发送通道不存在，或没填聊天 ID 且该通道未绑定主用户）");
+  // 结果送不到就别白跑一轮 Agent：目标会话被删 / 没选会话 / 通道没了，直接记「未投递」
+  const mode = resolveTaskNotify(t);
+  if (mode === "im") {
+    const problem = userNotifyProblem(t);
+    if (problem) return fail(`跳过: ${problem}`);
+  } else if (mode === "agent") {
+    const target = resolveTaskAgentTarget(t);
+    if (!target.ok) return fail(`跳过: ${target.error}`);
   }
   if (outboundChatKey) {
     log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
     sessionToChatMap.set(task.id, outboundChatKey);
+    // 应用内通道的出站目标是所选会话本身（带 ::目录）：登记一下，send_image / send_file 的出站校验才认它；
+    // 聊天键（飞书 / 微信 / 主用户私聊）不登记，否则侧边栏会多出一个叫聊天键的空会话
+    if (outboundChatKey.includes("::")) rememberSessionKey(outboundChatKey);
   } else {
     log("INFO", `定时任务「${task.name}」没有可用的出站聊天（所属通道未绑定主用户）：send_image / send_file 不可用`);
   }
@@ -6492,29 +6549,35 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
 
 /**
  * 把一段文字按任务的通知方式送出去。text 传不带任务名的正文，任务名由各通知方式自己按需加。
- * kind=notice 是系统提示（如「AI 没提交结果」），不套「汇报」外壳
+ * 独立运行传 AI 提交的结果；非独立运行 + 通知我传任务内容本身（通知 AI 的任务内容走队列，不经过这里）。
  */
 async function deliverTaskText(
   task: ScheduledTask,
   text: string,
-  kind: "result" | "notice",
 ): Promise<{ ok: true; where: string } | { ok: false; error: string }> {
   const mode = resolveTaskNotify(task);
   if (mode === "agent") {
     const target = resolveTaskAgentTarget(task);
     if (!target.ok) return { ok: false, error: target.error };
-    const body = kind === "result" ? formatTaskResultForAgent(task, text) : formatTaskImMessage(task, "notice", text).text;
-    if (!pushToAgentSession(target, body, `internal_taskresult_${task.id}_${Date.now()}`)) {
+    if (!pushToAgentSession(target, formatTaskResultForAgent(task, text), `internal_taskresult_${task.id}_${Date.now()}`)) {
       return { ok: false, error: "写入会话队列失败" };
     }
     log("INFO", `定时任务「${task.name}」结果已投进${target.label}队列 len=${text.length}`);
     return { ok: true, where: `「${target.label}」的队列` };
   }
   if (mode === "im") {
-    const routeKey = taskOutboundChatKey(task);
-    if (!routeKey) return { ok: false, error: "找不到发送目标：发送通道不存在，或没填聊天 ID 且该通道未绑定主用户" };
+    const t = withResolvedChannel(task);
+    const problem = userNotifyProblem(t);
+    if (problem) return { ok: false, error: problem };
     // 两份正文：带任务名的 text（没有任务横幅的通道用）、不带的 titled_text（飞书横幅已是任务名时用，见 resolveSendCardText）
-    const msg = formatTaskImMessage(task, kind, text);
+    const msg = formatTaskImMessage(t, text);
+    if (taskOutboundRuntime(t)?.cfg.type === "app") {
+      // 应用内会话直接写进聊天流：/api/send-text 要求会话已被 daemon 登记，设置页刚选的 / 很久没用的会话会被它拒掉
+      appChat.addText(normalizeSessionKey(t.notifyChatId?.trim() ?? ""), msg.text);
+      return { ok: true, where: "应用内会话" };
+    }
+    const routeKey = taskOutboundChatKey(t);
+    if (!routeKey) return { ok: false, error: "找不到发送目标" };
     const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-text"), {
       text: msg.text,
       titled_text: msg.titledText,
@@ -6525,6 +6588,35 @@ async function deliverTaskText(
     return { ok: true, where: "IM" };
   }
   return { ok: true, where: "（不通知，仅记录）" };
+}
+
+/**
+ * 任务到点的统一入口（cron / 手动触发）：
+ *  - 非独立运行 + 通知我：不启动 Agent，任务内容原样以 AI 口吻发给用户；
+ *  - 其余：入队，由 Agent 执行（独立运行）或直接收到任务内容（非独立 + 通知 AI）。
+ * 结果记进运行记录；返回值给手动触发用。
+ */
+async function startScheduledTask(
+  task: ScheduledTask,
+  content: string,
+  at: number,
+  manual = false,
+): Promise<{ ok: boolean; error?: string }> {
+  if (!isDirectNotifyTask(task)) {
+    const r = enqueueScheduledTaskMessage(task, content);
+    noteTaskEnqueued(task, at, r, manual);
+    return r;
+  }
+  const r = await deliverTaskText(task, task.content);
+  const flags = manual ? { manual: true as const } : {};
+  if (!r.ok) {
+    log("WARN", `定时任务「${task.name}」未投递: ${r.error}`);
+    noteTaskRun(task, { at, kind: "undelivered", detail: r.error, ...flags });
+    return { ok: false, error: r.error };
+  }
+  log("INFO", `定时任务已直发给用户: ${task.name} → ${r.where}`);
+  noteTaskRun(task, { at, kind: "reported", detail: r.where, ...flags });
+  return { ok: true };
 }
 
 /** send_result：独立任务本次运行的结果。成功才记账，失败让 AI 能重试；重复提交拒绝 */
@@ -6551,7 +6643,7 @@ async function submitTaskResult(
     log("INFO", `定时任务「${task.name}」本次无需通知（quiet）`);
     return { ok: true, message: "已记录：这次没有需要通知的内容。任务到此结束。" };
   }
-  const r = await deliverTaskText(task, text, "result");
+  const r = await deliverTaskText(task, text);
   if (!r.ok) {
     settleTaskRunLog(task.id, taskRunLogAt.get(task.id), { kind: "undelivered", detail: r.error });
     log("WARN", `定时任务「${task.name}」结果投递失败: ${r.error}`);
@@ -6565,8 +6657,7 @@ async function submitTaskResult(
 
 /**
  * 一批消息被确认处理完（回合成功结束）：若是独立任务会话，对账 AI 有没有提交结果。
- * 通知到 IM 却什么都没提交 → 给接收方一句兜底提示，免得任务静默「成功」而没人知道；
- * 其余方式没提交就是没有要汇报的，只记日志（见 shouldNoticeMissingResult）。
+ * 什么都没提交就是没有要汇报的：静默，只在日志和运行记录里留一笔，不给任何人发提示。
  * 回合失败不走这里（消息留在 .claimed 里由调度器重投），失败通知另议。
  */
 function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
@@ -6579,20 +6670,8 @@ function onTaskSessionConfirmed(sessionKey: string, doneIds: string[]): void {
   const runAt = taskRunLogAt.get(task.id);
   if (!hasPending) taskRunLogAt.delete(task.id);
   if (outcome !== "missing") return;
-  if (!shouldNoticeMissingResult(task)) {
-    log("INFO", `定时任务「${task.name}」运行结束，没有提交结果（视为无需汇报）`);
-    settleTaskRunLog(task.id, runAt, { kind: "quiet" }, "triggered");
-    return;
-  }
-  log("WARN", `定时任务「${task.name}」运行结束但没有提交结果（未调用 ${TASK_RESULT_TOOL}）`);
-  settleTaskRunLog(task.id, runAt, { kind: "no-result", detail: "已给你发了一条提示" }, "triggered");
-  deliverTaskText(task, TASK_MISSING_RESULT_BODY, "notice")
-    .then((r) => {
-      if (r.ok) return;
-      log("WARN", `定时任务「${task.name}」兜底提示发送失败: ${r.error}`);
-      settleTaskRunLog(task.id, runAt, { kind: "undelivered", detail: r.error }, "no-result");
-    })
-    .catch((e: unknown) => log("WARN", `定时任务「${task.name}」兜底提示异常: ${e instanceof Error ? e.message : String(e)}`));
+  log("INFO", `定时任务「${task.name}」运行结束，没有提交结果（未调用 ${TASK_RESULT_TOOL}，视为无需汇报）`);
+  settleTaskRunLog(task.id, runAt, { kind: "quiet", detail: "没调用 send_result" }, "triggered");
 }
 
 // ── AI 自排程 ────────────────────────────────────────────
@@ -6646,7 +6725,9 @@ function removeAiTasks(ids: string[]): boolean {
 /** 调度器触发入口：用户的任务原样入队；AI 排程先过关卡 */
 function fireScheduledTask(task: ScheduledTask, content: string, fireAt: number): void {
   if (!isAiTask(task)) {
-    noteTaskEnqueued(task, fireAt, enqueueScheduledTaskMessage(task, content));
+    startScheduledTask(task, content, fireAt).catch((e: unknown) => {
+      log("WARN", `定时任务「${task.name}」触发异常: ${e instanceof Error ? e.message : String(e)}`);
+    });
     return;
   }
   const runs = readAiRuns();
@@ -6659,7 +6740,7 @@ function fireScheduledTask(task: ScheduledTask, content: string, fireAt: number)
     log("INFO", `AI 排程「${task.name}」本次跳过: ${reason}`);
     noteTaskRun(task, { at: fireAt, kind: "skipped", detail: reason });
   };
-  if (task.independent === false || resolveTaskNotify(task) === "agent") {
+  if (resolveTaskNotify(task) === "agent") {
     const target = resolveTaskAgentTarget(task);
     if (!target.ok) {
       if (target.retire) {
@@ -6704,7 +6785,7 @@ function sweepAiTasks(): void {
   for (const t of tasks) {
     if (!isAiTask(t) || isAiTaskBusy(t)) continue;
     if (!t.enabled || !isAiTaskLive(t, runs[t.id] ?? 0, now)) { dead.push(t.id); continue; }
-    if (t.independent === false || resolveTaskNotify(t) === "agent") {
+    if (resolveTaskNotify(t) === "agent") {
       const target = resolveTaskAgentTarget(t);
       if (!target.ok && target.retire) dead.push(t.id);
     }
