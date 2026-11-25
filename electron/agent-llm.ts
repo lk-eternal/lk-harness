@@ -31,15 +31,10 @@ import {
 import { lookupModelThinkingLevels } from "./llm-model-catalog"
 import { takeLastTurns, turnsFromPiMessages, readMirrorTurns, mergeLegacyTurns } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
-import {
-  hashSystemPrompt,
-  computePromptHash,
-  resolveDaemonPortForPrompt,
-} from "./prompt-assembler"
+import { hashSystemPrompt } from "./prompt-assembler"
 import {
   forgetPiResumable,
-  getPiResumable,
-  rememberPiResumable,
+  getPiStreamCardId,
   patchPiResumableStreamCard,
 } from "./pi-resume-store"
 import { syncMainProcessProxyEnv } from "./agent-env"
@@ -110,8 +105,6 @@ interface LlmSession extends PollPhaseHost {
   channelModelParams: string
   /** 会话有效推理档（覆盖优先，其次模型默认；off=不推理） */
   thinkingLevel: ThinkingLevel
-  rulesHash: string
-  daemonPort?: number
   abort: AbortController
   runPromise: Promise<void>
   /** 已成功跑完 worker 回合的 messageId：黑洞重投时跳过重复处理 */
@@ -121,8 +114,6 @@ interface LlmSession extends PollPhaseHost {
   logAgg: { kind: "thinking" | "text" | null; buf: string }
   /** 本会话最近一次落日志的 system prompt 哈希：没变就不重复打（见 logSystemPromptIfChanged） */
   loggedSystemPromptHash?: string
-  /** 账本超限 rollover：unregister 时不再写 resume */
-  ledgerRollover?: boolean
 }
 
 export type LlmWorkerSession = LlmSession
@@ -280,17 +271,6 @@ function formatLlmError(e: unknown, agentErr?: string): string {
   if (agentErr?.trim()) return agentErr.trim()
   if (e instanceof Error) return e.message
   return String(e)
-}
-
-function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
-  return computePromptHash({
-    meta: opts.meta,
-    sessionKey: opts.sessionKey,
-    useMainWorkspace: opts.useMainWorkspace,
-    includeAdmin: opts.includeAdmin,
-    digitalIdentityOverride: opts.digitalIdentityOverride,
-    visitor: opts.visitor,
-  })
 }
 
 async function notifySessionLaunched(sessionKey: string, resumed: boolean, modelLabel?: string): Promise<void> {
@@ -498,19 +478,10 @@ export function registerLlmSession(session: LlmSession): void {
   broadcastLlmSessionStatus()
 }
 
-export async function unregisterLlmSession(session: LlmSession, aborted: boolean): Promise<void> {
+export async function unregisterLlmSession(session: LlmSession): Promise<void> {
   session.piUnsubscribe?.()
   session.piUnsubscribe = null
   await sealLlmStream(session, { interrupted: true })
-
-  if (!aborted && !session.ledgerRollover) {
-    rememberPiResumable(
-      session.sessionKey,
-      session.rulesHash,
-      session.daemonPort,
-      getPiResumable(session.sessionKey)?.streamCardId,
-    )
-  }
 
   llmSessions.delete(session.sessionKey)
   broadcastLlmSessionStatus()
@@ -873,16 +844,8 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     piSession = created.session
     const resumed = created.resumed
 
-    const currentDaemonPort = resolveDaemonPortForPrompt()
-    const stored = getPiResumable(sessionKey)
-    const rulesHash = promptHashForLlm(opts)
-    pushUiLog("LLM", "INFO", `[${sessionKey}] system prompt hash=${hashSystemPrompt(piSession.systemPrompt)} (${piSession.systemPrompt.length} chars, rulesHash=${rulesHash})`)
-
-    const rulesUpdated = resumed && !!stored?.rulesHash && stored.rulesHash !== rulesHash
-    const portChanged = resumed && !!stored?.daemonPort && !!currentDaemonPort
-      && stored.daemonPort !== currentDaemonPort
-    if (rulesUpdated) pushUiLog("LLM", "INFO", `[${sessionKey}] 检测到协议/规则变更（已反映于 system prompt，rulesHash ${stored!.rulesHash} → ${rulesHash}）`)
-    if (portChanged) pushUiLog("LLM", "INFO", `[${sessionKey}] 检测到 Daemon 端口变更 ${stored!.daemonPort} → ${currentDaemonPort}`)
+    const storedStreamCardId = getPiStreamCardId(sessionKey)
+    pushUiLog("LLM", "INFO", `[${sessionKey}] system prompt hash=${hashSystemPrompt(piSession.systemPrompt)} (${piSession.systemPrompt.length} chars)`)
 
     const promptCtx = {
       meta: opts.meta,
@@ -916,8 +879,6 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       channelModelParams: modelParams,
       thinkingLevel,
       modelLabel: llmModelLabel(model, thinkingLevel),
-      rulesHash,
-      daemonPort: currentDaemonPort ?? undefined,
       abort,
       runPromise: Promise.resolve(),
       streamAgg: shouldUseFeishuStreamAgg(sessionKey, opts.chatType) ? newStreamAgg() : null,
@@ -930,10 +891,10 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     }
 
     // pack/进程重启后 daemon 内存无卡，飞书旧流式卡仍在：Resume 前先收口孤儿卡
-    if (resumed && stored?.streamCardId && session.streamAgg) {
-      pushUiLog("LLM", "INFO", `[${sessionKey}] Resume 收口孤儿流式卡 card=${stored.streamCardId}`)
-      await postStreamCard(sessionKey, "finish", { segments: [] }, { cardId: stored.streamCardId })
-      patchPiResumableStreamCard(sessionKey, undefined, { onlyIf: stored.streamCardId })
+    if (resumed && storedStreamCardId && session.streamAgg) {
+      pushUiLog("LLM", "INFO", `[${sessionKey}] Resume 收口孤儿流式卡 card=${storedStreamCardId}`)
+      await postStreamCard(sessionKey, "finish", { segments: [] }, { cardId: storedStreamCardId })
+      patchPiResumableStreamCard(sessionKey, undefined, { onlyIf: storedStreamCardId })
     }
 
     session.piUnsubscribe = piSession.subscribe((event) => handlePiSessionEvent(session!, event))
@@ -957,7 +918,6 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
       withMemory: !resumed,
     })
-    rememberPiResumable(sessionKey, rulesHash, currentDaemonPort ?? undefined, session.streamAgg?.cardId)
     const history = piSession.messages.length
     broadcastLog(`[LLM] 会话 ${sessionKey} 已${resumed ? "恢复" : "启动"} worker (${llmProviderId(resource)} / ${model.id}, history=${history})`)
     try {

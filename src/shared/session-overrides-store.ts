@@ -28,10 +28,8 @@ export interface SessionOverrideRecord {
    * 有它就用它当 Agent 的 cwd，所以多个会话可以共用同一个目录；会话开始后不再更换（SDK 的续聊要求 cwd 不变）。
    */
   boundDir?: string
-  rulesHash?: string
   /** SDK 会话：这个账本里 AI 已经拿到的宿主提示词（协议、规则、Skill 名单）的指纹（变了才补发） */
   protocolHash?: string
-  daemonPort?: number
   streamCardId?: string
   updatedAt: number
 }
@@ -216,9 +214,7 @@ function isRecordEmpty(r: SessionOverrideRecord): boolean {
     && !r.agentId
     && !r.workspaceDir
     && !r.boundDir
-    && !r.rulesHash
     && !r.protocolHash
-    && r.daemonPort === undefined
     && !r.streamCardId
   )
 }
@@ -433,8 +429,6 @@ function ensureLegacyFiveFileMigrated(): void {
       agentId: string
       workspaceDir: string
       updatedAt: number
-      rulesHash?: string
-      daemonPort?: number
       streamCardId?: string
     }>
   >(path.join(dir, "sdk-resume-map.json"))
@@ -444,8 +438,6 @@ function ensureLegacyFiveFileMigrated(): void {
       mergeSessionInto(out, k, {
         agentId: e.agentId,
         workspaceDir: e.workspaceDir,
-        ...(e.rulesHash ? { rulesHash: e.rulesHash } : {}),
-        ...(e.daemonPort !== undefined ? { daemonPort: e.daemonPort } : {}),
         ...(e.streamCardId ? { streamCardId: e.streamCardId } : {}),
         updatedAt: e.updatedAt ?? Date.now(),
       })
@@ -453,15 +445,13 @@ function ensureLegacyFiveFileMigrated(): void {
   }
 
   const piRaw = readJsonFile<
-    Record<string, { rulesHash: string; daemonPort?: number; streamCardId?: string; updatedAt: number }>
+    Record<string, { streamCardId?: string; updatedAt: number }>
   >(path.join(dir, "pi-resume-map.json"))
   if (piRaw) {
     for (const [k, e] of Object.entries(piRaw)) {
-      if (!e?.rulesHash) continue
+      if (!e?.streamCardId) continue
       mergeSessionInto(out, k, {
-        rulesHash: e.rulesHash,
-        ...(e.daemonPort !== undefined ? { daemonPort: e.daemonPort } : {}),
-        ...(e.streamCardId ? { streamCardId: e.streamCardId } : {}),
+        streamCardId: e.streamCardId,
         updatedAt: e.updatedAt ?? Date.now(),
       })
     }

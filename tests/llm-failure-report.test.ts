@@ -40,8 +40,7 @@ vi.mock("../electron/llm-config", () => ({
 vi.mock("../electron/llm-model-catalog", () => ({ lookupModelThinkingLevels: () => undefined }))
 vi.mock("../electron/pi-resume-store", () => ({
   forgetPiResumable: () => {},
-  getPiResumable: () => undefined,
-  rememberPiResumable: () => {},
+  getPiStreamCardId: () => undefined,
   patchPiResumableStreamCard: () => {},
 }))
 vi.mock("../electron/pi-embedded", () => ({

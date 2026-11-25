@@ -333,7 +333,6 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       try {
         const { rolloverSessionLedgerIfNeeded } = await import("./session-retention.js")
         if (await rolloverSessionLedgerIfNeeded({ runtime: "llm", sessionKey })) {
-          session.ledgerRollover = true
           pushUiLog("LLM", "INFO", `[${sessionKey}] 账本超限，已清 pi 账本并用 mirror 冷启动`)
           break
         }
@@ -350,7 +349,7 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
     state.phase = "stopping"
     if (workers.get(sessionKey) === state) workers.delete(sessionKey)
     try {
-      await unregisterLlmSession(session, abort.signal.aborted)
+      await unregisterLlmSession(session)
     } catch (e: unknown) {
       pushUiLog("LLM", "WARN", `[${sessionKey}] worker unregister 失败: ${e instanceof Error ? e.message : String(e)}`)
     }

@@ -183,11 +183,6 @@ export function hashSystemPrompt(text: string): string {
   return createHash("md5").update(text).digest("hex").slice(0, 16)
 }
 
-/** 宿主提示词的指纹：就是实际给 AI 的那段文本的哈希，给了什么就是什么，不再另列一份「哪些输入算数」 */
-export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
-  return hashSystemPrompt(joinPromptBlocks(assembleProtocolBlocks(ctx)))
-}
-
 /** 宿主提示词整份：协议块加本机 Skill 名单。Pi 整份当系统提示词，SDK 按指纹决定哪一轮给 */
 export interface HostPrompt {
   text: string

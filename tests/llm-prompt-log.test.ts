@@ -44,18 +44,9 @@ vi.mock("../electron/llm-config", () => ({
 vi.mock("../electron/llm-model-catalog", () => ({ lookupModelThinkingLevels: () => undefined }))
 vi.mock("../electron/pi-resume-store", () => ({
   forgetPiResumable: () => {},
-  getPiResumable: () => undefined,
-  rememberPiResumable: () => {},
+  getPiStreamCardId: () => undefined,
   patchPiResumableStreamCard: () => {},
 }))
-vi.mock("../electron/prompt-assembler", async (orig) => {
-  const actual = await orig<typeof import("../electron/prompt-assembler")>()
-  return {
-    ...actual,
-    computePromptHash: () => "rules-hash",
-    resolveDaemonPortForPrompt: () => 9999,
-  }
-})
 vi.mock("../electron/pi-embedded", () => ({
   createHarnessPiSession: async () => ({ session: nextPi, resumed: nextResumed }),
   hasPersistedPiSession: () => false,

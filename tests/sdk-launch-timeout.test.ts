@@ -43,7 +43,6 @@ vi.mock("../electron/daemon-client", () => ({
   notifySessionLaunched: vi.fn(async () => undefined),
 }))
 vi.mock("../electron/prompt-assembler", () => ({
-  computePromptHash: vi.fn(() => "hash"),
   resolveDaemonPortForPrompt: vi.fn(() => undefined),
 }))
 // 拿到 Agent 之后会起 worker 去轮询队列、真的跑回合；这里只关心「拿到哪个 Agent」，worker 换成空壳

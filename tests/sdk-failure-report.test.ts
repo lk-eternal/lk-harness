@@ -35,7 +35,6 @@ vi.mock("../electron/daemon-client", () => ({
   notifySessionLaunched: vi.fn(async () => undefined),
 }))
 vi.mock("../electron/prompt-assembler", () => ({
-  computePromptHash: vi.fn(() => "hash"),
   resolveDaemonPortForPrompt: vi.fn(() => undefined),
 }))
 vi.mock("../electron/sdk-session-worker", () => ({

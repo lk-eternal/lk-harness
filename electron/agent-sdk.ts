@@ -12,7 +12,7 @@ import type { TranscriptTurn } from "./agent-engine/types"
 import { resolveSessionChatName } from "./session-chat-name"
 import { boundedCall, createTimeoutMessage, hedgedCall, resumeTimeoutMessage } from "./bounded-call"
 import { SdkAppendStore } from "./sdk-append-store"
-import { computePromptHash, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { resolveDaemonPortForPrompt } from "./prompt-assembler"
 import { buildSdkMcpServers, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 import type { VisitorLimits } from "../src/shared/visitor-limits.js"
 import { getAgentResource, getConfig } from "./config-store"
@@ -130,24 +130,10 @@ interface ResumeEntry {
   agentId: string
   workspaceDir: string
   updatedAt: number
-  rulesHash?: string
   /** 这个账本里 AI 已经拿到的宿主提示词的指纹：和现在的不一样就补发一次 */
   protocolHash?: string
-  /** Resume 时记录的 Daemon 端口，用于检测端口漂移 */
-  daemonPort?: number
   /** 最近一次飞书流式卡 cardId；进程重启后用于收口孤儿卡，避免 Resume 再建一张重复卡 */
   streamCardId?: string
-}
-
-function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "chatType" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
-  return computePromptHash({
-    meta: { chatType: session.chatType },
-    sessionKey: session.sessionKey,
-    useMainWorkspace: session.useMainWorkspace,
-    includeAdmin: session.includeAdmin,
-    digitalIdentityOverride: session.digitalIdentityOverride,
-    visitor: session.visitor,
-  })
 }
 
 function ensureModelStore(): void {
@@ -162,9 +148,7 @@ function toResumeEntry(e: SessionOverrideRecord, now: number): ResumeEntry | und
     agentId: e.agentId,
     workspaceDir: e.workspaceDir,
     updatedAt: e.updatedAt,
-    rulesHash: e.rulesHash,
     protocolHash: e.protocolHash,
-    daemonPort: e.daemonPort,
     streamCardId: e.streamCardId,
   }
 }
@@ -217,9 +201,7 @@ function rememberResumable(session: SdkSessionAgent): void {
   patchSessionRecord(session.sessionKey, {
     agentId: session.agentId,
     workspaceDir: session.workspaceDir,
-    rulesHash: promptHashForSession(session),
     protocolHash: session.protocolHash,
-    daemonPort: resolveDaemonPortForPrompt() ?? undefined,
     streamCardId: resolveRememberedStreamCardId(session.streamAgg, prev?.streamCardId),
   })
 }
@@ -1325,21 +1307,6 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
     broadcastSdkSessionStatus()
     recordModelUse(sessionKey, { model: modelId, modelParams, ...(opts.resourceId ? { resourceId: opts.resourceId } : {}) })
 
-    // Resume 会话的规则是创建时快照：规则文件变过则在唤醒 prompt 里硬指令重读
-    const currentDaemonPort = resolveDaemonPortForPrompt()
-    const rulesUpdated = resumed && !!resumable?.rulesHash
-      && resumable.rulesHash !== promptHashForSession({
-        sessionKey,
-        chatType,
-        useMainWorkspace: opts.useMainWorkspace,
-        includeAdmin,
-        digitalIdentityOverride: opts.digitalIdentityOverride,
-        visitor,
-      })
-    const portChanged = resumed && !!resumable?.daemonPort && !!currentDaemonPort
-      && resumable.daemonPort !== currentDaemonPort
-    if (rulesUpdated) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到协议/规则变更（已反映于 prompt 上下文，rulesHash 已变）`)
-    if (portChanged) pushUiLog("SDK", "INFO", `[${sessionKey}] 检测到 Daemon 端口变更 ${resumable!.daemonPort} → ${currentDaemonPort}`)
     // 全新项目会话（not found 回退 / reset 后 / resume 映射丢失）必须重带项目元数据——
     // 新 Agent 没有历史上下文，不注入就不知道项目/仓库/分支/角色
     let effectiveTask = taskMessage
