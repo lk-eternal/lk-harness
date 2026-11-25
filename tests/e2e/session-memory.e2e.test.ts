@@ -49,11 +49,11 @@ describe("会话记忆工具（/mcp-memory）", () => {
     expect(await call(d.sessionKey, "memory_read")).toBe("当前会话还没有记忆")
 
     expect(await call(d.sessionKey, "memory_save", { key: "部署约束", content: "只能周三发布" })).toContain("已记下「部署约束」（共 1/20 条）")
-    expect(readSessionMemory(d.dataDir, d.sessionKey)).toEqual([{ key: "部署约束", content: "只能周三发布" }])
+    expect(readSessionMemory(d.dataDir, d.sessionKey)).toMatchObject([{ key: "部署约束", content: "只能周三发布" }])
     expect(fs.existsSync(sessionMemoryPath(d.dataDir, d.sessionKey))).toBe(true)
 
     expect(await call(d.sessionKey, "memory_save", { key: "部署约束", content: "周三和周五" })).toContain("已更新「部署约束」")
-    expect(await call(d.sessionKey, "memory_read")).toContain("【部署约束】周三和周五")
+    expect(await call(d.sessionKey, "memory_read")).toMatch(/<item key="部署约束" created="[\d-]+ [\d:]+" updated="[\d-]+ [\d:]+">周三和周五<\/item>/)
 
     expect(await call(d.sessionKey, "memory_delete", { key: "部署约束" })).toContain("还剩 0 条")
     expect(readSessionMemory(d.dataDir, d.sessionKey)).toEqual([])
@@ -61,7 +61,7 @@ describe("会话记忆工具（/mcp-memory）", () => {
 
   it("Electron 一侧先写的记忆，daemon 的 memory_read 也读得到（两边认同一个文件）", async () => {
     saveSessionMemory(d.dataDir, d.sessionKey, "来自另一边", "内容")
-    expect(await call(d.sessionKey, "memory_read")).toContain("【来自另一边】内容")
+    expect(await call(d.sessionKey, "memory_read")).toContain('<item key="来自另一边"')
   })
 
   it("记忆属于调用者的会话：别的会话看不到、也动不了", async () => {
@@ -69,7 +69,7 @@ describe("会话记忆工具（/mcp-memory）", () => {
     await call(d.sessionKey, "memory_save", { key: "a", content: "1" })
     expect(await call(other, "memory_read")).toBe("当前会话还没有记忆")
     expect(await call(other, "memory_delete", { key: "a" })).toContain("[memory_failed]")
-    expect(readSessionMemory(d.dataDir, d.sessionKey)).toEqual([{ key: "a", content: "1" }])
+    expect(readSessionMemory(d.dataDir, d.sessionKey)).toMatchObject([{ key: "a", content: "1" }])
   })
 
   it("没有调用者会话头：拒绝读写，不会写到哪个会话里去", async () => {

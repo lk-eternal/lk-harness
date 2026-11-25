@@ -58,7 +58,7 @@ describe("resetAllSessionContext", () => {
     resetAllSessionContext("sk")
 
     expect(readSessionMemory(h.userData, "sk")).toEqual([])
-    expect(readSessionMemory(h.userData, "other")).toEqual([{ key: "b", content: "2" }])
+    expect(readSessionMemory(h.userData, "other")).toMatchObject([{ key: "b", content: "2" }])
   })
 
   it("只清本会话，别的会话的待搬运块不受影响", () => {

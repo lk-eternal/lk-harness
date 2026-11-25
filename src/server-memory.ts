@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { MEMORY_LIMITS, deleteSessionMemory, readSessionMemory, saveSessionMemory } from "./shared/session-memory.js";
+import { promptUtcOffset } from "./shared/prompt-markup.js";
+import { MEMORY_LIMITS, deleteSessionMemory, formatMemoryItems, readSessionMemory, saveSessionMemory } from "./shared/session-memory.js";
 
 function reply(text: string) {
   return { content: [{ type: "text" as const, text }] };
@@ -46,14 +47,14 @@ export function registerMemoryTools(s: McpServer, dataRoot: string, invoker: () 
 
   s.tool(
     "memory_read",
-    "读出当前会话的全部记忆。新起的会话首轮已经把记忆带给你了，一般不用再读；想确认现状时才用。",
+    "读出当前会话的全部记忆，每条带创建时间和修改时间。新起的会话首轮已经把记忆带给你了，一般不用再读；想确认现状时才用。",
     {},
     async () => {
       const t = target();
       if ("error" in t) return fail(t.error);
       const entries = readSessionMemory(dataRoot, t.sk);
       if (entries.length === 0) return reply("当前会话还没有记忆");
-      return reply([`共 ${entries.length}/${MEMORY_LIMITS.maxEntries} 条记忆：`, ...entries.map((e) => `- 【${e.key}】${e.content}`)].join("\n"));
+      return reply([`共 ${entries.length}/${MEMORY_LIMITS.maxEntries} 条记忆，时间为本机时间（${promptUtcOffset(Date.now())}）：`, formatMemoryItems(entries)].join("\n"));
     },
   );
 

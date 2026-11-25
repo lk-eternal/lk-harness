@@ -5,6 +5,7 @@
 
 import * as fs from "node:fs"
 import { JsonReadError, readJsonFile, writeJsonAtomic } from "./atomic-json.js"
+import { promptAttr, promptText, promptTime } from "./prompt-markup.js"
 import { ensureSessionEntry, sessionMemoryPath } from "./session-entry-paths.js"
 
 export const MEMORY_LIMITS = {
@@ -16,26 +17,52 @@ export const MEMORY_LIMITS = {
 export interface SessionMemoryEntry {
   key: string
   content: string
+  /** 第一次记下的时间（毫秒时间戳） */
+  createdAt: number
+  /** 最近一次改内容的时间（毫秒时间戳），没改过就等于 createdAt */
+  updatedAt: number
+}
+
+/** 文件里的一条：key 和内容必有，时间是后加的字段，旧文件没有 */
+interface StoredEntry {
+  key: string
+  content: string
+  createdAt?: unknown
+  updatedAt?: unknown
 }
 
 export type SessionMemoryResult<T> = ({ ok: true } & T) | { ok: false; error: string }
 
-function isEntry(v: unknown): v is SessionMemoryEntry {
+function isStoredEntry(v: unknown): v is StoredEntry {
   if (!v || typeof v !== "object") return false
   const e = v as Record<string, unknown>
   return typeof e.key === "string" && !!e.key && typeof e.content === "string"
 }
 
-/** 没有记忆（或文件读不出来）返回空数组。损坏的文件 readJsonFile 已备份成 .corrupt-*，读不出来不能挡住一轮对话 */
+function isTime(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v) && v > 0
+}
+
+/**
+ * 没有记忆（或文件读不出来）返回空数组。损坏的文件 readJsonFile 已备份成 .corrupt-*，读不出来不能挡住一轮对话。
+ * 旧文件的条目没有时间：用文件最后修改时间补，它只是「不晚于」的上界，不是真实时间；下一次写入会把补上的值固定下来。
+ */
 export function readSessionMemory(root: string, sessionKey: string): SessionMemoryEntry[] {
+  const file = sessionMemoryPath(root, sessionKey)
   let raw: unknown
   try {
-    raw = readJsonFile<unknown>(sessionMemoryPath(root, sessionKey), [])
+    raw = readJsonFile<unknown>(file, [])
   } catch (e: unknown) {
     if (e instanceof JsonReadError) return []
     throw e
   }
-  return Array.isArray(raw) ? raw.filter(isEntry) : []
+  if (!Array.isArray(raw)) return []
+  const stored = raw.filter(isStoredEntry)
+  const fileTime = stored.some((e) => !isTime(e.createdAt)) ? Math.floor(fs.statSync(file).mtimeMs) : 0
+  return stored.map((e) => {
+    const createdAt = isTime(e.createdAt) ? e.createdAt : fileTime
+    return { key: e.key, content: e.content, createdAt, updatedAt: isTime(e.updatedAt) ? e.updatedAt : createdAt }
+  })
 }
 
 function persist(root: string, sessionKey: string, entries: SessionMemoryEntry[]): void {
@@ -47,7 +74,7 @@ function persist(root: string, sessionKey: string, entries: SessionMemoryEntry[]
   writeJsonAtomic(sessionMemoryPath(root, sessionKey), entries)
 }
 
-/** 同一个 key 覆盖更新，位置不变；超出上限直接报错，不静默截断 */
+/** 同一个 key 覆盖更新，位置不变，创建时间保留、修改时间更新；超出上限直接报错，不静默截断 */
 export function saveSessionMemory(
   root: string,
   sessionKey: string,
@@ -67,8 +94,11 @@ export function saveSessionMemory(
   if (at < 0 && entries.length >= MEMORY_LIMITS.maxEntries) {
     return { ok: false, error: `已经有 ${entries.length} 条（上限 ${MEMORY_LIMITS.maxEntries} 条）：先合并，或用 memory_delete 删掉不再需要的。现有 key：${entries.map((e) => e.key).join("、")}` }
   }
-  if (at >= 0) entries[at] = { key: k, content: c }
-  else entries.push({ key: k, content: c })
+  const now = Date.now()
+  const previous = at >= 0 ? entries[at] : undefined
+  const entry: SessionMemoryEntry = { key: k, content: c, createdAt: previous?.createdAt ?? now, updatedAt: now }
+  if (previous) entries[at] = entry
+  else entries.push(entry)
   persist(root, sessionKey, entries)
   return { ok: true, replaced: at >= 0, count: entries.length }
 }
@@ -88,6 +118,13 @@ export function deleteSessionMemory(root: string, sessionKey: string, key: strin
 /** 只删文件，不为会话建目录：删会话时重置流程会调到这里，建回目录会让已删的会话以空目录的样子留在列表里 */
 export function clearSessionMemory(root: string, sessionKey: string): void {
   fs.rmSync(sessionMemoryPath(root, sessionKey), { force: true })
+}
+
+/** 记忆给 AI 看的写法，每条一行 item：memory_read 和首轮带入共用，格式只在这一处定 */
+export function formatMemoryItems(entries: SessionMemoryEntry[]): string {
+  return entries
+    .map((e) => `<item key="${promptAttr(e.key)}" created="${promptTime(e.createdAt)}" updated="${promptTime(e.updatedAt)}">${promptText(e.content)}</item>`)
+    .join("\n")
 }
 
 /** 首轮 `[本轮投递]` 里的 memory 字段：key → 内容；没有记忆返回 undefined（字段不出现） */

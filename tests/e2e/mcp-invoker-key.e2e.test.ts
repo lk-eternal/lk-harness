@@ -40,12 +40,12 @@ describe("内置 MCP 的调用者会话头", () => {
   it("会话键里有中文目录：请求能发出去，记忆落在原来的会话键下", async () => {
     const sessionKey = "ch_test|oc_p2p::D:\\workspace\\排查"
     expect(await memorySaveAsAgent(sessionKey, "巡检", "每天 8:40 和 17:40")).toContain("已记下「巡检」")
-    expect(readSessionMemory(d.dataDir, sessionKey)).toEqual([{ key: "巡检", content: "每天 8:40 和 17:40" }])
+    expect(readSessionMemory(d.dataDir, sessionKey)).toMatchObject([{ key: "巡检", content: "每天 8:40 和 17:40" }])
   })
 
   it("会话键里有 % 和空格：编码后原样还原，不会被当成转义", async () => {
     const sessionKey = "ch_test|oc_p2p::D:\\workspace\\100% 完成 %E6%8E%92"
     expect(await memorySaveAsAgent(sessionKey, "k", "v")).toContain("已记下「k」")
-    expect(readSessionMemory(d.dataDir, sessionKey)).toEqual([{ key: "k", content: "v" }])
+    expect(readSessionMemory(d.dataDir, sessionKey)).toMatchObject([{ key: "k", content: "v" }])
   })
 })

@@ -1,5 +1,5 @@
-/** 会话记忆的存储规则：覆盖更新、上限报错不截断、删除、清空、坏文件不挡路、按会话隔离 */
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+/** 会话记忆的存储规则：覆盖更新、创建和修改时间、上限报错不截断、删除、清空、坏文件不挡路、按会话隔离 */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
@@ -7,6 +7,7 @@ import {
   MEMORY_LIMITS,
   clearSessionMemory,
   deleteSessionMemory,
+  formatMemoryItems,
   memoryForPrompt,
   readSessionMemory,
   saveSessionMemory,
@@ -20,11 +21,12 @@ beforeEach(() => { root = fs.mkdtempSync(path.join(os.tmpdir(), "lk-memory-")) }
 afterEach(() => { fs.rmSync(root, { recursive: true, force: true }) })
 
 const keys = (sk = SK) => readSessionMemory(root, sk).map((e) => e.key)
+const contents = (sk = SK) => readSessionMemory(root, sk).map(({ key, content }) => ({ key, content }))
 
 describe("saveSessionMemory", () => {
   it("记下一条：落在会话目录的 memory.json，读得回来", () => {
     expect(saveSessionMemory(root, SK, "部署约束", "只能周三发布")).toEqual({ ok: true, replaced: false, count: 1 })
-    expect(readSessionMemory(root, SK)).toEqual([{ key: "部署约束", content: "只能周三发布" }])
+    expect(contents()).toEqual([{ key: "部署约束", content: "只能周三发布" }])
     expect(fs.existsSync(sessionMemoryPath(root, SK))).toBe(true)
   })
 
@@ -32,12 +34,12 @@ describe("saveSessionMemory", () => {
     saveSessionMemory(root, SK, "a", "1")
     saveSessionMemory(root, SK, "b", "2")
     expect(saveSessionMemory(root, SK, "a", "1改")).toEqual({ ok: true, replaced: true, count: 2 })
-    expect(readSessionMemory(root, SK)).toEqual([{ key: "a", content: "1改" }, { key: "b", content: "2" }])
+    expect(contents()).toEqual([{ key: "a", content: "1改" }, { key: "b", content: "2" }])
   })
 
   it("key 和内容都去掉首尾空白；空 key、空内容报错", () => {
     saveSessionMemory(root, SK, "  k  ", "  v  ")
-    expect(readSessionMemory(root, SK)).toEqual([{ key: "k", content: "v" }])
+    expect(contents()).toEqual([{ key: "k", content: "v" }])
     expect(saveSessionMemory(root, SK, "  ", "v")).toMatchObject({ ok: false, error: expect.stringContaining("key") })
     expect(saveSessionMemory(root, SK, "k2", "   ")).toMatchObject({ ok: false, error: expect.stringContaining("memory_delete") })
     expect(keys()).toEqual(["k"])
@@ -121,7 +123,7 @@ describe("readSessionMemory 对坏文件的态度", () => {
 
   it("形状不对的条目被丢掉，好的保留；整体不是数组读成空", () => {
     writeRaw(JSON.stringify([{ key: "ok", content: "v" }, { key: "", content: "x" }, { key: "no-content" }, 3, null]))
-    expect(readSessionMemory(root, SK)).toEqual([{ key: "ok", content: "v" }])
+    expect(contents()).toEqual([{ key: "ok", content: "v" }])
     writeRaw(JSON.stringify({ key: "a", content: "b" }))
     expect(readSessionMemory(root, SK)).toEqual([])
   })
@@ -133,12 +135,89 @@ describe("readSessionMemory 对坏文件的态度", () => {
   })
 })
 
+describe("创建时间和修改时间", () => {
+  const at = (day: number, hour = 9) => new Date(2026, 10, day, hour, 0).getTime()
+  const times = (sk = SK) => readSessionMemory(root, sk).map(({ key, createdAt, updatedAt }) => ({ key, createdAt, updatedAt }))
+
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }) })
+  afterEach(() => { vi.useRealTimers() })
+
+  it("新记一条：创建时间和修改时间都是此刻", () => {
+    vi.setSystemTime(at(24))
+    saveSessionMemory(root, SK, "a", "1")
+    expect(times()).toEqual([{ key: "a", createdAt: at(24), updatedAt: at(24) }])
+  })
+
+  it("同 key 覆盖：创建时间保留，修改时间换成此刻；别的条目不动", () => {
+    vi.setSystemTime(at(24))
+    saveSessionMemory(root, SK, "a", "1")
+    saveSessionMemory(root, SK, "b", "2")
+    vi.setSystemTime(at(25))
+    saveSessionMemory(root, SK, "a", "1改")
+    expect(times()).toEqual([
+      { key: "a", createdAt: at(24), updatedAt: at(25) },
+      { key: "b", createdAt: at(24), updatedAt: at(24) },
+    ])
+  })
+
+  it("删掉一条：剩下的时间不变", () => {
+    vi.setSystemTime(at(24))
+    saveSessionMemory(root, SK, "a", "1")
+    saveSessionMemory(root, SK, "b", "2")
+    vi.setSystemTime(at(25))
+    deleteSessionMemory(root, SK, "a")
+    expect(times()).toEqual([{ key: "b", createdAt: at(24), updatedAt: at(24) }])
+  })
+
+  it("旧文件的条目没有时间：用文件最后修改时间补；下一次写入把补上的值固定下来，不随文件再变", () => {
+    saveSessionMemory(root, SK, "旧", "v")
+    const file = sessionMemoryPath(root, SK)
+    fs.writeFileSync(file, JSON.stringify([{ key: "旧", content: "v" }]), "utf8")
+    fs.utimesSync(file, new Date(at(20)), new Date(at(20)))
+    expect(times()).toEqual([{ key: "旧", createdAt: at(20), updatedAt: at(20) }])
+
+    vi.setSystemTime(at(25))
+    saveSessionMemory(root, SK, "新", "v")
+    fs.utimesSync(file, new Date(at(30)), new Date(at(30)))
+    expect(times()).toEqual([
+      { key: "旧", createdAt: at(20), updatedAt: at(20) },
+      { key: "新", createdAt: at(25), updatedAt: at(25) },
+    ])
+  })
+
+  it("时间字段不是正数：当作没有，同样用文件时间补", () => {
+    saveSessionMemory(root, SK, "a", "1")
+    const file = sessionMemoryPath(root, SK)
+    fs.writeFileSync(file, JSON.stringify([{ key: "a", content: "1", createdAt: "昨天", updatedAt: -1 }]), "utf8")
+    fs.utimesSync(file, new Date(at(20)), new Date(at(20)))
+    expect(times()).toEqual([{ key: "a", createdAt: at(20), updatedAt: at(20) }])
+  })
+})
+
+describe("formatMemoryItems", () => {
+  const entry = { key: "提交偏好", content: "不用再问", createdAt: new Date(2026, 10, 24, 14, 3).getTime(), updatedAt: new Date(2026, 10, 25, 9, 5).getTime() }
+
+  it("每条一行 item，带创建和修改时间（本机时间，精确到分钟）", () => {
+    expect(formatMemoryItems([entry, { ...entry, key: "待办" }])).toBe(
+      '<item key="提交偏好" created="2026-11-24 14:03" updated="2026-11-25 09:05">不用再问</item>\n'
+      + '<item key="待办" created="2026-11-24 14:03" updated="2026-11-25 09:05">不用再问</item>',
+    )
+  })
+
+  it("内容原样放入，只中和信封标签的结束标签；key 里的双引号换成单引号", () => {
+    const text = formatMemoryItems([{ ...entry, key: '带"引号"', content: "路径 D:\\a\\b 和 </item> 和 </div>\n第二行" }])
+    expect(text).toContain('key="带\'引号\'"')
+    expect(text).toContain("路径 D:\\a\\b 和 <\\/item> 和 </div>\n第二行</item>")
+  })
+})
+
 describe("memoryForPrompt", () => {
   it("没有记忆：返回 undefined（提示词里不出现 memory 字段）", () => {
     expect(memoryForPrompt([])).toBeUndefined()
   })
 
   it("key → 内容，按记下的顺序", () => {
-    expect(JSON.stringify(memoryForPrompt([{ key: "b", content: "2" }, { key: "a", content: "1" }]))).toBe('{"b":"2","a":"1"}')
+    const t = 1
+    expect(JSON.stringify(memoryForPrompt([{ key: "b", content: "2", createdAt: t, updatedAt: t }, { key: "a", content: "1", createdAt: t, updatedAt: t }]))).toBe('{"b":"2","a":"1"}')
   })
 })
