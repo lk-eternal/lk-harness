@@ -1,37 +1,9 @@
 import { spawnSync } from "node:child_process"
 import * as path from "node:path"
-import { chatIdFromSessionKey, normalizeSessionKey, parseChatKey, workspaceDirFromSessionKey } from "./channel-types.js"
 import { readGitHead } from "./git-head.js"
 import { projectIdFromSessionKey, type Project } from "./project-types.js"
 
 export type SessionCardTitle = { title: string; subtitle?: string }
-
-const SESSION_HEADER_TEMPLATES = [
-  "turquoise", "blue", "wathet", "indigo", "violet", "purple",
-  "carmine", "orange", "red", "green",
-] as const
-
-export function sessionColorKey(sessionKey?: string): string {
-  if (!sessionKey) return ""
-  const sk = normalizeSessionKey(sessionKey) || sessionKey
-  const pid = projectIdFromSessionKey(sk)
-  if (pid) return `project:${pid}`
-  const chat = parseChatKey(chatIdFromSessionKey(sk)).chatId
-  const ws = workspaceDirFromSessionKey(sk)
-  if (ws) {
-    const norm = path.normalize(ws).replace(/[\\/]+$/, "").toLowerCase()
-    return `ws:${chat}::${norm}`
-  }
-  return `chat:${chat}`
-}
-
-export function sessionHeaderTemplate(sessionKey?: string): string | undefined {
-  const key = sessionColorKey(sessionKey)
-  if (!key) return undefined
-  let h = 0
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0
-  return SESSION_HEADER_TEMPLATES[h % SESSION_HEADER_TEMPLATES.length]
-}
 
 /**
  * 当前分支。先直接读 .git/HEAD（零点几毫秒，不起进程）；

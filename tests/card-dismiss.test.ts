@@ -5,14 +5,14 @@ describe("卡片关闭", () => {
   it("offerDismiss 为 true 时追加关闭按钮", () => {
     const card = LarkSender.buildCard("正文", { title: "标题" }, [
       { label: "操作", value: { kind: "cmd", cmd: "/p" } },
-    ], undefined, undefined, undefined, undefined, true) as { body: { elements: unknown[] } }
+    ], undefined, undefined, undefined, true) as { body: { elements: unknown[] } }
     const json = JSON.stringify(card)
     expect(json).toContain("✕ 关闭")
     expect(json).toContain('"kind":"dismiss"')
   })
 
   it("sections 模式同样追加关闭按钮", () => {
-    const card = LarkSender.buildCard("ignored", { title: "标题" }, undefined, undefined, undefined, undefined, [
+    const card = LarkSender.buildCard("ignored", { title: "标题" }, undefined, undefined, undefined, [
       { text: "段1", buttons: [{ label: "A", value: { kind: "cmd", cmd: "/a" } }] },
       { text: "段2", buttons: [{ label: "B", value: { kind: "cmd", cmd: "/b" } }] },
     ], true) as { body: { elements: unknown[] } }
@@ -35,7 +35,7 @@ describe("卡片关闭", () => {
   })
 
   it("无按钮时 offerDismiss 仍追加关闭", () => {
-    const card = LarkSender.buildCard("无 按钮正文", { title: "仅标题", subtitle: "副标题" }, undefined, undefined, undefined, undefined, undefined, true) as { body: { elements: unknown[] } }
+    const card = LarkSender.buildCard("无 按钮正文", { title: "仅标题", subtitle: "副标题" }, undefined, undefined, undefined, undefined, true) as { body: { elements: unknown[] } }
     const json = JSON.stringify(card)
     expect(json).toContain("✕ 关闭")
     expect(json).toContain('"kind":"dismiss"')

@@ -338,14 +338,14 @@ describe("taskCardFooter", () => {
 describe("taskCardHeader", () => {
   const tasks = [task({ name: "周报编写" })]
 
-  it("独立任务：头部是「⏰ 任务名」，配色键是任务 id", () => {
-    expect(taskCardHeader({ invokerSessionKey: TASK_ID, sessionKey: "ch_b|oc_main", tasks })).toEqual({ title: "⏰ 周报编写", colorKey: TASK_ID })
+  it("独立任务：头部是「⏰ 任务名」", () => {
+    expect(taskCardHeader({ invokerSessionKey: TASK_ID, sessionKey: "ch_b|oc_main", tasks })).toEqual({ title: "⏰ 周报编写" })
   })
 
   it("按调用方（任务 id）认任务，不是按发送目标（聊天键）认", () => {
     // 发送目标是聊天键，认不出任务；调用方是任务 id
     expect(taskCardHeader({ sessionKey: "ch_b|oc_main", tasks })).toBeUndefined()
-    expect(taskCardHeader({ sessionKey: "ch_b|oc_main", invokerSessionKey: TASK_ID, tasks })?.colorKey).toBe(TASK_ID)
+    expect(taskCardHeader({ sessionKey: "ch_b|oc_main", invokerSessionKey: TASK_ID, tasks })?.title).toBe("⏰ 周报编写")
   })
 
   it("没有调用方时退回用发送的会话键（它本身就是任务 id 的情形）", () => {

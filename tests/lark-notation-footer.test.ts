@@ -61,7 +61,7 @@ describe("LarkSender.withNotationFooter", () => {
 describe("LarkSender.sendMessage 带页脚", () => {
   it("直发：正文在前，页脚（分隔线 + 小字）在最后；顶部的会话横幅还在", async () => {
     const { sender, sent } = fakeSender()
-    await sender.sendMessage("定时任务测试成功", undefined, "oc_main", { title: "📂 lk-harness", subtitle: "🌿 main" }, "green", false, "composer-2.5-fast")
+    await sender.sendMessage("定时任务测试成功", undefined, "oc_main", { title: "📂 lk-harness", subtitle: "🌿 main" }, false, "composer-2.5-fast")
     expect(sent).toHaveLength(1)
     expect(sent[0].via).toBe("create")
     expect(sent[0].msgType).toBe("interactive")
@@ -79,7 +79,7 @@ describe("LarkSender.sendMessage 带页脚", () => {
 
   it("回复：页脚同样带上", async () => {
     const { sender, sent } = fakeSender()
-    await sender.sendMessage("结果", "om_user_msg", undefined, undefined, undefined, false, "gpt-x")
+    await sender.sendMessage("结果", "om_user_msg", undefined, undefined, false, "gpt-x")
     expect(sent).toHaveLength(1)
     expect(sent[0].via).toBe("reply")
     expect(sent[0].messageId).toBe("om_user_msg")
@@ -88,16 +88,16 @@ describe("LarkSender.sendMessage 带页脚", () => {
 
   it("不带页脚时发出去的卡片和以前完全一样", async () => {
     const { sender, sent } = fakeSender()
-    await sender.sendMessage("结果", undefined, "oc_main", { title: "T" }, "blue")
-    expect(JSON.parse(sent[0].content)).toEqual(LarkSender.buildCard("结果", { title: "T" }, undefined, undefined, "blue"))
+    await sender.sendMessage("结果", undefined, "oc_main", { title: "T" })
+    expect(JSON.parse(sent[0].content)).toEqual(LarkSender.buildCard("结果", { title: "T" }))
     const { sender: s2, sent: sent2 } = fakeSender()
-    await s2.sendMessage("结果", undefined, "oc_main", { title: "T" }, "blue", false, "   ")
+    await s2.sendMessage("结果", undefined, "oc_main", { title: "T" }, false, "   ")
     expect(sent2[0].content).toBe(sent[0].content)
   })
 
   it("含 @ 的消息走纯文本，没有卡片所以没有页脚，正文也不被改动", async () => {
     const { sender, sent } = fakeSender()
-    await sender.sendMessage('请看 <at user_id="ou_1">张三</at>', undefined, "oc_main", undefined, undefined, false, "composer-2.5-fast")
+    await sender.sendMessage('请看 <at user_id="ou_1">张三</at>', undefined, "oc_main", undefined, false, "composer-2.5-fast")
     expect(sent[0].msgType).toBe("text")
     expect(JSON.parse(sent[0].content)).toEqual({ text: '请看 <at user_id="ou_1">张三</at>' })
   })

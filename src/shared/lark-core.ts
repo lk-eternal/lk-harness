@@ -280,13 +280,13 @@ export class LarkSender {
     return text.replace(/<at\s+user_id="([^"]+)"[^>]*>([^<]*)<\/at>/gi, "<at id=$1>$2</at>");
   }
 
-  private formatForSend(text: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): { content: string; msgType: string } {
+  private formatForSend(text: string, title?: CardTitle, offerDismiss = false, footer?: string): { content: string; msgType: string } {
     const fullText = `${this.messagePrefix}${text}`;
     if (LarkSender.containsAtTag(fullText)) {
       // 含 @ 的走纯文本消息（卡片里的 @ 语法在这条路上不生效），没有页脚的位置
       return { content: JSON.stringify({ text: fullText }), msgType: "text" };
     }
-    const card = LarkSender.buildCard(fullText, title, undefined, undefined, template, undefined, undefined, offerDismiss);
+    const card = LarkSender.buildCard(fullText, title, undefined, undefined, undefined, undefined, offerDismiss);
     return { content: JSON.stringify(LarkSender.withNotationFooter(card, footer)), msgType: "interactive" };
   }
 
@@ -402,7 +402,6 @@ export class LarkSender {
     title?: CardTitle,
     buttons?: CardButton[],
     input?: CardInput,
-    template?: string,
     footer?: string,
     sections?: { text: string; buttons?: CardButton[] }[],
     offerDismiss = false,
@@ -1251,15 +1250,14 @@ export class LarkSender {
     return els;
   }
 
-  /** 独立的多选题卡（不在流式卡里）：会话色标题条 + buildQuestionMultiFormElements */
+  /** 独立的多选题卡（不在流式卡里）：会话横幅 + buildQuestionMultiFormElements */
   static buildQuestionMultiCard(opts: {
     questionText: string;
     form: QuestionMultiForm;
     title?: CardTitle;
-    template?: string;
     footer?: string;
   }): any {
-    const card = LarkSender.buildCard("", opts.title, undefined, undefined, opts.template);
+    const card = LarkSender.buildCard("", opts.title);
     card.body.elements.push(...LarkSender.buildQuestionMultiFormElements(opts));
     return card;
   }
@@ -1517,7 +1515,7 @@ export class LarkSender {
     };
   }
 
-  /** 构建流式卡 JSON；会话色条 + 时间线 segments */
+  /** 构建流式卡 JSON；会话横幅 + 时间线 segments */
   static buildStreamingCardJson(opts?: {
     status?: "streaming" | "completed" | "error";
     showThinking?: boolean;
@@ -1525,7 +1523,6 @@ export class LarkSender {
     /** 整卡 JSON 的 UTF-8 字节上限，默认 STREAM_CARD_BYTE_BUDGET；daemon 在飞书报 200860 后对这张卡收紧 */
     byteBudget?: number;
     sessionTitle?: CardTitle;
-    sessionTemplate?: string;
     segments?: Array<
       | { type: "thinking"; text: string; title?: string; panelId?: string; expanded?: boolean }
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
@@ -1847,11 +1844,9 @@ export class LarkSender {
    */
   async createStreamingCardEntity(opts?: {
     title?: string;
-    template?: string;
     showThinking?: boolean;
     keepPerKind?: number;
     sessionTitle?: CardTitle;
-    sessionTemplate?: string;
     segments?: Array<
       | { type: "thinking"; text: string; title?: string; panelId?: string; expanded?: boolean }
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
@@ -1873,7 +1868,6 @@ export class LarkSender {
       showThinking: opts?.showThinking,
       keepPerKind: opts?.keepPerKind,
       sessionTitle: opts?.sessionTitle,
-      sessionTemplate: opts?.sessionTemplate,
       segments: opts?.segments,
       thinking: opts?.thinking,
       thinkingTitle: opts?.thinkingTitle,
@@ -2089,12 +2083,11 @@ export class LarkSender {
     chatId?: string,
     title?: CardTitle,
     input?: CardInput,
-    template?: string,
     footer?: string,
     sections?: { text: string; buttons?: CardButton[] }[],
     offerDismiss = false,
   ): Promise<string | null | undefined> {
-    const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, input, template, footer, sections, offerDismiss);
+    const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, input, footer, sections, offerDismiss);
     const content = JSON.stringify(card);
     // 有 replyMessageId 时只走回复，成功即返回——禁止再 create 到 chatId（否则群消息 reply + 主用户 chat 直发 = 窜台）
     if (replyMessageId && !replyMessageId.startsWith("internal_")) {
@@ -2134,7 +2127,6 @@ export class LarkSender {
     messageId: string,
     text: string,
     title?: CardTitle,
-    template?: string,
     footer?: string,
     buttons?: CardButton[],
     sections?: { text: string; buttons?: CardButton[] }[],
@@ -2142,7 +2134,7 @@ export class LarkSender {
   ): Promise<boolean> {
     if (!messageId || messageId.startsWith("internal_")) return false;
     try {
-      const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, undefined, template, footer, sections, offerDismiss);
+      const card = LarkSender.buildCard(`${this.messagePrefix}${text}`, title, buttons, undefined, footer, sections, offerDismiss);
       const res = await this.client.im.message.patch({
         path: { message_id: messageId },
         data: { content: JSON.stringify(card) },
@@ -2160,9 +2152,9 @@ export class LarkSender {
     }
   }
 
-  async replyMessage(messageId: string, text: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): Promise<string | undefined> {
+  async replyMessage(messageId: string, text: string, title?: CardTitle, offerDismiss = false, footer?: string): Promise<string | undefined> {
     try {
-      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss, footer);
+      const { content, msgType } = this.formatForSend(text, title, offerDismiss, footer);
       const res = await this.client.im.message.reply({
         path: { message_id: messageId },
         data: { content, msg_type: msgType },
@@ -2173,8 +2165,8 @@ export class LarkSender {
     } catch (e: any) { this.log("WARN", `飞书回复异常: ${e?.message ?? e}`); return undefined; }
   }
 
-  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, template?: string, offerDismiss = false, footer?: string): Promise<string | undefined> {
-    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, template, offerDismiss, footer); }
+  async sendMessage(text: string, replyMessageId?: string, chatId?: string, title?: CardTitle, offerDismiss = false, footer?: string): Promise<string | undefined> {
+    if (replyMessageId && !replyMessageId.startsWith("internal_")) { return this.replyMessage(replyMessageId, text, title, offerDismiss, footer); }
     // internal_ 不可 reply：必须显式 chatId，禁止回落到 this.chatId（主用户）造成窜台
     if (replyMessageId?.startsWith("internal_") && !chatId) {
       this.log("WARN", `internal 消息回复缺少 chatId，已拒绝默认私聊兜底 (${replyMessageId})`);
@@ -2183,7 +2175,7 @@ export class LarkSender {
     const targetChatId = chatId ?? this.chatId;
     if (!targetChatId) { this.log("WARN", "无发送目标"); return undefined; }
     try {
-      const { content, msgType } = this.formatForSend(text, title, template, offerDismiss, footer);
+      const { content, msgType } = this.formatForSend(text, title, offerDismiss, footer);
       const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" as any },
         data: { receive_id: targetChatId, content, msg_type: msgType },

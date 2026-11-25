@@ -135,7 +135,7 @@ import {
   deleteHarnessRule,
 } from "./shared/harness-rule-store.js";
 import { projectIdFromSessionKey, projectSessionKeyFor, decodeRepoPairOption, splitRepoPairValues, isRemoteRepoRef, DEFAULT_NODE_GROUP_ID, formFieldStr, coerceFormMultiSelect } from "./shared/project-types.js";
-import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey, sessionHeaderTemplate } from "./shared/session-label.js";
+import { buildSessionCardTitle, isSpecialSessionSuffix, resolveWorkspaceFromSessionKey } from "./shared/session-label.js";
 import {
   listFeishuProjectsForPicker,
   resolveFeishuProjectFormDefaults,
@@ -1214,28 +1214,28 @@ function resolveReplyTitle(ch: ResolvedChannel, sessionKey?: string): CardTitle 
 }
 
 /**
- * send_text / send_question 发到飞书的卡片头部：横幅标题 + 配色键。
+ * send_text / send_question 发到飞书的卡片头部：横幅标题。
  *  - 独立定时任务：任务自己的标识（⏰ 任务名），不借聊天当前的活跃会话。
  *    出站目标是聊天键、不带会话，借了就会把任务结果标成活跃会话发的（可能是某个项目，甚至是已归档的项目）。
- *  - 其余：会话键 > 消息所属会话 > 聊天当前的活跃会话（带工作区的优先，保证标题和配色稳定在同一个会话上）。
+ *  - 其余：会话键 > 消息所属会话 > 聊天当前的活跃会话（带工作区的优先，保证标题稳定在同一个会话上）。
  * 标题仍只在主用户私聊显示。
  * taskTitled：这条的横幅是任务自己的标识（⏰ 任务名）且会显示。发任务消息时据此决定正文里还要不要再写一遍任务名，见 resolveSendCardText。
  */
 export function resolveSendCardHeader(
   ch: Extract<ResolvedChannel, { type: "feishu" }>,
   input: { sessionKey?: string; invokerSessionKey?: string; messageId?: string; tasks: ScheduledTask[] },
-): { title: CardTitle | undefined; colorKey: string | undefined; taskTitled: boolean } {
+): { title: CardTitle | undefined; taskTitled: boolean } {
   const task = taskCardHeader({ sessionKey: input.sessionKey, invokerSessionKey: input.invokerSessionKey, tasks: input.tasks });
   if (task) {
     const shown = isMainUserPrivateChat(ch);
-    return { title: shown ? task.title : undefined, colorKey: task.colorKey, taskTitled: shown };
+    return { title: shown ? task.title : undefined, taskTitled: shown };
   }
-  const colorKey = preferWorkspaceSessionKey(
+  const sk = preferWorkspaceSessionKey(
     input.sessionKey,
     input.messageId ? messageSessionMap.get(input.messageId) : undefined,
     ch.chatId ? lookupActiveSessionKey(makeChatKey(ch.rt.cfg.id, ch.chatId)) : undefined,
   );
-  return { title: resolveReplyTitle(ch, colorKey || input.sessionKey), colorKey, taskTitled: false };
+  return { title: resolveReplyTitle(ch, sk || input.sessionKey), taskTitled: false };
 }
 
 /**
@@ -1955,7 +1955,6 @@ interface AgentStreamCardState {
   channelId: string;
   showThinking: boolean;
   sessionTitle?: CardTitle;
-  sessionTemplate?: string;
   lastHash: string;
   lastSegments: AgentStreamSegment[];
   mcpReplies: Array<{ text: string; insertAt: number }>;
@@ -2064,14 +2063,6 @@ function hasOpenQuestionBlock(state: AgentStreamCardState): boolean {
 
 function formatStreamQuestionBatchSummary(blocks: ReadonlyArray<Pick<StreamQuestionBlock, "text" | "answered">>): string {
   return formatQuestionBatchSummary(blocks.map((b) => ({ text: questionDisplayBody(b.text), answered: b.answered })));
-}
-
-function resolveStreamCardChrome(ch: Extract<ResolvedChannel, { type: "feishu" }>, sessionKey: string): {
-  sessionTitle?: CardTitle; sessionTemplate?: string;
-} {
-  const sessionTitle = resolveReplyTitle(ch, sessionKey);
-  const sessionTemplate = sessionHeaderTemplate(sessionKey) || (sessionTitle ? "turquoise" : undefined);
-  return { sessionTitle, sessionTemplate };
 }
 
 function hashStreamPart(s: string): string {
@@ -2418,7 +2409,6 @@ function buildAgentStreamCardJson(
     keepPerKind: LarkSender.normalizeStreamKeepPerKind(daemonFlagsForSession(sessionKey, ch.rt.cfg).streamKeepPerKind),
     byteBudget: state.byteBudget,
     sessionTitle: state.sessionTitle,
-    sessionTemplate: state.sessionTemplate,
     segments: cardSegs,
     panelState: state,
     ...(footer ? { footer } : {}),
@@ -2610,7 +2600,7 @@ async function ensureAgentStreamCard(
   const sessionFlags = daemonFlagsForSession(sessionKey, ch.rt.cfg);
   const showThinking = sessionFlags.showThinking;
   const keepPerKind = LarkSender.normalizeStreamKeepPerKind(sessionFlags.streamKeepPerKind);
-  const chrome = resolveStreamCardChrome(ch, sessionKey);
+  const sessionTitle = resolveReplyTitle(ch, sessionKey);
   if (!ch.chatId) return { ok: false, error: "无法解析发送目标 chatId" };
   // MCP 首段正文随建卡一次渲染到位（reply 通道，绕过 fold 防降级为思考），避免空白卡闪现
   const mcpReplies: Array<{ text: string; insertAt: number }> = mcpBody?.trim()
@@ -2621,16 +2611,15 @@ async function ensureAgentStreamCard(
   const panelBoot: StreamPanelState = { panelSeq: 0, knownPanelIds: new Set(), expandedPanelIds: new Set() };
   ensureSegmentPanelIds(panelBoot, folded.segments);
   let segments = buildCardSegmentsFromPayload(folded, { finish: false, showThinking }, panelBoot);
-  // 空卡也能创建（仅会话条）；无 chrome 时放极短占位，避免飞书拒空 body
-  if (!segments.length && !chrome.sessionTitle) {
+  // 空卡也能创建（仅会话横幅）；没有横幅时放极短占位，避免飞书拒空 body
+  if (!segments.length && !sessionTitle) {
     segments = [{ type: "reply", text: "…" }];
   }
   const cardId = await sender.createStreamingCardEntity({
     showThinking,
     keepPerKind,
     segments,
-    sessionTitle: chrome.sessionTitle,
-    sessionTemplate: chrome.sessionTemplate,
+    sessionTitle,
   });
   if (!cardId) return { ok: false, error: "创建流式卡片失败（检查 cardkit:card:write 权限）" };
   // 和发文件、发图片、问题卡同一条规则：群聊以回复的方式发出（引用这一轮在回应的那条用户消息），单聊直发。
@@ -2652,8 +2641,7 @@ async function ensureAgentStreamCard(
     sequence: 0,
     channelId: ch.rt.cfg.id,
     showThinking,
-    sessionTitle: chrome.sessionTitle,
-    sessionTemplate: chrome.sessionTemplate,
+    sessionTitle,
     lastHash: payloadFingerprint(payload, false),
     lastSegments: [...folded.segments],
     mcpReplies,
@@ -2880,7 +2868,7 @@ function retractActiveStreamCard(rt: ChannelRuntime, sessionKey: string): Promis
 
 interface CardQuestionEntry {
   text: string; displayBody?: string; options: string[]; sessionKey?: string; chatKey?: string;
-  createdAt: number; title?: CardTitle; template?: string; isStreamCard?: boolean; questionBlockId?: string;
+  createdAt: number; title?: CardTitle; isStreamCard?: boolean; questionBlockId?: string;
   /** 多选题：勾选在飞书卡片表单里本地完成，提交时才带回；这里只记「这是多选题」 */
   multi?: boolean;
   /**
@@ -3034,7 +3022,7 @@ function expireOpenCardQuestions(chatKey: string, note: string): void {
   for (const { messageId, entry } of targets) {
     void (async () => {
       const ok = await sealQuestionCardByMessageId(messageId, entry, note)
-        || await sender.patchCard(messageId, entry.displayBody ?? questionDisplayBody(entry.text, 120), entry.title, entry.template, `⌛ _${note}_`);
+        || await sender.patchCard(messageId, entry.displayBody ?? questionDisplayBody(entry.text, 120), entry.title, `⌛ _${note}_`);
       if (ok) {
         cardQuestionMap.delete(messageId);
         scheduleCardQuestionSave();
@@ -3243,7 +3231,7 @@ async function expireOpenCardQuestionsForSession(
         continue;
       }
       const patched = await sender.patchCard(
-        messageId, entry.displayBody ?? questionDisplayBody(entry.text), entry.title, entry.template, closedQuestionFooter(entry.text, note),
+        messageId, entry.displayBody ?? questionDisplayBody(entry.text), entry.title, closedQuestionFooter(entry.text, note),
       );
       if (patched) {
         cardQuestionMap.delete(messageId);
@@ -3643,10 +3631,9 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
 
     const body = entry?.displayBody ?? questionDisplayBody(entry?.text ?? "问题");
     const title = entry?.title;
-    const template = entry?.template;
     return {
       toast: { type: "success", content: `已选择: ${opt.slice(0, 30)}` },
-      card: { type: "raw", data: LarkSender.buildCard(body, title, undefined, undefined, template, answeredQuestionFooter(opt)) },
+      card: { type: "raw", data: LarkSender.buildCard(body, title, undefined, undefined, answeredQuestionFooter(opt)) },
     };
   }
 
@@ -3866,7 +3853,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
       clearProjectNewDraft(chatKey);
       return {
         toast: { type: "info", content: "正在创建项目…" },
-        card: { type: "raw", data: LarkSender.buildCard(`📦 正在创建项目 **${name}**…`, "创建项目", undefined, undefined, "orange") },
+        card: { type: "raw", data: LarkSender.buildCard(`📦 正在创建项目 **${name}**…`, "创建项目") },
       };
     }
 
@@ -3902,7 +3889,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     clearProjectNewDraft(chatKey);
     return {
       toast: { type: "info", content: "正在创建项目…" },
-      card: { type: "raw", data: LarkSender.buildCard(`📦 正在创建项目 **${name}**…`, "创建项目", undefined, undefined, "orange") },
+      card: { type: "raw", data: LarkSender.buildCard(`📦 正在创建项目 **${name}**…`, "创建项目") },
     };
   }
 
@@ -3926,7 +3913,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     // 宿主保存后会把本卡 patch 回 setup 总览（单卡多视图）
     return {
       toast: { type: "success", content: "已提交" },
-      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存代码仓库…", "添加代码仓库", undefined, undefined, "orange") },
+      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存代码仓库…", "添加代码仓库") },
     };
   }
 
@@ -3940,7 +3927,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     })}\n`);
     return {
       toast: { type: "success", content: "已提交" },
-      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存工作区目录…", "设置工作区目录", undefined, undefined, "orange") },
+      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存工作区目录…", "设置工作区目录") },
     };
   }
 
@@ -3954,7 +3941,7 @@ async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): P
     })}\n`);
     return {
       toast: { type: "success", content: "已提交" },
-      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存 GitLab 配置…", "设置 GitLab", undefined, undefined, "orange") },
+      card: { type: "raw", data: LarkSender.buildCard("⏳ 正在保存 GitLab 配置…", "设置 GitLab") },
     };
   }
 
@@ -3990,7 +3977,6 @@ async function replyToMessage(
   text: string,
   chatId?: string,
   buttons?: { label: string; cmd: string; section?: string }[],
-  template?: string,
   opts?: {
     cardTitle?: { title: string; subtitle?: string };
     sections?: { text: string; buttons?: { label: string; cmd: string; section?: string }[] }[];
@@ -4057,14 +4043,12 @@ async function replyToMessage(
     return;
   }
   const sender = ch.rt.sender!;
-  // 显式登记的出站会话（如项目通知）最优先——用户活跃在别的会话时，项目卡不能被染成活跃会话样式；
-  // 其次当前活跃会话（含工作区），避免 messageSession 只记了裸 chatKey 导致配色/标题抖动
+  // 显式登记的出站会话（如项目通知）最优先——用户活跃在别的会话时，项目卡不能标成活跃会话；
+  // 其次当前活跃会话（含工作区），避免 messageSession 只记了裸 chatKey 导致标题抖动
   const mappedSk = messageId ? messageSessionMap.get(messageId) : undefined;
   const activeSk = lookupActiveSessionKey(chatId) || lookupActiveSessionKey(routeKey);
   const titleSessionKey = preferWorkspaceSessionKey(opts?.sessionKey, activeSk, mappedSk, routeKey);
-  const colorSessionKey = preferWorkspaceSessionKey(opts?.sessionKey, activeSk, titleSessionKey, mappedSk);
   const title = opts?.cardTitle || resolveReplyTitle(ch, titleSessionKey);
-  const headerTemplate = template || sessionHeaderTemplate(colorSessionKey) || sessionHeaderTemplate(titleSessionKey) || (title ? "turquoise" : undefined);
   // 群聊指令卡保留 reply（多人并发指令要对得上号）；p2p 直发去引用条
   const replyId = shouldReplyToMessage(ch, messageId) ? messageId : undefined;
   const mapBtns = (list?: { label: string; cmd: string; section?: string }[]): CardButton[] =>
@@ -4075,27 +4059,27 @@ async function replyToMessage(
   // 原卡更新：patch 点击来源卡片，成功即结束；失败回退新发
   const offerDismiss = opts?.offerDismiss ?? false;
   if (opts?.patchMessageId && !opts.patchMessageId.startsWith("internal_")) {
-    const patched = await sender.patchCard(opts.patchMessageId, text, title, headerTemplate, undefined, mapBtns(buttons), cardSections, offerDismiss);
+    const patched = await sender.patchCard(opts.patchMessageId, text, title, undefined, mapBtns(buttons), cardSections, offerDismiss);
     if (patched) return;
     log("WARN", `原卡更新失败，回退新发消息 (${opts.patchMessageId})`);
   }
   if ((buttons && buttons.length > 0) || (cardSections && cardSections.length > 0)) {
     const btns = mapBtns(buttons);
-    let sent = await sender.sendCardWithButtons(text, btns, replyId, ch.chatId, title, undefined, headerTemplate, undefined, cardSections, offerDismiss);
+    let sent = await sender.sendCardWithButtons(text, btns, replyId, ch.chatId, title, undefined, undefined, cardSections, offerDismiss);
     if (sent === undefined && replyId && ch.chatId) {
-      sent = await sender.sendCardWithButtons(text, btns, undefined, ch.chatId, title, undefined, headerTemplate, undefined, cardSections, offerDismiss);
+      sent = await sender.sendCardWithButtons(text, btns, undefined, ch.chatId, title, undefined, undefined, cardSections, offerDismiss);
     }
     if (typeof sent === "string" && opts?.sessionKey) trackMessageSession(sent, opts.sessionKey);
     return;
   }
   let sentTextId: string | undefined | null;
   if (replyId) {
-    sentTextId = await sender.replyMessage(replyId, text, title, headerTemplate, offerDismiss);
-    if (!sentTextId && ch.chatId) sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, offerDismiss);
+    sentTextId = await sender.replyMessage(replyId, text, title, offerDismiss);
+    if (!sentTextId && ch.chatId) sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, offerDismiss);
   } else if (ch.chatId) {
-    sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, headerTemplate, offerDismiss);
+    sentTextId = await sender.sendMessage(text, undefined, ch.chatId, title, offerDismiss);
   } else if (messageId && !messageId.startsWith("internal_")) {
-    sentTextId = await sender.replyMessage(messageId, text, title, headerTemplate, offerDismiss);
+    sentTextId = await sender.replyMessage(messageId, text, title, offerDismiss);
   }
   if (typeof sentTextId === "string" && opts?.sessionKey) trackMessageSession(sentTextId, opts.sessionKey);
 }
@@ -4778,7 +4762,7 @@ function startHttpServer(): Promise<number> {
           log("INFO", `指令执行完成: ok=${body.ok}, msgId=${body.messageId}, chatId=${body.chatId ?? "N/A"}`);
           // 空 messageId 但有 chatId 时仍需投递（如项目节点完成通知）：replyToMessage 会走 chat 直发
           if (body.messageId || body.chatId) {
-            await replyToMessage(body.messageId || "", body.message, body.chatId, body.buttons, undefined, {
+            await replyToMessage(body.messageId || "", body.message, body.chatId, body.buttons, {
               cardTitle: body.cardTitle,
               sections: body.sections,
               sessionKey: body.sessionKey,
@@ -5531,10 +5515,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         messageId: message_id,
         tasks: readTasksSafe(),
       });
-      const { title, colorKey } = header;
+      const { title } = header;
       // 任务消息：横幅已经是任务名时，正文不再重复写一遍
       const cardText = resolveSendCardText(header, text, titled_text);
-      const headerTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
       // 独立定时任务不建流式卡，没有收口页脚；它的卡片在这里补一行「用的哪个模型」。其余会话（走不到这里的、或不是独立任务的）不加
       const footer = taskCardFooter({
         sessionKey: session_key,
@@ -5545,14 +5528,14 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       let sentMsgId: string | undefined;
       // p2p 直发砍引用条；群聊保留 reply；internal_ 不可 reply
       if (shouldReplyToMessage(ch, message_id)) {
-        sentMsgId = await sender.sendMessage(cardText, message_id, undefined, title, headerTemplate, false, footer);
+        sentMsgId = await sender.sendMessage(cardText, message_id, undefined, title, false, footer);
         if (!sentMsgId) {
           log("INFO", `回复退避: message_id=${message_id} → ${ch.chatId ? `chat_id=${ch.chatId}` : "无目标"}`);
-          if (ch.chatId) sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, headerTemplate, false, footer);
+          if (ch.chatId) sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, false, footer);
         }
       } else {
         if (!ch.chatId) { json(res, { ok: false, error: "无法解析发送目标 chatId" }, 400); return true; }
-        sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, headerTemplate, false, footer);
+        sentMsgId = await sender.sendMessage(cardText, undefined, ch.chatId, title, false, footer);
       }
       if (sentMsgId && session_key) trackMessageSession(sentMsgId, session_key);
       json(res, { ok: !!sentMsgId, message_id: sentMsgId });
@@ -5744,7 +5727,6 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
               chatKey: session_key ? chatIdFromSessionKey(session_key) : (ch.chatId ? makeChatKey(ch.rt.cfg.id, ch.chatId) : undefined),
               createdAt: Date.now(),
               title: stream.sessionTitle,
-              template: stream.sessionTemplate,
               questionBlockId: blockId,
             });
             trackMessageSession(stream.messageId, session_key);
@@ -5762,15 +5744,13 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           return true;
         }
       }
-      const { title, colorKey } = resolveSendCardHeader(ch, {
+      const { title } = resolveSendCardHeader(ch, {
         sessionKey: session_key,
         invokerSessionKey: invoker_session_key,
         messageId: message_id,
         tasks: readTasksSafe(),
       });
-      // 问题卡与普通回复同色：用会话稳定色，关闭/点选时不变色
       const displayBody = questionBodyWithOptions(text, opts);
-      const pendingTemplate = sessionHeaderTemplate(colorKey || session_key) || (title ? "turquoise" : undefined);
       // 单选：选项字母按钮，点一下就作答；多选：表单（每项一个勾选框 + 「提交」）。答完都用 displayBody（带 A./B. 选项表）定格。
       // 两种卡的发送方式（p2p 直发 / 群聊先 reply）一样，只是卡不同
       const sendQuestionCard = (replyId?: string, chatId?: string) => multi
@@ -5778,10 +5758,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           questionText: questionDisplayBody(text),
           form: multiQuestionForm(opts, multiQuestionNamePrefix(undefined), { kind: "question_submit", sk: session_key }),
           title,
-          template: pendingTemplate,
           footer: MULTI_QUESTION_CARD_HINT,
         }, replyId, chatId)
-        : sender.sendCardWithButtons(displayBody, questionOptionButtons(opts, session_key), replyId, chatId, title, undefined, pendingTemplate, QUESTION_CARD_HINT);
+        : sender.sendCardWithButtons(displayBody, questionOptionButtons(opts, session_key), replyId, chatId, title, undefined, QUESTION_CARD_HINT);
       // p2p 直发；群聊先 reply，失败再直发（null=已回复成功勿再发）
       let sentMsgId: string | null | undefined;
       if (shouldReplyToMessage(ch, message_id)) {
@@ -5799,7 +5778,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
         rememberCardQuestion(sentMsgId, {
           text, displayBody, options: opts, sessionKey: session_key,
           chatKey: session_key ? chatIdFromSessionKey(session_key) : (ch.chatId ? makeChatKey(ch.rt.cfg.id, ch.chatId) : undefined),
-          createdAt: Date.now(), title, template: pendingTemplate,
+          createdAt: Date.now(), title,
           ...(multi ? { multi: true } : {}),
         });
         if (session_key) trackMessageSession(sentMsgId, session_key);

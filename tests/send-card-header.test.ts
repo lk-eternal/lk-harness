@@ -14,7 +14,6 @@ import { activeSessionMap, resolveSendCardHeader, resolveSendCardText } from "..
 import { createProject, initProjectStore, setProjectArchived } from "../src/shared/project-store.js"
 import { projectSessionKey, type Project } from "../src/shared/project-types.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
-import { sessionHeaderTemplate } from "../src/shared/session-label.js"
 import { formatTaskImMessage } from "../src/shared/task-delivery.js"
 
 const CHANNEL = "ch_hdr_test"
@@ -63,7 +62,6 @@ describe("独立任务的头部：只认任务自己", () => {
     activeSessionMap.set(CHAT, projectSession)
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks: [task()] })
     expect(h.title).toBe("⏰ 周报编写")
-    expect(h.colorKey).toBe(TASK_ID)
     expect(h.taskTitled).toBe(true)
   })
 
@@ -73,29 +71,15 @@ describe("独立任务的头部：只认任务自己", () => {
     expect(h.title).toBe("⏰ 周报编写")
   })
 
-  it("配色只由任务决定，不随聊天停在哪个会话变", () => {
-    const tasks = [task()]
-    activeSessionMap.set(CHAT, projectSession)
-    const a = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks })
-    activeSessionMap.set(CHAT, `${CHAT}::${wsDir}`)
-    const b = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks })
-    activeSessionMap.clear()
-    const c = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks })
-    expect(a.colorKey).toBe(b.colorKey)
-    expect(b.colorKey).toBe(c.colorKey)
-    expect(sessionHeaderTemplate(a.colorKey)).toBeTruthy()
-  })
-
   it("聊天没有活跃会话时同样有任务头部", () => {
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks: [task()] })
     expect(h.title).toBe("⏰ 周报编写")
   })
 
-  it("发到群聊：和以前一样不露头部（群里不暴露会话信息），配色键仍是任务", () => {
+  it("发到群聊：和以前一样不露头部（群里不暴露会话信息）", () => {
     activeSessionMap.set(`${CHANNEL}|${GROUP}`, projectSessionKey(`${CHANNEL}|${GROUP}`, project.id))
     const h = resolveSendCardHeader(feishu(GROUP), { sessionKey: `${CHANNEL}|${GROUP}`, invokerSessionKey: TASK_ID, tasks: [task()] })
     expect(h.title).toBeUndefined()
-    expect(h.colorKey).toBe(TASK_ID)
     expect(h.taskTitled).toBe(false)
   })
 
@@ -103,7 +87,6 @@ describe("独立任务的头部：只认任务自己", () => {
     activeSessionMap.set(CHAT, projectSession)
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, invokerSessionKey: TASK_ID, tasks: [task({ independent: false })] })
     expect(h.title).toEqual({ title: "📦 排课系统慢sql治理", subtitle: "🌿 feature/261110-slow-sql" })
-    expect(h.colorKey).toBe(projectSession)
     expect(h.taskTitled).toBe(false)
   })
 })
@@ -179,21 +162,18 @@ describe("不是独立任务的发送：头部取法和以前一样", () => {
   it("项目会话自己回复：头部是该项目（项目名 + 分支）", () => {
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: projectSession, invokerSessionKey: projectSession, tasks: [task()] })
     expect(h.title).toEqual({ title: "📦 排课系统慢sql治理", subtitle: "🌿 feature/261110-slow-sql" })
-    expect(h.colorKey).toBe(projectSession)
   })
 
   it("目录会话自己回复：头部是该目录", () => {
     const sk = `${CHAT}::${wsDir}`
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: sk, invokerSessionKey: sk, tasks: [task()] })
     expect(h.title).toMatchObject({ title: "📂 my-workspace" })
-    expect(h.colorKey).toBe(sk)
   })
 
   it("只给了聊天键（没有会话）：借聊天当前的活跃会话，这一条没变", () => {
     activeSessionMap.set(CHAT, `${CHAT}::${wsDir}`)
     const h = resolveSendCardHeader(feishu(MAIN), { sessionKey: CHAT, tasks: [task()] })
     expect(h.title).toMatchObject({ title: "📂 my-workspace" })
-    expect(h.colorKey).toBe(`${CHAT}::${wsDir}`)
   })
 
   it("发到群聊：不露头部", () => {

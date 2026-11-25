@@ -141,7 +141,7 @@ export function taskCardFooter(input: {
 }
 
 /**
- * 独立任务发到飞书的卡片头部：「⏰ 任务名」，配色按任务 id 定。
+ * 独立任务发到飞书的卡片头部：「⏰ 任务名」。
  * 独立任务不是任何一个会话的回合。它的出站目标是聊天键、不带会话，
  * 头部如果照常借「这个聊天当前的活跃会话」，结果就会被标成某个项目 / 目录会话发的
  * （活跃会话想指哪就指哪，比如一个已经归档的项目）。
@@ -151,10 +151,10 @@ export function taskCardHeader(input: {
   sessionKey?: string;
   invokerSessionKey?: string;
   tasks: ScheduledTask[];
-}): { title: string; colorKey: string } | undefined {
+}): { title: string } | undefined {
   const key = (input.invokerSessionKey || input.sessionKey)?.trim();
   if (!key) return undefined;
   const task = findScheduledTaskBySessionKey(key, input.tasks);
   if (!task || !sendsStandaloneMessages(task)) return undefined;
-  return { title: formatScheduledTaskLabel(task.name?.trim() || "定时任务"), colorKey: task.id };
+  return { title: formatScheduledTaskLabel(task.name?.trim() || "定时任务") };
 }
