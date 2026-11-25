@@ -256,11 +256,12 @@ describe("归属与列表", () => {
 
 describe("classifyAiScheduleOwner：谁能给自己排程", () => {
   const channels: Record<string, ReturnType<AiScheduleOwnerEnv["channel"]>> = {
-    ch_app: { id: "ch_app", type: "app", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "D:\\ws" },
-    // 应用内通道但还没配置主目录
-    ch_app_nodir: { id: "ch_app_nodir", type: "app", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "" },
-    ch_app_nomain: { id: "ch_app_nomain", type: "app", mainUserEnabled: false, workspaceDir: "D:\\ws" },
-    ch_fs: { id: "ch_fs", type: "feishu", mainUserEnabled: true, mainUserChatId: "ou_main", workspaceDir: "D:\\fs" },
+    ch_app: { id: "ch_app", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "D:\\ws" },
+    // 还没配置主目录的通道
+    ch_app_nodir: { id: "ch_app_nodir", mainUserEnabled: true, mainUserChatId: "app_main", workspaceDir: "" },
+    ch_app_nomain: { id: "ch_app_nomain", mainUserEnabled: false, workspaceDir: "D:\\ws" },
+    ch_fs: { id: "ch_fs", mainUserEnabled: true, mainUserChatId: "ou_main", workspaceDir: "D:\\fs" },
+    ch_wx: { id: "ch_wx", mainUserEnabled: true, mainUserChatId: "wx_main", workspaceDir: "D:\\wx" },
   }
   const projects: Record<string, { name: string; archivedAt?: number }> = {
     p1: { name: "活跃项目" },
@@ -280,7 +281,7 @@ describe("classifyAiScheduleOwner：谁能给自己排程", () => {
     expect(kindOf("ch_fs|ou_main::D:\\fs")).toBe("main")
   })
 
-  it("应用内主用户的其他会话（别的工作目录 / 临时会话）→ chat，归属就是这个会话", () => {
+  it("主用户的其他会话（别的工作目录 / 临时会话）→ chat，归属就是这个会话", () => {
     expect(classify("ch_app|app_main::D:\\other")).toEqual({
       ok: true, owner: { sessionKey: "ch_app|app_main::D:\\other", kind: "chat", channelId: "ch_app" },
     })
@@ -289,9 +290,13 @@ describe("classifyAiScheduleOwner：谁能给自己排程", () => {
     expect(kindOf("ch_app_nodir|app_main::D:\\x")).toBe("chat")
   })
 
-  it("飞书 / 微信里主用户的其他工作目录会话不开放：只有主会话可以", () => {
-    expect(kindOf("ch_fs|ou_main::D:\\elsewhere")).toBe("rejected")
-    expect(kindOf("ch_fs|ou_main")).toBe("rejected")
+  it.each([
+    ["飞书", "ch_fs|ou_main", "D:\\fs"],
+    ["微信", "ch_wx|wx_main", "D:\\wx"],
+  ])("%s里也一样：主会话 → main，主用户的其他目录会话、/c new 的临时会话 → chat", (_label, chat, mainDir) => {
+    expect(kindOf(`${chat}::${mainDir}`)).toBe("main")
+    expect(classify(`${chat}::D:\\elsewhere`)).toMatchObject({ ok: true, owner: { sessionKey: `${chat}::D:\\elsewhere`, kind: "chat" } })
+    expect(kindOf(`${chat}::C:\\Users\\u\\AppData\\workspaces\\temp_1700000000000`)).toBe("chat")
   })
 
   it.each([

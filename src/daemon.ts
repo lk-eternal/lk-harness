@@ -6387,7 +6387,7 @@ type TaskAgentTarget =
   | { ok: true; sessionKey: string; chatKey: string; chatType: "p2p" | "project"; label: string }
   | { ok: false; error: string; /** 目标永久失效（项目没了 / 已归档 / 创建排程的会话被删） */ retire: boolean };
 
-/** AI 排程的创建者是应用内的非主会话（其他目录 / 临时会话）时返回它的会话键，其余返回空 */
+/** AI 排程的创建者是主用户聊天下的非主会话（其他目录 / 临时会话）时返回它的会话键，其余返回空 */
 function aiChatOwnerSessionKey(task: ScheduledTask): string {
   if (!isAiTask(task) || !task.ownerSessionKey) return "";
   const c = classifyScheduleOwner(task.ownerSessionKey);
@@ -6397,7 +6397,7 @@ function aiChatOwnerSessionKey(task: ScheduledTask): string {
 /**
  * 任务绑定的 Agent 会话：
  *  - 项目会话的排程 = 该项目的会话；
- *  - 应用内其他会话（其他目录 / 临时会话）建的 AI 排程 = 创建它的那个会话，那个会话被删了就作废；
+ *  - 主用户聊天下的其他会话（其他目录 / 临时会话）建的 AI 排程 = 创建它的那个会话，那个会话被删了就作废；
  *  - 其余（含用户建的任务）= 所属通道的主会话（不跟随当前 active 的项目会话）。
  */
 function resolveTaskAgentTarget(task: ScheduledTask): TaskAgentTarget {
@@ -6727,7 +6727,6 @@ function classifyScheduleOwner(invoker: string | undefined) {
       if (!rt) return undefined;
       return {
         id: rt.cfg.id,
-        type: rt.cfg.type,
         mainUserEnabled: rt.cfg.mainUserEnabled,
         mainUserChatId: rt.cfg.mainUserChatId,
         workspaceDir: channelWorkspaceDir(rt),

@@ -41,7 +41,7 @@ export interface AiScheduleInput {
 export interface AiScheduleOwner {
   /** 已规范化的会话 key */
   sessionKey: string;
-  /** main = 通道的主会话；project = 项目会话；chat = 应用内通道里主用户的其他会话（其他目录、临时会话） */
+  /** main = 通道的主会话；project = 项目会话；chat = 主用户聊天下的其他会话（其他目录、临时会话） */
   kind: "main" | "project" | "chat";
   channelId?: string;
   projectId?: string;
@@ -52,8 +52,6 @@ export interface AiScheduleOwnerEnv {
   project(id: string): { name: string; archivedAt?: number } | undefined;
   channel(id: string): {
     id: string;
-    /** 通道类型：app = 应用内，其余是飞书 / 微信 */
-    type: string;
     mainUserEnabled?: boolean;
     mainUserChatId?: string;
     /** 通道的主目录；没配置是空串 */
@@ -67,8 +65,8 @@ export type AiScheduleOwnerCheck = { ok: true; owner: AiScheduleOwner } | { ok: 
  * 调用者是谁决定排程归谁（AI 无法自报身份）：
  *  - 活跃的项目会话；
  *  - 通道主用户的主会话；
- *  - 应用内通道里，主用户聊天下的其他会话（其他目录、临时会话）：应用内没有「别人」，这些都是用户自己的会话。
- * 飞书 / 微信里主用户的其他目录会话、群聊、别人的私聊、定时任务的会话不开放。
+ *  - 主用户聊天下的其他会话（其他目录、`/c new` 的临时会话）：不论哪个通道，这些都是用户自己的会话。
+ * 群聊、别人的私聊、定时任务的会话不开放。
  */
 export function classifyAiScheduleOwner(invoker: string | undefined, env: AiScheduleOwnerEnv): AiScheduleOwnerCheck {
   const raw = invoker?.trim();
@@ -91,12 +89,10 @@ export function classifyAiScheduleOwner(invoker: string | undefined, env: AiSche
   const mainChat = rt?.mainUserEnabled ? rt.mainUserChatId : undefined;
   if (rt && mainChat && chatKey === makeChatKey(rt.id, mainChat)) {
     const mainSessionKey = rt.workspaceDir ? normalizeSessionKey(`${chatKey}::${rt.workspaceDir}`) || `${chatKey}::${rt.workspaceDir}` : "";
-    if (mainSessionKey && sessionKey === mainSessionKey) {
-      return { ok: true, owner: { sessionKey, kind: "main", channelId: rt.id } };
-    }
-    if (rt.type === "app") return { ok: true, owner: { sessionKey, kind: "chat", channelId: rt.id } };
+    const kind = mainSessionKey && sessionKey === mainSessionKey ? "main" : "chat";
+    return { ok: true, owner: { sessionKey, kind, channelId: rt.id } };
   }
-  return { ok: false, error: "只有主用户的会话和活跃的项目会话可以给自己排程（定时任务、群聊、别人的私聊不行；飞书 / 微信里只有主会话可以）" };
+  return { ok: false, error: "只有主用户的会话和活跃的项目会话可以给自己排程（定时任务、群聊、别人的私聊不行）" };
 }
 
 export type AiScheduleResult =
