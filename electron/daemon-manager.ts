@@ -2272,7 +2272,8 @@ export function initDaemonManager(): void {
   // 每个任务最近的运行记录（daemon 写、这里只读），设置页显示「上次什么时候跑、结果怎样」
   ipcMain.handle("scheduled-tasks:get-runs", () => readTaskRuns(taskRunLogFile(app.getPath("userData"))))
 
-  // 对话页「这个会话的定时」：绑定到该会话的任务（AI 给自己排的 + 设置页里投给它的），连同下次触发时间一起算好
+  // 对话页「这个会话的定时」：投递目标是该会话的任务（AI 给自己排的 + 设置页里选了它的，通知 AI / 通知我都算），
+  // 连同下次触发时间、最近几次运行一起算好
   ipcMain.handle("scheduled-tasks:for-session", (_, sessionKey: string) => {
     if (typeof sessionKey !== "string" || !sessionKey.trim()) return []
     const tasks = readTasksFromFile()
@@ -2286,6 +2287,7 @@ export function initDaemonManager(): void {
       now: Date.now(),
       channels: getChannels(),
       runningTaskIds: running,
+      runLog: readTaskRuns(taskRunLogFile(app.getPath("userData"))),
     })
   })
 

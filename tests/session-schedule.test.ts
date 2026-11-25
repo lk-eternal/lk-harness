@@ -5,6 +5,7 @@ import {
   describeScheduleDetail,
   describeScheduleItem,
   formatFireTime,
+  RECENT_RUNS_LIMIT,
   runNowHint,
   summarizeSchedules,
   taskBoundToSession,
@@ -150,9 +151,51 @@ describe("taskBoundToSession：哪些任务算绑定到这个会话", () => {
       expect(taskBoundToSession(task({ independent: true, notify: "none", channelId: "ch_app" }), mainCtx, "ch_app")).toBe(false)
       expect(taskBoundToSession(task({ independent: true, notify: "im", channelId: "ch_app" }), mainCtx, "ch_app")).toBe(false)
     })
-    it("旧任务没有 notify 字段：填过聊天 ID 就是通知到 IM，不算；没填就是不通知，也不算", () => {
+    it("旧任务没有 notify 字段：填过聊天 ID 就是通知我（填的不是会话键就不在任何应用内会话里），没填就是不通知，都不算", () => {
       expect(taskBoundToSession(task({ notifyChatId: "oc_x", channelId: "ch_app" }), mainCtx, "ch_app")).toBe(false)
       expect(taskBoundToSession(task({ channelId: "ch_app" }), mainCtx, "ch_app")).toBe(false)
+    })
+  })
+
+  describe("通知 AI 选了具体会话：只在那个会话里出现（独立与否都一样）", () => {
+    const picked = (over: Partial<ScheduledTask> = {}) =>
+      task({ notify: "agent", channelId: "ch_app", notifyChatId: dirCtx.sessionKey, ...over })
+
+    it.each([false, true])("independent=%s：选中的会话算，主会话和别的会话不算", (independent) => {
+      const t = picked({ independent })
+      expect(taskBoundToSession(t, dirCtx, "ch_app")).toBe(true)
+      expect(taskBoundToSession(t, mainCtx, "ch_app")).toBe(false)
+      expect(taskBoundToSession(t, projectCtx, "ch_app")).toBe(false)
+    })
+    it("盘符大小写、斜杠方向不同也是同一个会话", () => {
+      const t = picked({ notifyChatId: "ch_app|app_main::d:/other" })
+      expect(taskBoundToSession(t, dirCtx, "ch_app")).toBe(true)
+    })
+    it("选的会话恰好是主会话：主会话里能看到，和「不指定 = 主会话」一样", () => {
+      expect(taskBoundToSession(picked({ notifyChatId: MAIN_KEY }), mainCtx, "ch_app")).toBe(true)
+    })
+    it("绑了项目时以项目为准，残留的会话键不生效", () => {
+      const t = picked({ targetProjectId: "p1" })
+      expect(taskBoundToSession(t, projectCtx, "ch_app")).toBe(true)
+      expect(taskBoundToSession(t, dirCtx, "ch_app")).toBe(false)
+    })
+  })
+
+  describe("通知我：发到所选的应用内会话（只显示给用户），也算绑定", () => {
+    const toMe = (over: Partial<ScheduledTask> = {}) =>
+      task({ notify: "im", channelId: "ch_app", notifyChatId: dirCtx.sessionKey, ...over })
+
+    it.each([false, true])("independent=%s：所选会话算，别的会话不算", (independent) => {
+      const t = toMe({ independent })
+      expect(taskBoundToSession(t, dirCtx, "ch_app")).toBe(true)
+      expect(taskBoundToSession(t, mainCtx, "ch_app")).toBe(false)
+    })
+    it("非独立 + 通知我没填 notifyChatId：没有目标会话，不算（不会错投到主会话）", () => {
+      expect(taskBoundToSession(toMe({ independent: false, notifyChatId: undefined }), mainCtx, "ch_app")).toBe(false)
+    })
+    it("飞书群 id / 微信：接收方不在应用内会话里，不算", () => {
+      expect(taskBoundToSession(toMe({ channelId: "ch_feishu", notifyChatId: "oc_group" }), mainCtx, "ch_feishu")).toBe(false)
+      expect(taskBoundToSession(toMe({ channelId: "ch_wechat", notifyChatId: undefined }), mainCtx, "ch_wechat")).toBe(false)
     })
   })
 })
@@ -238,6 +281,55 @@ describe("buildSessionSchedules", () => {
     })
     expect(items.find((i) => i.id === "a")?.running).toBe(true)
     expect(items.find((i) => i.id === "b")?.running).toBe(false)
+  })
+
+  it("通知我 / 选了具体会话的任务带出 target 和怎么跑，AI 排程 target 是 ai", () => {
+    const items = buildSessionSchedules({
+      ...base,
+      ctx: dirCtx,
+      tasks: [
+        task({ id: "me-inject", independent: false, notify: "im", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+        task({ id: "me-report", independent: true, notify: "im", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+        task({ id: "ai-inject", independent: false, notify: "agent", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+        task({ id: "ai-report", independent: true, notify: "agent", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+        aiTask({ id: "self", ownerSessionKey: dirCtx.sessionKey }),
+        task({ id: "elsewhere", independent: false, notify: "im", channelId: "ch_app", notifyChatId: MAIN_KEY }),
+      ],
+    })
+    const pick = (id: string) => items.find((i) => i.id === id)
+    expect(items.map((i) => i.id).sort()).toEqual(["ai-inject", "ai-report", "me-inject", "me-report", "self"])
+    expect(pick("me-inject")).toMatchObject({ origin: "user", delivery: "inject", target: "me" })
+    expect(pick("me-report")).toMatchObject({ origin: "user", delivery: "report", target: "me" })
+    expect(pick("ai-inject")).toMatchObject({ delivery: "inject", target: "ai" })
+    expect(pick("ai-report")).toMatchObject({ delivery: "report", target: "ai" })
+    expect(pick("self")).toMatchObject({ origin: "ai", target: "ai" })
+  })
+
+  it("按通知通道归属：旧任务单独存的 notifyChannelId 优先于 channelId", () => {
+    const t = task({ independent: false, channelId: "ch_feishu", notifyChannelId: "ch_app" })
+    expect(buildSessionSchedules({ ...base, tasks: [t] }).map((i) => i.id)).toEqual(["t1"])
+    expect(buildSessionSchedules({ ...base, tasks: [{ ...t, notifyChannelId: undefined }] })).toEqual([])
+  })
+
+  it("每个任务带最近几次运行：新的在前，最多 5 条；没有记录就是空数组", () => {
+    const records = Array.from({ length: 8 }, (_, i) => ({ at: NOW - i * MIN, kind: "reported" as const }))
+    const items = buildSessionSchedules({
+      ...base,
+      tasks: [
+        task({ id: "busy", independent: false, channelId: "ch_app" }),
+        task({ id: "fresh", independent: false, channelId: "ch_app" }),
+      ],
+      runLog: { busy: records, other: [{ at: NOW, kind: "missed" }] },
+    })
+    const busy = items.find((i) => i.id === "busy")!
+    expect(busy.recent).toHaveLength(RECENT_RUNS_LIMIT)
+    expect(busy.recent).toEqual(records.slice(0, RECENT_RUNS_LIMIT))
+    expect(items.find((i) => i.id === "fresh")!.recent).toEqual([])
+  })
+
+  it("没传运行记录也不出错", () => {
+    const [item] = buildSessionSchedules({ ...base, tasks: [aiTask()] })
+    expect(item.recent).toEqual([])
   })
 
   it("没设所属通道的任务按「第一个启用的通道」归属，和设置页、daemon 同一口径", () => {
@@ -362,11 +454,31 @@ describe("列表文案", () => {
     expect(describeScheduleDetail(item({ origin: "ai" }))).toContain("AI 给自己排的程")
     expect(describeScheduleDetail(item({ origin: "user" }))).toContain("设置页")
   })
+  it("通知我：文案说清只显示给用户、不唤醒 Agent", () => {
+    const inject = describeScheduleDetail(item({ origin: "user", delivery: "inject", target: "me" }))
+    expect(inject).toContain("不启动 Agent")
+    expect(inject).toContain("只显示给你看")
+    expect(inject).not.toContain("占用")
+    const report = describeScheduleDetail(item({ origin: "user", delivery: "report", target: "me" }))
+    expect(report).toContain("全新 Agent")
+    expect(report).toContain("不唤醒任何 Agent")
+  })
+  it("四种投递各有各的副标题开头", () => {
+    expect(deliveryLabel("inject", "ai")).toBe("提醒本会话")
+    expect(deliveryLabel("report", "ai")).toBe("独立执行")
+    expect(deliveryLabel("inject", "me")).toBe("直接发给你")
+    expect(deliveryLabel("report", "me")).toBe("独立执行，结果发给你")
+    expect(describeScheduleItem(item({ origin: "user", delivery: "inject", target: "me", cron: "0 9 * * *", nextAt: local(2026, 11, 7, 9, 0) }), now))
+      .toBe("直接发给你 · 每天 09:00 · 下次 明天 09:00")
+  })
   it("「立即运行」的提示说明不影响计划和次数", () => {
     for (const delivery of ["inject", "report"] as const) {
-      expect(runNowHint(item({ delivery }))).toContain("不计入已触发次数")
+      for (const target of ["ai", "me"] as const) {
+        expect(runNowHint(item({ delivery, target }))).toContain("不计入已触发次数")
+      }
     }
     expect(deliveryLabel("inject")).toBe("提醒本会话")
     expect(deliveryLabel("report")).toBe("独立执行")
+    expect(runNowHint(item({ delivery: "inject", target: "me" }))).toContain("发到这个会话")
   })
 })

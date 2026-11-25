@@ -8,13 +8,16 @@ import {
   resolveTaskChannelId,
   type ScheduledTask,
 } from "./scheduled-task.js";
-import { isAiTask } from "./scheduled-task-rules.js";
+import { isAiTask, taskNotifyChannelId } from "./scheduled-task-rules.js";
 import {
+  RECENT_RUNS_LIMIT,
   scheduleDelivery,
+  scheduleTarget,
   taskBoundToSession,
   type SessionScheduleContext,
   type SessionScheduleItem,
 } from "./session-schedule.js";
+import type { TaskRunLog } from "./task-run-log-rules.js";
 
 /** cron 在 from 之后的下一次触发（毫秒时间戳）；表达式无效返回 undefined */
 export function nextCronFireAt(expression: string, from: number): number | undefined {
@@ -47,10 +50,12 @@ export interface BuildSessionSchedulesInput {
   /** AI 排程累计触发次数（ai-schedule-state.json） */
   aiRuns: Readonly<Record<string, number>>;
   now: number;
-  /** 没设所属通道的任务按「第一个启用的通道」算，和设置页、daemon 的口径一致 */
+  /** 没设通知通道的任务按「第一个启用的通道」算，和设置页、daemon 的口径一致 */
   channels: readonly { id: string; enabled?: boolean }[];
   /** 正在运行的独立任务 id */
   runningTaskIds: ReadonlySet<string>;
+  /** 每个任务的运行记录（新的在前）；每个任务取最近 RECENT_RUNS_LIMIT 条，点开一行时显示 */
+  runLog?: TaskRunLog;
   /** 下次触发时间；默认按 cron 表达式算，测试可替换 */
   nextFireAt?: (cron: string, from: number) => number | undefined;
 }
@@ -61,12 +66,13 @@ export interface BuildSessionSchedulesInput {
  * 用户在设置页停用的任务照常列出（置灰），可以看到、也能立即运行或删除。
  */
 export function buildSessionSchedules(input: BuildSessionSchedulesInput): SessionScheduleItem[] {
-  const { tasks, ctx, aiRuns, now, channels, runningTaskIds } = input;
+  const { tasks, ctx, aiRuns, now, channels, runningTaskIds, runLog } = input;
   const nextFireAt = input.nextFireAt ?? nextCronFireAt;
   const items: SessionScheduleItem[] = [];
 
   for (const task of tasks) {
-    if (!taskBoundToSession(task, ctx, resolveTaskChannelId(task, channels))) continue;
+    const notifyChannelId = resolveTaskChannelId({ channelId: taskNotifyChannelId(task) }, channels);
+    if (!taskBoundToSession(task, ctx, notifyChannelId)) continue;
 
     const ai = isAiTask(task);
     const runs = aiRuns[task.id] ?? 0;
@@ -76,12 +82,16 @@ export function buildSessionSchedules(input: BuildSessionSchedulesInput): Sessio
     // 下次触发时已经过期：它不会再跑了，别显示一个不会发生的时间
     if (ai && nextAt !== undefined && task.expiresAt !== undefined && nextAt >= task.expiresAt) nextAt = undefined;
 
+    const recent = (runLog?.[task.id] ?? []).slice(0, RECENT_RUNS_LIMIT);
+
     items.push({
       id: task.id,
       name: task.name,
       cron: task.cron,
       origin: ai ? "ai" : "user",
       delivery: scheduleDelivery(task),
+      target: scheduleTarget(task),
+      recent,
       enabled: task.enabled,
       running: runningTaskIds.has(task.id),
       ...(nextAt !== undefined ? { nextAt } : {}),

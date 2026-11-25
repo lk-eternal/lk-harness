@@ -1,12 +1,15 @@
 // ── 对话页「这个会话的定时」：哪些任务算绑定到某个会话，以及一行怎么写 ─────────
 // 绑定有两种来源：
 //   - AI 给自己排的程（createdBy=ai）：记着创建它的会话（ownerSessionKey）；
-//   - 用户在设置页 / 管理工具里建的任务：非独立运行，或独立运行 + 通知到 Agent 会话，投给「主会话」或某个项目的会话。
+//   - 用户在设置页 / 管理工具里建的任务，投递目标是这个会话（独立与否都算）：
+//       通知 AI：投给项目会话 / 所选的具体会话 / 通道的主会话（任务内容或结果会进它的上下文）；
+//       通知我 + 应用内通道：发到所选的会话（只显示给用户，不唤醒 Agent）。
 // 渲染进程（对话页）要用这里的格式化函数，所以本文件不许引入带 node 依赖的模块
 // （scheduled-task.ts / ai-schedule.ts / project-types.ts）。取任务、算下次触发时间的部分在 session-schedule-build.ts。
 
 import { appChatSessionId } from "./app-chat-types.js";
-import { isAiTask, resolveTaskNotify, type ScheduledTask } from "./scheduled-task-rules.js";
+import { isAiTask, resolveTaskNotify, taskAgentSessionKey, type ScheduledTask } from "./scheduled-task-rules.js";
+import type { TaskRunRecord } from "./task-run-log-rules.js";
 
 /** 当前会话是谁（主进程按会话键解析，归属判断只看这几项） */
 export interface SessionScheduleContext {
@@ -19,10 +22,13 @@ export interface SessionScheduleContext {
 
 /**
  * 到点怎么跑：
- *  - inject：把任务内容直接发进这个会话，由它自己做（会占用这个会话的上下文）；
- *  - report：全新 Agent 独立执行，结果作为一条消息投回这个会话。
+ *  - inject：不开新 Agent，把任务内容直接送进这个会话（通知 AI：由它自己做，会占用上下文；通知我：只显示给用户）；
+ *  - report：全新 Agent 独立执行，结果作为一条消息送进这个会话（通知 AI：唤醒它处理；通知我：只显示给用户）。
  */
 export type SessionScheduleDelivery = "inject" | "report";
+
+/** 送进这个会话的东西是给谁的：ai = 通知 AI（进它的上下文并唤醒）；me = 通知我（以 AI 口吻显示给用户，不唤醒 Agent） */
+export type SessionScheduleTarget = "ai" | "me";
 
 /** 对话页列表里的一行（主进程算好后经 IPC 传过来，全是可序列化的原始字段） */
 export interface SessionScheduleItem {
@@ -32,6 +38,8 @@ export interface SessionScheduleItem {
   /** ai = AI 给自己排的；user = 用户在设置页建的 */
   origin: "ai" | "user";
   delivery: SessionScheduleDelivery;
+  /** 缺省 = ai */
+  target?: SessionScheduleTarget;
   enabled: boolean;
   /** 独立运行的任务正在跑 */
   running: boolean;
@@ -42,7 +50,12 @@ export interface SessionScheduleItem {
   maxRuns?: number;
   /** AI 排程：到期时间（毫秒时间戳） */
   expiresAt?: number;
+  /** 最近几次运行（新的在前，最多 RECENT_RUNS_LIMIT 条）；点开一行时显示 */
+  recent?: TaskRunRecord[];
 }
+
+/** 每个任务在会话栏里带多少条最近运行 */
+export const RECENT_RUNS_LIMIT = 5;
 
 /** 任务到点是不是要投给某个 Agent 会话（通知 AI：非独立运行投内容，独立运行投结果） */
 export function deliversToAgentSession(task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId">): boolean {
@@ -53,24 +66,40 @@ export function scheduleDelivery(task: Pick<ScheduledTask, "independent">): Sess
   return task.independent === false ? "inject" : "report";
 }
 
+/** 送进会话的东西是给 AI 的还是给用户的（只有通知我是给用户的） */
+export function scheduleTarget(task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId">): SessionScheduleTarget {
+  return resolveTaskNotify(task) === "im" ? "me" : "ai";
+}
+
+function sameSession(a: string, b: string): boolean {
+  return !!a && !!b && appChatSessionId(a) === appChatSessionId(b);
+}
+
 /**
- * 这个任务是不是绑定到当前会话。
- * taskChannelId = 任务实际所属的通道（没设通道的任务按「第一个启用的通道」，由调用方解析）。
- * 用户任务的「主会话」只认应用内通道里这一个主会话；绑了项目的认项目会话；投到飞书 / 微信私聊的不会匹配应用内会话。
+ * 这个任务是不是绑定到当前会话（投递目标是它，独立与否都算）。
+ * notifyChannelId = 任务实际通知的通道（没设通道的任务按「第一个启用的通道」，由调用方解析）。
+ *  - AI 排程：创建它的会话；
+ *  - 通知 AI：绑了项目认项目会话；选了具体会话认那个会话；都没选认通知通道的主会话（只认应用内通道里这一个主会话）；
+ *  - 通知我：只有应用内通道选的会话才是「这个会话」（会话键带目录）；飞书 / 微信的接收方不在应用内会话里；
+ *  - 不通知：不投任何会话。
  */
 export function taskBoundToSession(
   task: ScheduledTask,
   ctx: SessionScheduleContext,
-  taskChannelId: string | undefined,
+  notifyChannelId: string | undefined,
 ): boolean {
-  if (isAiTask(task)) {
-    const owner = task.ownerSessionKey?.trim();
-    return !!owner && !!ctx.sessionKey && appChatSessionId(owner) === appChatSessionId(ctx.sessionKey);
+  if (isAiTask(task)) return sameSession(task.ownerSessionKey?.trim() ?? "", ctx.sessionKey);
+  const mode = resolveTaskNotify(task);
+  if (mode === "none") return false;
+  if (mode === "im") {
+    const chat = task.notifyChatId?.trim() ?? "";
+    return chat.includes("::") && sameSession(chat, ctx.sessionKey);
   }
-  if (!deliversToAgentSession(task)) return false;
   const projectId = task.targetProjectId?.trim();
   if (projectId) return ctx.projectId === projectId;
-  return !!ctx.mainOfChannelId && !!taskChannelId && ctx.mainOfChannelId === taskChannelId;
+  const picked = taskAgentSessionKey(task);
+  if (picked) return sameSession(picked, ctx.sessionKey);
+  return !!ctx.mainOfChannelId && !!notifyChannelId && ctx.mainOfChannelId === notifyChannelId;
 }
 
 // ── cron → 一句人话 ────────────────────────────────────
@@ -210,30 +239,38 @@ function nextText(item: SessionScheduleItem, now: number): string {
   return item.nextAt !== undefined ? `下次 ${formatFireTime(item.nextAt, now)}` : "";
 }
 
-/** 到点怎么跑，一个短语（列表副标题的开头） */
-export function deliveryLabel(delivery: SessionScheduleDelivery): string {
+/** 到点怎么跑，一个短语（列表副标题的开头）；target 缺省 = 通知 AI */
+export function deliveryLabel(delivery: SessionScheduleDelivery, target: SessionScheduleTarget = "ai"): string {
+  if (target === "me") return delivery === "inject" ? "直接发给你" : "独立执行，结果发给你";
   return delivery === "inject" ? "提醒本会话" : "独立执行";
 }
 
 /** 一行的副标题：怎么跑 · 频率 · 进度 · 下次 */
 export function describeScheduleItem(item: SessionScheduleItem, now: number): string {
-  return [deliveryLabel(item.delivery), describeCronShort(item.cron), limitText(item, now), nextText(item, now)]
+  return [deliveryLabel(item.delivery, item.target), describeCronShort(item.cron), limitText(item, now), nextText(item, now)]
     .filter(Boolean)
     .join(" · ");
 }
 
 /** 悬停说明：把「到点会发生什么」讲完整 */
 export function describeScheduleDetail(item: SessionScheduleItem): string {
-  const what = item.delivery === "inject"
-    ? "到点把任务内容发进这个会话，由它自己执行；会占用这个会话的上下文。"
-    : "到点由全新 Agent 独立执行，提交的结果会作为一条消息投回这个会话。";
+  const inject = item.delivery === "inject";
+  const what = item.target === "me"
+    ? inject
+      ? "到点不启动 Agent，把任务内容以 AI 口吻直接发到这个会话，只显示给你看。"
+      : "到点由全新 Agent 独立执行，提交的结果以 AI 口吻发到这个会话，只显示给你看，不唤醒任何 Agent。"
+    : inject
+      ? "到点把任务内容发进这个会话，由它自己执行；会占用这个会话的上下文。"
+      : "到点由全新 Agent 独立执行，提交的结果会作为一条消息投回这个会话。";
   const who = item.origin === "ai" ? "AI 给自己排的程。" : "在设置页创建的定时任务。";
   return `${who}${what}`;
 }
 
 /** 「立即运行」按钮的悬停提示 */
 export function runNowHint(item: SessionScheduleItem): string {
-  const act = item.delivery === "inject" ? "立即把任务内容发进这个会话一次" : "立即让新 Agent 执行一次";
+  const act = item.delivery === "inject"
+    ? item.target === "me" ? "立即把任务内容发到这个会话一次" : "立即把任务内容发进这个会话一次"
+    : "立即让新 Agent 执行一次";
   return `${act}（不改变原计划，也不计入已触发次数）`;
 }
 

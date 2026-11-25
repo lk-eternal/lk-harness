@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { AlarmClock, ChevronUp, Loader2, Trash2, Zap } from "lucide-react"
+import { AlarmClock, ChevronDown, ChevronUp, Loader2, Trash2, Zap } from "lucide-react"
 import {
   describeScheduleDetail,
   describeScheduleItem,
@@ -7,7 +7,9 @@ import {
   summarizeSchedules,
   type SessionScheduleItem,
 } from "../../../shared/session-schedule"
+import { describeRun, runTone } from "../../../shared/task-run-log-rules"
 import useOutsideClose from "../../hooks/useOutsideClose"
+import { RUN_TONE_CLASS } from "../run-tone"
 import { useSessionSchedules } from "./useSessionSchedules"
 
 interface Props {
@@ -24,12 +26,21 @@ interface Props {
 type Note = { ok: boolean; text: string }
 
 /**
- * 输入框上方的「这个会话的定时」：折叠条显示几个、下次什么时候；点开列出每个任务，
- * 可以立即运行一次、或删除（AI 排程是取消）。会话里没有定时任务时整块不显示。
+ * 输入框上方的「这个会话的定时」：折叠条显示几个、下次什么时候；点开列出每个任务（投递目标是这个会话的都算，
+ * 不论通知 AI 还是通知我）。点一行展开它最近几次的运行情况；每行可以立即运行一次、或删除（AI 排程是取消）。
+ * 会话里没有定时任务时整块不显示。
  */
 export default function SessionSchedules({ sessionKey, active, confirm, onOpenSettings }: Props) {
   const { items, reload } = useSessionSchedules(sessionKey, active)
   const [open, setOpen] = useState(false)
+  /** 展开了运行记录的任务 id */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleExpanded = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(id)) next.add(id)
+      return next
+    })
   /** 正在处理的任务：run = 立即运行中，del = 删除 / 取消中 */
   const [busy, setBusy] = useState<Record<string, "run" | "del">>({})
   const [note, setNote] = useState<Note | null>(null)
@@ -38,7 +49,7 @@ export default function SessionSchedules({ sessionKey, active, confirm, onOpenSe
   useOutsideClose(open, rootRef, closePopover)
 
   // 换会话：上一个会话的弹层和提示不带过来
-  useEffect(() => { setOpen(false); setNote(null); setBusy({}) }, [sessionKey])
+  useEffect(() => { setOpen(false); setNote(null); setBusy({}); setExpanded(new Set()) }, [sessionKey])
   // 最后一个任务没了：收起弹层，别留一个空壳
   useEffect(() => { if (items.length === 0) setOpen(false) }, [items.length])
   useEffect(() => {
@@ -104,36 +115,65 @@ export default function SessionSchedules({ sessionKey, active, confirm, onOpenSe
         <div className="absolute bottom-full left-0 right-0 z-20 mb-1.5 overflow-hidden rounded-xl border border-line bg-page shadow-lg">
           <p className="px-3 pb-1 pt-2 text-[12px] font-medium text-fg-3">这个会话的定时</p>
           <ul className="max-h-64 divide-y divide-line-subtle overflow-y-auto">
-            {items.map((item) => (
-              <li key={item.id} title={describeScheduleDetail(item)} className="flex items-center gap-2 px-3 py-2">
-                {item.running
-                  ? <Loader2 size={11} className="shrink-0 animate-spin text-accent" />
-                  : <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.enabled ? "bg-accent" : "bg-fg-faint"}`} />}
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`truncate text-[13px] ${item.enabled ? "text-fg-2" : "text-fg-muted line-through"}`}>{item.name}</span>
-                    {item.origin === "ai" && <span className="shrink-0 rounded bg-raised px-1 text-[10px] leading-4 text-fg-muted">AI</span>}
+            {items.map((item) => {
+              const isExpanded = expanded.has(item.id)
+              const recent = item.recent ?? []
+              return (
+                <li key={item.id}>
+                  <div className="flex items-center gap-2 px-3 py-2">
+                    {item.running
+                      ? <Loader2 size={11} className="shrink-0 animate-spin text-accent" />
+                      : <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.enabled ? "bg-accent" : "bg-fg-faint"}`} />}
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(item.id)}
+                      aria-expanded={isExpanded}
+                      title={describeScheduleDetail(item)}
+                      className="flex min-w-0 flex-1 items-center gap-1.5 rounded text-left"
+                    >
+                      <span className="block min-w-0 flex-1">
+                        <span className="flex items-center gap-1.5">
+                          <span className={`truncate text-[13px] ${item.enabled ? "text-fg-2" : "text-fg-muted line-through"}`}>{item.name}</span>
+                          {item.origin === "ai" && <span className="shrink-0 rounded bg-raised px-1 text-[10px] leading-4 text-fg-muted">AI</span>}
+                        </span>
+                        <span className="block truncate text-[11.5px] text-fg-muted">{describeScheduleItem(item, now)}</span>
+                      </span>
+                      <ChevronDown size={12} className={`shrink-0 text-fg-faint transition ${isExpanded ? "rotate-180" : ""}`} />
+                    </button>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void runNow(item)}
+                        disabled={!!busy[item.id] || item.running}
+                        title={item.running ? "正在运行" : runNowHint(item)}
+                        className="rounded p-1.5 text-fg-muted transition hover:bg-raised hover:text-accent disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                      >{busy[item.id] === "run" ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}</button>
+                      <button
+                        type="button"
+                        onClick={() => void remove(item)}
+                        disabled={!!busy[item.id]}
+                        title={item.origin === "ai" ? "取消这个定时（之后不再触发）" : "删除这个定时任务"}
+                        className="rounded p-1.5 text-fg-muted transition hover:bg-raised hover:text-danger disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+                      >{busy[item.id] === "del" ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}</button>
+                    </div>
                   </div>
-                  <p className="truncate text-[11.5px] text-fg-muted">{describeScheduleItem(item, now)}</p>
-                </div>
-                <div className="flex shrink-0 items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => void runNow(item)}
-                    disabled={!!busy[item.id] || item.running}
-                    title={item.running ? "正在运行" : runNowHint(item)}
-                    className="rounded p-1.5 text-fg-muted transition hover:bg-raised hover:text-accent disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
-                  >{busy[item.id] === "run" ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />}</button>
-                  <button
-                    type="button"
-                    onClick={() => void remove(item)}
-                    disabled={!!busy[item.id]}
-                    title={item.origin === "ai" ? "取消这个定时（之后不再触发）" : "删除这个定时任务"}
-                    className="rounded p-1.5 text-fg-muted transition hover:bg-raised hover:text-danger disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted"
-                  >{busy[item.id] === "del" ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}</button>
-                </div>
-              </li>
-            ))}
+                  {isExpanded && (
+                    <div className="border-t border-line-subtle bg-surface/50 px-3 py-2 pl-[26px]">
+                      <p className="text-[11px] font-medium text-fg-muted">最近运行</p>
+                      {recent.length === 0 ? (
+                        <p className="mt-1 text-[11.5px] text-fg-faint">还没有记录，到点触发后会显示在这里</p>
+                      ) : (
+                        <ul className="mt-1 space-y-0.5 text-[11.5px]">
+                          {recent.map((r, i) => (
+                            <li key={`${r.at}-${i}`} className={RUN_TONE_CLASS[runTone(r.kind)]}>{describeRun(r, now)}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
           {note && (
             <p role="status" className={`border-t border-line-subtle px-3 py-1.5 text-[12px] ${note.ok ? "text-success" : "text-danger"}`}>{note.text}</p>

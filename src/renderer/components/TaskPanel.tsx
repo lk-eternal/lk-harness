@@ -27,14 +27,8 @@ import {
   type TaskDeliveryCheckEnv,
   type TaskDeliveryLabels,
 } from "../../shared/task-delivery"
-import { describeLastRun, describeRun, runTone, sortTasksForList, type TaskRunLog, type TaskRunTone } from "../../shared/task-run-log-rules"
-
-const RUN_TONE_CLASS: Record<TaskRunTone, string> = {
-  ok: "text-success",
-  muted: "text-fg-muted",
-  warn: "text-warning",
-  bad: "text-danger",
-}
+import { describeLastRun, describeRun, runTone, sortTasksForList, type TaskRunLog } from "../../shared/task-run-log-rules"
+import { RUN_TONE_CLASS } from "./run-tone"
 
 const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none transition focus:border-focus"
 
