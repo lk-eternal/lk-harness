@@ -171,12 +171,16 @@ function readItems(file: string): AppChatItem[] {
 /** 投递记录的标题最多多少字；超出的靠折叠的全文看 */
 const DELIVERED_TITLE_MAX_CHARS = 80;
 
-/** 交给 Agent 的一条消息在聊天流里怎么显示：第一行当标题，整段当折叠的全文；只有一行且不长就没有全文 */
+/**
+ * 交给 Agent 的一条消息在聊天流里怎么显示：第一行当标题，标题以外的部分当折叠的全文，只有一行且不长就没有全文。
+ * 第一行太长被截断时，标题显示不全，全文就是完整的整段。
+ */
 export function deliveredNoticeParts(text: string): { text: string; detail?: string } {
   const full = text.trim();
-  const firstLine = full.split(/\r?\n/, 1)[0].trim();
-  const title = firstLine.length > DELIVERED_TITLE_MAX_CHARS ? `${firstLine.slice(0, DELIVERED_TITLE_MAX_CHARS)}…` : firstLine;
-  return title === full ? { text: full } : { text: title, detail: full };
+  const firstLineEnd = full.search(/\r?\n/);
+  const firstLine = firstLineEnd === -1 ? full : full.slice(0, firstLineEnd).trim();
+  if (firstLine.length > DELIVERED_TITLE_MAX_CHARS) return { text: `${firstLine.slice(0, DELIVERED_TITLE_MAX_CHARS)}…`, detail: full };
+  return firstLineEnd === -1 ? { text: full } : { text: firstLine, detail: full.slice(firstLineEnd).trim() };
 }
 
 export class AppChat {

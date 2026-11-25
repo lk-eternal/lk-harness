@@ -29,10 +29,10 @@ describe("deliveredNoticeParts：标题和折叠的全文", () => {
     expect(deliveredNoticeParts("帮我检查一下服务器状态")).toEqual({ text: "帮我检查一下服务器状态" })
   })
 
-  it("多行：第一行是标题，整段（含标题行）是全文", () => {
+  it("多行：第一行是标题，标题以外的部分是全文，标题不重复", () => {
     expect(deliveredNoticeParts("⏰ 定时任务「巡检」汇报\n\n磁盘占用 91%")).toEqual({
       text: "⏰ 定时任务「巡检」汇报",
-      detail: "⏰ 定时任务「巡检」汇报\n\n磁盘占用 91%",
+      detail: "磁盘占用 91%",
     })
   })
 
@@ -44,7 +44,7 @@ describe("deliveredNoticeParts：标题和折叠的全文", () => {
   })
 
   it("首尾空白和 CRLF 换行不影响标题", () => {
-    expect(deliveredNoticeParts("\n\n  标题行  \r\n正文\r\n")).toEqual({ text: "标题行", detail: "标题行  \r\n正文" })
+    expect(deliveredNoticeParts("\n\n  标题行  \r\n正文\r\n")).toEqual({ text: "标题行", detail: "正文" })
   })
 })
 
@@ -52,7 +52,7 @@ describe("recordDelivered：交给 Agent 的消息聊天里还没有记录就补
   it("补成提示条：id 就是消息 id，带标题和全文，并推给界面", () => {
     chat.recordDelivered(SESSION, [{ messageId: "internal_taskresult_t1_1", text: "⏰ 定时任务「巡检」汇报\n\n一切正常" }])
 
-    expect(notices()).toMatchObject([{ id: "internal_taskresult_t1_1", text: "⏰ 定时任务「巡检」汇报", detail: "⏰ 定时任务「巡检」汇报\n\n一切正常" }])
+    expect(notices()).toMatchObject([{ id: "internal_taskresult_t1_1", text: "⏰ 定时任务「巡检」汇报", detail: "一切正常" }])
     expect(events.filter((e) => e.type === "item")).toHaveLength(1)
   })
 
@@ -96,7 +96,7 @@ describe("recordDelivered：交给 Agent 的消息聊天里还没有记录就补
     chat.flush()
 
     const reopened = new AppChat(dir, () => {})
-    expect(reopened.list(SESSION)).toMatchObject([{ kind: "notice", id: "internal_a", text: "标题", detail: "标题\n\n全文" }])
+    expect(reopened.list(SESSION)).toMatchObject([{ kind: "notice", id: "internal_a", text: "标题", detail: "全文" }])
     reopened.recordDelivered(SESSION, [{ messageId: "internal_a", text: "标题\n\n全文" }])
     expect(reopened.list(SESSION)).toHaveLength(1)
   })
