@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { applyTaskChannel, applyTaskModel, resolveTaskResourceId, taskResourceMissing } from "../src/renderer/components/task-model"
+import { applyTaskChannel, applyTaskModel, prefillTaskModel, resolveTaskResourceId, taskModelProblem, taskResourceMissing } from "../src/renderer/components/task-model"
 
 const resources = [{ id: "r_sdk" }, { id: "r_llm" }]
 const channels = [
@@ -161,5 +161,68 @@ describe("applyTaskChannel", () => {
       const blank = { ...task, resourceId: "  " }
       expect(applyTaskChannel(blank, "ch_b", channels, resources).model).toBeUndefined()
     })
+  })
+})
+
+describe("prefillTaskModel：旧任务打开时补成显式的供应商 + 模型", () => {
+  const withModels = [
+    { id: "ch_a", agentResourceId: "r_sdk", model: "composer-2", modelParams: "fast=true" },
+    { id: "ch_b", agentResourceId: "r_llm", model: "gpt-x" },
+    { id: "ch_nomodel", agentResourceId: "r_sdk" },
+    { id: "ch_none", model: "orphan" },
+  ]
+
+  it("没配模型（原来跟随通道）：补上所属通道的供应商、主模型和参数", () => {
+    expect(prefillTaskModel({ id: "t", channelId: "ch_a" }, withModels, resources, "ch_a"))
+      .toMatchObject({ resourceId: "r_sdk", model: "composer-2", modelParams: "fast=true" })
+    expect(prefillTaskModel({ id: "t", channelId: "ch_b" }, withModels, resources, "ch_b"))
+      .toMatchObject({ resourceId: "r_llm", model: "gpt-x" })
+  })
+
+  it("只配了模型没配供应商：供应商补成通道的，模型和参数不动", () => {
+    expect(prefillTaskModel({ id: "t", model: "m1", modelParams: "p" }, withModels, resources, "ch_b"))
+      .toEqual({ id: "t", model: "m1", modelParams: "p", resourceId: "r_llm" })
+  })
+
+  it("供应商和模型都有：原样不动", () => {
+    const t = { id: "t", resourceId: "r_llm", model: "m1" }
+    expect(prefillTaskModel(t, withModels, resources, "ch_a")).toBe(t)
+  })
+
+  it("没模型但有供应商（供应商本来就不生效）：整套取通道的，不把两家混在一起", () => {
+    expect(prefillTaskModel({ id: "t", resourceId: "r_llm" }, withModels, resources, "ch_a"))
+      .toMatchObject({ resourceId: "r_sdk", model: "composer-2" })
+  })
+
+  it("没选通道取第一个通道（和 daemon / 表单的取法一致）", () => {
+    expect(prefillTaskModel({ id: "t" }, withModels, resources, undefined)).toMatchObject({ resourceId: "r_sdk", model: "composer-2" })
+  })
+
+  it("通道没配供应商 / 没配模型：补不了，原样留空让用户选", () => {
+    const t = { id: "t" }
+    expect(prefillTaskModel(t, withModels, resources, "ch_none")).toBe(t)
+    expect(prefillTaskModel(t, withModels, resources, "ch_nomodel")).toBe(t)
+  })
+
+  it("不改原对象", () => {
+    const t = { id: "t" }
+    prefillTaskModel(t, withModels, resources, "ch_a")
+    expect(t).toEqual({ id: "t" })
+  })
+})
+
+describe("taskModelProblem：保存前的模型检查", () => {
+  it("供应商和模型都有且供应商还在：没问题", () => {
+    expect(taskModelProblem({ resourceId: "r_llm", model: "m1" }, resources)).toBeUndefined()
+  })
+
+  it("缺供应商或缺模型（含空白）：要求选择", () => {
+    expect(taskModelProblem({ model: "m1" }, resources)).toContain("请选择供应商和模型")
+    expect(taskModelProblem({ resourceId: "r_llm" }, resources)).toContain("请选择供应商和模型")
+    expect(taskModelProblem({ resourceId: "r_llm", model: "  " }, resources)).toContain("请选择供应商和模型")
+  })
+
+  it("选的供应商已被删：点明要重选（优先于「请选择」）", () => {
+    expect(taskModelProblem({ resourceId: "r_deleted", model: "m1" }, resources)).toContain("已不存在")
   })
 })

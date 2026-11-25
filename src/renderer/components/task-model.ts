@@ -66,6 +66,38 @@ export function applyTaskChannel<T extends TaskModelFields>(
   return before === after ? next : { ...next, model: undefined, modelParams: undefined }
 }
 
+interface ChannelModelLike extends ChannelLike { model?: string; modelParams?: string }
+
+/**
+ * 表单里的模型是显式的：供应商和模型都要有，不再有「跟随通道」。
+ * 已存的任务没配模型（原来跟随通道主模型）、或只配了模型没配供应商的，按它现在实际会用的补上——
+ * 也就是所属通道的供应商和主模型（daemon 拉起任务时取的就是这两样），打开看到的就是真实在用的，保存后也不再随通道变。
+ * 通道没配供应商 / 没配模型的补不了，原样留空，让用户自己选。
+ */
+export function prefillTaskModel<T extends TaskModelFields>(
+  task: T,
+  channels: ChannelModelLike[],
+  resources: ResourceLike[],
+  channelId: string | undefined,
+): T {
+  const channelResourceId = resolveTaskResourceId(channels, resources, channelId)
+  if (task.model?.trim()) {
+    return task.resourceId?.trim() || !channelResourceId ? task : { ...task, resourceId: channelResourceId }
+  }
+  // 没模型时任务自己的供应商不生效（模型是跟着供应商走的），整套取通道的
+  const channel = channels.find((c) => c.id === channelId) ?? channels[0]
+  const model = channel?.model?.trim()
+  if (!channelResourceId || !model) return task
+  return { ...task, resourceId: channelResourceId, model, modelParams: channel?.modelParams || undefined }
+}
+
+/** 保存前的模型检查：供应商和模型都要选，选的供应商还得在；没问题返回 undefined */
+export function taskModelProblem(task: Pick<TaskModelFields, "model" | "resourceId">, resources: ResourceLike[]): string | undefined {
+  if (taskResourceMissing(task, resources)) return "任务选的供应商已不存在，请重新选择"
+  if (!task.resourceId?.trim() || !task.model?.trim()) return "请选择供应商和模型"
+  return undefined
+}
+
 /** 任务自己选的供应商已经不在配置里了（被删了）：运行时会因找不到资源而失败，界面要提醒重新选 */
 export function taskResourceMissing(task: Pick<TaskModelFields, "resourceId">, resources: ResourceLike[]): boolean {
   const id = task.resourceId?.trim()
