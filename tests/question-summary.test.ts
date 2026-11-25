@@ -25,4 +25,23 @@ describe("formatQuestionBatchSummary", () => {
     expect(formatQuestionBatchSummary([])).toBe("")
     expect(formatQuestionBatchSummary([{ text: "没选的" }])).toBe("")
   })
+
+  it("关掉的题标成未作答，按条目顺序和答案一起编号", () => {
+    expect(formatQuestionBatchSummary([
+      { text: "第一题", answered: "保留" },
+      { text: "第二题", closed: true },
+      { text: "第三题", answered: "可以" },
+    ])).toBe("问题 1：第一题\n回答：保留\n\n问题 2：第二题\n[未作答, 问题已关闭]\n\n问题 3：第三题\n回答：可以")
+  })
+
+  it("关掉的题只带标题：取第一个非空行，去掉 markdown 标记，超过 30 字截断", () => {
+    expect(formatQuestionBatchSummary([{ text: "\n  **P-008 评审**\n\n正文很长……", closed: true }]))
+      .toBe("问题 1：P-008 评审\n[未作答, 问题已关闭]")
+    expect(formatQuestionBatchSummary([{ text: "## `一二三四五六七八九十` 一二三四五六七八九十一二三四五六七八九十一二", closed: true }]))
+      .toBe("问题 1：一二三四五六七八九十 一二三四五六七八九十一二三四五六七八九…\n[未作答, 问题已关闭]")
+  })
+
+  it("已有答案的条目不看 closed：照常带整段题干和回答", () => {
+    expect(formatQuestionBatchSummary([{ text: "第一行\n第二行", answered: "A", closed: true }])).toBe("问题 1：第一行\n第二行\n回答：A")
+  })
 })

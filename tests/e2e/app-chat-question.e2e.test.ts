@@ -137,7 +137,7 @@ describe("多选题（multi_select）", () => {
 })
 
 describe("问题没选完就直接发消息", () => {
-  it("已选的答案不会丢：先于用户的消息一起发给 Agent，没选的问题被关闭", async () => {
+  it("已选的答案不会丢：和没选的题汇成一条，先于用户的消息发给 Agent，没选的问题被关闭", async () => {
     const q1 = await ask("用哪个库？", ["A", "B"])
     const q2 = await ask("要不要加测试？", ["要", "不要"])
     const q3 = await ask("什么时候发？", ["今天", "明天"])
@@ -148,7 +148,7 @@ describe("问题没选完就直接发消息", () => {
     expect((await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "第二个问题我想先聊聊" })).ok).toBe(true)
 
     expect(await polled()).toEqual([
-      "问题 1：用哪个库？\n回答：A\n\n问题 2：什么时候发？\n回答：今天",
+      "问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]\n\n问题 3：什么时候发？\n回答：今天",
       "第二个问题我想先聊聊",
     ])
     expect(await questionOf(q1)).toMatchObject({ answered: "A" })
@@ -157,11 +157,25 @@ describe("问题没选完就直接发消息", () => {
     expect((await questionOf(q2)).answered).toBeUndefined()
   })
 
-  it("什么都没选就发消息：只有用户的消息，没有多余的汇总", async () => {
-    await ask("用哪个库？", ["A", "B"])
+  it("这一轮还在跑就发消息：只有用户的消息，题不动", async () => {
+    const q1 = await ask("用哪个库？", ["A", "B"])
     await ask("要不要加测试？", ["要", "不要"])
     await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "我自己说吧" })
     expect(await polled()).toEqual(["我自己说吧"])
+    expect((await questionOf(q1)).closedNote).toBeUndefined()
+  })
+
+  it("这一轮已结束、一个都没选就发消息：先告诉 Agent 这些卡已关闭（只带标题），再是用户的消息", async () => {
+    const q1 = await ask("**P-008 评审**\n\n痛点：……很长的正文……", ["保留", "丢弃"])
+    const q2 = await ask("要不要加测试？", ["要", "不要"])
+    expect(await polled()).toEqual([])
+    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "我自己说吧" })
+    expect(await polled()).toEqual([
+      "问题 1：P-008 评审\n[未作答, 问题已关闭]\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]",
+      "我自己说吧",
+    ])
+    expect(await questionOf(q1)).toMatchObject({ closedNote: "问题已关闭" })
+    expect(await questionOf(q2)).toMatchObject({ closedNote: "问题已关闭" })
   })
 
   it("指令不算「直接发消息」：已选的答案继续等其余问题", async () => {

@@ -101,7 +101,7 @@ describe("同一轮有多个问题：全选完才交出", () => {
 
   it("已被关闭的问题不拦着其余的，也不进汇总", () => {
     const q1 = ask("旧问题")
-    chat.closeOpenQuestions(SESSION, "问题已关闭")
+    chat.closeEndedQuestions(SESSION, "问题已关闭")
     const q2 = ask("新问题一")
     const q3 = ask("新问题二")
     expect(chat.answerQuestion(SESSION, q1, "是")).toEqual({ ok: false })
@@ -128,15 +128,16 @@ describe("同一轮有多个问题：全选完才交出", () => {
 })
 
 describe("问题没选完就直接发消息", () => {
-  it("已选的答案先交出（带题干），没选的被关闭", () => {
+  it("已选的带回答、没选的标已关闭，按题目顺序汇成一条，并真的关掉没选的", () => {
     const q1 = ask("第一题")
     const q2 = ask("第二题")
     const q3 = ask("第三题")
     chat.answerQuestion(SESSION, q1, "是")
     chat.answerQuestion(SESSION, q3, "否")
 
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：第一题\n回答：是\n\n问题 2：第三题\n回答：否")
-    chat.closeOpenQuestions(SESSION, "问题已关闭")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe(
+      "问题 1：第一题\n回答：是\n\n问题 2：第二题\n[未作答, 问题已关闭]\n\n问题 3：第三题\n回答：否",
+    )
 
     expect(question(q1)).toMatchObject({ answered: "是" })
     expect(question(q1).held).toBeUndefined()
@@ -144,22 +145,28 @@ describe("问题没选完就直接发消息", () => {
     expect(question(q2)).toMatchObject({ closedNote: "问题已关闭" })
     expect(question(q2).answered).toBeUndefined()
     // 只交一次
-    expect(chat.releaseHeldAnswers(SESSION)).toBeUndefined()
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
+  })
+
+  it("一个都没选：也告诉 Agent 这张卡已关闭，只带标题（第一行），不贴整段题干", () => {
+    const q1 = ask("**P-008 评审：要不要给守护进程加来源校验**\n\n痛点：……很长的正文……", ["保留", "丢弃"])
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：P-008 评审：要不要给守护进程加来源校验\n[未作答, 问题已关闭]")
+    expect(question(q1)).toMatchObject({ closedNote: "问题已关闭" })
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
   })
 
   it("只选了一个也带题干（用户消息本身没有问题的上下文）", () => {
     const q1 = ask("用哪个库？", ["A", "B"])
     ask("第二题")
     chat.answerQuestion(SESSION, q1, "A")
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：用哪个库？\n回答：A")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：用哪个库？\n回答：A\n\n问题 2：第二题\n[未作答, 问题已关闭]")
   })
 
-  it("没有已选未交出的答案时什么也不返回", () => {
-    expect(chat.releaseHeldAnswers(SESSION)).toBeUndefined()
+  it("没有未交出的题时什么也不返回", () => {
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
     const q1 = ask("单个问题")
-    expect(chat.releaseHeldAnswers(SESSION)).toBeUndefined()
     chat.answerQuestion(SESSION, q1, "是")
-    expect(chat.releaseHeldAnswers(SESSION)).toBeUndefined()
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
   })
 
   it("只取当前会话的，不碰别的会话", () => {
@@ -169,7 +176,7 @@ describe("问题没选完就直接发消息", () => {
     ask("B 的第二题", ["是", "否"], OTHER_SESSION)
     chat.answerQuestion(SESSION, a1, "是")
     chat.answerQuestion(OTHER_SESSION, b1, "否")
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：A 的第一题\n回答：是")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：A 的第一题\n回答：是\n\n问题 2：A 的第二题\n[未作答, 问题已关闭]")
     expect(question(b1, OTHER_SESSION).held).toBe(true)
   })
 })
