@@ -164,12 +164,61 @@ describe("手动触发（立即执行）：任务投到绑定的 Agent 会话", 
     expect(await pollKey("t-nochan")).toEqual([])
   })
 
-  it("通知我 + 应用内通道没选会话：不启动任务，原因写明要选会话", async () => {
+  it("通知我 + 应用内通道没有专属会话：自动新建一个并写回任务文件，任务照常启动；再触发沿用它不重建", async () => {
     writeTasks([task("t-nosession", { notify: "im" })])
-    const r = await trigger("t-nosession")
-    expect(r.ok).toBe(false)
-    expect(r.error).toContain("没选接收结果的会话")
-    expect(await pollKey("t-nosession")).toEqual([])
+    expect((await trigger("t-nosession")).ok).toBe(true)
+    expect((await pollKey("t-nosession")).length).toBeGreaterThan(0)
+    const key = readTasks().find((t) => t.id === "t-nosession")?.notifyChatId as string
+    expect(key).toMatch(/^ch_test\|app_main::.+temp_\d+$/)
+    expect(fs.existsSync(key.split("::")[1])).toBe(true)
+
+    expect(await sendResult("t-nosession", { text: "专属会话里的结论" })).toContain("结果已处理")
+    const h = await d.post("/api/app-chat/history", { sessionKey: key })
+    expect(JSON.stringify(h.items ?? [])).toContain("专属会话里的结论")
+
+    await confirm("t-nosession")
+    expect((await trigger("t-nosession")).ok).toBe(true)
+    expect(readTasks().find((t) => t.id === "t-nosession")?.notifyChatId).toBe(key)
+  })
+
+  it("新建专属会话时通知主进程给它起名：标题是「⏰ 任务名」（标题只有主进程能写）", async () => {
+    writeTasks([task("t-title", { notify: "im" })])
+    const ac = new AbortController()
+    const events: Array<Record<string, any>> = []
+    const res = await fetch(`${d.base}/api/queue-events`, { signal: ac.signal })
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    void (async () => {
+      let buf = ""
+      try {
+        for (;;) {
+          const { value, done } = await reader.read()
+          if (done) return
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split("\n")
+          buf = lines.pop() ?? ""
+          for (const line of lines) if (line.startsWith("data: ")) events.push(JSON.parse(line.slice(6)))
+        }
+      } catch { /* 测试结束时 abort */ }
+    })()
+    try {
+      await trigger("t-title")
+      const key = readTasks().find((t) => t.id === "t-title")?.notifyChatId as string
+      expect(await waitFor(() => events.some((e) => e.type === "app-chat-title" && e.sessionKey === key))).toBe(true)
+      expect(events.find((e) => e.type === "app-chat-title")?.title).toBe("⏰ 任务-t-title")
+    } finally {
+      ac.abort()
+    }
+  })
+
+  it("两个任务各有各的专属会话（不共用）", async () => {
+    writeTasks([task("t-own-a", { notify: "im" }), task("t-own-b", { notify: "im" })])
+    await trigger("t-own-a")
+    await trigger("t-own-b")
+    const keyOf = (id: string) => readTasks().find((t) => t.id === id)?.notifyChatId as string
+    expect(keyOf("t-own-a")).toBeTruthy()
+    expect(keyOf("t-own-b")).toBeTruthy()
+    expect(keyOf("t-own-a")).not.toBe(keyOf("t-own-b"))
   })
 
   it("通知 AI 选了会话但已被删除（临时会话目录没了）：不启动任务，原因写明", async () => {
@@ -243,13 +292,23 @@ describe("通知谁：选了具体会话", () => {
     expect(JSON.stringify(r.items ?? [])).toContain("内容-n-me-fresh")
   })
 
-  it("通知我 + 所选临时会话已被删除：没送出去，原因写明", async () => {
+  it("通知我 + 专属会话被用户删了：重建一个新的，消息进新会话，已删的那个不会被复活", async () => {
     const gone = deadTempKey("1700000000203")
     writeTasks([task("n-me-gone", { independent: false, notify: "im", notifyChatId: gone })])
     const r = await trigger("n-me-gone")
-    expect(r.ok).toBe(false)
-    expect(r.error).toContain("已被删除")
+    expect(r.ok).toBe(true)
+    const fresh = readTasks().find((t) => t.id === "n-me-gone")?.notifyChatId as string
+    expect(fresh).not.toBe(gone)
+    expect(fs.existsSync(fresh.split("::")[1])).toBe(true)
+    expect(fs.existsSync(path.join(d.dataDir, "workspaces", "temp_1700000000203"))).toBe(false)
+    expect(JSON.stringify((await d.post("/api/app-chat/history", { sessionKey: fresh })).items ?? [])).toContain("内容-n-me-gone")
     expect((await d.post("/api/app-chat/history", { sessionKey: gone })).items ?? []).toEqual([])
+  })
+
+  it("通知我 + 专属会话键属于别的通道（换过通知通道留下的）：重建，不往别的通道里投", async () => {
+    writeTasks([task("n-me-moved", { independent: false, notify: "im", notifyChatId: `ch_ghost|app_main::${d.wsDir}` })])
+    expect((await trigger("n-me-moved")).ok).toBe(true)
+    expect(readTasks().find((t) => t.id === "n-me-moved")?.notifyChatId).toMatch(/^ch_test\|app_main::/)
   })
 })
 
@@ -499,13 +558,13 @@ describe("运行记录：设置页「上次什么时候跑、结果怎样」", (
   it("非独立 + 通知我：内容直接发出去就是终点，记「已汇报」；没发出去记「没送出去」", async () => {
     writeTasks([
       task("l-direct", { independent: false, notify: "im", notifyChatId: d.sessionKey }),
-      task("l-direct-bad", { independent: false, notify: "im" }),
+      task("l-direct-bad", { independent: false, notify: "im", notifyChannelId: "ch_missing" }),
     ])
     await trigger("l-direct")
     await trigger("l-direct-bad")
     expect(runsOf("l-direct")).toMatchObject([{ kind: "reported", manual: true }])
     expect(runsOf("l-direct-bad")[0]).toMatchObject({ kind: "undelivered" })
-    expect(runsOf("l-direct-bad")[0].detail).toContain("没选接收结果的会话")
+    expect(runsOf("l-direct-bad")[0].detail).toContain("发送目标")
   })
 
   it("结果送不出去：记「没送出去」，之后跑完没提交也不会被改成别的", async () => {

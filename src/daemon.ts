@@ -73,7 +73,7 @@ import { admitChat, denyReasonText, shouldSendDenyNotice, type AdmitResult } fro
 import { disambiguatePathLabel } from "./shared/path-label.js";
 import { isTempChatWorkspace } from "./shared/temp-workspace.js";
 import { deleteHarnessSkill, listHarnessSkills, readHarnessSkill, saveHarnessSkill, type SkillAdminResult } from "./shared/skill-admin.js";
-import { readScheduledTasksFile, writeScheduledTasksFile, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, isDirectNotifyTask, sendsStandaloneMessages, taskAgentSessionKey, taskNotifyChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
+import { readScheduledTasksFile, writeScheduledTasksFile, formatScheduledTaskLabel, resolveTaskOutboundChatKey, resolveTaskNotify, isTaskNotify, isDirectNotifyTask, sendsStandaloneMessages, taskAgentSessionKey, taskNotifyChannelId, findScheduledTaskBySessionKey, isIndependentTaskSessionKey, taskCardFooter, taskCardHeader, taskSessionOverride, type ScheduledTask } from "./shared/scheduled-task.js";
 import {
   TASK_RESULT_TOOL,
   TaskRunTracker,
@@ -626,6 +626,14 @@ function broadcastQueueEvent(chatId?: string): void {
 
 function broadcastTempChatActiveEvent(payload: { chatId: string; sessionKey: string; invokerSessionKey?: string }): void {
   const data = JSON.stringify({ type: "temp-chat-active", ...payload, ts: Date.now() });
+  for (const res of sseClients) {
+    try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
+  }
+}
+
+/** daemon 新建了应用内会话（定时任务的专属会话）：标题存在 electron 主进程，由它收到后写进去 */
+function broadcastAppChatTitleEvent(sessionKey: string, title: string): void {
+  const data = JSON.stringify({ type: "app-chat-title", sessionKey, title, ts: Date.now() });
   for (const res of sseClients) {
     try { res.write(`data: ${data}\n\n`); } catch { sseClients.delete(res); }
   }
@@ -6400,7 +6408,7 @@ function taskOutboundChatKey(task: ScheduledTask): string | undefined {
   return resolveTaskOutboundChatKey(t, taskOutboundMainChatId(t));
 }
 
-/** 「通知我」的目标有没有问题（有问题返回原因，没问题返回 undefined）。应用内通道必须选了会话，且会话还在 */
+/** 「通知我」的目标有没有问题（有问题返回原因，没问题返回 undefined）。应用内通道的专属会话缺了就建，见 ensureTaskAppSession */
 function userNotifyProblem(task: ScheduledTask): string | undefined {
   const t = withResolvedChannel(task);
   const rt = taskOutboundRuntime(t);
@@ -6408,11 +6416,42 @@ function userNotifyProblem(task: ScheduledTask): string | undefined {
   if (rt.cfg.type !== "app") {
     return taskOutboundChatKey(t) ? undefined : "找不到发送目标：没填聊天 ID，且该通道未绑定主用户";
   }
-  const sessionKey = normalizeSessionKey(t.notifyChatId?.trim() ?? "");
-  if (!sessionKey) return "没选接收结果的会话，请在设置里选择";
-  if (channelIdFromSessionKey(sessionKey) !== rt.cfg.id) return "所选会话不属于通知的通道，请在设置里重新选择";
-  if (pickedSessionGone(sessionKey)) return "所选会话已被删除，请在设置里重新选择";
   return undefined;
+}
+
+/**
+ * 应用内通道「通知我」要送到的会话：每个任务一个专属会话（临时会话，标题 = 任务名），写在任务的 notifyChatId 里。
+ * 存着的会话还在就用它；没有、被用户删了、或属于别的通道（换过通知通道）就新建一个，并把会话键写回任务文件。
+ * 全程同步（建目录、读写任务文件都没有 await），同一任务并发触发不会各建一个。
+ * 返回带上最新 notifyChatId 的任务；不是应用内通道的任务原样返回。
+ */
+function ensureTaskAppSession(task: ScheduledTask): { ok: true; task: ScheduledTask } | { ok: false; error: string } {
+  const rt = taskOutboundRuntime(task);
+  if (!rt || rt.cfg.type !== "app") return { ok: true, task };
+  const stored = readTasksSafe().find((x) => x.id === task.id);
+  const existing = normalizeSessionKey((stored ?? task).notifyChatId?.trim() ?? "");
+  if (existing && channelIdFromSessionKey(existing) === rt.cfg.id && !pickedSessionGone(existing)) {
+    return { ok: true, task: { ...task, notifyChatId: existing } };
+  }
+  try {
+    const { sessionKey } = createTempChatSession(APP_DATA_DIR, makeChatKey(rt.cfg.id, APP_CHANNEL_CHAT_ID));
+    rememberSessionKey(sessionKey);
+    broadcastAppChatTitleEvent(sessionKey, formatScheduledTaskLabel(task.name));
+    if (stored) {
+      writeTasks(readTasksSafe().map((x) => (x.id === task.id ? { ...x, notifyChatId: sessionKey } : x)));
+    }
+    log("INFO", `定时任务「${task.name}」新建了应用内专属会话: ${sessionKey}`);
+    return { ok: true, task: { ...task, notifyChatId: sessionKey } };
+  } catch (e) {
+    return { ok: false, error: `创建应用内专属会话失败: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** 「通知我」送出前的准备：目标有没有问题，应用内通道顺便确保专属会话存在；返回带上最新会话键的任务 */
+function prepareUserNotify(task: ScheduledTask): { ok: true; task: ScheduledTask } | { ok: false; error: string } {
+  const t = withResolvedChannel(task);
+  const problem = userNotifyProblem(t);
+  return problem ? { ok: false, error: problem } : ensureTaskAppSession(t);
 }
 
 type TaskAgentTarget =
@@ -6506,17 +6545,18 @@ function enqueueScheduledTaskMessage(task: ScheduledTask, content: string): { ok
     return { ok: true };
   }
 
-  const t = withResolvedChannel(task);
-  const outboundChatKey = taskOutboundChatKey(t);
-  // 结果送不到就别白跑一轮 Agent：目标会话被删 / 没选会话 / 通道没了，直接记「未投递」
+  let t = withResolvedChannel(task);
+  // 结果送不到就别白跑一轮 Agent：通道没了 / 目标会话没了，直接记「未投递」；应用内的专属会话缺了就先建好
   const mode = resolveTaskNotify(t);
   if (mode === "im") {
-    const problem = userNotifyProblem(t);
-    if (problem) return fail(`跳过: ${problem}`);
+    const prepared = prepareUserNotify(t);
+    if (!prepared.ok) return fail(`跳过: ${prepared.error}`);
+    t = prepared.task;
   } else if (mode === "agent") {
     const target = resolveTaskAgentTarget(t);
     if (!target.ok) return fail(`跳过: ${target.error}`);
   }
+  const outboundChatKey = taskOutboundChatKey(t);
   if (outboundChatKey) {
     log("INFO", `定时任务「${task.name}」MCP 投递目标: ${outboundChatKey}`);
     sessionToChatMap.set(task.id, outboundChatKey);
@@ -6566,9 +6606,9 @@ async function deliverTaskText(
     return { ok: true, where: `「${target.label}」的队列` };
   }
   if (mode === "im") {
-    const t = withResolvedChannel(task);
-    const problem = userNotifyProblem(t);
-    if (problem) return { ok: false, error: problem };
+    const prepared = prepareUserNotify(task);
+    if (!prepared.ok) return { ok: false, error: prepared.error };
+    const t = prepared.task;
     // 两份正文：带任务名的 text（没有任务横幅的通道用）、不带的 titled_text（飞书横幅已是任务名时用，见 resolveSendCardText）
     const msg = formatTaskImMessage(t, text);
     if (taskOutboundRuntime(t)?.cfg.type === "app") {

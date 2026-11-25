@@ -18,6 +18,7 @@ import { parseChatKey, channelIdFromSessionKey, chatIdFromSessionKey, normalizeS
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
+import { keepTaskAppSessions } from "../src/shared/task-delivery.js"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../src/shared/ai-schedule-state.js"
 import { readTaskRuns, taskRunLogFile } from "../src/shared/task-run-log.js"
 import { buildSessionSchedules, removeUserTask } from "../src/shared/session-schedule-build.js"
@@ -92,7 +93,7 @@ import {
   dirBaseName,
 } from "../src/shared/session-label.js"
 import { readLockFile, getLockFilePath, httpGet, httpPost, syncActiveSession, getCurrentActiveSession, enqueueToSession, resolveMainChatId, resolveMainSessionKey } from "./daemon-client"
-import { forwardAppChatEvent, releaseQueuedAppChatMessages } from "./app-chat"
+import { forwardAppChatEvent, releaseQueuedAppChatMessages, renameAppChatSession } from "./app-chat"
 import { resolveEffectiveSessionKey, resolveEffectiveModel } from "./session-key-resolver"
 import {
   applyChannelWorkspaceSwitch,
@@ -1015,6 +1016,10 @@ function connectSseQueueEvents(): void {
             handleAgentPollPhase(ev.sessionKey, ev.phase, ev)
           } else if (ev.type === "app-chat" && ev.event) {
             forwardAppChatEvent(ev.event)
+          } else if (ev.type === "app-chat-title" && ev.sessionKey && typeof ev.title === "string") {
+            // daemon 给定时任务新建的应用内专属会话：标题只有主进程能写
+            const r = renameAppChatSession(ev.sessionKey, ev.title)
+            if (!r.ok) broadcastLog(`[定时任务] 专属会话命名失败: ${r.error}`, "WARN")
           }
         } catch { /* ignore */ }
       }
@@ -2223,7 +2228,8 @@ export function initDaemonManager(): void {
   ipcMain.handle("scheduled-tasks:save", (_, saved: ScheduledTask[]) => {
     const before = readTasksFromFile()
     // AI 排程不归设置页管：以文件为准（界面快照可能落后于 AI 刚建 / 刚被清理的排程）
-    const tasks = mergeSavedTasksKeepingAi(saved, before)
+    // 界面快照里没有 daemon 刚给任务建的应用内专属会话键：带回来，不然下次运行又建一个
+    const tasks = keepTaskAppSessions(mergeSavedTasksKeepingAi(saved, before), before)
     writeTasksToFile(tasks)
     // 改过通道 / 供应商 / 模型的任务，把会话里登记的旧覆盖作废，下次触发按新设置重新登记
     try {
