@@ -112,14 +112,14 @@ interface LlmSession extends PollPhaseHost {
   piUnsubscribe: (() => void) | null
   /** 流式日志聚合：连续同类型(thinking/text)增量合并成一条打印 */
   logAgg: { kind: "thinking" | "text" | null; buf: string }
-  /** 本会话最近一次落日志的 system prompt 哈希：没变就不重复打（见 logSystemPromptIfChanged） */
-  loggedSystemPromptHash?: string
 }
 
 export type LlmWorkerSession = LlmSession
 
 const llmSessions = new Map<string, LlmSession>()
 const pendingLaunches = new Set<string>()
+/** 会话键 → 最近一次落日志的 system prompt 哈希；worker 退出后仍保留，重新拉起时才能判断有没有变（见 logSystemPromptIfChanged） */
+const loggedSystemPromptHashes = new Map<string, string>()
 let idleHandler: ((sessionKey: string) => void) | null = null
 
 const llmFailStreak = new Map<string, {
@@ -329,14 +329,18 @@ function isAssistantVisibleComplete(message: AgentMessage): boolean {
 /**
  * system prompt 全文落日志。Pi 的协议、规则、Skill 名单都在 system prompt 里（SDK 是拼进每轮 prompt，
  * 会被「worker 回合 Prompt」带出来），只打哈希没法核对内容。
- * 同一会话内容没变不重复打；变了（扩展 before_agent_start 改写、工具集变化重建）才再打一份。
+ * 哈希按会话键记，不随 worker 退出丢失：新账本（首轮、搬运轮）总打，标「启动」；
+ * 其余只在和上次不同时打，标「变更」（扩展 before_agent_start 改写、规则或 Skill 名单变化）；
+ * 本进程没打过这个会话（应用刚重启）打一次，标「恢复」。
  * 展示层靠 "System Prompt:" 前缀识别并跳过 sessionKey 缩写（见 shared/log-format.ts）。
  */
-function logSystemPromptIfChanged(session: LlmSession, why: "启动" | "恢复" | "变更"): void {
+function logSystemPromptIfChanged(session: LlmSession, newLedger = false): void {
   const text = session.piSession.systemPrompt ?? ""
   const hash = hashSystemPrompt(text)
-  if (session.loggedSystemPromptHash === hash) return
-  session.loggedSystemPromptHash = hash
+  const last = loggedSystemPromptHashes.get(session.sessionKey)
+  loggedSystemPromptHashes.set(session.sessionKey, hash)
+  if (!newLedger && last === hash) return
+  const why = newLedger ? "启动" : last === undefined ? "恢复" : "变更"
   pushUiLog("LLM", "INFO", `[${session.sessionKey}] ${why} System Prompt: hash=${hash} · ${text.length} chars\n${text}`)
 }
 
@@ -346,7 +350,7 @@ function handlePiSessionEvent(session: LlmSession, event: AgentSessionEvent): vo
 
   // 回合开头：此刻 Pi 已把本回合要用的 system prompt 定下来（扩展钩子改写发生在这之前）
   if (event.type === "agent_start") {
-    logSystemPromptIfChanged(session, "变更")
+    logSystemPromptIfChanged(session)
     return
   }
 
@@ -908,7 +912,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       return { ok: true }
     }
 
-    logSystemPromptIfChanged(session, resumed ? "恢复" : "启动")
+    logSystemPromptIfChanged(session, !resumed)
     registerLlmSession(session)
     session.runPromise = startLlmWorkerLoop(session, {
       persistentPoll,

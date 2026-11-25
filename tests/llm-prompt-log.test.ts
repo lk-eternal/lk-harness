@@ -105,10 +105,9 @@ let seq = 0
 
 const resource = { id: "res1", type: "llm-custom", name: "gw", baseUrl: "http://gw" } as never
 
-async function launch(systemPrompt: string, resumed = false) {
+async function launch(systemPrompt: string, resumed = false, sessionKey = `ch_test${++seq}|oc_chat${seq}::D:\\work`) {
   nextPi = makeFakePi(systemPrompt)
   nextResumed = resumed
-  const sessionKey = `ch_test${++seq}|oc_chat${seq}::D:\\work`
   const r = await llm.launchLlmAgent({
     sessionKey,
     chatType: "p2p",
@@ -144,13 +143,48 @@ describe("Pi system prompt 日志", () => {
     expect(c.slice(c.indexOf("\n") + 1)).toBe(text)
   })
 
-  it("恢复已有账本：标为「恢复」，同样打全文", async () => {
+  it("恢复已有账本、本进程没打过这个会话：标「恢复」，打一次全文", async () => {
     const text = "恢复场景的 system prompt"
     await launch(text, true)
     const dumps = systemDumps()
     expect(dumps).toHaveLength(1)
     expect(dumps[0]!.content).toContain("恢复 System Prompt:")
     expect(dumps[0]!.content.endsWith(text)).toBe(true)
+  })
+
+  /** worker 退出后用同一会话键再拉起一次 */
+  async function relaunch(key: string, systemPrompt: string, resumed: boolean) {
+    const prev = startedSessions[startedSessions.length - 1] as Parameters<AgentLlm["unregisterLlmSession"]>[0]
+    await llm.unregisterLlmSession(prev)
+    return launch(systemPrompt, resumed, key)
+  }
+
+  it("同一会话重新拉起、账本续上且没变：不重复打", async () => {
+    const key = "ch_relaunch|oc_chat::D:\\work"
+    await launch("不变的 system prompt", false, key)
+    await relaunch(key, "不变的 system prompt", true)
+    await relaunch(key, "不变的 system prompt", true)
+    expect(systemDumps()).toHaveLength(1)
+  })
+
+  it("同一会话重新拉起、账本续上但内容变了：标「变更」再打一次", async () => {
+    const key = "ch_changed|oc_chat::D:\\work"
+    await launch("旧版 system prompt", false, key)
+    await relaunch(key, "新版 system prompt", true)
+    await relaunch(key, "新版 system prompt", true)
+    const dumps = systemDumps()
+    expect(dumps).toHaveLength(2)
+    expect(dumps[1]!.content).toContain("变更 System Prompt:")
+    expect(dumps[1]!.content.endsWith("新版 system prompt")).toBe(true)
+  })
+
+  it("新账本（首轮、搬运轮）：哈希没变也标「启动」打全文", async () => {
+    const key = "ch_newledger|oc_chat::D:\\work"
+    await launch("同一份 system prompt", false, key)
+    await relaunch(key, "同一份 system prompt", false)
+    const dumps = systemDumps()
+    expect(dumps).toHaveLength(2)
+    expect(dumps[1]!.content).toContain("启动 System Prompt:")
   })
 
   it("回合开始时 system prompt 没变：不重复打", async () => {
