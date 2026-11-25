@@ -88,10 +88,6 @@ function hasReplyText(segments: AppChatSegment[]): boolean {
   return segments.some((s) => s.type === "reply" && s.text.trim().length > 0);
 }
 
-function isOpenQuestion(item: AppChatItem): item is AppChatQuestionItem {
-  return item.kind === "question" && !item.answered && !item.closedNote;
-}
-
 /** 还没交给 Agent 的问题：没选的，和已选但在等这一轮结束、或等其余问题的 */
 function isUndeliveredQuestion(item: AppChatItem): item is AppChatQuestionItem {
   return item.kind === "question" && !item.closedNote && (!item.answered || item.held === true);
@@ -524,26 +520,19 @@ export class AppChat {
   }
 
   /**
-   * 用户没有把问题选完、而是直接打字发了消息：已选但还没交出的答案不能丢，取出来先交给 Agent。
-   * 只处理所属那一轮已结束的题；那一轮还在跑的题不动（用户可能还没看到这一轮后面发的题）。
-   * 返回带题干的汇总文本；没有这样的答案返回 undefined。要在 closeOpenQuestions 之前调用。
+   * 用户没有把问题选完、而是直接打字发了消息：所属那一轮已结束、还没交出的题现在一并收口。
+   * 已选的答案不能丢，带回答；没选的题关掉，在汇总里标成已关闭，让 Agent 知道这些卡已经失效。
+   * 那一轮还在跑的题不动（用户可能还没看到这一轮后面发的题）。
+   * 返回带题干的汇总文本，由调用方排在用户这条消息前面交给 Agent；没有这样的题返回 undefined。
    */
-  releaseHeldAnswers(sessionKey: string): string | undefined {
+  closeEndedQuestions(sessionKey: string, note: string): string | undefined {
     const entry = this.entry(sessionKey);
-    const held = entry.items.filter(
-      (i): i is AppChatQuestionItem => i.kind === "question" && i.held === true && !i.closedNote && this.isRoundEnded(sessionKey, i.round),
+    const ended = entry.items.filter(
+      (i): i is AppChatQuestionItem => isUndeliveredQuestion(i) && this.isRoundEnded(sessionKey, i.round),
     );
-    if (held.length === 0) return undefined;
-    for (const q of held) this.upsert(entry, withoutHeld(q));
-    return formatQuestionBatchSummary(held);
-  }
-
-  /** 用户打字替代了没选的题：只关所属那一轮已结束的，那一轮还在跑的题不动 */
-  closeOpenQuestions(sessionKey: string, note: string): void {
-    const entry = this.entry(sessionKey);
-    for (const item of [...entry.items]) {
-      if (isOpenQuestion(item) && this.isRoundEnded(sessionKey, item.round)) this.upsert(entry, { ...item, closedNote: note });
-    }
+    if (ended.length === 0) return undefined;
+    for (const q of ended) this.upsert(entry, q.answered ? withoutHeld(q) : { ...q, closedNote: note });
+    return formatQuestionBatchSummary(ended.map((q) => ({ text: q.text, answered: q.answered, closed: !q.answered })));
   }
 
   private findAssistant(entry: SessionEntry, id: string): AppChatAssistantItem | undefined {

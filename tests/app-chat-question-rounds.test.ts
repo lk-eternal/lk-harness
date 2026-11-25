@@ -110,14 +110,13 @@ describe("这一轮已结束", () => {
 })
 
 describe("用户打字", () => {
-  it("这一轮已结束：已选的先交出，没选的关掉", () => {
+  it("这一轮已结束：已选的带回答、没选的标已关闭，汇成一条，并关掉没选的", () => {
     const q1 = ask("第一题", ["A", "B"])
     const q2 = ask("第二题", ["A", "B"])
     chat.answerQuestion(SESSION, q1, "B")
     rounds.end(SESSION)
 
-    expect(chat.releaseHeldAnswers(SESSION)).toBe("问题 1：第一题\n回答：B")
-    chat.closeOpenQuestions(SESSION, "问题已关闭")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：第一题\n回答：B\n\n问题 2：第二题\n[用户未作答, 系统已自动关闭]")
     expect(question(q1).closedNote).toBeUndefined()
     expect(question(q2).closedNote).toBe("问题已关闭")
   })
@@ -127,8 +126,7 @@ describe("用户打字", () => {
     const q2 = ask("第二题", ["A", "B"])
     chat.answerQuestion(SESSION, q1, "B")
 
-    expect(chat.releaseHeldAnswers(SESSION)).toBeUndefined()
-    chat.closeOpenQuestions(SESSION, "问题已关闭")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
     expect(question(q1)).toMatchObject({ answered: "B", held: true })
     expect(question(q2).closedNote).toBeUndefined()
   })
@@ -138,7 +136,7 @@ describe("用户打字", () => {
     rounds.end(SESSION)
     const fresh = ask("这一轮的题")
 
-    chat.closeOpenQuestions(SESSION, "问题已关闭")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：上一轮的题\n[用户未作答, 系统已自动关闭]")
     expect(question(old).closedNote).toBe("问题已关闭")
     expect(question(fresh).closedNote).toBeUndefined()
   })
