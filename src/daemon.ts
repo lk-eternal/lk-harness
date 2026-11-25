@@ -1583,7 +1583,7 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
   if (chatId) fullMeta.chatId = chatId;
   if (chatType) fullMeta.chatType = chatType;
   if (senderOpenId) fullMeta.senderOpenId = senderOpenId;
-  // 用户直接打字（非卡片点击）：他没选完的题由这段文字代替。已选的答案先于这条消息交给 Agent（只涉及那一轮已结束的卡）
+  // 用户直接打字（非卡片点击）：他没选完的题由这段文字代替。已选的答案和被关掉的题先于这条消息汇总交给 Agent（只涉及那一轮已结束的卡）
   const typedSessionKey = messageId && !messageId.startsWith("internal_") ? routedId : undefined;
   // 只替他自己的题作答：群里别人的题不碰（题的归属人是他，或他是管理员才算）
   const typedForOwner: OwnerFilter = (owner) => mayAnswerQuestion(owner, senderOpenId, isMainUserSender(chatId, senderOpenId));
@@ -2879,7 +2879,7 @@ interface CardQuestionEntry {
   blocks?: StreamQuestionSnapshot[];
   /** 最近一次点选这张卡的人：答案要等这一轮结束才交给 Agent，交的时候点选事件早已过去 */
   operatorOpenId?: string;
-  /** 用户打字时已选的答案先交给了 Agent，卡上没选的题正在关：此后不再按「选完」交第二遍 */
+  /** 用户打字时这张卡上已选的答案和没选的题已汇总交给了 Agent，没选的题正在关：此后不再按「选完」交第二遍 */
   answersDelivered?: boolean;
 }
 const cardQuestionMap = new Map<string, CardQuestionEntry>();
@@ -3396,20 +3396,24 @@ function enqueueAppAnswers(sessionKey: string, text: string, anchorId: string | 
 }
 
 /**
- * 用户打字发了消息：这个会话里所属那一轮已经结束、还没选完的卡，已选的答案先交给 Agent（排在用户这条消息前面），
- * 没选的题随后由 expireOpenCardQuestionsForSession 关掉。那一轮还在跑的卡、别人的卡不动。
+ * 用户打字发了消息：这个会话里所属那一轮已经结束、还没收口的卡，已选的答案和没选的题汇总成一条先交给 Agent
+ * （排在用户这条消息前面）；没选的题在汇总里标成已关闭，卡随后由 expireOpenCardQuestionsForSession 真正关掉。
+ * 那一轮还在跑的卡、别人的卡不动。
  */
 function releaseEndedCardAnswers(sessionKey: string, mayRelease: OwnerFilter): void {
   for (const [messageId, entry] of [...cardQuestionMap]) {
-    if (!entry.isStreamCard || entry.answersDelivered || !isSameSession(entry.sessionKey, sessionKey)) continue;
+    if (entry.answersDelivered || !isSameSession(entry.sessionKey, sessionKey)) continue;
     if (!cardQuestionRoundsEnded(entry) || !cardQuestionsOpenToTypist(entry, mayRelease)) continue;
-    const answered = (entry.blocks ?? []).filter((b) => !b.closedNote && b.answered);
-    if (answered.length === 0) continue;
+    // 流式卡：还没关掉的题，选了的带回答，没选的随后被关；单题卡答完就摘登记，登记还在就是还没答
+    const pending = entry.isStreamCard
+      ? (entry.blocks ?? []).filter((b) => !b.closedNote).map((b) => ({ text: questionDisplayBody(b.text), answered: b.answered, closed: !b.answered }))
+      : [{ text: questionDisplayBody(entry.text), closed: true }];
+    if (pending.length === 0) continue;
     entry.answersDelivered = true;
     scheduleCardQuestionSave();
     enqueueCardAnswers({
       messageId, sessionKey: entry.sessionKey, chatKey: entry.chatKey, operatorOpenId: entry.operatorOpenId,
-      summary: formatStreamQuestionBatchSummary(answered),
+      summary: formatQuestionBatchSummary(pending),
     });
   }
 }
@@ -5428,11 +5432,10 @@ async function handleAppChatApi(pathname: string, req: http.IncomingMessage, res
   } else if (hasProjectNewDraft(chatKey)) {
     process.stdout.write(`__PROJECT_NEW_FILL__:${JSON.stringify({ chatId: chatKey, messageId, text })}\n`);
   } else {
-    // 用户直接打字：那一轮已结束的题里，已选的答案先交给 Agent（独立一条，用户之后编辑/撤回自己的消息不会连带丢掉它），没选的关掉；
-    // 那一轮还在跑的题不动
-    const heldAnswers = appChat.releaseHeldAnswers(sessionKey);
-    if (heldAnswers) enqueueAppAnswers(sessionKey, heldAnswers, undefined);
-    appChat.closeOpenQuestions(sessionKey, "问题已关闭");
+    // 用户直接打字：那一轮已结束的题一并收口——已选的答案、没选而被关掉的题汇总成独立一条先交给 Agent
+    // （用户之后编辑/撤回自己的消息不会连带丢掉它）；那一轮还在跑的题不动
+    const closedSummary = appChat.closeEndedQuestions(sessionKey, "问题已关闭");
+    if (closedSummary) enqueueAppAnswers(sessionKey, closedSummary, undefined);
     const content = [...images.map((p) => `[图片已保存: ${p}]`), text].filter(Boolean).join("\n");
     pushMessage(content, messageId, chatKey, "p2p", undefined, undefined, { senderType: "user" });
   }
