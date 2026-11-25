@@ -14,4 +14,12 @@ describe("createTempChatSession", () => {
     expect(fs.existsSync(workspaceDir)).toBe(true)
     fs.rmSync(root, { recursive: true, force: true })
   })
+
+  it("同一毫秒里连建多个：各自一个目录、会话键不撞（定时任务批量建专属会话）", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "lh-temp-"))
+    const made = Array.from({ length: 5 }, () => createTempChatSession(root, "ch_a|app_main"))
+    expect(new Set(made.map((m) => m.sessionKey)).size).toBe(5)
+    expect(new Set(made.map((m) => m.workspaceDir)).size).toBe(5)
+    fs.rmSync(root, { recursive: true, force: true })
+  })
 })

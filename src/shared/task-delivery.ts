@@ -9,6 +9,7 @@
 
 import { channelIdFromSessionKey } from "./channel-types.js";
 import {
+  isAiTask,
   resolveTaskNotify,
   taskAgentSessionKey,
   taskNotifyChannelId,
@@ -53,19 +54,18 @@ export function taskAgentTargetLabel(
   return task.createdBy === "ai" ? "创建它的会话" : "主会话";
 }
 
-/** 「通知我」目标的显示名：通过哪个通道，发到哪个聊天 / 会话 */
+/**
+ * 「通知我」目标的显示名：通过哪个通道，发到哪个聊天 / 会话。
+ * 应用内通道每个任务一个专属会话（没有就在第一次投递时建），不让用户挑，所以不写会话名。
+ */
 export function taskUserTargetLabel(
   task: Pick<ScheduledTask, "channelId" | "notifyChannelId" | "notifyChatId">,
-  labels: Pick<TaskDeliveryLabels, "channelName" | "isAppChannel" | "sessionName">,
+  labels: Pick<TaskDeliveryLabels, "channelName" | "isAppChannel">,
 ): string {
   const channelId = taskNotifyChannelId(task);
   const channel = channelId ? (labels.channelName(channelId) ?? "（通道已不存在）") : "（未选通道）";
+  if (labels.isAppChannel(channelId)) return `通过「${channel}」发到这个任务专属的会话（没有就自动创建）`;
   const chat = task.notifyChatId?.trim();
-  if (labels.isAppChannel(channelId)) {
-    if (!chat) return `通过「${channel}」发到（未选会话）`;
-    const name = labels.sessionName?.(chat);
-    return `通过「${channel}」发到${name ? `会话「${name}」` : "所选会话"}`;
-  }
   const where = chat ? `聊天 ${shortChatId(chat)}` : "主用户私聊";
   return `通过「${channel}」发到${where}`;
 }
@@ -214,10 +214,10 @@ export function validateTaskDelivery(
 
   const chat = task.notifyChatId?.trim();
   const isApp = env.channelIsApp(channelId);
-  const sessionKey = mode === "agent" ? taskAgentSessionKey(task) : isApp ? chat : undefined;
+  // 应用内通道的「通知我」不挑会话：每个任务有自己的专属会话，缺了 / 不属于这个通道就在投递时重建，所以这里不拦
+  const sessionKey = mode === "agent" ? taskAgentSessionKey(task) : undefined;
   if (sessionKey && channelIdFromSessionKey(sessionKey) !== channelId) return "所选会话不属于这个通道，请重新选择";
-  if (mode === "im" && !chat) {
-    if (isApp) return "请选择接收结果的会话";
+  if (mode === "im" && !chat && !isApp) {
     if (env.channelMainUserBound(channelId) !== true) {
       const name = env.channelName(channelId) ?? channelId;
       return `通道「${name}」还没有绑定主用户私聊：请填写飞书群 / 聊天 ID，或先在通道设置里绑定主用户`;
@@ -255,6 +255,45 @@ export function normalizeTaskDelivery<T extends ScheduledTask>(task: T): T {
     delete next.notifyChannelId;
   }
   return next;
+}
+
+// ── 用户建的任务只有一种交付方式：独立运行 + 通知我 ──────────────
+
+/**
+ * 存着的任务是不是旧版的交付方式（非独立运行 / 不通知 / 通知 AI / 绑了项目）。
+ * 这些任务照存的字段继续跑，设置页打开时提示一句，保存才会转成「独立运行 + 通知我」。
+ */
+export function isLegacyDelivery(
+  task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "targetProjectId">,
+): boolean {
+  return task.independent === false || resolveTaskNotify(task) !== "im" || !!task.targetProjectId?.trim();
+}
+
+/**
+ * 设置页保存 / manage_tasks 新建时把任务定成「独立运行 + 通知我」，其余交付字段一并清理。
+ * 原来不是「通知我」的（通知 AI 的会话键、不通知残留的聊天 ID）对通知我没有意义，不带过来。
+ */
+export function toUserNotifyTask<T extends ScheduledTask>(task: T): T {
+  const next: T = { ...task, independent: true, notify: "im" };
+  if (resolveTaskNotify(task) !== "im") delete next.notifyChatId;
+  delete next.targetProjectId;
+  return normalizeTaskDelivery(next);
+}
+
+/**
+ * 设置页保存时界面里的任务快照可能比 daemon 落盘的旧：daemon 在应用内通道为任务新建专属会话后，
+ * 把会话键写回了文件，快照里没有它。以文件里的为准把它带回来，否则每保存一次，下次运行就重建一个会话。
+ * 只带回应用内会话键（含 ::，飞书群 ID 没有）；通知通道换过的不带，旧通道的会话键对新通道没用。
+ */
+export function keepTaskAppSessions<T extends ScheduledTask>(saved: readonly T[], before: readonly T[]): T[] {
+  const old = new Map(before.map((t) => [t.id, t]));
+  return saved.map((t) => {
+    if (isAiTask(t) || t.notifyChatId?.trim() || resolveTaskNotify(t) !== "im") return t;
+    const prev = old.get(t.id);
+    const key = prev?.notifyChatId?.trim();
+    if (!prev || !key?.includes("::") || taskNotifyChannelId(prev) !== taskNotifyChannelId(t)) return t;
+    return { ...t, notifyChatId: key };
+  });
 }
 
 // ── 消息文案 ───────────────────────────────────────────
