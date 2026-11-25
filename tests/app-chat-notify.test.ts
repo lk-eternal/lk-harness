@@ -215,6 +215,23 @@ describe("回复完成通知", () => {
     ])
   })
 
+  it("独立文字消息（定时任务投递）、没在看这个会话：弹，正文是消息开头", () => {
+    const { notify, shown } = setup({ name: "⏰ 日报" })
+    notify(itemEvent({ kind: "text", id: "t1", ts: 1, text: "⏰ 定时任务「日报」汇报\n\n**今日**已完成" }))
+    expect(shown).toEqual([{ sessionKey: "ch|app_main::D:\\work\\a", title: "⏰ 日报", body: "⏰ 定时任务「日报」汇报 今日已完成" }])
+  })
+
+  it("独立文字消息：正看着这个会话不弹；同一条的重复事件只弹一次", () => {
+    const viewing = setup({ viewing: true })
+    viewing.notify(itemEvent({ kind: "text", id: "t1", ts: 1, text: "你好" }))
+    expect(viewing.shown).toEqual([])
+
+    const away = setup()
+    away.notify(itemEvent({ kind: "text", id: "t2", ts: 1, text: "你好" }))
+    away.notify(itemEvent({ kind: "text", id: "t2", ts: 1, text: "你好" }))
+    expect(away.shown).toHaveLength(1)
+  })
+
   it("用户消息、移除、清空这些事件不弹，也不去问是否在看", () => {
     const { notify, shown, asked } = setup()
     notify(itemEvent({ kind: "user", id: "u", ts: 1, text: "你好" }))

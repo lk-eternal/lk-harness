@@ -10,7 +10,7 @@ interface Entry {
   liveCardId?: string
   /** 最后一条是用户消息，AI 还没有任何回应 */
   awaiting: boolean
-  /** 回合在你没看着这个会话时收口了，点开它之前一直保留 */
+  /** 回合在你没看着这个会话时收口了、或来了独立文字消息，点开它之前一直保留 */
   unread: boolean
 }
 
@@ -25,6 +25,9 @@ function applyItem(cur: Entry, item: AppChatItem, viewed: boolean): Entry {
         return item.id === cur.liveCardId ? cur : { ...cur, liveCardId: item.id, awaiting: false }
       }
       return { ...cur, liveCardId: undefined, unread: cur.unread || !viewed }
+    case "text":
+      // 独立文字消息（定时任务投递、send_text）没有回合卡，来了就算新消息
+      return { ...cur, awaiting: false, unread: cur.unread || !viewed }
     default:
       return cur.awaiting ? { ...cur, awaiting: false } : cur
   }

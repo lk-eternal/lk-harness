@@ -1,6 +1,6 @@
 // ── 应用内对话：回复完成的系统通知 ─────────────────────────────────────
 // 什么时候弹、弹什么写在这里（纯逻辑，主进程接线见 electron/app-chat-notify.ts）：
-// 回合卡正常收口、而你没在看这个会话时，弹一条通知，正文是回复的开头。
+// 回合卡正常收口、或收到独立文字消息，而你没在看这个会话时，弹一条通知，正文是回复 / 消息的开头。
 
 import {
   appChatSessionId,
@@ -58,14 +58,19 @@ export function markdownToPlainLine(markdown: string): string {
     .trim()
 }
 
+/** 整理成一行后截断；只显示开头一小段，长文本没必要整篇过一遍正则；没有文字返回空串 */
+function previewLine(markdown: string, maxChars: number): string {
+  const line = markdownToPlainLine(markdown.slice(0, RAW_PREVIEW_CHARS))
+  return line ? clip(line, maxChars) : ""
+}
+
 /** 回复预览：最后一段有文字的回复（通常就是结论），整理成一行后截断；没有文字返回空串 */
 export function replyPreview(segments: readonly AppChatSegment[], maxChars = NOTICE_BODY_MAX_CHARS): string {
   for (let i = segments.length - 1; i >= 0; i--) {
     const seg = segments[i]
     if (seg.type !== "reply") continue
-    // 只显示开头一小段，长回复没必要整篇过一遍正则
-    const line = markdownToPlainLine(seg.text.slice(0, RAW_PREVIEW_CHARS))
-    if (line) return clip(line, maxChars)
+    const line = previewLine(seg.text, maxChars)
+    if (line) return line
   }
   return ""
 }
@@ -88,9 +93,16 @@ export interface ReplyNotifierDeps {
   show(notice: ReplyNotice): void
 }
 
+/** 值得提醒的消息返回通知正文：正常收口的回复，和独立文字消息（定时任务投递、send_text）；其它返回 undefined */
+function noticeBody(item: AppChatItem): string | undefined {
+  if (isFinishedReply(item)) return replyPreview(item.segments) || NOTICE_FALLBACK_BODY
+  if (item.kind === "text") return previewLine(item.text, NOTICE_BODY_MAX_CHARS)
+  return undefined
+}
+
 /**
- * 订阅应用内聊天事件的监听器：回合卡正常收口时，你没在看这个会话就弹通知。
- * 每张回合卡只处理一次（先记下再判断是否在看）：之后同一张卡的重复事件，不会在你离开后再弹一次。
+ * 订阅应用内聊天事件的监听器：回合卡正常收口、或收到独立文字消息时，你没在看这个会话就弹通知。
+ * 每条消息只处理一次（先记下再判断是否在看）：之后同一条的重复事件，不会在你离开后再弹一次。
  */
 export function createReplyNotifier(deps: ReplyNotifierDeps): (event: AppChatEvent) => void {
   const seen = new Set<string>()
@@ -100,13 +112,15 @@ export function createReplyNotifier(deps: ReplyNotifierDeps): (event: AppChatEve
   }
 
   return (event) => {
-    if (event.type !== "item" || !isFinishedReply(event.item) || seen.has(event.item.id)) return
+    if (event.type !== "item" || seen.has(event.item.id)) return
+    const body = noticeBody(event.item)
+    if (body === undefined) return
     remember(event.item.id)
     if (deps.isViewing(event.sessionKey)) return
     deps.show({
       sessionKey: event.sessionKey,
       title: clip(deps.sessionName(event.sessionKey).trim() || "应用内会话", NOTICE_TITLE_MAX_CHARS),
-      body: replyPreview(event.item.segments) || NOTICE_FALLBACK_BODY,
+      body,
     })
   }
 }
