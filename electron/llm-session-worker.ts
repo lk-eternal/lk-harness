@@ -34,6 +34,8 @@ interface WorkerState {
   taskMessage?: string
   historyTurns?: HistoryTurn[]
   firstTurn: boolean
+  /** 记忆只随新账本的第一轮给：账本续上的拉起不再重发 */
+  withMemory: boolean
   abort: AbortController
   loopPromise: Promise<void>
 }
@@ -147,6 +149,7 @@ export function startLlmWorkerLoop(
     taskMessage?: string
     historyTurns?: HistoryTurn[]
     firstTurn: boolean
+    withMemory: boolean
   },
 ): Promise<void> {
   const state: WorkerState = {
@@ -157,6 +160,7 @@ export function startLlmWorkerLoop(
     taskMessage: opts.taskMessage,
     historyTurns: opts.historyTurns,
     firstTurn: opts.firstTurn,
+    withMemory: opts.withMemory,
     abort: session.abort,
     loopPromise: Promise.resolve(),
   }
@@ -235,11 +239,12 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       inFlight = fresh
       noteAgentActivity()
       const prompt = assembleTurnPrompt(fresh, state.promptCtx, {
-        firstTurn: state.firstTurn,
+        withMemory: state.withMemory,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
         historyTurns: state.firstTurn ? state.historyTurns : undefined,
       })
       state.firstTurn = false
+      state.withMemory = false
       state.taskMessage = undefined
       state.historyTurns = undefined
 

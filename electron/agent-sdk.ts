@@ -1408,6 +1408,7 @@ export async function launchSdkAgent(opts: SdkLaunchOptions): Promise<{ ok: bool
       historyTurns: promptCtx.historyTurns,
       skillCatalog,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
+      withMemory: !resumed,
     })
 
     return { ok: true }

@@ -955,6 +955,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
       taskMessage: opts.taskMessage,
       historyTurns: opts.historyTurns,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),
+      withMemory: !resumed,
     })
     rememberPiResumable(sessionKey, rulesHash, currentDaemonPort ?? undefined, session.streamAgg?.cardId)
     const history = piSession.messages.length

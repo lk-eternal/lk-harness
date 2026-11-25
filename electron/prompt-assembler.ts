@@ -194,12 +194,12 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
+  opts?: { withMemory?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
 ): string {
   const blocks = assembleProtocolBlocks(ctx)
   if (opts?.skillCatalog) blocks.push(opts.skillCatalog)
   blocks.push(assembleTurnPrompt(messages, ctx, {
-    firstTurn: opts?.firstTurn,
+    withMemory: opts?.withMemory,
     taskMessage: opts?.taskMessage,
     historyTurns: opts?.historyTurns,
   }))
@@ -222,8 +222,8 @@ function projectNodeRouting(sessionKey: string | undefined, messages: TurnMessag
   return { projectId: proj.id, nodes }
 }
 
-/** 首轮带给 AI 的会话记忆；没挂记忆工具的会话（独立任务、访客）不带 */
-function firstTurnMemory(ctx: PromptAssemblyContext): SessionMemoryEntry[] | undefined {
+/** 新账本第一轮带给 AI 的会话记忆；没挂记忆工具的会话（独立任务、访客）不带 */
+function memoryForTurn(ctx: PromptAssemblyContext): SessionMemoryEntry[] | undefined {
   const sessionKey = ctx.sessionKey?.trim()
   if (!sessionKey || !ctxIncludeMemory(ctx)) return undefined
   return readSessionMemory(app.getPath("userData"), sessionKey)
@@ -253,14 +253,14 @@ function toEnvelopeMessage(m: TurnMessage): EnvelopeMessage {
 export function assembleTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
+  opts?: { withMemory?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
 ): string {
   const channelType = resolvePromptChannel(ctx).channel?.type
   return buildTurnEnvelope({
     chat: ctx.meta?.chatType,
     channel: channelType ? CHANNEL_TYPE_LABELS[channelType] : undefined,
     now: Date.now(),
-    memory: opts?.firstTurn ? firstTurnMemory(ctx) : undefined,
+    memory: opts?.withMemory ? memoryForTurn(ctx) : undefined,
     task: opts?.taskMessage?.trim(),
     history: (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map(toEnvelopeHistory),
     messages: messages.map(toEnvelopeMessage),

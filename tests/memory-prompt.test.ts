@@ -120,7 +120,7 @@ describe("shouldMountMemoryMcp / buildBuiltinMcpServers", () => {
   })
 })
 
-describe("首轮带入记忆", () => {
+describe("新账本第一轮带入记忆", () => {
   const remember = (sk: string) => {
     saveSessionMemory(h.userData, sk, "部署约束", "线上只能周三发布")
     saveSessionMemory(h.userData, sk, "待办", "等产品确认文案")
@@ -128,7 +128,7 @@ describe("首轮带入记忆", () => {
 
   it("首轮：memory 标签里每条记忆一个 item，带创建和修改时间，放在消息之前；用户消息照常在 message 里", () => {
     remember(MAIN.sessionKey!)
-    const prompt = assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })
+    const prompt = assembleTurnPrompt(MSGS, MAIN, { withMemory: true })
     const items = memoryOf(prompt)!.split("\n")
     expect(items).toHaveLength(2)
     expect(items[0]).toMatch(/^<item key="部署约束" created="[\d-]+ [\d:]+" updated="[\d-]+ [\d:]+">线上只能周三发布<\/item>$/)
@@ -137,37 +137,37 @@ describe("首轮带入记忆", () => {
     expect(prompt).toContain('<message id="m1">\n用户这一句\n</message>')
   })
 
-  it("不是首轮：不带（AI 手里的上下文里已经有了，每轮重复只是白占字数）", () => {
+  it("不是新账本的第一轮：不带（AI 手里的上下文里已经有了，重复只是白占字数）", () => {
     remember(MAIN.sessionKey!)
-    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: false }))).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { withMemory: false }))).toBeUndefined()
     expect(memoryOf(assembleTurnPrompt(MSGS, MAIN))).toBeUndefined()
   })
 
   it("首轮但没有记忆：不出现 memory 标签", () => {
-    expect(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })).not.toContain("<memory>")
+    expect(assembleTurnPrompt(MSGS, MAIN, { withMemory: true })).not.toContain("<memory>")
   })
 
   it("记忆只给自己的会话：别的会话的记忆不会串进来", () => {
     remember("ch_a|oc_other")
-    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true }))).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { withMemory: true }))).toBeUndefined()
   })
 
   it.each([["独立定时任务", TASK], ["访客档", VISITOR]] as [string, PromptAssemblyContext][])(
     "%s：没挂记忆工具，磁盘上即使有记忆也不带",
     (_n, ctx) => {
       remember(ctx.sessionKey!)
-      expect(memoryOf(assembleTurnPrompt(MSGS, ctx, { firstTurn: true }))).toBeUndefined()
+      expect(memoryOf(assembleTurnPrompt(MSGS, ctx, { withMemory: true }))).toBeUndefined()
     },
   )
 
   it("没有会话 key（单测里的空上下文）：不读记忆，不抛错", () => {
-    expect(memoryOf(assembleTurnPrompt(MSGS, {}, { firstTurn: true }))).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, {}, { withMemory: true }))).toBeUndefined()
   })
 
   it("和切供应商搬来的历史一起首轮带入：memory 在前，接着是 history，最后是本轮消息", () => {
     remember(MAIN.sessionKey!)
     const prompt = assembleTurnPrompt(MSGS, MAIN, {
-      firstTurn: true,
+      withMemory: true,
       historyTurns: [{ role: "user", text: "旧问题" }, { role: "assistant", text: "旧回答" }],
     })
     const at = (s: string) => prompt.indexOf(s)
@@ -179,9 +179,9 @@ describe("首轮带入记忆", () => {
 
   it("SDK 引擎的整轮提示词：协议段在前，memory 随首轮的 turn 标签在后，且只出现一次", () => {
     remember(MAIN.sessionKey!)
-    const p = assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: true })
+    const p = assembleSdkWorkerTurnPrompt(MSGS, MAIN, { withMemory: true })
     expect(p.indexOf(MEMORY_GROUP)).toBeLessThan(p.lastIndexOf("<turn "))
     expect(count(p, "线上只能周三发布")).toBe(1)
-    expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: false })).not.toContain("线上只能周三发布")
+    expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { withMemory: false })).not.toContain("线上只能周三发布")
   })
 })

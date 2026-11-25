@@ -40,6 +40,8 @@ interface WorkerState {
   /** 还没交给模型的 Skill 名单：第一轮带上，之后清掉 */
   skillCatalog?: SkillCatalogInjection
   firstTurn: boolean
+  /** 记忆只随新账本的第一轮给：账本续上的拉起不再重发 */
+  withMemory: boolean
   abort: AbortController
   loopPromise: Promise<void>
   /** 正在 executeSdkTurn 里（从调用到返回，同步置位/复位，供软打断判断有没有回合可打断） */
@@ -197,6 +199,7 @@ export function startSdkWorkerLoop(
     historyTurns?: HistoryTurn[]
     skillCatalog?: SkillCatalogInjection
     firstTurn: boolean
+    withMemory: boolean
   },
 ): Promise<void> {
   const abort = new AbortController()
@@ -209,6 +212,7 @@ export function startSdkWorkerLoop(
     historyTurns: opts.historyTurns,
     skillCatalog: opts.skillCatalog,
     firstTurn: opts.firstTurn,
+    withMemory: opts.withMemory,
     abort,
     loopPromise: Promise.resolve(),
     inTurn: false,
@@ -288,13 +292,14 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       inFlight = fresh
       noteAgentActivity()
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
-        firstTurn: state.firstTurn,
+        withMemory: state.withMemory,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
         historyTurns: state.firstTurn ? state.historyTurns : undefined,
         skillCatalog: state.skillCatalog?.text,
       })
       const sentCatalog = state.skillCatalog
       state.firstTurn = false
+      state.withMemory = false
       state.taskMessage = undefined
       state.historyTurns = undefined
       state.skillCatalog = undefined
