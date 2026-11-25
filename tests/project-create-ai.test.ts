@@ -130,6 +130,8 @@ function expectProjectInfoCard(body: Record<string, unknown>, projectId: string,
   expect(cmds.length).toBeGreaterThan(0)
   expect(cmds).not.toContain("/p info")
   expect(cmds.every((c) => c.startsWith("/p "))).toBe(true)
+  // 群本身就是这个项目：卡片不再带项目横幅
+  expect(body.cardTitle).toBeUndefined()
 }
 
 function git(cwd: string, args: string[]): string {
@@ -694,6 +696,28 @@ describe("AI 建项：绑定已有飞书群（mode=bind）", () => {
     await commands.handleFeishuProjectCommand(port, "m1", `/p use ${r.projectId}`, FS_CHAT)
     expect(hit("/api/active-session")).toEqual([])
     expect(hit("/cmd/result")[0]?.body.message).toContain("没有接入当前聊天")
+  })
+
+  it("项目横幅：专属群里不带，主聊天里照带；群里的详情卡只留「项目 · 详细信息」", async () => {
+    const { create, commands } = await boot()
+    const inGroup = await create.createProjectForAi(FS_CHAT, { name: "群项目", templateId: "general" }, bindTo(EXISTING_GROUP_ID))
+    const inMain = await create.createProjectForAi(FS_CHAT, { name: "私聊项目", templateId: "general" }, [inlineOn(FEISHU)])
+    expect(inGroup.ok && inMain.ok).toBe(true)
+    if (!inGroup.ok || !inMain.ok) return
+    const lastCard = () => hit("/cmd/result").at(-1)!.body
+
+    // 协作主卡（正文为空，只有流程按钮）
+    await commands.handleFeishuProjectCommand(port, "m1", `/p use ${inGroup.projectId}`, EXISTING_KEY)
+    expect(lastCard()).toMatchObject({ ok: true, message: "" })
+    expect(lastCard().cardTitle).toBeUndefined()
+    await commands.handleFeishuProjectCommand(port, "m2", "/p info", EXISTING_KEY)
+    expect(lastCard().cardTitle).toEqual({ title: "项目", subtitle: "详细信息" })
+
+    await commands.handleFeishuProjectCommand(port, "m3", `/p use ${inMain.projectId}`, FS_CHAT)
+    expect(lastCard()).toMatchObject({ ok: true, message: "" })
+    expect(lastCard().cardTitle).toMatchObject({ title: "📦 私聊项目" })
+    await commands.handleFeishuProjectCommand(port, "m4", "/p info", FS_CHAT)
+    expect(lastCard().cardTitle).toMatchObject({ title: "📦 私聊项目", subtitle: "详细信息" })
   })
 })
 

@@ -176,11 +176,11 @@ describe("独立的飞书多选题卡（不在流式卡里）", () => {
   const form = { namePrefix: "qm", labels: ["A. 甲", "B. 乙"], submitValue: { kind: "question_submit", sk: "sk1" } }
   const opts = { questionText: "选哪些？", form, title: "会话A", template: "turquoise", footer: "<font color='grey'>可多选</font>" }
 
-  it("会话色标题条 + 题干 + 表单 + 灰字提示，表单在根节点", () => {
+  it("会话横幅（灰字 + 细线）+ 题干 + 表单 + 灰字提示，表单在根节点", () => {
     const card = LarkSender.buildQuestionMultiCard(opts)
     expect(card.schema).toBe("2.0")
-    expect(card.body.elements.map((e: El) => e.tag)).toEqual(["column_set", "markdown", "form", "markdown"])
-    const f = card.body.elements[2]
+    expect(card.body.elements.map((e: El) => e.tag)).toEqual(["markdown", "hr", "markdown", "form", "markdown"])
+    const f = card.body.elements[3]
     expect(f.elements.filter((e: El) => e.tag === "checker").map((c: El) => c.name)).toEqual(["qm_0", "qm_1"])
     expect(buttonsIn(card).map((b) => b.behaviors[0].value)).toEqual([{ kind: "question_submit", sk: "sk1" }])
     // 整张卡内 name 不重名

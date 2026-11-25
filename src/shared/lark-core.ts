@@ -314,23 +314,6 @@ export class LarkSender {
     return { title: title.title, subtitle: title.subtitle };
   }
 
-  /** 正文色条底色（RGB）；与会话色板枚举一一对应。飞书 header 渲染有客户端 bug（同一卡片时有时无背景色），改为正文自绘规避 */
-  private static readonly BANNER_RGB: Record<string, string> = {
-    turquoise: "16,166,166",
-    blue: "51,109,244",
-    wathet: "58,142,230",
-    indigo: "97,81,244",
-    violet: "180,74,224",
-    purple: "124,88,246",
-    carmine: "235,54,146",
-    orange: "255,136,0",
-    red: "245,74,82",
-    yellow: "255,197,26",
-    green: "52,199,36",
-    grey: "142,142,147",
-    default: "142,142,147",
-  };
-
   static readonly CARD_DISMISSED_MD = "<font color='grey'>菜单已关闭</font>";
   static readonly CARD_BUTTON_BUDGET = 20;
 
@@ -482,31 +465,8 @@ export class LarkSender {
       config: { update_multi: true, width_mode: "fill" },
       body: { horizontal_align: "left", elements },
     };
-    const { title: titleText, subtitle } = LarkSender.normalizeCardTitle(title);
-    if (titleText) {
-      const esc = (s: string) => s.slice(0, 100);
-      const t = esc(titleText);
-      const sub = subtitle ? esc(subtitle) : undefined;
-      const oneLine = sub && LarkSender.displayWidth(t) + LarkSender.displayWidth(sub) + 3 <= 36;
-      const content = sub ? (oneLine ? `**${t}** · ${sub}` : `**${t}**\n${sub}`) : `**${t}**`;
-      const rgb = LarkSender.BANNER_RGB[template || ""] ?? LarkSender.BANNER_RGB.turquoise;
-      card.config.style = {
-        color: { "cus-hdr": { light_mode: `rgba(${rgb},0.14)`, dark_mode: `rgba(${rgb},0.26)` } },
-      };
-      elements.unshift({
-        tag: "column_set",
-        margin: "0px 0px 8px 0px",
-        columns: [{
-          tag: "column",
-          width: "weighted",
-          weight: 1,
-          background_style: "cus-hdr",
-          padding: "6px 10px 6px 10px",
-          vertical_align: "center",
-          elements: [{ tag: "markdown", content, text_size: "notation" }],
-        }],
-      });
-      if (questionMd) elements.splice(1, 0, { tag: "hr" });
+    if (title && LarkSender.normalizeCardTitle(title).title) {
+      elements.unshift(...LarkSender.buildSessionBannerElements(title));
     }
     return card;
   }
@@ -1136,27 +1096,15 @@ export class LarkSender {
     };
     return el;
   }
-  /** 流式卡：会话色条（目录/项目 + 分支），与 send 消息同款 */
-  static buildSessionBannerElement(title: CardTitle, elementId = "session_bar"): Record<string, unknown> {
+  /** 会话横幅（目录/项目 + 分支）：灰字一行加细线；send 消息卡和流式卡共用 */
+  static buildSessionBannerElements(title: CardTitle, elementId = "session_bar"): Record<string, unknown>[] {
     const { title: titleText, subtitle } = LarkSender.normalizeCardTitle(title);
     const t = (titleText || "会话").slice(0, 100);
     const sub = subtitle ? subtitle.slice(0, 100) : undefined;
     const oneLine = sub && LarkSender.displayWidth(t) + LarkSender.displayWidth(sub) + 3 <= 36;
-    const content = sub ? (oneLine ? `**${t}** · ${sub}` : `**${t}**\n${sub}`) : `**${t}**`;
-    return {
-      tag: "column_set",
-      element_id: elementId,
-      margin: "0px 0px 4px 0px",
-      columns: [{
-        tag: "column",
-        width: "weighted",
-        weight: 1,
-        background_style: "cus-hdr",
-        padding: "6px 10px 6px 10px",
-        vertical_align: "center",
-        elements: [{ tag: "markdown", content, text_size: "notation" }],
-      }],
-    };
+    const lines = sub ? (oneLine ? [`**${t}** · ${sub}`] : [`**${t}**`, sub]) : [`**${t}**`];
+    const content = lines.map((line) => `<font color='grey'>${line}</font>`).join("\n");
+    return [{ tag: "markdown", element_id: elementId, content, text_size: "notation" }, { tag: "hr" }];
   }
 
   /** 流式卡：未决/已收口问题区（collapsible_panel 灰框） */
@@ -1603,9 +1551,6 @@ export class LarkSender {
     const status = opts?.status || "streaming";
     const showThinking = opts?.showThinking !== false;
     const keepPerKind = LarkSender.normalizeStreamKeepPerKind(opts?.keepPerKind);
-    const sessionTpl = opts?.sessionTemplate || "turquoise";
-    const sessionRgb = LarkSender.BANNER_RGB[sessionTpl] ?? LarkSender.BANNER_RGB.turquoise;
-
     let segments = opts?.segments;
     if (!segments) {
       segments = [];
@@ -1633,7 +1578,7 @@ export class LarkSender {
     const buildBodyElements = (segs: BodySegment[]): Record<string, unknown>[] => {
       const els: Record<string, unknown>[] = [];
       if (opts?.sessionTitle) {
-        els.push(LarkSender.buildSessionBannerElement(opts.sessionTitle));
+        els.push(...LarkSender.buildSessionBannerElements(opts.sessionTitle));
       }
       let thinkIdx = 0;
       let toolIdx = 0;
@@ -1793,14 +1738,6 @@ export class LarkSender {
         update_multi: true,
         width_mode: "fill",
         summary: { content: status === "streaming" ? "思考中…" : status === "completed" ? "已完成" : "出错" },
-        style: {
-          color: {
-            "cus-hdr": {
-              light_mode: `rgba(${sessionRgb},0.14)`,
-              dark_mode: `rgba(${sessionRgb},0.26)`,
-            },
-          },
-        },
       },
       body: { horizontal_align: "left", elements: els },
     });

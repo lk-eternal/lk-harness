@@ -179,8 +179,9 @@ function projectButtons(p?: Project, chatId?: string): CommandButton[] {
   ]
 }
 
-/** 项目卡色条用项目名/分支，避免仍显示普通会话目录 */
-function projectCardTitle(p: Project) {
+/** 项目卡横幅用项目名/分支，避免仍显示普通会话目录；项目专属群本身就是这个项目，不再重复 */
+function projectCardTitle(p: Project, chatId?: string) {
+  if (projectGroupChatMatches(p, chatId)) return undefined
   return buildSessionCardTitle({ project: p })
 }
 
@@ -252,7 +253,7 @@ interface NewProjectInput {
 /** 项目信息卡发进新接入的群里（尽力而为：reportCommandResult 自己吞掉发送错误，机器人不在群里时发不进去也不算失败）：正文是项目信息，按钮只留流程节点（信息已经在卡上，不再放「项目详细信息」） */
 async function announceProjectInGroup(port: number, project: Project, groupChatKey: string): Promise<void> {
   await reportCommandResult(port, "", true, formatProjectCard(project), groupChatKey, projectNodeButtons(project), {
-    cardTitle: projectCardTitle(project),
+    cardTitle: projectCardTitle(project, groupChatKey),
     sessionKey: projectSessionKeyFor(project, groupChatKey),
   })
 }
@@ -1013,7 +1014,7 @@ async function runAction(
     `🚀 已启动${r.label}\n项目：${r.project.name}`,
     chatId,
     undefined,
-    { patchMessageId, cardTitle: projectCardTitle(p), sessionKey: r.sessionKey },
+    { patchMessageId, cardTitle: projectCardTitle(p, chatId), sessionKey: r.sessionKey },
   )
 }
 
@@ -1203,7 +1204,7 @@ async function replyProjectWorkspace(
   headerNote?: string,
 ): Promise<void> {
   const sk = projectSessionKeyFor(p, chatId)
-  const base = projectCardTitle(p)
+  const base = projectCardTitle(p, chatId)
   const cardTitle = headerNote && base
     ? { title: base.title, subtitle: headerNote }
     : base
@@ -1357,7 +1358,7 @@ export async function handleFeishuProjectCommand(
         await reportCommandResult(port, messageId, false, isolation ? `❌ ${r.error}` : projectDirUnavailableText(target, r.error || ""), chatId, isolation ? undefined : [
           { label: `重试进入 ${target.name}`, cmd: `/p use ${target.id}` },
         ], {
-          cardTitle: projectCardTitle(target),
+          cardTitle: projectCardTitle(target, chatId),
           sessionKey: projectSessionKeyFor(target, chatId),
         })
         return
@@ -1415,7 +1416,7 @@ export async function handleFeishuProjectCommand(
     await reportCommandResult(port, messageId, true, formatProjectCard(cur), chatId, [
       { label: "← 返回菜单", cmd: "/p menu --back", section: "导航" },
     ], {
-      cardTitle: { title: projectCardTitle(cur)?.title ?? `📦 ${cur.name}`, subtitle: "详细信息" },
+      cardTitle: { title: projectCardTitle(cur, chatId)?.title ?? "项目", subtitle: "详细信息" },
       patchMessageId,
     })
     return

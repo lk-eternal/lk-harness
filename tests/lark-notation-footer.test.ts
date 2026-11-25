@@ -59,7 +59,7 @@ describe("LarkSender.withNotationFooter", () => {
 })
 
 describe("LarkSender.sendMessage 带页脚", () => {
-  it("直发：正文在前，页脚（分隔线 + 小字）在最后；顶部的会话色条还在", async () => {
+  it("直发：正文在前，页脚（分隔线 + 小字）在最后；顶部的会话横幅还在", async () => {
     const { sender, sent } = fakeSender()
     await sender.sendMessage("定时任务测试成功", undefined, "oc_main", { title: "📂 lk-harness", subtitle: "🌿 main" }, "green", false, "composer-2.5-fast")
     expect(sent).toHaveLength(1)
@@ -71,8 +71,10 @@ describe("LarkSender.sendMessage 带页脚", () => {
     // 正文紧挨着页脚之前，没被页脚挤到别处
     expect(els.some((e) => e.tag === "markdown" && e.content === "定时任务测试成功")).toBe(true)
     expect(els.findIndex((e) => e.content === "定时任务测试成功")).toBeLessThan(els.length - 2)
-    // 色条（column_set）仍是第一个元素
-    expect(els[0].tag).toBe("column_set")
+    // 横幅（灰字 markdown + 细线）仍在最前面
+    expect(els[0].tag).toBe("markdown")
+    expect(els[0].content).toContain("📂 lk-harness")
+    expect(els[1]).toEqual({ tag: "hr" })
   })
 
   it("回复：页脚同样带上", async () => {
