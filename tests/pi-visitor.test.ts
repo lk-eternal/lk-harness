@@ -58,7 +58,7 @@ vi.mock("../electron/pi-mcp-loader.js", async () => {
 })
 
 import { buildAppendSystemPrompt, createHarnessPiSession } from "../electron/pi-embedded"
-import { computePromptHash } from "../electron/prompt-assembler"
+import { buildHostPrompt } from "../electron/prompt-assembler"
 import { initHarnessMcpStore, saveHarnessMcpServer, CLAW_MCP_KEY } from "../src/shared/harness-mcp-store"
 import { PI_LOCAL_TOOLS, resolveVisitorLimits } from "../src/shared/visitor-limits"
 
@@ -134,14 +134,14 @@ describe("pi 访客会话", () => {
   })
 })
 
-describe("提示词指纹（两个引擎共用）：访客限制变了指纹就变", () => {
+describe("宿主提示词指纹（两个引擎共用）：访客限制变了指纹就变", () => {
   it("不受限 / 访客 / 访客+开放 MCP 三者指纹互不相同；相同限制指纹相同", () => {
     const ctx = { meta: { chatType: "p2p" }, sessionKey: "ch_a|oc_x", includeAdmin: false } as never
     const lim = (c: Record<string, unknown>) => resolveVisitorLimits({ visitorTier: "visitor", ...c }, "others")
-    const none = computePromptHash(ctx)
-    const v1 = computePromptHash({ ...(ctx as object), visitor: lim({}) } as never)
-    const v2 = computePromptHash({ ...(ctx as object), visitor: lim({ visitorMcp: ["notion"] }) } as never)
-    const v2again = computePromptHash({ ...(ctx as object), visitor: lim({ visitorMcp: ["notion"] }) } as never)
+    const none = buildHostPrompt(ctx).hash
+    const v1 = buildHostPrompt({ ...(ctx as object), visitor: lim({}) } as never).hash
+    const v2 = buildHostPrompt({ ...(ctx as object), visitor: lim({ visitorMcp: ["notion"] }) } as never).hash
+    const v2again = buildHostPrompt({ ...(ctx as object), visitor: lim({ visitorMcp: ["notion"] }) } as never).hash
     expect(new Set([none, v1, v2]).size).toBe(3)
     expect(v2).toBe(v2again)
   })

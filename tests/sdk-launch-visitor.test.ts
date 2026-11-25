@@ -3,14 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 /**
  * 真实的 launchSdkAgent + 假的 @cursor/sdk + 空壳 worker：验证访客档真的传给了 SDK。
  * 访客会话：Agent.create / Agent.resume 都带 tools 白名单（SDK 的 tools 不随 Agent 持久化，续聊也要再传）、
- * 内置 MCP 走 /mcp-visitor、用户 MCP 只挂点名的、Skill 名单只列点名的；主人 / 同我档的会话一个限制都不加。
+ * 内置 MCP 走 /mcp-visitor、用户 MCP 只挂点名的；主人 / 同我档的会话一个限制都不加。
  */
 const h = vi.hoisted(() => ({
   dir: "",
   resume: vi.fn(),
   create: vi.fn(),
   startWorker: vi.fn(),
-  skillCalls: [] as unknown[][],
 }))
 
 vi.mock("electron", async () => {
@@ -52,13 +51,6 @@ vi.mock("../electron/sdk-session-worker", () => ({
   isSdkWorkerActive: vi.fn(() => false),
   stopSdkWorker: vi.fn(async () => undefined),
 }))
-vi.mock("../electron/skill-catalog", () => ({
-  getSkillCatalog: (...args: unknown[]) => {
-    h.skillCalls.push(args)
-    return { text: "", hash: "", count: 0 }
-  },
-}))
-
 import { launchSdkAgent } from "../electron/agent-sdk"
 import { initSessionModelStore } from "../src/shared/session-model-store"
 import { patchSessionRecord } from "../src/shared/session-overrides-store"
@@ -102,7 +94,6 @@ beforeEach(() => {
   h.startWorker.mockImplementation(() => new Promise<void>(() => {}))
   h.resume.mockResolvedValue(fakeAgent("agent-old"))
   h.create.mockResolvedValue(fakeAgent("agent-new"))
-  h.skillCalls.length = 0
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
 })
 afterEach(() => {
@@ -110,18 +101,17 @@ afterEach(() => {
 })
 
 describe("不受限的会话：和以前一样，一个限制都不加", () => {
-  it("没有 visitor：不传 tools；内置 MCP 走 /mcp-interactive；用户 MCP 全挂；Skill 名单不过滤", async () => {
+  it("没有 visitor：不传 tools；内置 MCP 走 /mcp-interactive；用户 MCP 全挂", async () => {
     expect(await launchSdkAgent(opts())).toEqual({ ok: true })
     const o = createOpts()
     expect("tools" in o).toBe(false)
     expect(o.mcpServers[CLAW_MCP_KEY]!.url).toBe("http://127.0.0.1:4321/mcp-interactive")
     expect(Object.keys(o.mcpServers).sort()).toEqual([CLAW_MCP_KEY, MEMORY_MCP_KEY, "db", "notion"].sort())
-    expect(h.skillCalls[0]![1]).toBeUndefined()
   })
 })
 
 describe("访客会话", () => {
-  it("Agent.create：tools 白名单 + 访客专用内置 MCP + 不挂用户 MCP + Skill 名单按空白名单取", async () => {
+  it("Agent.create：tools 白名单 + 访客专用内置 MCP + 不挂用户 MCP", async () => {
     const visitor = resolveVisitorLimits({ visitorTier: "visitor" }, "others")!
     expect(await launchSdkAgent(opts({ visitor }))).toEqual({ ok: true })
     const o = createOpts()
@@ -130,7 +120,6 @@ describe("访客会话", () => {
     expect(o.tools).not.toContain("read")
     expect(o.mcpServers[CLAW_MCP_KEY]!.url).toBe("http://127.0.0.1:4321/mcp-visitor")
     expect(Object.keys(o.mcpServers)).toEqual([CLAW_MCP_KEY])
-    expect(h.skillCalls[0]![1]).toEqual([])
   })
 
   it("Agent.resume（续聊）也带同一份 tools 和 MCP：SDK 不持久化 tools，漏了就等于续聊时解除限制", async () => {
@@ -145,14 +134,13 @@ describe("访客会话", () => {
     expect(Object.keys(ro.mcpServers).sort()).toEqual([CLAW_MCP_KEY, "notion"].sort())
   })
 
-  it("额外开放：点名的用户 MCP 才挂；开放了 Skill 就多给 read，名单只列点名的", async () => {
+  it("额外开放：点名的用户 MCP 才挂；开放了 Skill 就多给 read", async () => {
     const visitor = resolveVisitorLimits({ visitorTier: "visitor", visitorMcp: ["db"], visitorSkills: ["weekly-report"] }, "others")!
     expect(await launchSdkAgent(opts({ visitor }))).toEqual({ ok: true })
     const o = createOpts()
     expect(Object.keys(o.mcpServers).sort()).toEqual([CLAW_MCP_KEY, "db"].sort())
     expect(o.tools).toContain("read")
     expect(o.tools).not.toContain("shell")
-    expect(h.skillCalls[0]![1]).toEqual(["weekly-report"])
   })
 
   it("交给 worker 的提示词上下文带着 visitor（提示词里要告诉 AI 它是访客）", async () => {

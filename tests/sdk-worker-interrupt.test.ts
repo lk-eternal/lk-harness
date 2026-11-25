@@ -31,7 +31,7 @@ vi.mock("../electron/poll-host", () => ({
   hostTouchSessionReply: vi.fn(async () => undefined),
   markMessagesProcessed: mocks.markMessagesProcessed,
 }))
-vi.mock("../electron/prompt-assembler", () => ({ assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt") }))
+vi.mock("../electron/prompt-assembler", () => ({ assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt"), planHostPrompt: vi.fn(() => undefined) }))
 vi.mock("../electron/carryover", () => ({ appendMirrorTurns: mocks.appendMirrorTurns, replyTexts: mocks.replyTexts }))
 vi.mock("../electron/ui-logger", () => ({ pushUiLog: vi.fn() }))
 vi.mock("../electron/stream-card", () => ({ rebaseUnensuredQueue: vi.fn() }))

@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest"
 import {
   buildSkillCatalog,
-  planSkillInjection,
   SKILL_CATALOG_BUDGET,
   SKILL_DESC_MAX,
-  withUpdateNotice,
   type CatalogRoot,
   type CatalogSkill,
 } from "../src/shared/skill-catalog"
@@ -188,62 +186,4 @@ describe("buildSkillCatalog：预算", () => {
     const r = buildSkillCatalog(many(500))
     expect(r.text.length).toBeLessThanOrEqual(SKILL_CATALOG_BUDGET)
   })
-})
-
-describe("withUpdateNotice", () => {
-  it("名单有变化时在前面说明这份替代之前的", () => {
-    const t = withUpdateNotice("## 本机 Skill\nx")
-    expect(t.startsWith("（Skill 名单有变化")).toBe(true)
-    expect(t.endsWith("## 本机 Skill\nx")).toBe(true)
-  })
-
-  it("空名单不加说明（没有名单就别发一句孤零零的提示）", () => {
-    expect(withUpdateNotice("")).toBe("")
-  })
-})
-
-describe("planSkillInjection：这次拉起要不要带名单", () => {
-  const current = { text: "## 本机 Skill\n- a：甲", hash: "h2", count: 1 }
-
-  it("新账本（AI 手里还没有名单）：带原文，不加「有变化」的说明", () => {
-    const p = planSkillInjection(current, undefined)
-    expect(p).toEqual({ text: current.text, hash: "h2", reason: "new-ledger" })
-    expect(p!.text).not.toContain("名单有变化")
-  })
-
-  it("AI 手里的就是这一版：不带（续跑的会话每次拉起都很安静）", () => {
-    expect(planSkillInjection(current, "h2")).toBeUndefined()
-  })
-
-  it("AI 手里的是旧版：补发最新的，并说明以这份为准", () => {
-    const p = planSkillInjection(current, "h1")
-    expect(p).toMatchObject({ hash: "h2", reason: "changed" })
-    expect(p!.text).toBe(withUpdateNotice(current.text))
-    expect(p!.text).toContain("以这份为准")
-  })
-
-  it("本机没有可列的 Skill：什么都不带，不管 AI 手里有没有旧版", () => {
-    const none = { text: "", hash: "", count: 0 }
-    expect(planSkillInjection(none, undefined)).toBeUndefined()
-    expect(planSkillInjection(none, "h1")).toBeUndefined()
-  })
-
-  it("count 为 0 但文本非空 / 文本为空但 count 非 0 这种自相矛盾的输入：保守地不带", () => {
-    expect(planSkillInjection({ text: "x", hash: "h", count: 0 }, undefined)).toBeUndefined()
-    expect(planSkillInjection({ text: "", hash: "h", count: 3 }, undefined)).toBeUndefined()
-  })
-
-  it("一连串拉起：新账本带一次 → 之后都不带 → 名单变了补一次 → 又安静", () => {
-    let sent: string | undefined
-    const launch = (cur: typeof current) => {
-      const p = planSkillInjection(cur, sent)
-      if (p) sent = p.hash // 对应 worker 里「交付成功才记指纹」
-      return p?.reason
-    }
-    const v2 = { ...current, hash: "h3", text: "## 本机 Skill\n- a：甲\n- b：乙", count: 2 }
-    expect([launch(current), launch(current), launch(current), launch(v2), launch(v2)]).toEqual([
-      "new-ledger", undefined, undefined, "changed", undefined,
-    ])
-  })
-
 })

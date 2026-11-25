@@ -14,6 +14,7 @@ import { MESSAGE_FORMAT_BLOCK, buildTurnEnvelope, type EnvelopeMessage, type Env
 import { buildVisitorPromptSection, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { joinPromptBlocks, promptAttr } from "../src/shared/prompt-markup.js"
 import { readTasksFromFile } from "./cron-scheduler"
+import { getSkillCatalog } from "./skill-catalog"
 import { readLockFile } from "./daemon-client"
 import { getDaemonPort } from "./workspace-injector"
 import type { LaunchMeta } from "./agent-session-types"
@@ -187,23 +188,55 @@ export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "ses
   return hashSystemPrompt(joinPromptBlocks(assembleProtocolBlocks(ctx)))
 }
 
+/** 宿主提示词整份：协议块加本机 Skill 名单。Pi 整份当系统提示词，SDK 按指纹决定哪一轮给 */
+export interface HostPrompt {
+  text: string
+  /** 文本的指纹：账本里 AI 手里的那一版是不是现在这一版，就比它 */
+  hash: string
+}
+
+export function buildHostPrompt(ctx: PromptAssemblyContext): HostPrompt {
+  const skills = getSkillCatalog(Date.now(), ctx.visitor?.skillAllow)
+  const text = joinPromptBlocks([...assembleProtocolBlocks(ctx), skills.text])
+  return { text, hash: hashSystemPrompt(text) }
+}
+
+const HOST_PROMPT_UPDATE_NOTICE = "（以下协议、规则和 Skill 名单有更新，以这份为准）"
+
+export interface HostPromptDelivery {
+  /** 放进这一轮的文本；账本里已经有旧版时，开头说明以这份为准 */
+  text: string
+  /** 这一轮送达成功后记下的指纹 */
+  hash: string
+  reason: "new-ledger" | "changed"
+}
+
 /**
- * SDK Session Worker：每轮全量注入宿主协议块（身份、能力、数字身份、用户规则……）。
- * skillCatalog：本机 Skill 名单，只在账本新开或名单变了的那一轮给（之后的轮次不带，已经在历史里了）。
+ * SDK 这一轮要不要给宿主提示词：账本里 AI 手里那一版（deliveredHash）和现在的一样就不给。
+ * 新账本、搬运、规则或 Skill 变了、上次没送达，都是同一个判断。
  */
+export function planHostPrompt(ctx: PromptAssemblyContext, deliveredHash: string | undefined): HostPromptDelivery | undefined {
+  const host = buildHostPrompt(ctx)
+  if (host.hash === deliveredHash) return undefined
+  return deliveredHash
+    ? { text: `${HOST_PROMPT_UPDATE_NOTICE}\n${host.text}`, hash: host.hash, reason: "changed" }
+    : { text: host.text, hash: host.hash, reason: "new-ledger" }
+}
+
+/** SDK Session Worker 的一轮：hostPrompt 是 planHostPrompt 定下要给的整份宿主提示词，放在信封之前；不给就只有信封 */
 export function assembleSdkWorkerTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
-  opts?: { withMemory?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
+  opts?: { withMemory?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; hostPrompt?: string },
 ): string {
-  const blocks = assembleProtocolBlocks(ctx)
-  if (opts?.skillCatalog) blocks.push(opts.skillCatalog)
-  blocks.push(assembleTurnPrompt(messages, ctx, {
-    withMemory: opts?.withMemory,
-    taskMessage: opts?.taskMessage,
-    historyTurns: opts?.historyTurns,
-  }))
-  return joinPromptBlocks(blocks)
+  return joinPromptBlocks([
+    opts?.hostPrompt ?? "",
+    assembleTurnPrompt(messages, ctx, {
+      withMemory: opts?.withMemory,
+      taskMessage: opts?.taskMessage,
+      historyTurns: opts?.historyTurns,
+    }),
+  ])
 }
 
 /** 项目会话每轮自然语言附带：节点索引 + 发现协议（按钮 [PROJECT_ACTION] 轮跳过，抗长会话遗忘） */

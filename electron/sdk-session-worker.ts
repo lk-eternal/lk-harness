@@ -14,7 +14,7 @@ import {
   type HostPollResult,
   type PollMessage,
 } from "./poll-host"
-import { assembleSdkWorkerTurnPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
+import { assembleSdkWorkerTurnPrompt, planHostPrompt, type HistoryTurn, type PromptAssemblyContext } from "./prompt-assembler"
 import { appendMirrorTurns, replyTexts } from "./carryover"
 import { pushUiLog } from "./ui-logger"
 import { noteAgentActivity } from "./agent-activity"
@@ -24,12 +24,6 @@ import { WORKER_IDLE_EXIT_MS } from "../src/shared/poll-protocol.js"
 
 export type SdkWorkerPhase = "listening" | "processing" | "stopping"
 
-/** 要随第一轮交给模型的 Skill 名单；hash 是名单指纹，交付成功后记到会话上 */
-export interface SkillCatalogInjection {
-  text: string
-  hash: string
-}
-
 interface WorkerState {
   session: SdkSessionAgent
   phase: SdkWorkerPhase
@@ -37,8 +31,6 @@ interface WorkerState {
   promptCtx: PromptAssemblyContext
   taskMessage?: string
   historyTurns?: HistoryTurn[]
-  /** 还没交给模型的 Skill 名单：第一轮带上，之后清掉 */
-  skillCatalog?: SkillCatalogInjection
   firstTurn: boolean
   /** 记忆只随新账本的第一轮给：账本续上的拉起不再重发 */
   withMemory: boolean
@@ -197,7 +189,6 @@ export function startSdkWorkerLoop(
     promptCtx: PromptAssemblyContext
     taskMessage?: string
     historyTurns?: HistoryTurn[]
-    skillCatalog?: SkillCatalogInjection
     firstTurn: boolean
     withMemory: boolean
   },
@@ -210,7 +201,6 @@ export function startSdkWorkerLoop(
     promptCtx: opts.promptCtx,
     taskMessage: opts.taskMessage,
     historyTurns: opts.historyTurns,
-    skillCatalog: opts.skillCatalog,
     firstTurn: opts.firstTurn,
     withMemory: opts.withMemory,
     abort,
@@ -291,18 +281,21 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       state.phase = "processing"
       inFlight = fresh
       noteAgentActivity()
+      // 宿主提示词（协议、规则、Skill 名单）只在账本里 AI 手里那一版和现在的不一样时给：新账本、搬运、规则或名单变了、上次没送达
+      const hostDelivery = planHostPrompt(state.promptCtx, session.protocolHash)
+      if (hostDelivery) {
+        pushUiLog("SDK", "INFO", `[${sessionKey}] 本轮带上宿主提示词（${hostDelivery.reason === "changed" ? "内容有变化" : "账本新开"}，${hostDelivery.text.length} 字，hash=${hostDelivery.hash}）`)
+      }
       const prompt = assembleSdkWorkerTurnPrompt(fresh, state.promptCtx, {
         withMemory: state.withMemory,
         taskMessage: state.firstTurn ? state.taskMessage : undefined,
         historyTurns: state.firstTurn ? state.historyTurns : undefined,
-        skillCatalog: state.skillCatalog?.text,
+        hostPrompt: hostDelivery?.text,
       })
-      const sentCatalog = state.skillCatalog
       state.firstTurn = false
       state.withMemory = false
       state.taskMessage = undefined
       state.historyTurns = undefined
-      state.skillCatalog = undefined
 
       pushUiLog("SDK", "INFO", `[${sessionKey}] worker 处理 ${fresh.length} 条消息`)
 
@@ -318,9 +311,9 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
       session.interruptRequested = false
       if (abort.signal.aborted || session.abortController.signal.aborted) break
 
-      // 名单已经随这一轮交给了模型（被软打断的回合模型也看过了）：记下指纹，之后的轮次和下次 Resume 都不用再带；
-      // 回合失败没记，下次拉起会再带一次
-      if (sentCatalog && (turnResult.ok || interrupted)) session.skillsHash = sentCatalog.hash
+      // 宿主提示词已经随这一轮交给了模型（被软打断的回合模型也看过了）：记下指纹，之后的轮次和下次 Resume 都不用再带；
+      // 回合失败没记，下一轮会再带一次
+      if (hostDelivery && (turnResult.ok || interrupted)) session.protocolHash = hostDelivery.hash
 
       // 被软打断的回合：取消引发的错误状态不算失败，worker 继续监听
       if (!turnResult.ok && !interrupted) {

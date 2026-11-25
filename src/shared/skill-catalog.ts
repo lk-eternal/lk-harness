@@ -127,31 +127,3 @@ export function buildSkillCatalog(
   }
   return { text: render(rows, dirs, 0, 0), count: n, full: 0, listed: 0 }
 }
-
-/** 名单有变化时补发：开头说明这份替代之前给过的，以免 AI 以为是两份 */
-export function withUpdateNotice(text: string): string {
-  return text ? `（Skill 名单有变化，下面是最新的，以这份为准）\n${text}` : text
-}
-
-export interface SkillInjection {
-  text: string
-  hash: string
-  /** new-ledger：这个账本里还没给过；changed：给过，但名单后来变了 */
-  reason: "new-ledger" | "changed"
-}
-
-/**
- * 这次拉起会话要不要给 AI 带名单。
- * sentHash = 这个账本里 AI 已经拿到的那一版的指纹（新账本、或上次没送达都是 undefined）。
- * 没有 Skill、或名单没变就不带——后面的轮次靠这个保持安静。
- */
-export function planSkillInjection(
-  current: { text: string; hash: string; count: number },
-  sentHash: string | undefined,
-): SkillInjection | undefined {
-  if (current.count <= 0 || !current.text) return undefined
-  if (sentHash === current.hash) return undefined
-  return sentHash
-    ? { text: withUpdateNotice(current.text), hash: current.hash, reason: "changed" }
-    : { text: current.text, hash: current.hash, reason: "new-ledger" }
-}

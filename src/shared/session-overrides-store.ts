@@ -29,8 +29,8 @@ export interface SessionOverrideRecord {
    */
   boundDir?: string
   rulesHash?: string
-  /** SDK 会话：这个账本里 AI 已经拿到的 Skill 名单的指纹（名单变了才补发） */
-  skillsHash?: string
+  /** SDK 会话：这个账本里 AI 已经拿到的宿主提示词（协议、规则、Skill 名单）的指纹（变了才补发） */
+  protocolHash?: string
   daemonPort?: number
   streamCardId?: string
   updatedAt: number
@@ -217,7 +217,7 @@ function isRecordEmpty(r: SessionOverrideRecord): boolean {
     && !r.workspaceDir
     && !r.boundDir
     && !r.rulesHash
-    && !r.skillsHash
+    && !r.protocolHash
     && r.daemonPort === undefined
     && !r.streamCardId
   )

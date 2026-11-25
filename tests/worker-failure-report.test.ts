@@ -40,6 +40,7 @@ vi.mock("../electron/poll-host", () => ({
 vi.mock("../electron/agent-failure-notice", () => ({ reportAgentFailure: m.reportAgentFailure }))
 vi.mock("../electron/prompt-assembler", () => ({
   assembleSdkWorkerTurnPrompt: vi.fn(() => "prompt"),
+  planHostPrompt: vi.fn(() => undefined),
   assembleTurnPrompt: vi.fn(() => "prompt"),
 }))
 vi.mock("../electron/carryover", () => ({ appendMirrorTurns: vi.fn(), replyTexts: vi.fn(() => []) }))
