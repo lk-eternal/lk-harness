@@ -19,11 +19,12 @@ vi.mock("../electron/ui-logger", () => ({ broadcastLog: () => {} }))
 
 import { assembleProtocolBlocks, clearProtocolTemplateCache, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
 import { buildBuiltinMcpServers, shouldMountScheduleMcp, SCHEDULE_MCP_KEY } from "../src/shared/harness-mcp-store.js"
+import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
 beforeEach(() => clearProtocolTemplateCache())
 
 const SCHEDULE_TOOLS = "schedule_create / schedule_list / schedule_cancel"
-const text = (ctx: PromptAssemblyContext) => assembleProtocolBlocks(ctx, 19528).join("\n")
+const text = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx, 19528))
 const count = (s: string, sub: string) => s.split(sub).length - 1
 
 const MAIN: PromptAssemblyContext = { meta: { chatType: "p2p" }, sessionKey: "ch_a|oc_main", includeAdmin: true }

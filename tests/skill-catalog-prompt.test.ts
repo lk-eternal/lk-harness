@@ -30,6 +30,7 @@ vi.mock("../electron/skill-catalog", () => ({ getSkillCatalog: () => scan.value 
 import { DefaultResourceLoader, SettingsManager } from "@mariozechner/pi-coding-agent"
 import { assembleProtocolBlocks, assembleSdkWorkerTurnPrompt, clearProtocolTemplateCache, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
 import { buildAppendSystemPrompt, PI_SKILL_LOADING } from "../electron/pi-embedded.js"
+import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
 const CATALOG = "## 本机 Skill\n下面这些目录里有 Skill\n\n### /home/u/.cursor/skills\n- alpha：甲"
 const USER_TEXT = "用户这一句-XYZ"
@@ -43,7 +44,7 @@ beforeEach(() => {
 
 describe("SDK：assembleSdkWorkerTurnPrompt 的 skillCatalog", () => {
   it("给了名单：放在协议块之后、本轮消息之前，且只出现一次", () => {
-    const protocol = assembleProtocolBlocks(CTX).join("\n")
+    const protocol = joinPromptBlocks(assembleProtocolBlocks(CTX))
     const p = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true, skillCatalog: CATALOG })
     const at = p.indexOf(CATALOG)
     expect(at).toBeGreaterThanOrEqual(protocol.length)
@@ -51,19 +52,18 @@ describe("SDK：assembleSdkWorkerTurnPrompt 的 skillCatalog", () => {
     expect(p.split(CATALOG).length - 1).toBe(1)
   })
 
-  it("名单和前后都用 --- 隔开，和协议块、消息不粘在一起", () => {
+  it("名单和前后各隔一个空行，和协议块、消息不粘在一起", () => {
     const p = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true, skillCatalog: CATALOG })
-    expect(p).toContain(`\n---\n${CATALOG}\n---\n`)
+    expect(p).toContain(`\n\n${CATALOG}\n\n`)
   })
 
-  it("没给名单（后续轮次的常态）：提示词里没有任何 Skill 名单痕迹，也没有多余的分隔线", () => {
+  it("没给名单（后续轮次的常态）：提示词里没有任何 Skill 名单痕迹", () => {
     const p = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: false })
-    expect(p).not.toContain("本机 Skill")
-    expect(p).not.toContain("---\n---")
+    expect(p).not.toContain("# Skill")
     expect(p).toContain(USER_TEXT)
   })
 
-  it("给空串和不给一样（不会多出一对空的分隔线）", () => {
+  it("给空串和不给一样（不会多出空段）", () => {
     const none = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true })
     const empty = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true, skillCatalog: "" })
     expect(empty).toBe(none)
@@ -72,25 +72,25 @@ describe("SDK：assembleSdkWorkerTurnPrompt 的 skillCatalog", () => {
   it("带不带名单，其余部分一字不差（名单是纯插入，不改动协议和消息）", () => {
     const without = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true })
     const withCat = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true, skillCatalog: CATALOG })
-    expect(withCat.replace(`---\n${CATALOG}\n`, "")).toBe(without)
+    expect(withCat.replace(`${CATALOG}\n\n`, "")).toBe(without)
   })
 })
 
 describe("Pi：buildAppendSystemPrompt 带上同一份名单", () => {
   const launch = { meta: { chatType: "p2p" }, sessionKey: "ch_a|oc_main", includeAdmin: true } as never
 
-  it("有名单：协议块之后接 --- 和名单，整体仍是一个字符串块", () => {
+  it("有名单：协议块之后隔一个空行接名单，整体仍是一个字符串块", () => {
     scan.value = { text: CATALOG, hash: "abc", count: 1 }
     const blocks = buildAppendSystemPrompt(launch)
     expect(blocks).toHaveLength(1)
-    const protocol = assembleProtocolBlocks(CTX).join("\n")
+    const protocol = joinPromptBlocks(assembleProtocolBlocks(CTX))
     expect(blocks[0].startsWith(protocol)).toBe(true)
-    expect(blocks[0].endsWith(`\n---\n${CATALOG}`)).toBe(true)
+    expect(blocks[0].endsWith(`\n\n${CATALOG}`)).toBe(true)
   })
 
-  it("没有名单：只有协议，不留尾部的 ---", () => {
+  it("没有名单：只有协议，尾部不留空行", () => {
     const blocks = buildAppendSystemPrompt(launch)
-    expect(blocks).toEqual([assembleProtocolBlocks(CTX).join("\n")])
+    expect(blocks).toEqual([joinPromptBlocks(assembleProtocolBlocks(CTX))])
     expect(blocks[0]).not.toContain("本机 Skill")
   })
 

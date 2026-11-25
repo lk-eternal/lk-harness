@@ -11,7 +11,8 @@ import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
 import { shouldMountMemoryMcp, shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
 import { MEMORY_PROMPT_SECTION, memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
-import { buildVisitorPromptSection, visitorLimitsKey, type VisitorLimits } from "../src/shared/visitor-limits.js"
+import { buildVisitorPromptSection, type VisitorLimits } from "../src/shared/visitor-limits.js"
+import { joinPromptBlocks, promptAttr } from "../src/shared/prompt-markup.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
 import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
@@ -153,16 +154,13 @@ function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessi
   return { channelId: channel?.id ?? channelId, audience, ...(scene === "dm" || scene === "group" ? { scene } : {}) }
 }
 
-function appendUserHarnessRules(parts: string[], ctx?: Pick<PromptAssemblyContext, "meta" | "sessionKey">): void {
+/** 每条规则一个标签，规则正文里自带的标题层级原样保留，不和外层标题混；没有适用的规则返回空串 */
+function buildUserRulesBlock(ctx?: Pick<PromptAssemblyContext, "meta" | "sessionKey">): string {
   const scope = resolvePromptRuleScope(ctx ?? {})
   const rules = listEnabledHarnessRules().filter((r) => ruleAppliesTo(r, scope.channelId, scope.audience, scope.scene))
-  if (!rules.length) return
-  parts.push("---")
-  parts.push("## 用户 Harness 规则")
-  for (const r of rules) {
-    parts.push(`### ${r.name}`)
-    parts.push(stripFrontmatter(r.content))
-  }
+  if (!rules.length) return ""
+  const items = rules.map((r) => `<rule name="${promptAttr(r.name)}">\n${stripFrontmatter(r.content)}\n</rule>`)
+  return ["# 用户规则", ...items].join("\n\n")
 }
 
 function ctxIncludeAdmin(ctx: Pick<PromptAssemblyContext, "includeAdmin">): boolean {
@@ -206,54 +204,27 @@ function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey
   }
 }
 
-export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">, daemonPort?: number | null): string {
-  const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
-  const includeAdmin = ctxIncludeAdmin(ctx)
-  const h = createHash("md5")
-  h.update(loadProtocol(portForAssembly(daemonPort), includeAdmin, ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)))
-  const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
-  if (identity) h.update(identity)
-  const scope = resolvePromptRuleScope(ctx)
-  for (const r of listEnabledHarnessRules().filter((x) => ruleAppliesTo(x, scope.channelId, scope.audience, scope.scene))) {
-    h.update(r.id)
-    h.update(r.content)
-    h.update(JSON.stringify(r.scope ?? { mode: "main" }))
-  }
-  h.update(scope.audience)
-  if (scope.scene) h.update(scope.scene)
-  h.update(scope.channelId ?? "")
-  h.update(resolveTaskProtocolSection(ctx))
-  // 档位 / 额外开放变了，提示词里的「你能做什么」就变了：算规则变更
-  if (ctx.visitor) h.update(visitorLimitsKey(ctx.visitor))
-  return h.digest("hex").slice(0, 16)
-}
-
+/** 宿主提示词的各个块（协议、数字身份、用户规则、任务段、访客段），没内容的块不出现；块之间用 joinPromptBlocks 连 */
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
-  const parts: string[] = []
-  parts.push("---")
-  parts.push(loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)))
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
-  if (identity) {
-    parts.push("---")
-    parts.push("## 数字身份")
-    parts.push(identity)
-  }
-  appendUserHarnessRules(parts, ctx)
-  const taskSection = resolveTaskProtocolSection(ctx)
-  if (taskSection) {
-    parts.push("---")
-    parts.push(taskSection)
-  }
-  if (ctx.visitor) {
-    parts.push("---")
-    parts.push(buildVisitorPromptSection(ctx.visitor))
-  }
-  return parts
+  const blocks = [
+    loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)),
+    identity ? `# 数字身份\n${identity}` : "",
+    buildUserRulesBlock(ctx),
+    resolveTaskProtocolSection(ctx),
+    ctx.visitor ? buildVisitorPromptSection(ctx.visitor) : "",
+  ]
+  return blocks.filter((b) => b.length > 0)
 }
 
 export function hashSystemPrompt(text: string): string {
   return createHash("md5").update(text).digest("hex").slice(0, 16)
+}
+
+/** 宿主提示词的指纹：就是实际给 AI 的那段文本的哈希，给了什么就是什么，不再另列一份「哪些输入算数」 */
+export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">, daemonPort?: number | null): string {
+  return hashSystemPrompt(joinPromptBlocks(assembleProtocolBlocks(ctx, daemonPort)))
 }
 
 /**
@@ -265,19 +236,14 @@ export function assembleSdkWorkerTurnPrompt(
   ctx: PromptAssemblyContext,
   opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[]; skillCatalog?: string },
 ): string {
-  const chunks: string[] = []
-  chunks.push(...assembleProtocolBlocks(ctx))
-  if (opts?.skillCatalog) {
-    chunks.push("---")
-    chunks.push(opts.skillCatalog)
-  }
-  chunks.push("---")
-  chunks.push(assembleTurnPrompt(messages, ctx, {
+  const blocks = assembleProtocolBlocks(ctx)
+  if (opts?.skillCatalog) blocks.push(opts.skillCatalog)
+  blocks.push(assembleTurnPrompt(messages, ctx, {
     firstTurn: opts?.firstTurn,
     taskMessage: opts?.taskMessage,
     historyTurns: opts?.historyTurns,
   }))
-  return chunks.join("\n")
+  return joinPromptBlocks(blocks)
 }
 
 /** 项目会话每轮自然语言附带：节点索引 + 发现协议（按钮 [PROJECT_ACTION] 轮跳过，抗长会话遗忘） */

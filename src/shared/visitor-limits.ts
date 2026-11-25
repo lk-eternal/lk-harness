@@ -105,7 +105,7 @@ export function buildVisitorPromptSection(limits: VisitorLimits): string {
   const cannot = ["读写本机文件", "执行命令", "发送本机的图片或文件", "使用主人的其他工具和 Skill"]
   if (limits.canRead) cannot.splice(0, 1, "读取与 Skill 无关的本机文件")
   return [
-    "## 访客会话（受限）",
+    "# 访客会话（受限）",
     "你现在服务的是被开放使用的其他人，不是这台机器的主人。",
     `你可以：${can.join("；")}。`,
     `你不能：${cannot.join("；")}。`,

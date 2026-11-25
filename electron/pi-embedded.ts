@@ -16,6 +16,7 @@ import type { Model, Api } from "@mariozechner/pi-ai/compat"
 import { app } from "electron"
 import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
 import { sessionPiDir } from "../src/shared/session-entry-paths.js"
+import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
 import { assembleProtocolBlocks, resolveDaemonPortForPrompt } from "./prompt-assembler"
@@ -125,8 +126,8 @@ export function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
   // 本机 Skill 名单：和 SDK 引擎同一份文本。Pi 自带的清单已关（见 noSkills），免得两份名单对不上；
   // system prompt 每个请求都在，不用像 SDK 那样考虑「只给一次」
   const skills = getSkillCatalog(Date.now(), opts.visitor?.skillAllow)
-  if (skills.text) blocks.push("---", skills.text)
-  return [blocks.join("\n")]
+  if (skills.text) blocks.push(skills.text)
+  return [joinPromptBlocks(blocks)]
 }
 
 function resolveSessionManager(cwd: string, sessionKey: string): SessionManager {

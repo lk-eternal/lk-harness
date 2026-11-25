@@ -6,6 +6,8 @@
  * 纯函数、不碰磁盘：扫描目录在 electron/skill-catalog.ts。
  */
 
+import { promptAttr } from "./prompt-markup.js"
+
 export interface CatalogSkill {
   /** 给 AI 看的名字（frontmatter 的 name，没写就是文件夹名） */
   name: string
@@ -36,8 +38,8 @@ export interface SkillCatalogText {
   listed: number
 }
 
-const HEADING = "## 本机 Skill"
-const INTRO = "下面这些目录里有 Skill：每个子目录是一个 Skill，其中的 SKILL.md 是完整说明；条目写作「名字：说明」。"
+const HEADING = "# Skill"
+const INTRO = "本机有下面这些 Skill：每个子目录是一个 Skill，其中的 SKILL.md 是完整说明；条目写作「名字：说明」。"
 
 interface Row {
   root: number
@@ -98,7 +100,7 @@ function render(rows: readonly Row[], dirs: readonly string[], full: number, lis
     }
     if (bare.length > 0) lines.push(`- 仅列名字：${bare.join("、")}`)
     if (lines.length === 0) continue
-    out.push("", `### ${dirs[d]}`, ...lines)
+    out.push("", `<skills dir="${promptAttr(dirs[d])}">`, ...lines, "</skills>")
   }
   if (listed < rows.length) out.push("", `（另有 ${rows.length - listed} 个 Skill 未列出）`)
   return out.join("\n")

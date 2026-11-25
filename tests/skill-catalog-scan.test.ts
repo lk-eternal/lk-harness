@@ -124,7 +124,7 @@ describe("computeSkillCatalog", () => {
 
   it("目录路径写进名单（AI 才知道去哪读完整 SKILL.md）", () => {
     put(dirOf.pi(), "x", md({ description: "x" }))
-    expect(computeSkillCatalog(home).text).toContain(`### ${path.resolve(dirOf.pi())}`)
+    expect(computeSkillCatalog(home).text).toContain(`<skills dir="${path.resolve(dirOf.pi())}">`)
   })
 
   describe("hash：名单变了才变（拿它判断 AI 手里那份过期没有）", () => {

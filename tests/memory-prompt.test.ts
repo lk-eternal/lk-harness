@@ -29,6 +29,7 @@ import {
 import { buildBuiltinMcpServers, MEMORY_MCP_KEY, shouldMountMemoryMcp } from "../src/shared/harness-mcp-store.js"
 import { resolveVisitorLimits } from "../src/shared/visitor-limits.js"
 import { saveSessionMemory } from "../src/shared/session-memory.js"
+import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
 beforeEach(() => {
   h.userData = fs.mkdtempSync(path.join(os.tmpdir(), "lk-memprompt-"))
@@ -37,7 +38,7 @@ beforeEach(() => {
 afterEach(() => { fs.rmSync(h.userData, { recursive: true, force: true }) })
 
 const MEMORY_TOOLS = "memory_save / memory_read / memory_delete"
-const protocol = (ctx: PromptAssemblyContext) => assembleProtocolBlocks(ctx, 19528).join("\n")
+const protocol = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx, 19528))
 const count = (s: string, sub: string) => s.split(sub).length - 1
 const MSGS = [{ text: "用户这一句", messageId: "m1" }]
 

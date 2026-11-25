@@ -298,7 +298,7 @@ export function buildTaskProtocolSection(
   if (task.independent === false) return "";
   const mode: TaskNotify = resolveTaskNotify(task);
   const lines = [
-    `## 定时任务「${task.name}」`,
+    `# 定时任务「${task.name}」`,
     "",
     mode === "agent"
       ? `独立运行：你的回复不会直接发给任何人。有要汇报的调用 \`${TASK_RESULT_TOOL}\` 提交（\`text\` 是结果正文）；没有就直接结束。`

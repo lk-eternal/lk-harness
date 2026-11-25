@@ -22,8 +22,8 @@ describe("buildSkillCatalog：基本格式", () => {
   it("目录路径只写一次，条目写「名字：说明」不重复路径", () => {
     const { text, count, full, listed } = buildSkillCatalog([root("/home/u/.cursor/skills", sk("alpha"), sk("beta"))])
     expect({ count, full, listed }).toEqual({ count: 2, full: 2, listed: 2 })
-    expect(text).toContain("## 本机 Skill")
-    expect(text).toContain("### /home/u/.cursor/skills")
+    expect(text).toContain("# Skill")
+    expect(text).toContain('<skills dir="/home/u/.cursor/skills">')
     expect(text).toContain("- alpha：alpha 的说明")
     expect(text).toContain("- beta：beta 的说明")
     expect(text.split("/home/u/.cursor/skills").length - 1).toBe(1)
@@ -44,7 +44,7 @@ describe("buildSkillCatalog：基本格式", () => {
   it("没有 Skill 的目录不出现标题", () => {
     const { text } = buildSkillCatalog([root("/empty"), root("/full", sk("x"))])
     expect(text).not.toContain("/empty")
-    expect(text).toContain("### /full")
+    expect(text).toContain('<skills dir="/full">')
   })
 })
 
@@ -62,8 +62,8 @@ describe("buildSkillCatalog：去重和顺序", () => {
 
   it("同名的 Skill 被去掉后，整个目录都没剩下就不写标题", () => {
     const { text } = buildSkillCatalog([root("/a", sk("dup")), root("/b", sk("dup"))])
-    expect(text).toContain("### /a")
-    expect(text).not.toContain("### /b")
+    expect(text).toContain('<skills dir="/a">')
+    expect(text).not.toContain('<skills dir="/b">')
   })
 
   it("目录内按名字排序：输入顺序变了，文本不变（提示词缓存才命中）", () => {
@@ -179,7 +179,7 @@ describe("buildSkillCatalog：预算", () => {
       { budget: 900 },
     )
     expect(r.text).toContain("- a0：")
-    const second = r.text.slice(r.text.indexOf("### /second"))
+    const second = r.text.slice(r.text.indexOf('<skills dir="/second">'))
     expect(second).toContain("- 仅列名字：")
   })
 
