@@ -6,9 +6,18 @@ import { usePanelSave } from "./usePanelSave"
 import { PANEL_ROOT, PANEL_ASIDE, PANEL_LIST, PANEL_ADD_BAR, PANEL_ADD_BTN, PANEL_MAIN, PANEL_SCROLL, PANEL_FOOTER } from "./panel-layout"
 import { useScrollActiveIntoView } from "./panel-scroll"
 import { useOpenFirstOnce } from "./panel-default"
-import { applyTaskChannel, applyTaskModel, resolveTaskResourceId, taskResourceMissing } from "./task-model"
+import { applyTaskModel, resolveTaskResourceId, taskResourceMissing } from "./task-model"
+import {
+  agentPickValue,
+  applyAgentPick,
+  applyIndependent,
+  applyNotifyChannel,
+  applyNotifyMode,
+  sessionLabelOf,
+  sessionOptionsForChannel,
+} from "./task-notify-form"
 import { useModelFavorites } from "../hooks/useModelFavorites"
-import { isAiTask, resolveTaskNotify, type TaskNotify } from "../../shared/scheduled-task-rules"
+import { isAiTask, resolveTaskNotify, taskNotifyChannelId, type TaskNotify } from "../../shared/scheduled-task-rules"
 import {
   describeAiTaskProgress,
   describeTaskDelivery,
@@ -31,11 +40,14 @@ const inputCls = "w-full rounded-lg border border-line bg-surface px-3 py-2 text
 
 interface ProjectOption { id: string; name: string; archived: boolean }
 
-const NOTIFY_OPTIONS: { value: TaskNotify; label: string }[] = [
-  { value: "none", label: "不通知（只执行）" },
-  { value: "agent", label: "通知到 Agent 会话" },
-  { value: "im", label: "通知到 IM 聊天（飞书 / 微信）" },
+/** 通知谁的选项；「不通知」只有独立运行才有（非独立运行的任务内容必须送到谁手里） */
+const NOTIFY_OPTIONS: { value: TaskNotify; label: string; independentOnly?: boolean }[] = [
+  { value: "none", label: "不通知（只执行）", independentOnly: true },
+  { value: "agent", label: "通知 AI" },
+  { value: "im", label: "通知我" },
 ]
+
+type DashboardTree = Awaited<ReturnType<typeof window.electronAPI.listDashboardTree>>
 
 function emptyTask(channels: ChannelConfig[]): ScheduledTask {
   return {
@@ -56,6 +68,9 @@ export default function TaskPanel() {
   const [projects, setProjects] = useState<ProjectOption[]>([])
   const [taskStatuses, setTaskStatuses] = useState<Record<string, { running: boolean }>>({})
   const [taskRuns, setTaskRuns] = useState<TaskRunLog>({})
+  /** 会话下拉的数据：工作台的会话树 + 应用内会话的标题；null = 还没取到 / 服务没跑 */
+  const [tree, setTree] = useState<DashboardTree | null>(null)
+  const [chatTitles, setChatTitles] = useState<Record<string, string>>({})
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ScheduledTask | null>(null)
   const [savedSnapshot, setSavedSnapshot] = useState("")
@@ -125,18 +140,42 @@ export default function TaskPanel() {
     openDraft(t, false)
   }
 
-  /** 任务所属通道的供应商：选择器里「跟随通道」那一项列的是它家的模型 */
+  /** 任务通道的供应商：选择器里「跟随通道」那一项列的是它家的模型 */
   const draftChannelResourceId = draft ? resolveTaskResourceId(taskChannels, agentResources, draft.channelId) : undefined
   const draftResourceMissing = draft ? taskResourceMissing(draft, agentResources) : false
 
-  /** 所属通道选「默认」= 第一个启用的通道（与 daemon 的取法一致），校验 / 描述按它算 */
+  /** 没选通道 = 第一个启用的通道（与 daemon 的取法一致），校验 / 描述按它算 */
   const defaultChannelId = taskChannels.find((c) => c.enabled)?.id ?? taskChannels[0]?.id
   const withEffectiveChannel = <T extends ScheduledTask>(t: T): T => ({ ...t, channelId: t.channelId || defaultChannelId })
+
+  // 通知的通道（同时也是任务跑在哪个通道）：旧任务单独存的发送通道优先，没有就是任务的通道，再没有就是默认通道
+  const notifyChannelId = draft ? (taskNotifyChannelId(draft) ?? defaultChannelId) : undefined
+  const notifyChannel = taskChannels.find((c) => c.id === notifyChannelId)
+  const notifyIsApp = notifyChannel?.type === "app"
+  const notifyChannelTabs = tree?.channels.find((c) => c.channelId === notifyChannelId)?.mainTabs
+  const sessionOptions = sessionOptionsForChannel(notifyChannelTabs ?? [], { isApp: notifyIsApp, titles: chatTitles })
+
+  // 要不要取会话列表：只有通知谁不是「不通知」的可编辑任务才用得上
+  const needsSessionList = !!draft && !isAiTask(draft) && resolveTaskNotify(draft) !== "none"
+  useEffect(() => {
+    if (!needsSessionList) return
+    let cancelled = false
+    void Promise.all([
+      window.electronAPI.listDashboardTree().catch(() => ({ ok: false as const, channels: [], running: [], error: "ipc" })),
+      window.electronAPI.appChatTitles().catch(() => ({} as Record<string, string>)),
+    ]).then(([t, titles]) => {
+      if (cancelled) return
+      setTree(t)
+      setChatTitles(titles)
+    })
+    return () => { cancelled = true }
+  }, [needsSessionList, draft?.id])
 
   const labels: TaskDeliveryLabels = {
     channelName: (id) => taskChannels.find((c) => c.id === id)?.name,
     projectName: (id) => projects.find((p) => p.id === id)?.name,
     isAppChannel: (id) => taskChannels.find((c) => c.id === id)?.type === "app",
+    sessionName: (key) => sessionLabelOf(sessionOptions, key),
   }
   const checkEnv: TaskDeliveryCheckEnv = {
     channelIsApp: (id) => taskChannels.find((c) => c.id === id)?.type === "app",
@@ -267,30 +306,64 @@ export default function TaskPanel() {
 
   const independent = draft ? draft.independent !== false : true
   const notifyMode: TaskNotify = draft ? resolveTaskNotify(draft) : "none"
-  const needsAgentTarget = !!draft && (!independent || notifyMode === "agent")
   const deliveryHint = draft ? describeTaskDelivery(withEffectiveChannel(draft), labels) : ""
   const ai = draft ? isAiTask(draft) : false
+  // 内容的用途随运行方式变：独立运行是给 Agent 的指令；非独立运行是原样送出去的消息（通知 AI 发给会话，通知我直接发给你）
+  const contentLabel = independent
+    ? "任务内容（给独立 Agent 的指令）"
+    : notifyMode === "im" ? "消息内容（原样发给你，不启动 Agent）" : "消息内容（发给 AI 会话）"
+  const contentPlaceholder = independent
+    ? "要独立 Agent 去做的事，做完让它提交结果…"
+    : notifyMode === "im" ? "到点要发给你的提醒 / 消息…" : "要发送给 AI 会话的消息..."
+  const sessionListReady = !!tree && tree.ok && !tree.error
+  /** 会话下拉里没有、但任务存着的会话：删了 / 服务没跑 / 换过通道，如实标出来，不悄悄丢掉 */
+  const missingSessionKey = (key: string): string | undefined =>
+    key && !sessionOptions.some((o) => o.value === key) ? key : undefined
+  const missingSessionLabel = sessionListReady ? "（会话已不存在，或不属于这个通道）" : "（已选的会话，服务没运行时列不出名字）"
 
-  /** Agent 会话选择：空 = 所属通道的主会话；已归档的项目不再提供（已选的保留，保存时提示它已不可用） */
-  const agentTargetSelect = draft && (
-    <select
-      value={draft.targetProjectId ?? ""}
-      onChange={(e) => setDraft({ ...draft, targetProjectId: e.target.value || undefined })}
-      className={inputCls}
-    >
-      <option value="">主会话（所属通道的主用户私聊）</option>
-      {draft.targetProjectId && !projects.some((p) => p.id === draft.targetProjectId) && (
-        <option value={draft.targetProjectId}>（项目已不存在）</option>
-      )}
-      {projects
-        .filter((p) => !p.archived || p.id === draft.targetProjectId)
-        .map((p) => (
-          <option key={p.id} value={p.id}>
-            项目「{p.name}」的会话{p.archived ? "（已归档）" : ""}
-          </option>
-        ))}
-    </select>
-  )
+  /** 通知 AI 的接收方：空 = 通道的主会话；具体会话；项目会话。已归档的项目不再提供（已选的保留，保存时提示它已不可用） */
+  const agentTargetSelect = draft && (() => {
+    const value = agentPickValue(draft)
+    const missingSession = value.startsWith("project:") ? undefined : missingSessionKey(value)
+    return (
+      <select value={value} onChange={(e) => setDraft(applyAgentPick(draft, e.target.value))} className={inputCls}>
+        <option value="">主会话（通道的主会话）</option>
+        {missingSession && <option value={missingSession}>{missingSessionLabel}</option>}
+        {sessionOptions.length > 0 && (
+          <optgroup label="会话">
+            {sessionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </optgroup>
+        )}
+        {draft.targetProjectId && !projects.some((p) => p.id === draft.targetProjectId) && (
+          <option value={`project:${draft.targetProjectId}`}>（项目已不存在）</option>
+        )}
+        {projects.some((p) => !p.archived || p.id === draft.targetProjectId) && (
+          <optgroup label="项目">
+            {projects
+              .filter((p) => !p.archived || p.id === draft.targetProjectId)
+              .map((p) => (
+                <option key={p.id} value={`project:${p.id}`}>
+                  项目「{p.name}」的会话{p.archived ? "（已归档）" : ""}
+                </option>
+              ))}
+          </optgroup>
+        )}
+      </select>
+    )
+  })()
+
+  /** 通知我 + 应用内通道的接收方：必须选一个会话（应用内没有「主用户私聊」） */
+  const userSessionSelect = draft && (() => {
+    const value = draft.notifyChatId?.trim() ?? ""
+    const missingSession = missingSessionKey(value)
+    return (
+      <select value={value} onChange={(e) => setDraft({ ...draft, notifyChatId: e.target.value || undefined })} className={inputCls}>
+        <option value="">请选择会话</option>
+        {missingSession && <option value={missingSession}>{missingSessionLabel}</option>}
+        {sessionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    )
+  })()
 
   const now = Date.now()
   const draftRuns = draft ? (taskRuns[draft.id] ?? []) : []
@@ -375,100 +448,111 @@ export default function TaskPanel() {
                     )}
                   </div>
                 )}
-                <div><label className="mb-1 block text-xs text-fg-muted">{independent ? "任务内容（给独立 Agent 的指令）" : "消息内容（发给 Agent 会话）"}</label>
-                  <textarea value={draft.content} readOnly={ai} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder={independent ? "要独立 Agent 去做的事，做完让它提交结果…" : "要发送给 Agent 会话的消息..."} /></div>
+                <div><label className="mb-1 block text-xs text-fg-muted">{contentLabel}</label>
+                  <textarea value={draft.content} readOnly={ai} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder={contentPlaceholder} /></div>
 
                 {ai ? (
                   <div className="rounded-lg border border-line-subtle bg-surface/80 px-3 py-2 text-xs leading-relaxed text-fg-3">{deliveryHint}</div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="mb-1 block text-xs text-fg-muted" title="决定任务用哪个通道的默认供应商 / 模型 / 规则；结果发到哪里在下面单独设置">所属通道</label>
-                        <select value={draft.channelId ?? ""} onChange={(e) => setDraft(applyTaskChannel(draft, e.target.value || undefined, taskChannels, agentResources))} className={inputCls}>
-                          <option value="">默认</option>
-                          {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-fg-muted">模型</label>
-                        <ModelPicker
-                          variant="field"
-                          placement="down"
-                          portal
-                          resources={agentResources}
-                          currentResourceId={draft.resourceId ?? ""}
-                          currentModel={draft.model ?? ""}
-                          currentParams={draft.modelParams}
-                          followProvider="跟随通道"
-                          followResourceId={draftChannelResourceId}
-                          followModel="跟随通道主模型"
-                          allowManual
-                          placeholder="选择供应商 / 模型"
-                          quickModels={quickModels}
-                          favorites={favorites}
-                          onToggleFavorite={toggleFavorite}
-                          onOpen={() => void refreshModels()}
-                          onSelect={(c) => setDraft(applyTaskModel(draft, c))}
-                        />
-                        {draftResourceMissing && (
-                          <p className="mt-1 text-xs text-warning">任务选的供应商已不存在，运行会失败，请重新选择。</p>
-                        )}
-                      </div>
-                    </div>
-
                     <div className="space-y-3 rounded-lg border border-line-subtle bg-surface/60 px-3 py-3">
                       <div className="flex items-center gap-4">
                         <label className="flex items-center gap-2 text-xs text-fg-3"><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} className="rounded border-line-strong" />启用</label>
-                        <label className="flex items-center gap-2 text-xs text-fg-3" title="勾选：每次由全新 Agent 执行，不占用任何会话的上下文；不勾选：任务内容直接发给一个 Agent 会话，由它自己执行"><input type="checkbox" checked={independent} onChange={(e) => setDraft({ ...draft, independent: e.target.checked })} className="rounded border-line-strong" />独立运行（每次全新 Agent）</label>
+                        <label className="flex items-center gap-2 text-xs text-fg-3" title="勾选：每次由全新 Agent 执行，不占用任何会话的上下文；不勾选：不启动 Agent，任务内容直接发给下面选的人 / 会话"><input type="checkbox" checked={independent} onChange={(e) => setDraft(applyIndependent(draft, e.target.checked))} className="rounded border-line-strong" />独立运行（每次全新 Agent）</label>
                       </div>
 
                       {independent && (
                         <div>
-                          <label className="mb-1 block text-xs text-fg-muted">完成后通知</label>
-                          <select value={notifyMode} onChange={(e) => setDraft({ ...draft, notify: e.target.value as TaskNotify })} className={inputCls}>
-                            {NOTIFY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
+                          <label className="mb-1 block text-xs text-fg-muted">模型</label>
+                          <ModelPicker
+                            variant="field"
+                            placement="down"
+                            portal
+                            resources={agentResources}
+                            currentResourceId={draft.resourceId ?? ""}
+                            currentModel={draft.model ?? ""}
+                            currentParams={draft.modelParams}
+                            followProvider="跟随通道"
+                            followResourceId={draftChannelResourceId}
+                            followModel="跟随通道主模型"
+                            allowManual
+                            placeholder="选择供应商 / 模型"
+                            quickModels={quickModels}
+                            favorites={favorites}
+                            onToggleFavorite={toggleFavorite}
+                            onOpen={() => void refreshModels()}
+                            onSelect={(c) => setDraft(applyTaskModel(draft, c))}
+                          />
+                          {draftResourceMissing && (
+                            <p className="mt-1 text-xs text-warning">任务选的供应商已不存在，运行会失败，请重新选择。</p>
+                          )}
+                          {notifyMode === "none" && (
+                            <p className="mt-1 text-xs text-fg-faint">不通知时用「{taskChannels.find((c) => c.id === (draft.channelId || defaultChannelId))?.name ?? "（没有可用通道）"}」通道的默认供应商和规则运行。</p>
+                          )}
                         </div>
                       )}
 
-                      {needsAgentTarget && (
-                        <div>
-                          <label className="mb-1 block text-xs text-fg-muted">{independent ? "结果投给哪个 Agent 会话" : "任务内容发给哪个 Agent 会话"}</label>
-                          {agentTargetSelect}
-                        </div>
-                      )}
+                      <div>
+                        <label className="mb-1 block text-xs text-fg-muted">{independent ? "完成后通知谁" : "任务内容发给谁"}</label>
+                        <select value={notifyMode} onChange={(e) => setDraft(applyNotifyMode(draft, e.target.value as TaskNotify))} className={inputCls}>
+                          {NOTIFY_OPTIONS.filter((o) => independent || !o.independentOnly).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        </select>
+                      </div>
 
-                      {independent && notifyMode === "im" && (
+                      {notifyMode !== "none" && (
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="mb-1 block text-xs text-fg-muted">发送通道</label>
-                            <select value={draft.notifyChannelId ?? ""} onChange={(e) => setDraft({ ...draft, notifyChannelId: e.target.value || undefined })} className={inputCls}>
-                              <option value="">同所属通道{taskChannels.find((c) => c.id === (draft.channelId || defaultChannelId)) ? `（${taskChannels.find((c) => c.id === (draft.channelId || defaultChannelId))!.name}）` : ""}</option>
-                              {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            <label className="mb-1 block text-xs text-fg-muted" title="通知走哪个通道；独立运行时，任务也借这个通道的默认供应商 / 规则">通道</label>
+                            <select
+                              value={notifyChannelId ?? ""}
+                              onChange={(e) => setDraft(applyNotifyChannel(draft, e.target.value || undefined, taskChannels, agentResources))}
+                              className={inputCls}
+                            >
+                              {!notifyChannel && <option value={notifyChannelId ?? ""}>{notifyChannelId ? "（通道已不存在）" : "请选择通道"}</option>}
+                              {taskChannels.map((c) => <option key={c.id} value={c.id}>{c.name}{c.enabled ? "" : "（已停用）"}</option>)}
                             </select>
                           </div>
-                          <div>
-                            <div className="mb-1 flex items-center gap-2 text-xs text-fg-muted">
-                              <span>飞书群 / 聊天 ID（可选）</span>
-                              <span
-                                className="cursor-help text-accent/90 underline decoration-dotted underline-offset-2"
-                                title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
-                              >
-                                如何获取?
-                              </span>
+                          {notifyMode === "agent" && (
+                            <div>
+                              <label className="mb-1 block text-xs text-fg-muted">{independent ? "结果投给哪个会话" : "任务内容发给哪个会话"}</label>
+                              {agentTargetSelect}
                             </div>
-                            <input
-                              type="text"
-                              value={draft.notifyChatId ?? ""}
-                              onChange={(e) => setDraft({ ...draft, notifyChatId: e.target.value.trim() || undefined })}
-                              className={inputCls + " font-mono text-xs"}
-                              placeholder="不填 = 发到发送通道绑定的主用户私聊"
-                            />
-                          </div>
+                          )}
+                          {notifyMode === "im" && notifyIsApp && (
+                            <div>
+                              <label className="mb-1 block text-xs text-fg-muted">发到哪个会话</label>
+                              {userSessionSelect}
+                            </div>
+                          )}
+                          {notifyMode === "im" && notifyChannel?.type === "feishu" && (
+                            <div>
+                              <div className="mb-1 flex items-center gap-2 text-xs text-fg-muted">
+                                <span>飞书群 ID（可选）</span>
+                                <span
+                                  className="cursor-help text-accent/90 underline decoration-dotted underline-offset-2"
+                                  title="可在飞书会话中(需保证机器人在会话中)点击右上角设置,滚动到最下方,复制会话ID即可"
+                                >
+                                  如何获取?
+                                </span>
+                              </div>
+                              <input
+                                type="text"
+                                value={draft.notifyChatId ?? ""}
+                                onChange={(e) => setDraft({ ...draft, notifyChatId: e.target.value.trim() || undefined })}
+                                className={inputCls + " font-mono text-xs"}
+                                placeholder="不填 = 发到通道绑定的主用户私聊"
+                              />
+                            </div>
+                          )}
+                          {notifyMode === "im" && !notifyIsApp && notifyChannel?.type !== "feishu" && (
+                            <p className="self-end pb-2 text-xs text-fg-faint">发到通道绑定的主用户私聊。</p>
+                          )}
                         </div>
                       )}
 
+                      {tree && !sessionListReady && (notifyMode === "agent" || (notifyMode === "im" && notifyIsApp)) && (
+                        <p className="text-xs text-warning">服务没运行，暂时列不出会话；先启动服务再来选择。</p>
+                      )}
                       <p className="text-xs leading-relaxed text-fg-muted">{deliveryHint}</p>
                       {saveError && <p className="text-xs text-danger">{saveError}</p>}
                     </div>
