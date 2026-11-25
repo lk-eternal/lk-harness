@@ -2,9 +2,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { MESSAGE_FORMAT_BLOCK, buildTurnEnvelope, turnMessageTexts, type TurnEnvelope } from "../src/shared/turn-envelope"
 
-const NOW = new Date(2026, 10, 25, 10, 19).getTime()
-const SENT = new Date(2026, 10, 25, 10, 18).getTime()
-const NOW_ATTR = "2026-11-25 周三 10:19 (UTC+8)"
+const NOW = new Date(2026, 10, 25, 10, 19, 42).getTime()
+const SENT = new Date(2026, 10, 25, 10, 18, 7).getTime()
+const NOW_ATTR = "2026-11-25 周三 10:19:42 (UTC+8)"
 
 beforeEach(() => { vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480) })
 afterEach(() => { vi.restoreAllMocks() })
@@ -32,7 +32,7 @@ describe("buildTurnEnvelope", () => {
     expect(text).toBe([
       `<turn chat="project" channel="飞书" now="${NOW_ATTR}">`,
       "<memory>",
-      '<item key="约束" created="2026-11-25 10:18" updated="2026-11-25 10:19">只能周三发布</item>',
+      '<item key="约束" created="2026-11-25 10:18:07" updated="2026-11-25 10:19:42">只能周三发布</item>',
       "</memory>",
       "<task>",
       "项目专属会话",
@@ -45,7 +45,7 @@ describe("buildTurnEnvelope", () => {
       "旧回答",
       "</message>",
       "</history>",
-      '<message id="om_1" at="2026-11-25 10:18" from="user" sender="ou_u">',
+      '<message id="om_1" at="2026-11-25 10:18:07" from="user" sender="ou_u">',
       '<quote id="om_q" from="bot" sender="ou_bot">',
       "慢sql表",
       "</quote>",

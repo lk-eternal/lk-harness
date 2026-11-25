@@ -194,12 +194,12 @@ describe("创建时间和修改时间", () => {
 })
 
 describe("formatMemoryItems", () => {
-  const entry = { key: "提交偏好", content: "不用再问", createdAt: new Date(2026, 10, 24, 14, 3).getTime(), updatedAt: new Date(2026, 10, 25, 9, 5).getTime() }
+  const entry = { key: "提交偏好", content: "不用再问", createdAt: new Date(2026, 10, 24, 14, 3, 8).getTime(), updatedAt: new Date(2026, 10, 25, 9, 5, 7).getTime() }
 
-  it("每条一行 item，带创建和修改时间（本机时间，精确到分钟）", () => {
+  it("每条一行 item，带创建和修改时间（本机时间，精确到秒）", () => {
     expect(formatMemoryItems([entry, { ...entry, key: "待办" }])).toBe(
-      '<item key="提交偏好" created="2026-11-24 14:03" updated="2026-11-25 09:05">不用再问</item>\n'
-      + '<item key="待办" created="2026-11-24 14:03" updated="2026-11-25 09:05">不用再问</item>',
+      '<item key="提交偏好" created="2026-11-24 14:03:08" updated="2026-11-25 09:05:07">不用再问</item>\n'
+      + '<item key="待办" created="2026-11-24 14:03:08" updated="2026-11-25 09:05:07">不用再问</item>',
     )
   })
 

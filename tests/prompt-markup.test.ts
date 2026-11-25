@@ -22,9 +22,9 @@ describe("promptText", () => {
 })
 
 describe("promptTime / promptUtcOffset", () => {
-  it("本机时间精确到分钟，月日时分补零", () => {
-    expect(promptTime(new Date(2026, 0, 5, 7, 4, 59).getTime())).toBe("2026-01-05 07:04")
-    expect(promptTime(new Date(2026, 10, 25, 23, 59).getTime())).toBe("2026-11-25 23:59")
+  it("本机时间精确到秒，月日时分秒补零", () => {
+    expect(promptTime(new Date(2026, 0, 5, 7, 4, 9).getTime())).toBe("2026-01-05 07:04:09")
+    expect(promptTime(new Date(2026, 10, 25, 23, 59, 59).getTime())).toBe("2026-11-25 23:59:59")
   })
 
   it.each([
@@ -39,7 +39,7 @@ describe("promptTime / promptUtcOffset", () => {
 
   it("现在：日期、星期、时间和时区", () => {
     vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480)
-    expect(promptNow(new Date(2026, 10, 25, 10, 19).getTime())).toBe("2026-11-25 周三 10:19 (UTC+8)")
-    expect(promptNow(new Date(2026, 10, 29, 8, 0).getTime())).toBe("2026-11-29 周日 08:00 (UTC+8)")
+    expect(promptNow(new Date(2026, 10, 25, 10, 19, 42).getTime())).toBe("2026-11-25 周三 10:19:42 (UTC+8)")
+    expect(promptNow(new Date(2026, 10, 29, 8, 0, 5).getTime())).toBe("2026-11-29 周日 08:00:05 (UTC+8)")
   })
 })

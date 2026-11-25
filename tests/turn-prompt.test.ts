@@ -29,7 +29,7 @@ import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 beforeEach(() => {
   vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480)
   vi.useFakeTimers({ toFake: ["Date"] })
-  vi.setSystemTime(new Date(2026, 10, 25, 10, 19))
+  vi.setSystemTime(new Date(2026, 10, 25, 10, 19, 42))
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -41,7 +41,7 @@ const MSGS = [{ text: "你好", messageId: "m1" }]
 describe("turn 标签的环境信息", () => {
   it("会话类型、现在（日期、星期、时间、时区）都在 turn 标签上", () => {
     const p = assembleTurnPrompt(MSGS, { meta: { chatType: "p2p" } })
-    expect(p.split("\n")[0]).toBe('<turn chat="p2p" now="2026-11-25 周三 10:19 (UTC+8)">')
+    expect(p.split("\n")[0]).toBe('<turn chat="p2p" now="2026-11-25 周三 10:19:42 (UTC+8)">')
   })
 
   it.each([
@@ -59,9 +59,9 @@ describe("turn 标签的环境信息", () => {
   })
 
   it("消息的入队时间作为发送时间；没有入队时间的不写 at", () => {
-    const sent = new Date(2026, 10, 25, 9, 5).getTime()
+    const sent = new Date(2026, 10, 25, 9, 5, 7).getTime()
     const p = assembleTurnPrompt([{ text: "早", messageId: "m1", timestamp: sent }, { text: "晚", messageId: "m2" }], {})
-    expect(p).toContain('<message id="m1" at="2026-11-25 09:05">\n早\n</message>')
+    expect(p).toContain('<message id="m1" at="2026-11-25 09:05:07">\n早\n</message>')
     expect(p).toContain('<message id="m2">\n晚\n</message>')
   })
 })

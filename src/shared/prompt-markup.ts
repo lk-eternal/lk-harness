@@ -26,10 +26,10 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0")
 }
 
-/** 本机时间，精确到分钟：2026-11-25 10:19 */
+/** 本机时间，精确到秒：2026-11-25 10:19:42 */
 export function promptTime(ms: number): string {
   const d = new Date(ms)
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
 }
 
 /** 本机时区：UTC+8、UTC-5、UTC+5:30 */
@@ -43,7 +43,7 @@ export function promptUtcOffset(ms: number): string {
 
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"]
 
-/** 「现在」：本机日期、星期、时间和时区，2026-11-25 周三 10:19 (UTC+8) */
+/** 「现在」：本机日期、星期、时间和时区，2026-11-25 周三 10:19:42 (UTC+8) */
 export function promptNow(ms: number): string {
   const [date, clock] = promptTime(ms).split(" ")
   return `${date} 周${WEEKDAYS[new Date(ms).getDay()]} ${clock} (${promptUtcOffset(ms)})`
