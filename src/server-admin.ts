@@ -472,7 +472,10 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
     [
       "管理全局定时任务（和设置页里的一样）。支持列出、添加/更新、删除、启用/禁用。",
       "注意：这不是「给当前会话定时」。要让你当前所在的会话到点自己做事、或过一阵回来跟进，用 schedule_create（它绑定调用者所在的会话），不要用本工具。",
-      "本工具建的任务：独立运行（默认）= 每次由全新 Agent 执行，结果按 notify 发出；independent=false = 把任务内容投给「所属通道」的主会话——飞书/微信通道的主会话就是主用户私聊，回复会发到飞书/微信，不一定是你当前所在的会话。所属通道默认是你当前所在的通道。",
+      "本工具建的任务先定「是否独立运行」，再定「完成后通知谁」（notify）：",
+      "- 独立运行（默认）：每次由全新 Agent 执行，它用 send_result 提交结果，没提交就静默。notify=agent（通知 AI）把结果投进会话并唤醒它；notify=im（通知我）以 AI 口吻发给用户，不唤醒任何 Agent；notify=none 不通知。",
+      "- independent=false：不启动新 Agent，把任务内容直接送出去。notify=agent（默认）送进会话的 AI，占用它的上下文；notify=im 把任务内容以 AI 口吻直接发给用户。此时 notify=none 无效，按 agent 处理。",
+      "通道默认是你当前所在的通道。应用内通道里，目标会话默认就是你当前所在的会话（项目会话除外：通知 AI 落到主会话，通知我没有默认会话，返回的去向会写「未选会话」，要如实告诉用户到设置页选）；飞书/微信里，通知 AI 投给主会话（主用户私聊，回复会发到飞书/微信，不一定是你当前所在的会话），通知我发到主用户私聊。要换通道、指定别的会话或飞书群，请用户到设置页改。",
       "创建 / 修改 / 启用后会返回任务实际的去向，如实转述给用户，不要自己推断。",
     ].join("\n"),
     {
@@ -482,8 +485,8 @@ export function registerAdminTools(mcpServer: McpServer, deps: AdminToolDeps = {
       cron: z.string().optional().describe("Cron 表达式（add 时必填，update 时可选）"),
       content: z.string().optional().describe("任务消息内容（add 时必填，update 时可选）"),
       enabled: z.boolean().optional().describe("是否启用（add 时默认 true）"),
-      independent: z.boolean().optional().describe("是否独立运行（add 时默认 true）。false = 任务内容投给所属通道的主会话由它自己执行，会占用该会话的上下文；飞书/微信通道的主会话回复会发到 IM，不一定是你当前所在的会话"),
-      notify: z.enum(["none", "agent", "im"]).optional().describe("独立运行的任务做完后怎么通知（非独立运行无效）：none=不通知，agent=把结果投进所属通道的主会话，im=发到所属通道的主用户私聊（add 时默认 im）。AI 在任务里用 send_result 提交结果"),
+      independent: z.boolean().optional().describe("是否独立运行（add 时默认 true）。true = 每次由全新 Agent 执行；false = 不启动新 Agent，直接把任务内容送给 notify 指定的对象（agent：进会话 AI 的上下文并占用它；im：以 AI 口吻发给用户）"),
+      notify: z.enum(["none", "agent", "im"]).optional().describe("完成后通知谁：agent=通知 AI（独立运行：把 send_result 的结果投进会话并唤醒它；非独立：把任务内容投进会话），im=通知我（独立运行：send_result 的结果以 AI 口吻发给用户；非独立：任务内容直接发给用户，不唤醒 Agent），none=不通知（仅独立运行有效，非独立按 agent 处理）。add 默认：独立运行 im，非独立运行 agent。独立运行的 AI 在任务里用 send_result 提交结果"),
     },
     async ({ action, id, name, cron, content, enabled, independent, notify }) => {
       try {

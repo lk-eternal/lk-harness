@@ -53,7 +53,7 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "text", type: "string", description: "结果正文（Markdown）；quiet=true 时可省略" },
         { name: "quiet", type: "boolean", description: "true = 没什么要汇报的，不发消息" },
       ],
-      notes: "结果按任务的通知方式送达：不通知 / Agent 会话 / IM。",
+      notes: "结果按任务的通知方式送达：不通知 / 通知 AI（投进所选会话并唤醒它）/ 通知我（以 AI 口吻发给用户）。没调用也一样静默，不会再给用户补发提示。",
     },
   },
   "lk-harness-schedule": {
@@ -165,7 +165,7 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
     },
     manage_tasks: {
       summary: "管理全局定时任务（和设置页里的一样）。不是「给当前会话定时」：那用 schedule_create。",
-      notes: "新建时所属通道默认是调用者所在的通道。independent=false 投给所属通道的主会话（飞书/微信通道的主会话回复会发到 IM，不一定是调用者当前所在的会话）。创建 / 修改 / 启用后返回任务实际的去向。",
+      notes: "先定是否独立运行，再定完成后通知谁（notify）：独立运行 = 全新 Agent 执行，用 send_result 提交结果，没提交就静默；非独立运行 = 不启动新 Agent，直接送任务内容。通知 AI = 进会话 AI 的上下文（独立运行时是结果并唤醒它）；通知我 = 以 AI 口吻发给用户，不唤醒 Agent。新建时通道默认是调用者所在的通道；应用内通道里目标会话默认是调用者当前所在的会话（项目会话除外：通知 AI 落到主会话，通知我没有默认会话，去向会写「未选会话」，要如实告诉用户到设置页选），飞书/微信里通知 AI 投给主会话（回复会发到 IM，不一定是调用者当前所在的会话）、通知我发到主用户私聊。换通道 / 指定别的会话或飞书群要用户在设置页改。创建 / 修改 / 启用后返回任务实际的去向。",
       params: [
         {
           name: "action",
@@ -179,8 +179,8 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "cron", type: "string", description: "add 必填；update 可选：cron 表达式" },
         { name: "content", type: "string", description: "add 必填；update 可选：到点发给 Agent 的任务正文" },
         { name: "enabled", type: "boolean", description: "add 默认 true；update 可选" },
-        { name: "independent", type: "boolean", description: "add 默认 true：每次由全新 Agent 执行；false：任务内容投给所属通道的主会话，占用该会话上下文（飞书/微信通道的主会话回复会发到 IM）" },
-        { name: "notify", type: "enum", enumValues: ["none", "agent", "im"], description: "独立运行的结果通知方式（非独立运行无效）：none 不通知 / agent 投进所属通道的主会话 / im 发到所属通道的主用户私聊（add 默认 im）" },
+        { name: "independent", type: "boolean", description: "add 默认 true：每次由全新 Agent 执行；false：不启动新 Agent，直接把任务内容送给 notify 指定的对象（agent 进会话 AI 的上下文并占用它，im 以 AI 口吻发给用户）" },
+        { name: "notify", type: "enum", enumValues: ["none", "agent", "im"], description: "完成后通知谁：agent 通知 AI（独立运行投 send_result 的结果并唤醒它，非独立投任务内容）/ im 通知我（独立运行发 send_result 的结果，非独立发任务内容，都以 AI 口吻、不唤醒 Agent）/ none 不通知（仅独立运行，非独立按 agent 处理）。add 默认：独立运行 im，非独立运行 agent" },
       ],
     },
     manage_project: {

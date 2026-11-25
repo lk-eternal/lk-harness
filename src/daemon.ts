@@ -4263,8 +4263,8 @@ export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: b
     s.tool(
       TASK_RESULT_TOOL,
       [
-        "提交定时任务这一次运行的结果，结果按任务设置送达（不通知 / Agent 会话 / IM）。",
-        "没什么要汇报的传 quiet=true，不发消息。",
+        "提交定时任务这一次运行的结果，结果按任务设置送达（不通知 / 通知 AI：投进所选会话并唤醒它 / 通知我：以 AI 口吻发给用户）。",
+        "没什么要汇报的传 quiet=true，不发消息；没调用本工具也一样静默，不会再给用户补发提示。",
         "飞书群里 @ 成员：在 text 中使用 `<at user_id=\"ou_xxx\">名字</at>`。",
       ].join("\n"),
       {
