@@ -148,7 +148,7 @@ describe("问题没选完就直接发消息", () => {
     expect((await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "第二个问题我想先聊聊" })).ok).toBe(true)
 
     expect(await polled()).toEqual([
-      "问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]\n\n问题 3：什么时候发？\n回答：今天",
+      "问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[用户未作答, 系统已自动关闭]\n\n问题 3：什么时候发？\n回答：今天",
       "第二个问题我想先聊聊",
     ])
     expect(await questionOf(q1)).toMatchObject({ answered: "A" })
@@ -171,7 +171,7 @@ describe("问题没选完就直接发消息", () => {
     expect(await polled()).toEqual([])
     await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "我自己说吧" })
     expect(await polled()).toEqual([
-      "问题 1：P-008 评审\n[未作答, 问题已关闭]\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]",
+      "问题 1：P-008 评审\n[用户未作答, 系统已自动关闭]\n\n问题 2：要不要加测试？\n[用户未作答, 系统已自动关闭]",
       "我自己说吧",
     ])
     expect(await questionOf(q1)).toMatchObject({ closedNote: "问题已关闭" })

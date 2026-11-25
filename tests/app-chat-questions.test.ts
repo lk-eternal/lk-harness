@@ -136,7 +136,7 @@ describe("问题没选完就直接发消息", () => {
     chat.answerQuestion(SESSION, q3, "否")
 
     expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe(
-      "问题 1：第一题\n回答：是\n\n问题 2：第二题\n[未作答, 问题已关闭]\n\n问题 3：第三题\n回答：否",
+      "问题 1：第一题\n回答：是\n\n问题 2：第二题\n[用户未作答, 系统已自动关闭]\n\n问题 3：第三题\n回答：否",
     )
 
     expect(question(q1)).toMatchObject({ answered: "是" })
@@ -150,7 +150,7 @@ describe("问题没选完就直接发消息", () => {
 
   it("一个都没选：也告诉 Agent 这张卡已关闭，只带标题（第一行），不贴整段题干", () => {
     const q1 = ask("**P-008 评审：要不要给守护进程加来源校验**\n\n痛点：……很长的正文……", ["保留", "丢弃"])
-    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：P-008 评审：要不要给守护进程加来源校验\n[未作答, 问题已关闭]")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：P-008 评审：要不要给守护进程加来源校验\n[用户未作答, 系统已自动关闭]")
     expect(question(q1)).toMatchObject({ closedNote: "问题已关闭" })
     expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBeUndefined()
   })
@@ -159,7 +159,7 @@ describe("问题没选完就直接发消息", () => {
     const q1 = ask("用哪个库？", ["A", "B"])
     ask("第二题")
     chat.answerQuestion(SESSION, q1, "A")
-    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：用哪个库？\n回答：A\n\n问题 2：第二题\n[未作答, 问题已关闭]")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：用哪个库？\n回答：A\n\n问题 2：第二题\n[用户未作答, 系统已自动关闭]")
   })
 
   it("没有未交出的题时什么也不返回", () => {
@@ -176,7 +176,7 @@ describe("问题没选完就直接发消息", () => {
     ask("B 的第二题", ["是", "否"], OTHER_SESSION)
     chat.answerQuestion(SESSION, a1, "是")
     chat.answerQuestion(OTHER_SESSION, b1, "否")
-    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：A 的第一题\n回答：是\n\n问题 2：A 的第二题\n[未作答, 问题已关闭]")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：A 的第一题\n回答：是\n\n问题 2：A 的第二题\n[用户未作答, 系统已自动关闭]")
     expect(question(b1, OTHER_SESSION).held).toBe(true)
   })
 })

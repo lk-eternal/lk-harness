@@ -116,7 +116,7 @@ describe("用户打字", () => {
     chat.answerQuestion(SESSION, q1, "B")
     rounds.end(SESSION)
 
-    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：第一题\n回答：B\n\n问题 2：第二题\n[未作答, 问题已关闭]")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：第一题\n回答：B\n\n问题 2：第二题\n[用户未作答, 系统已自动关闭]")
     expect(question(q1).closedNote).toBeUndefined()
     expect(question(q2).closedNote).toBe("问题已关闭")
   })
@@ -136,7 +136,7 @@ describe("用户打字", () => {
     rounds.end(SESSION)
     const fresh = ask("这一轮的题")
 
-    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：上一轮的题\n[未作答, 问题已关闭]")
+    expect(chat.closeEndedQuestions(SESSION, "问题已关闭")).toBe("问题 1：上一轮的题\n[用户未作答, 系统已自动关闭]")
     expect(question(old).closedNote).toBe("问题已关闭")
     expect(question(fresh).closedNote).toBeUndefined()
   })

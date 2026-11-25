@@ -243,7 +243,7 @@ describe("用户打字", () => {
     typeText("用 B，别的你定")
     await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
 
-    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]", "用 B，别的你定"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：B\n\n问题 2：要不要加测试？\n[用户未作答, 系统已自动关闭]", "用 B，别的你定"])
     expect(agentStreamCards.get(SESSION)?.questionBlocks.map((b) => [b.answered, b.closedNote])).toEqual([["B", undefined], [undefined, "问题已关闭"]])
   })
 
@@ -254,7 +254,7 @@ describe("用户打字", () => {
     typeText("我自己说吧")
     await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
 
-    expect(queued()).toEqual(["问题 1：用哪个库？\n[未作答, 问题已关闭]", "我自己说吧"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n[用户未作答, 系统已自动关闭]", "我自己说吧"])
     expect(replacedIds()).toHaveLength(1)
     expect((sender.replaceCardElement.mock.calls[0] as unknown[])[0]).toBe(cardId)
   })
@@ -268,7 +268,7 @@ describe("用户打字", () => {
     await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
     endRound()
 
-    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]", "好了"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[用户未作答, 系统已自动关闭]", "好了"])
   })
 
   it("独立的单题卡（不在流式卡里）没答就被打字关掉：同样先告诉 Agent，且只告诉一次", async () => {
@@ -280,7 +280,7 @@ describe("用户打字", () => {
     typeText("再说一次")
     await new Promise((r) => setTimeout(r, 20))
 
-    expect(queued()).toEqual(["问题 1：要不要发版？\n[未作答, 问题已关闭]", "先别发", "再说一次"])
+    expect(queued()).toEqual(["问题 1：要不要发版？\n[用户未作答, 系统已自动关闭]", "先别发", "再说一次"])
   })
 
   it("同时有上一轮和这一轮的卡：只处理上一轮的，这一轮的不碰", async () => {
@@ -392,7 +392,7 @@ describe("题归这一轮的发言人：打字", () => {
     expect(cardQuestionMap.has(b.messageId)).toBe(true)
     expect(cardQuestionMap.has(c.messageId)).toBe(true)
     expect(cardQuestionMap.get(b.messageId)?.blocks?.[0].closedNote).toBeUndefined()
-    expect(queued()).toEqual(["问题 1：用哪个库？\n[未作答, 问题已关闭]", "我自己说吧"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n[用户未作答, 系统已自动关闭]", "我自己说吧"])
 
     const r = await pick(b.messageId, "q_b", "要", SESSION, "ou_b")
     expect(r.toast).toMatchObject({ type: "success" })
@@ -419,7 +419,7 @@ describe("题归这一轮的发言人：打字", () => {
 
     typeText("别的你定", "ou_a")
     await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
-    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[未作答, 问题已关闭]", "别的你定"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n回答：A\n\n问题 2：要不要加测试？\n[用户未作答, 系统已自动关闭]", "别的你定"])
   })
 
   it("主用户（管理员）打字：别人的题也算被他的文字代替", async () => {
@@ -430,7 +430,7 @@ describe("题归这一轮的发言人：打字", () => {
 
     typeText("这个先不用选了", "ou_admin")
     await vi.waitFor(() => expect(cardQuestionMap.has(messageId)).toBe(false))
-    expect(queued()).toEqual(["问题 1：用哪个库？\n[未作答, 问题已关闭]", "这个先不用选了"])
+    expect(queued()).toEqual(["问题 1：用哪个库？\n[用户未作答, 系统已自动关闭]", "这个先不用选了"])
   })
 
   it("没有归属人的题：谁打字都算代替（和以前一致）", async () => {
