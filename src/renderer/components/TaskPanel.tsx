@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { Plus, Loader2, Play, Trash2 } from "lucide-react"
 import ModelPicker from "./chat/ModelPicker"
 import useInlineModal from "./useInlineModal"
@@ -27,7 +27,7 @@ import {
   type TaskDeliveryCheckEnv,
   type TaskDeliveryLabels,
 } from "../../shared/task-delivery"
-import { describeLastRun, describeRun, runTone, type TaskRunLog, type TaskRunTone } from "../../shared/task-run-log-rules"
+import { describeLastRun, describeRun, runTone, sortTasksForList, type TaskRunLog, type TaskRunTone } from "../../shared/task-run-log-rules"
 
 const RUN_TONE_CLASS: Record<TaskRunTone, string> = {
   ok: "text-success",
@@ -368,9 +368,12 @@ export default function TaskPanel() {
   const now = Date.now()
   const draftRuns = draft ? (taskRuns[draft.id] ?? []) : []
 
+  // 列表顺序：停用的在最后，其余按最近一次执行的时间排（刚执行完的在最前面）
+  const orderedTasks = useMemo(() => sortTasksForList(tasks, taskRuns), [tasks, taskRuns])
+
   const listRef = useRef<HTMLDivElement>(null)
   useScrollActiveIntoView(listRef, selectedId, tasks.length)
-  useOpenFirstOnce(tasksReady, tasks, selectedId !== null || draft !== null, (t) => openDraft(t, false))
+  useOpenFirstOnce(tasksReady, orderedTasks, selectedId !== null || draft !== null, (t) => openDraft(t, false))
 
   return (
     <>
@@ -382,7 +385,7 @@ export default function TaskPanel() {
             </button>
           </div>
           <div ref={listRef} className={PANEL_LIST}>
-            {tasks.map((t) => {
+            {orderedTasks.map((t) => {
               const active = selectedId === t.id
               const isRunning = !!taskStatuses[t.id]?.running
               const lastRun = taskRuns[t.id]?.[0]

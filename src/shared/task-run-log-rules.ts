@@ -169,6 +169,39 @@ export function describeRun(rec: TaskRunRecord, now: number): string {
   return `${runTimeText(rec, now)} ${runKindLabel(rec)}${rec.detail ? ` · ${rec.detail}` : ""}`;
 }
 
+/** 这两种不算「执行过」：到点没跑起来（错过），或被关卡挡掉（跳过） */
+const NOT_EXECUTED: ReadonlySet<TaskRunKind> = new Set<TaskRunKind>(["missed", "skipped"]);
+
+/** 最近一次执行的时间：真的触发过的记录里最新的一条（没送出去也算触发过）；一次都没有返回 undefined */
+export function lastExecutedAt(records: readonly TaskRunRecord[] | undefined): number | undefined {
+  let latest: number | undefined;
+  for (const r of records ?? []) {
+    if (NOT_EXECUTED.has(r.kind)) continue;
+    if (latest === undefined || r.at > latest) latest = r.at;
+  }
+  return latest;
+}
+
+/**
+ * 任务列表的顺序：停用的排最后；其余按最近一次执行的时间从新到旧（刚执行完的在最前面），
+ * 还没执行过的排在执行过的后面；时间相同 / 都没执行过的保持原来的先后。
+ * 停用的任务内部也按同样的规则排。
+ */
+export function sortTasksForList<T extends { id: string; enabled: boolean }>(tasks: readonly T[], log: TaskRunLog): T[] {
+  return tasks
+    .map((task, index) => ({ task, index, ran: lastExecutedAt(log[task.id]) }))
+    .sort((a, b) => {
+      if (a.task.enabled !== b.task.enabled) return a.task.enabled ? -1 : 1;
+      if (a.ran !== b.ran) {
+        if (a.ran === undefined) return 1;
+        if (b.ran === undefined) return -1;
+        return b.ran - a.ran;
+      }
+      return a.index - b.index;
+    })
+    .map((x) => x.task);
+}
+
 /** 任务列表里的一行：「上次：今天 09:00 已汇报」；还没有记录返回空串 */
 export function describeLastRun(records: readonly TaskRunRecord[] | undefined, now: number): string {
   const last = records?.[0];

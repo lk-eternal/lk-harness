@@ -7,11 +7,13 @@ import {
   describeLastRun,
   describeRun,
   formatRunTime,
+  lastExecutedAt,
   MAX_RUNS_PER_TASK,
   parseTaskRunLog,
   runKindLabel,
   runTone,
   settleRun,
+  sortTasksForList,
   type TaskRunRecord,
 } from "../src/shared/task-run-log-rules.js"
 import {
@@ -128,6 +130,60 @@ describe("task-run-log-rules：文案", () => {
     expect(runTone("reported")).toBe("ok")
     expect(runTone("quiet")).toBe("muted")
     expect(runTone("triggered")).toBe("muted")
+  })
+})
+
+describe("task-run-log-rules：任务列表的顺序", () => {
+  const t = (id: string, enabled = true) => ({ id, enabled })
+  const ids = (list: { id: string }[]) => list.map((x) => x.id)
+
+  it("最近一次执行：错过和跳过不算，没送出去也算（它确实触发过）", () => {
+    expect(lastExecutedAt(undefined)).toBeUndefined()
+    expect(lastExecutedAt([])).toBeUndefined()
+    expect(lastExecutedAt([{ at: at(10), kind: "missed" }, { at: at(9), kind: "skipped" }])).toBeUndefined()
+    expect(lastExecutedAt([{ at: at(10), kind: "missed" }, { at: at(8), kind: "reported" }])).toBe(at(8))
+    expect(lastExecutedAt([{ at: at(7), kind: "undelivered" }, { at: at(6), kind: "reported" }])).toBe(at(7))
+    // 不依赖记录的先后（取时间最大的）
+    expect(lastExecutedAt([{ at: at(6), kind: "reported" }, { at: at(9), kind: "triggered" }])).toBe(at(9))
+  })
+
+  it("刚执行完的在最前面", () => {
+    const log = {
+      a: [{ at: at(8), kind: "reported" as const }],
+      b: [{ at: at(9), kind: "triggered" as const }],
+      c: [{ at: at(7), kind: "quiet" as const }],
+    }
+    expect(ids(sortTasksForList([t("a"), t("b"), t("c")], log))).toEqual(["b", "a", "c"])
+  })
+
+  it("停用的排在最后，不管它多近执行过", () => {
+    const log = {
+      off: [{ at: at(12), kind: "reported" as const }],
+      on: [{ at: at(7), kind: "reported" as const }],
+    }
+    expect(ids(sortTasksForList([t("off", false), t("on")], log))).toEqual(["on", "off"])
+  })
+
+  it("还没执行过的排在执行过的后面，保持原来的先后", () => {
+    const log = { ran: [{ at: at(7), kind: "reported" as const }], missedOnly: [{ at: at(9), kind: "missed" as const }] }
+    expect(ids(sortTasksForList([t("never1"), t("missedOnly"), t("ran"), t("never2")], log)))
+      .toEqual(["ran", "never1", "missedOnly", "never2"])
+  })
+
+  it("停用的内部也按最近执行时间排", () => {
+    const log = {
+      old: [{ at: at(6), kind: "reported" as const }],
+      recent: [{ at: at(9), kind: "reported" as const }],
+    }
+    expect(ids(sortTasksForList([t("old", false), t("never", false), t("recent", false)], log))).toEqual(["recent", "old", "never"])
+  })
+
+  it("时间相同保持原顺序；不改原数组", () => {
+    const list = [t("x"), t("y")]
+    const log = { x: [{ at: at(9), kind: "reported" as const }], y: [{ at: at(9), kind: "quiet" as const }] }
+    expect(ids(sortTasksForList(list, log))).toEqual(["x", "y"])
+    sortTasksForList([t("b"), t("a")], {})
+    expect(ids(list)).toEqual(["x", "y"])
   })
 })
 
