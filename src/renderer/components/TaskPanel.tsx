@@ -13,7 +13,6 @@ import { isAiTask, taskNotifyChannelId } from "../../shared/scheduled-task-rules
 import {
   describeAiTaskProgress,
   describeTaskDelivery,
-  isLegacyDelivery,
   taskAgentTargetLabel,
   toUserNotifyTask,
   validateTaskDelivery,
@@ -264,8 +263,6 @@ export default function TaskPanel() {
 
   const deliveryHint = draft ? describeTaskDelivery(withEffectiveChannel(draft), labels) : ""
   const ai = draft ? isAiTask(draft) : false
-  /** 旧版存下的交付方式（非独立 / 不通知 / 通知 AI / 绑项目）：照存的跑，保存才转成「独立运行 + 通知我」 */
-  const legacy = !!draft && !ai && !isNew && isLegacyDelivery(draft)
 
   const now = Date.now()
   const draftRuns = draft ? (taskRuns[draft.id] ?? []) : []
@@ -353,18 +350,13 @@ export default function TaskPanel() {
                     )}
                   </div>
                 )}
-                <div><label className="mb-1 block text-xs text-fg-muted">任务内容（给独立 Agent 的指令）</label>
+                <div><label className="mb-1 block text-xs text-fg-muted">任务内容</label>
                   <textarea value={draft.content} readOnly={ai} onChange={(e) => setDraft({ ...draft, content: e.target.value })} rows={6} className={inputCls + " font-mono text-xs leading-relaxed"} placeholder="要独立 Agent 去做的事，做完让它提交结果…" /></div>
 
                 {ai ? (
                   <div className="rounded-lg border border-line-subtle bg-surface/80 px-3 py-2 text-xs leading-relaxed text-fg-3">{deliveryHint}</div>
                 ) : (
                   <>
-                    {legacy && (
-                      <div className="rounded-lg border border-warning/40 bg-warning/5 px-3 py-2 text-xs leading-relaxed text-fg-3">
-                        这个任务是旧版的交付方式，现在仍照原样运行；保存后会改成「独立运行 + 通知我」：每次由全新 Agent 执行，结果发给你。
-                      </div>
-                    )}
                     <div className="space-y-3 rounded-lg border border-line-subtle bg-surface/60 px-3 py-3">
                       <div>
                         <label className="mb-1 block text-xs text-fg-muted">模型</label>
@@ -427,7 +419,6 @@ export default function TaskPanel() {
                         )}
                       </div>
 
-                      <p className="text-xs leading-relaxed text-fg-muted">{deliveryHint}</p>
                       {saveError && <p className="text-xs text-danger">{saveError}</p>}
                     </div>
                   </>
