@@ -66,7 +66,7 @@ export function clearPiSession(sessionKey: string): void {
   } catch { /* ignore */ }
 }
 
-/** 账本口径：落盘 jsonl 物理消息数（不展开[本轮投递]） */
+/** 账本口径：落盘 jsonl 物理消息数（不展开一条用户消息里的多条正文） */
 export function countPiSessionPhysicalTurns(sessionKey: string): number {
   const file = findExistingSessionFile(sessionDirForKey(sessionKey))
   if (!file) return 0

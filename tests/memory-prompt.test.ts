@@ -51,10 +51,10 @@ const VISITOR: PromptAssemblyContext = {
   visitor: resolveVisitorLimits({ visitorTier: "visitor" }, "others"),
 }
 
-/** 从 [本轮投递] 里取出 JSON 载荷 */
-function payloadOf(prompt: string): Record<string, unknown> {
-  const m = prompt.match(/\[本轮投递\]\s*```json\s*([\s\S]*?)```/)
-  return JSON.parse(m![1]!)
+/** 本轮信封里的 memory 标签内容；没有返回 undefined。宿主提示词的说明文字里也提到 `<memory>`，所以从 turn 标签起找 */
+function memoryOf(prompt: string): string | undefined {
+  const turn = prompt.slice(prompt.lastIndexOf("<turn "))
+  return /<memory>\n([\s\S]*?)\n<\/memory>/.exec(turn)?.[1]
 }
 
 describe("提示词里的「会话记忆」组跟着工具挂载走", () => {
@@ -126,57 +126,61 @@ describe("首轮带入记忆", () => {
     saveSessionMemory(h.userData, sk, "待办", "等产品确认文案")
   }
 
-  it("首轮：memory 是 key → 内容，放在 session 之后、messages 之前；用户消息照常在 messages 里", () => {
+  it("首轮：memory 标签里每条记忆一个 item，带创建和修改时间，放在消息之前；用户消息照常在 message 里", () => {
     remember(MAIN.sessionKey!)
     const prompt = assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })
-    const payload = payloadOf(prompt)
-    expect(payload.memory).toEqual({ 部署约束: "线上只能周三发布", 待办: "等产品确认文案" })
-    expect(Object.keys(payload)).toEqual(["session", "memory", "messages"])
-    expect((payload.messages as { text: string }[]).map((m) => m.text)).toEqual(["用户这一句"])
+    const items = memoryOf(prompt)!.split("\n")
+    expect(items).toHaveLength(2)
+    expect(items[0]).toMatch(/^<item key="部署约束" created="[\d-]+ [\d:]+" updated="[\d-]+ [\d:]+">线上只能周三发布<\/item>$/)
+    expect(items[1]).toContain('<item key="待办"')
+    expect(prompt.indexOf("<memory>")).toBeLessThan(prompt.indexOf("<message "))
+    expect(prompt).toContain('<message id="m1">\n用户这一句\n</message>')
   })
 
   it("不是首轮：不带（AI 手里的上下文里已经有了，每轮重复只是白占字数）", () => {
     remember(MAIN.sessionKey!)
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: false })).memory).toBeUndefined()
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN)).memory).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: false }))).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN))).toBeUndefined()
   })
 
-  it("首轮但没有记忆：不出现 memory 字段", () => {
-    expect(Object.keys(payloadOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })))).toEqual(["session", "messages"])
+  it("首轮但没有记忆：不出现 memory 标签", () => {
+    expect(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })).not.toContain("<memory>")
   })
 
   it("记忆只给自己的会话：别的会话的记忆不会串进来", () => {
     remember("ch_a|oc_other")
-    expect(payloadOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true })).memory).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, MAIN, { firstTurn: true }))).toBeUndefined()
   })
 
   it.each([["独立定时任务", TASK], ["访客档", VISITOR]] as [string, PromptAssemblyContext][])(
     "%s：没挂记忆工具，磁盘上即使有记忆也不带",
     (_n, ctx) => {
       remember(ctx.sessionKey!)
-      expect(payloadOf(assembleTurnPrompt(MSGS, ctx, { firstTurn: true })).memory).toBeUndefined()
+      expect(memoryOf(assembleTurnPrompt(MSGS, ctx, { firstTurn: true }))).toBeUndefined()
     },
   )
 
   it("没有会话 key（单测里的空上下文）：不读记忆，不抛错", () => {
-    expect(payloadOf(assembleTurnPrompt(MSGS, {}, { firstTurn: true })).memory).toBeUndefined()
+    expect(memoryOf(assembleTurnPrompt(MSGS, {}, { firstTurn: true }))).toBeUndefined()
   })
 
-  it("和切供应商搬来的历史一起首轮带入：memory 在前，历史和本轮消息按原顺序在 messages 里", () => {
+  it("和切供应商搬来的历史一起首轮带入：memory 在前，接着是 history，最后是本轮消息", () => {
     remember(MAIN.sessionKey!)
-    const payload = payloadOf(assembleTurnPrompt(MSGS, MAIN, {
+    const prompt = assembleTurnPrompt(MSGS, MAIN, {
       firstTurn: true,
       historyTurns: [{ role: "user", text: "旧问题" }, { role: "assistant", text: "旧回答" }],
-    }))
-    expect(Object.keys(payload)).toEqual(["session", "memory", "messages"])
-    expect((payload.messages as { text: string }[]).map((m) => m.text)).toEqual(["旧问题", "旧回答", "用户这一句"])
+    })
+    const at = (s: string) => prompt.indexOf(s)
+    expect(at("<memory>")).toBeLessThan(at("<history>"))
+    expect(at("<history>")).toBeLessThan(at("旧问题"))
+    expect(at("旧回答")).toBeLessThan(at("</history>"))
+    expect(at("</history>")).toBeLessThan(at("用户这一句"))
   })
 
-  it("SDK 引擎的整轮提示词：协议段在前，memory 随首轮 [本轮投递] 在后，且只出现一次", () => {
+  it("SDK 引擎的整轮提示词：协议段在前，memory 随首轮的 turn 标签在后，且只出现一次", () => {
     remember(MAIN.sessionKey!)
     const p = assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: true })
-    // 协议正文里本身就提到「[本轮投递]」，要认带 JSON 的那个
-    expect(p.indexOf(MEMORY_GROUP)).toBeLessThan(p.indexOf("[本轮投递]\n```json"))
+    expect(p.indexOf(MEMORY_GROUP)).toBeLessThan(p.lastIndexOf("<turn "))
     expect(count(p, "线上只能周三发布")).toBe(1)
     expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: false })).not.toContain("线上只能周三发布")
   })

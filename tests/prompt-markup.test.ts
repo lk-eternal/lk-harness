@@ -1,6 +1,6 @@
 /** 提示词标签标记的公共规则：块拼接、属性值、原文中和、本机时间的写法 */
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { joinPromptBlocks, promptAttr, promptText, promptTime, promptUtcOffset } from "../src/shared/prompt-markup"
+import { joinPromptBlocks, promptAttr, promptNow, promptText, promptTime, promptUtcOffset } from "../src/shared/prompt-markup"
 
 afterEach(() => { vi.restoreAllMocks() })
 
@@ -35,5 +35,11 @@ describe("promptTime / promptUtcOffset", () => {
   ])("时区偏移 %i 分钟写成 %s", (offset, expected) => {
     vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(offset)
     expect(promptUtcOffset(Date.now())).toBe(expected)
+  })
+
+  it("现在：日期、星期、时间和时区", () => {
+    vi.spyOn(Date.prototype, "getTimezoneOffset").mockReturnValue(-480)
+    expect(promptNow(new Date(2026, 10, 25, 10, 19).getTime())).toBe("2026-11-25 周三 10:19 (UTC+8)")
+    expect(promptNow(new Date(2026, 10, 29, 8, 0).getTime())).toBe("2026-11-29 周日 08:00 (UTC+8)")
   })
 })

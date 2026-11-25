@@ -7,7 +7,7 @@
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("electron", async () => {
   const p = await import("node:path")
@@ -42,6 +42,10 @@ beforeEach(() => {
 })
 
 describe("SDK：assembleSdkWorkerTurnPrompt 的 skillCatalog", () => {
+  // 每轮信封里有「现在」，几次拼装要逐字比较，时间得固定住
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(2026, 10, 25, 10, 19)) })
+  afterEach(() => { vi.useRealTimers() })
+
   it("给了名单：放在协议块之后、本轮消息之前，且只出现一次", () => {
     const protocol = joinPromptBlocks(assembleProtocolBlocks(CTX))
     const p = assembleSdkWorkerTurnPrompt(MSGS, CTX, { firstTurn: true, skillCatalog: CATALOG })

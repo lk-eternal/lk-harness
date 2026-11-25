@@ -1,6 +1,7 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrate.js"
+import { turnMessageTexts } from "../src/shared/turn-envelope.js"
 import {
   ensureSessionEntry,
   sessionCarryoverPath,
@@ -33,10 +34,15 @@ function textOfContent(content: PiMessage["content"]): string {
     .join("\n")
 }
 
-/** [本轮投递] JSON 里包着真用户正文；冷启动/唤醒类系统回合直接扔掉 */
+/**
+ * 用户消息里包着真用户正文：现在是 turn 标签；旧账本里还留着 `[本轮投递]` JSON 和冷启动/唤醒类系统回合，也要认（旧格式分支等旧账本滚完再删）。
+ * 冷启动/唤醒类系统回合直接扔掉。
+ */
 function splitUserText(raw: string): string[] {
   const t = raw.trim()
   if (!t) return []
+  const turnTexts = turnMessageTexts(t)
+  if (turnTexts) return turnTexts
   if (t.startsWith("[冷启动]") || t.startsWith("[SESSION_RESUME")) return []
   const m = t.match(/\[本轮投递\]\s*```json\s*([\s\S]*?)```/)
   if (m) {
@@ -49,7 +55,7 @@ function splitUserText(raw: string): string[] {
   return [t]
 }
 
-/** 账本口径：物理 Pi 消息数（1 个 prompt = 1 轮，不展开[本轮投递]；搬运重放不再算负债） */
+/** 账本口径：物理 Pi 消息数（1 个 prompt = 1 轮，不展开一条用户消息里的多条正文；搬运重放不再算负债） */
 export function countPiPhysicalTurns(messages: PiMessage[]): number {
   let n = 0
   for (const msg of messages) {

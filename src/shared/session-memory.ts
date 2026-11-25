@@ -120,15 +120,9 @@ export function clearSessionMemory(root: string, sessionKey: string): void {
   fs.rmSync(sessionMemoryPath(root, sessionKey), { force: true })
 }
 
-/** 记忆给 AI 看的写法，每条一行 item：memory_read 和首轮带入共用，格式只在这一处定 */
+/** 记忆给 AI 看的写法，每条一行 item：memory_read 和首轮的 memory 标签共用，格式只在这一处定 */
 export function formatMemoryItems(entries: SessionMemoryEntry[]): string {
   return entries
     .map((e) => `<item key="${promptAttr(e.key)}" created="${promptTime(e.createdAt)}" updated="${promptTime(e.updatedAt)}">${promptText(e.content)}</item>`)
     .join("\n")
-}
-
-/** 首轮 `[本轮投递]` 里的 memory 字段：key → 内容；没有记忆返回 undefined（字段不出现） */
-export function memoryForPrompt(entries: SessionMemoryEntry[]): Record<string, string> | undefined {
-  if (entries.length === 0) return undefined
-  return Object.fromEntries(entries.map((e) => [e.key, e.content]))
 }

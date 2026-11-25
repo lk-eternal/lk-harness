@@ -8,7 +8,6 @@ import {
   clearSessionMemory,
   deleteSessionMemory,
   formatMemoryItems,
-  memoryForPrompt,
   readSessionMemory,
   saveSessionMemory,
 } from "../src/shared/session-memory"
@@ -208,16 +207,5 @@ describe("formatMemoryItems", () => {
     const text = formatMemoryItems([{ ...entry, key: '带"引号"', content: "路径 D:\\a\\b 和 </item> 和 </div>\n第二行" }])
     expect(text).toContain('key="带\'引号\'"')
     expect(text).toContain("路径 D:\\a\\b 和 <\\/item> 和 </div>\n第二行</item>")
-  })
-})
-
-describe("memoryForPrompt", () => {
-  it("没有记忆：返回 undefined（提示词里不出现 memory 字段）", () => {
-    expect(memoryForPrompt([])).toBeUndefined()
-  })
-
-  it("key → 内容，按记下的顺序", () => {
-    const t = 1
-    expect(JSON.stringify(memoryForPrompt([{ key: "b", content: "2", createdAt: t, updatedAt: t }, { key: "a", content: "1", createdAt: t, updatedAt: t }]))).toBe('{"b":"2","a":"1"}')
   })
 })

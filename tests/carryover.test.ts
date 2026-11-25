@@ -28,7 +28,7 @@ import {
 } from "../src/shared/session-resource-store.js"
 
 describe("turnsFromPiMessages", () => {
-  it("跳过工具块与报错空回合，拆出[本轮投递]真用户正文", () => {
+  it("跳过工具块与报错空回合，拆出旧账本里[本轮投递]的真用户正文", () => {
     const turns = turnsFromPiMessages([
       { role: "user", content: "[冷启动] 请先非阻塞 poll-message" },
       {
@@ -44,6 +44,34 @@ describe("turnsFromPiMessages", () => {
     expect(turns).toEqual([
       { role: "user", text: "回调重试会重复入账" },
       { role: "assistant", text: "加了幂等键" },
+    ])
+  })
+
+  it("拆出 turn 标签里的真用户正文：记忆、历史、引用不算；一条用户消息里的多条正文各成一轮", () => {
+    const content = [
+      '<turn chat="p2p" now="2026-11-25 周三 10:19 (UTC+8)">',
+      "<memory>",
+      '<item key="k" created="2026-11-24 14:03" updated="2026-11-24 14:03">记忆内容</item>',
+      "</memory>",
+      "<history>",
+      '<message from="user">',
+      "搬来的旧问题",
+      "</message>",
+      "</history>",
+      '<message id="m1" at="2026-11-25 10:18" from="user">',
+      '<quote id="q" from="bot">',
+      "被引用的",
+      "</quote>",
+      "第一条",
+      "</message>",
+      '<message id="m2" from="user">',
+      "第二条",
+      "</message>",
+      "</turn>",
+    ].join("\n")
+    expect(turnsFromPiMessages([{ role: "user", content }])).toEqual([
+      { role: "user", text: "第一条" },
+      { role: "user", text: "第二条" },
     ])
   })
 })

@@ -55,7 +55,7 @@ export function buildCapabilityBlock(scope: CapabilityScope): string {
     groups.push(group(
       "会话记忆（lk-harness-memory）",
       "记录和读取当前会话的记忆。对话只保留最近约 15 轮，更早的内容会在会话滚动时丢掉，需要长期保留的结论、约束、没做完的事用记忆。"
-        + "新起的会话首轮会在 `[本轮投递]` 的 `memory`（key → 内容）里带上你之前记的内容；它和用户最新说的冲突，以用户为准。",
+        + "新起的会话首轮会在 `<memory>` 里带上你之前记的内容；它和用户最新说的冲突，以用户为准。",
     ))
   }
   return ["# 能力", INTRO, ...groups].join("\n\n")

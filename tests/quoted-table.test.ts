@@ -88,17 +88,16 @@ describe("投递与镜像带引用", () => {
     fs.rmSync(dataDir, { recursive: true, force: true })
   })
 
-  it("internal_ 队列 id 不写入本轮投递 message_id", () => {
+  it("internal_ 队列 id 不写入 message 标签的 id", () => {
     const out = assembleTurnPrompt(
       [{ text: "任务正文", messageId: "internal_enqueue_1", meta: { senderType: "user", senderOpenId: "ou_u" } }],
       { meta: { chatType: "p2p" } },
     )
-    const payload = JSON.parse(out.match(/```json\s*([\s\S]*?)```/)![1])
-    expect(payload.messages[0]).toEqual({ sender_type: "user", sender_open_id: "ou_u", text: "任务正文" })
-    expect(payload.messages[0]).not.toHaveProperty("message_id")
+    expect(out).toContain('<message from="user" sender="ou_u">\n任务正文\n</message>')
+    expect(out).not.toContain("internal_enqueue_1")
   })
 
-  it("本轮投递装 quoted_message 对象", () => {
+  it("引用放在 message 标签里、正文之前，带被引用消息的 id、发送者类型、发送者标识", () => {
     const out = assembleTurnPrompt(
       [{
         text: "帮忙分析一下排课的慢sql",
@@ -111,11 +110,12 @@ describe("投递与镜像带引用", () => {
       }],
       { sessionKey: "sk" },
     )
-    const payload = JSON.parse(out.match(/```json\s*([\s\S]*?)```/)![1])
-    expect(payload.messages[0].quoted_message).toEqual({
-      message_id: "om_q", sender_type: "bot", sender_open_id: "ou_bot", text: "慢sql表",
-    })
-    expect(payload.messages[0]).not.toHaveProperty("quoted_content")
+    expect(out).toContain(
+      '<message id="om_new" from="user" sender="ou_u">\n'
+      + '<quote id="om_q" from="bot" sender="ou_bot">\n慢sql表\n</quote>\n'
+      + "帮忙分析一下排课的慢sql\n"
+      + "</message>",
+    )
   })
 
   it("mirror 往返保留引用", () => {

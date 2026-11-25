@@ -2,14 +2,15 @@ import { createHash } from "node:crypto"
 import { app } from "electron"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
-import { channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience, resolveChannelScene } from "../src/shared/channel-types.js"
+import { CHANNEL_TYPE_LABELS, channelIdFromSessionKey, chatIdFromSessionKey, parseChatKey, resolveChannelAudience, resolveChannelScene, type MessageChannel } from "../src/shared/channel-types.js"
 import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
 import { shouldMountMemoryMcp, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
 import { IDENTITY_BLOCK, buildCapabilityBlock } from "../src/shared/capability-index.js"
-import { memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
+import { readSessionMemory, type SessionMemoryEntry } from "../src/shared/session-memory.js"
+import { MESSAGE_FORMAT_BLOCK, buildTurnEnvelope, type EnvelopeMessage, type EnvelopeNodeRouting, type EnvelopeQuote } from "../src/shared/turn-envelope.js"
 import { buildVisitorPromptSection, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { joinPromptBlocks, promptAttr } from "../src/shared/prompt-markup.js"
 import { readTasksFromFile } from "./cron-scheduler"
@@ -48,6 +49,8 @@ export interface QuotedMessagePayload {
 export interface TurnMessage {
   text: string
   messageId?: string
+  /** 入队时间（毫秒），作为这条消息的发送时间交给 AI */
+  timestamp?: number
   meta?: {
     chatType?: string
     senderOpenId?: string
@@ -86,11 +89,9 @@ function resolveDigitalIdentity(skipIdentity: boolean, override?: string): strin
   return (override ?? getConfig().digitalIdentity ?? "").trim()
 }
 
-function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; audience: "main" | "others"; scene?: "dm" | "group" } {
-  const sessionKey = ctx.sessionKey ?? ""
-  const chatType = ctx.meta?.chatType
-  const chatKey = sessionKey ? chatIdFromSessionKey(sessionKey) : (ctx.meta?.chatId ?? "")
-  let channelId = sessionKey ? channelIdFromSessionKey(sessionKey) : undefined
+/** 会话所属的通道：先认会话键里的通道，没有再认启动参数里的聊天键 */
+function resolvePromptChannel(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; channel?: MessageChannel } {
+  let channelId = ctx.sessionKey ? channelIdFromSessionKey(ctx.sessionKey) : undefined
   let channel = channelId ? getChannel(channelId) : undefined
   if (!channel && ctx.meta?.chatId) {
     const parsed = parseChatKey(ctx.meta.chatId)
@@ -99,6 +100,14 @@ function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessi
       channelId = parsed.channelId
     }
   }
+  return { channelId, channel }
+}
+
+function resolvePromptRuleScope(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey">): { channelId?: string; audience: "main" | "others"; scene?: "dm" | "group" } {
+  const sessionKey = ctx.sessionKey ?? ""
+  const chatType = ctx.meta?.chatType
+  const chatKey = sessionKey ? chatIdFromSessionKey(sessionKey) : (ctx.meta?.chatId ?? "")
+  const { channelId, channel } = resolvePromptChannel(ctx)
   const scene = resolveChannelScene({
     mainUserEnabled: channel?.mainUserEnabled,
     mainUserChatId: channel?.mainUserChatId,
@@ -148,7 +157,7 @@ function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey
   }
 }
 
-/** 宿主提示词的各个块（身份、能力、数字身份、用户规则、任务段、访客段），没内容的块不出现；块之间用 joinPromptBlocks 连 */
+/** 宿主提示词的各个块（身份、能力、消息格式、数字身份、用户规则、任务段、访客段），没内容的块不出现；块之间用 joinPromptBlocks 连 */
 export function assembleProtocolBlocks(ctx: PromptAssemblyContext): string[] {
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
@@ -160,6 +169,7 @@ export function assembleProtocolBlocks(ctx: PromptAssemblyContext): string[] {
       includeProject: isProjectSession(ctx.meta, ctx.sessionKey),
       sessionKey: ctx.sessionKey,
     }),
+    MESSAGE_FORMAT_BLOCK,
     identity ? `# 数字身份\n${identity}` : "",
     buildUserRulesBlock(ctx),
     resolveTaskProtocolSection(ctx),
@@ -197,7 +207,7 @@ export function assembleSdkWorkerTurnPrompt(
 }
 
 /** 项目会话每轮自然语言附带：节点索引 + 发现协议（按钮 [PROJECT_ACTION] 轮跳过，抗长会话遗忘） */
-function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessage[]): Record<string, unknown> | undefined {
+function projectNodeRouting(sessionKey: string | undefined, messages: TurnMessage[]): EnvelopeNodeRouting | undefined {
   if (!sessionKey) return undefined
   let pid: string | undefined
   try { pid = projectIdFromSessionKey(sessionKey) } catch { return undefined }
@@ -209,49 +219,51 @@ function projectNodeReminder(sessionKey: string | undefined, messages: TurnMessa
   if (!proj) return undefined
   const nodes = projectNodes(proj).map((n) => ({ id: n.id, label: n.label }))
   if (!nodes.length) return undefined
+  return { projectId: proj.id, nodes }
+}
+
+/** 首轮带给 AI 的会话记忆；没挂记忆工具的会话（独立任务、访客）不带 */
+function firstTurnMemory(ctx: PromptAssemblyContext): SessionMemoryEntry[] | undefined {
+  const sessionKey = ctx.sessionKey?.trim()
+  if (!sessionKey || !ctxIncludeMemory(ctx)) return undefined
+  return readSessionMemory(app.getPath("userData"), sessionKey)
+}
+
+function toEnvelopeQuote(q: QuotedMessagePayload): EnvelopeQuote {
+  return { id: q.message_id, from: q.sender_type, sender: q.sender_open_id, text: q.text }
+}
+
+function toEnvelopeHistory(t: HistoryTurn): EnvelopeMessage {
+  return { from: t.role, text: t.text.trim(), quote: t.quoted_message ? toEnvelopeQuote(t.quoted_message) : undefined }
+}
+
+/** internal_ 开头的是应用内部下发的队列 id，不是真实消息 id，不交给 AI */
+function toEnvelopeMessage(m: TurnMessage): EnvelopeMessage {
   return {
-    nodes,
-    rule: `判断用户消息内容是否对应某节点，如果明确命中→先调 project_get_node(project_id=${proj.id}, node_id=命中id) 获取完整提示词再干；未命中则直接处理用户消息即可`,
+    id: m.messageId && !m.messageId.startsWith("internal_") ? m.messageId : undefined,
+    at: m.timestamp,
+    from: m.meta?.senderType,
+    sender: m.meta?.senderOpenId,
+    text: m.text.trim(),
+    quote: m.meta?.quoted_message ? toEnvelopeQuote(m.meta.quoted_message) : undefined,
   }
 }
 
-/** 首轮带给 AI 的会话记忆（key → 内容）；没挂记忆工具的会话（独立任务、访客）不带 */
-function firstTurnMemory(ctx: PromptAssemblyContext): Record<string, string> | undefined {
-  const sessionKey = ctx.sessionKey?.trim()
-  if (!sessionKey || !ctxIncludeMemory(ctx)) return undefined
-  return memoryForPrompt(readSessionMemory(app.getPath("userData"), sessionKey))
-}
-
-/** Session Worker 向 Agent 交付一批用户消息（JSON 结构化，避免正文与元数据混淆） */
+/** Session Worker 向 Agent 交付一批用户消息：包成 turn 标签，正文原样放入（格式见 turn-envelope） */
 export function assembleTurnPrompt(
   messages: TurnMessage[],
   ctx: PromptAssemblyContext,
   opts?: { firstTurn?: boolean; taskMessage?: string; historyTurns?: HistoryTurn[] },
 ): string {
-  const history = (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map((t) => ({
-    sender_type: t.role,
-    ...(t.quoted_message ? { quoted_message: t.quoted_message } : {}),
-    text: t.text.trim(),
-  }))
-  const sessionMeta: Record<string, string> = {}
-  if (ctx.meta?.chatType) sessionMeta.chat_type = ctx.meta.chatType
-  const memory = opts?.firstTurn ? firstTurnMemory(ctx) : undefined
-  const payload: Record<string, unknown> = {
-    ...(Object.keys(sessionMeta).length ? { session: sessionMeta } : {}),
-    ...(memory ? { memory } : {}),
-    messages: [
-      ...history,
-      ...messages.map((m) => ({
-        ...(m.messageId && !m.messageId.startsWith("internal_") ? { message_id: m.messageId } : {}),
-        ...(m.meta?.senderType ? { sender_type: m.meta.senderType } : {}),
-        ...(m.meta?.senderOpenId ? { sender_open_id: m.meta.senderOpenId } : {}),
-        ...(m.meta?.quoted_message ? { quoted_message: m.meta.quoted_message } : {}),
-        text: m.text.trim(),
-      })),
-    ],
-  }
-  if (opts?.taskMessage?.trim()) payload.task = opts.taskMessage.trim()
-  const nodeProtocol = projectNodeReminder(ctx.sessionKey, messages)
-  if (nodeProtocol) payload.node_protocol = nodeProtocol
-  return `[本轮投递]\n\`\`\`json\n${JSON.stringify(payload, null, 2)}\n\`\`\``
+  const channelType = resolvePromptChannel(ctx).channel?.type
+  return buildTurnEnvelope({
+    chat: ctx.meta?.chatType,
+    channel: channelType ? CHANNEL_TYPE_LABELS[channelType] : undefined,
+    now: Date.now(),
+    memory: opts?.firstTurn ? firstTurnMemory(ctx) : undefined,
+    task: opts?.taskMessage?.trim(),
+    history: (opts?.historyTurns ?? []).filter((t) => t.text?.trim()).map(toEnvelopeHistory),
+    messages: messages.map(toEnvelopeMessage),
+    nodeRouting: projectNodeRouting(ctx.sessionKey, messages),
+  })
 }

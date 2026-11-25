@@ -40,3 +40,11 @@ export function promptUtcOffset(ms: number): string {
   const rest = abs % 60
   return `UTC${sign}${Math.floor(abs / 60)}${rest ? `:${pad2(rest)}` : ""}`
 }
+
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"]
+
+/** 「现在」：本机日期、星期、时间和时区，2026-11-25 周三 10:19 (UTC+8) */
+export function promptNow(ms: number): string {
+  const [date, clock] = promptTime(ms).split(" ")
+  return `${date} 周${WEEKDAYS[new Date(ms).getDay()]} ${clock} (${promptUtcOffset(ms)})`
+}

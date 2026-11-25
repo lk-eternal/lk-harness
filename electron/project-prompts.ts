@@ -35,12 +35,12 @@ export interface ProjectSessionPromptOpts {
   gitPrinciples?: string | null
 }
 
-/** 首次进入项目会话的提示词：项目上下文 + 工作方式（节点索引/发现协议见每轮 [本轮投递] node_protocol） */
+/** 首次进入项目会话的提示词：项目上下文 + 工作方式（节点索引/发现协议见每轮的 node-routing 标签） */
 export function buildProjectSessionPrompt(p: Project, opts?: ProjectSessionPromptOpts): string {
   const hasRepo = projectHasRepoInfo(p)
   const principles = hasRepo ? resolveGitPrinciples(opts?.gitPrinciples) : ""
   return [
-    `[PROJECT_SESSION] 项目「${p.name}」专属会话`,
+    `项目「${p.name}」专属会话`,
     "",
     ...contextBlock(p),
     ...(principles ? ["", principles] : []),
@@ -48,7 +48,7 @@ export function buildProjectSessionPrompt(p: Project, opts?: ProjectSessionPromp
     "工作方式:",
     "1. 普通对话：用户直接发消息、问答讨论、小修小改 → 直接回。",
     "2. 按钮任务：用户点击按钮会收到 [PROJECT_ACTION] 任务 → 按任务要求执行（信息齐备直接执行，缺关键输入先问清再干）。",
-    "3. 自然语言：按每轮 [本轮投递] 内 node_protocol 判断是否拉取节点提示词。",
+    "3. 自然语言：按每轮的 <node-routing> 判断是否拉取节点提示词。",
     "",
     "查数与写数（全会话唯一指引）:",
     `- 查：project_get(project_id=${p.id}) 查项目信息/链接/最近成果；project_get_node 查单步骤全文。内部 ID/路径不向用户复述。`,

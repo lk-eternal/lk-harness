@@ -4288,7 +4288,7 @@ function registerMediaOutboundTools(s: McpServer): void {
     "发送本地图片到飞书/微信。image_path 为本地文件绝对路径。",
     {
       image_path: z.string().describe("图片绝对路径"),
-      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息里的 message_id）；传入后以回复模式发送"),
+      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息 <message> 标签的 id 属性）；传入后以回复模式发送"),
     },
     async ({ image_path, message_id }) => {
       try {
@@ -4309,7 +4309,7 @@ function registerMediaOutboundTools(s: McpServer): void {
     "发送本地文件到飞书/微信。file_path 为本地文件绝对路径。",
     {
       file_path: z.string().describe("文件绝对路径"),
-      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息里的 message_id）；传入后以回复模式发送"),
+      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息 <message> 标签的 id 属性）；传入后以回复模式发送"),
     },
     async ({ file_path, message_id }) => {
       try {
@@ -4334,7 +4334,7 @@ function registerQuestionOutboundTool(s: McpServer): void {
       text: z.string().describe("问题题目（支持 markdown）。保持简练，不要在题目里写结论"),
       options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）。选项前不要写序号，渲染层会自动带上。多选时选项文本里不要含「、」，多选答案用它连接"),
       multi_select: z.boolean().optional().describe(`true = 多选题：用户可勾选多个选项后提交，收到的答案是被选中的选项文本按题目顺序用「${MULTI_ANSWER_SEP}」连起来；默认 false（单选）`),
-      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息里的 message_id）；传入后以回复模式发送"),
+      message_id: z.string().optional().describe("要回复的消息 ID（取自用户消息 <message> 标签的 id 属性）；传入后以回复模式发送"),
     },
     async ({ text, options, multi_select, message_id }) => {
       try {
