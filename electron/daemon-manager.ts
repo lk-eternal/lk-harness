@@ -49,7 +49,7 @@ import { initHarnessRuleStore } from "../src/shared/harness-rule-store.js"
 import { registerFeishuApp } from "./feishu-register"
 import {
   setDaemonPort,
-  cleanupChannelWorkspaces, clearInjectionCache,
+  cleanupChannelWorkspaces,
 } from "./workspace-injector"
 import {
   invalidateMcpEnabledCache,
@@ -1617,7 +1617,6 @@ export async function applyWorkspaceSwitch(workspaceDir: string, stopOldSessions
   }
 
   invalidateMcpEnabledCache()
-  clearInjectionCache()
 
   if (!skipDaemonSync) {
     const lock = readLockFile()

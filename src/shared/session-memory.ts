@@ -13,17 +13,6 @@ export const MEMORY_LIMITS = {
   maxContentChars: 500,
 } as const
 
-/** 嵌入宿主协议的「会话记忆」段：挂载了 lk-harness-memory 的会话才会收到 */
-export const MEMORY_PROMPT_SECTION = [
-  "### 会话记忆（lk-harness-memory）",
-  "",
-  "**memory_save / memory_read / memory_delete** — 记录和读取**当前会话**的记忆。",
-  "- 对话里只会保留最近约 15 轮，更早的内容和工具返回会在会话滚动时丢掉；记忆不会：之后每次新起的会话，首轮 `[本轮投递]` 的 `memory`（key → 内容）里都会带上它。只有重置会话才会清空。",
-  "- 值得记：用户的决定和约束、已确认的结论、查到的关键事实（ID、路径、数值）、没做完的事和下一步。别记对话原文，也别记能从文件、代码里重新查到的内容。",
-  `- \`memory_save(key, content)\`：同一个 key 会覆盖更新；每条不超过 ${MEMORY_LIMITS.maxContentChars} 字，最多 ${MEMORY_LIMITS.maxEntries} 条，满了先合并或 \`memory_delete\`。`,
-  "- 收到 `memory` 时，它是你之前记的；和用户最新说的冲突，以用户为准。",
-].join("\n")
-
 export interface SessionMemoryEntry {
   key: string
   content: string

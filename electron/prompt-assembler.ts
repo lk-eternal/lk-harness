@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto"
-import * as fs from "node:fs"
 import { app } from "electron"
 import { getConfig, getChannel } from "./config-store"
 import { listEnabledHarnessRules, ruleAppliesTo } from "./harness-rule-store"
@@ -8,21 +7,21 @@ import { projectIdFromSessionKey } from "../src/shared/project-types.js"
 import { getProject, projectNodes } from "../src/shared/project-store.js"
 import { findScheduledTaskBySessionKey } from "../src/shared/scheduled-task.js"
 import { buildTaskProtocolSection } from "../src/shared/task-delivery.js"
-import { AI_SCHEDULE_PROMPT_SECTION } from "../src/shared/ai-schedule.js"
-import { shouldMountMemoryMcp, shouldMountScheduleMcp } from "../src/shared/harness-mcp-store.js"
-import { MEMORY_PROMPT_SECTION, memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
+import { shouldMountMemoryMcp, type HarnessMcpEndpoint } from "../src/shared/harness-mcp-store.js"
+import { IDENTITY_BLOCK, buildCapabilityBlock } from "../src/shared/capability-index.js"
+import { memoryForPrompt, readSessionMemory } from "../src/shared/session-memory.js"
 import { buildVisitorPromptSection, type VisitorLimits } from "../src/shared/visitor-limits.js"
 import { joinPromptBlocks, promptAttr } from "../src/shared/prompt-markup.js"
 import { readTasksFromFile } from "./cron-scheduler"
 import { readLockFile } from "./daemon-client"
-import { getRuleTemplatePath, getDaemonPort, getAdminMcpProtocolSection } from "./workspace-injector"
+import { getDaemonPort } from "./workspace-injector"
 import type { LaunchMeta } from "./agent-session-types"
 
 export interface PromptAssemblyContext {
   meta?: LaunchMeta
   sessionKey?: string
   useMainWorkspace?: boolean
-  /** 主用户私聊：协议内嵌 admin MCP 段并挂载 lk-harness-admin 工具 */
+  /** 主用户私聊：能力里列出自管理组并挂载 lk-harness-admin 工具 */
   includeAdmin?: boolean
   notifySessionKey?: string
   taskMessage?: string
@@ -37,12 +36,6 @@ function stripFrontmatter(raw: string): string {
   const end = raw.indexOf("\n---", 3)
   if (end === -1) return raw.trim()
   return raw.slice(end + 4).trim()
-}
-
-let cachedProtocol: { port: string; admin: boolean; schedule: boolean; memory: boolean; body: string } | null = null
-
-export function clearProtocolTemplateCache(): void {
-  cachedProtocol = null
 }
 
 export interface QuotedMessagePayload {
@@ -70,7 +63,7 @@ export interface HistoryTurn {
   quoted_message?: QuotedMessagePayload
 }
 
-/** Prompt 内嵌协议用的 Daemon 端口：优先 lock 文件（与当前 profile 实例一致） */
+/** 当前实例 Daemon 的端口：优先 lock 文件（与当前 profile 实例一致） */
 export function resolveDaemonPortForPrompt(): number | null {
   const lock = readLockFile()
   if (lock?.port) return lock.port
@@ -78,43 +71,6 @@ export function resolveDaemonPortForPrompt(): number | null {
   if (injected) return injected
   const cfg = getConfig().daemonPort
   return cfg > 0 ? cfg : null
-}
-
-function portForAssembly(explicit?: number | null): number | null {
-  if (explicit != null && explicit > 0) return explicit
-  return resolveDaemonPortForPrompt()
-}
-
-function substituteDaemonPort(raw: string, port: string): string {
-  if (!port) return raw
-  return raw
-    .replace(/\{\{DAEMON_PORT\}\}/g, port)
-    .replace(/127\.0\.0\.1:19528\b/g, `127.0.0.1:${port}`)
-    .replace(/Daemon 端口为 [`']19528[`']/g, `Daemon 端口为 \`${port}\``)
-}
-
-function substituteToolSections(raw: string, includeAdmin: boolean, includeSchedule: boolean, includeMemory: boolean): string {
-  const admin = includeAdmin ? getAdminMcpProtocolSection() : ""
-  const schedule = includeSchedule ? `\n\n${AI_SCHEDULE_PROMPT_SECTION}\n` : ""
-  const memory = includeMemory ? `\n\n${MEMORY_PROMPT_SECTION}\n` : ""
-  return raw
-    .replace(/\{\{ADMIN_MCP_SECTION\}\}/g, () => admin)
-    .replace(/\{\{SCHEDULE_MCP_SECTION\}\}/g, () => schedule)
-    .replace(/\{\{MEMORY_MCP_SECTION\}\}/g, () => memory)
-}
-
-/** 会话协议（无 poll，由 harness Session Worker 代管） */
-export function loadProtocol(daemonPort?: number | null, includeAdmin = false, includeSchedule = false, includeMemory = false): string {
-  const port = String(portForAssembly(daemonPort) ?? "")
-  if (cachedProtocol && cachedProtocol.port === port && cachedProtocol.admin === includeAdmin && cachedProtocol.schedule === includeSchedule && cachedProtocol.memory === includeMemory) return cachedProtocol.body
-  const tplPath = getRuleTemplatePath()
-  if (!fs.existsSync(tplPath)) throw new Error(`协议模板缺失: ${tplPath}`)
-  let raw = fs.readFileSync(tplPath, "utf-8")
-  raw = substituteDaemonPort(raw, port)
-  raw = substituteToolSections(raw, includeAdmin, includeSchedule, includeMemory)
-  const body = stripFrontmatter(raw)
-  cachedProtocol = { port, admin: includeAdmin, schedule: includeSchedule, memory: includeMemory, body }
-  return body
 }
 
 function isProjectSession(meta?: LaunchMeta, sessionKey?: string): boolean {
@@ -163,26 +119,14 @@ function buildUserRulesBlock(ctx?: Pick<PromptAssemblyContext, "meta" | "session
   return ["# 用户规则", ...items].join("\n\n")
 }
 
-function ctxIncludeAdmin(ctx: Pick<PromptAssemblyContext, "includeAdmin">): boolean {
-  return ctx.includeAdmin === true
+/** 这个会话挂的是哪种内置端点：和 agent-sdk / pi-embedded 挂载工具时的判定一致 */
+function resolveMcpEndpoint(ctx: Pick<PromptAssemblyContext, "meta" | "visitor">): HarnessMcpEndpoint {
+  return ctx.meta?.chatType === "task" ? "task" : ctx.visitor ? "visitor" : "interactive"
 }
 
-/** 自排程段：与 lk-harness-schedule 工具的挂载条件同一个判定（主用户会话 / 项目会话） */
-function ctxIncludeSchedule(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "includeAdmin">): boolean {
-  return shouldMountScheduleMcp({
-    includeAdmin: ctxIncludeAdmin(ctx),
-    includeProject: isProjectSession(ctx.meta, ctx.sessionKey),
-    endpoint: ctx.meta?.chatType === "task" ? "task" : "interactive",
-    sessionKey: ctx.sessionKey,
-  })
-}
-
-/** 会话记忆段：与 lk-harness-memory 工具的挂载条件同一个判定（交互会话，不含独立任务和访客） */
+/** 首轮要不要带入会话记忆：与 lk-harness-memory 工具的挂载条件同一个判定（交互会话，不含独立任务和访客） */
 function ctxIncludeMemory(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "visitor">): boolean {
-  return shouldMountMemoryMcp({
-    endpoint: ctx.meta?.chatType === "task" ? "task" : ctx.visitor ? "visitor" : "interactive",
-    sessionKey: ctx.sessionKey,
-  })
+  return shouldMountMemoryMcp({ endpoint: resolveMcpEndpoint(ctx), sessionKey: ctx.sessionKey })
 }
 
 /**
@@ -204,12 +148,18 @@ function resolveTaskProtocolSection(ctx: Pick<PromptAssemblyContext, "sessionKey
   }
 }
 
-/** 宿主提示词的各个块（协议、数字身份、用户规则、任务段、访客段），没内容的块不出现；块之间用 joinPromptBlocks 连 */
-export function assembleProtocolBlocks(ctx: PromptAssemblyContext, daemonPort?: number | null): string[] {
+/** 宿主提示词的各个块（身份、能力、数字身份、用户规则、任务段、访客段），没内容的块不出现；块之间用 joinPromptBlocks 连 */
+export function assembleProtocolBlocks(ctx: PromptAssemblyContext): string[] {
   const skipIdentity = shouldSkipDigitalIdentity(ctx.meta, ctx.sessionKey, ctx.useMainWorkspace)
   const identity = resolveDigitalIdentity(skipIdentity, ctx.digitalIdentityOverride)
   const blocks = [
-    loadProtocol(portForAssembly(daemonPort), ctxIncludeAdmin(ctx), ctxIncludeSchedule(ctx), ctxIncludeMemory(ctx)),
+    IDENTITY_BLOCK,
+    buildCapabilityBlock({
+      endpoint: resolveMcpEndpoint(ctx),
+      includeAdmin: ctx.includeAdmin === true,
+      includeProject: isProjectSession(ctx.meta, ctx.sessionKey),
+      sessionKey: ctx.sessionKey,
+    }),
     identity ? `# 数字身份\n${identity}` : "",
     buildUserRulesBlock(ctx),
     resolveTaskProtocolSection(ctx),
@@ -223,12 +173,12 @@ export function hashSystemPrompt(text: string): string {
 }
 
 /** 宿主提示词的指纹：就是实际给 AI 的那段文本的哈希，给了什么就是什么，不再另列一份「哪些输入算数」 */
-export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">, daemonPort?: number | null): string {
-  return hashSystemPrompt(joinPromptBlocks(assembleProtocolBlocks(ctx, daemonPort)))
+export function computePromptHash(ctx: Pick<PromptAssemblyContext, "meta" | "sessionKey" | "useMainWorkspace" | "digitalIdentityOverride" | "includeAdmin" | "visitor">): string {
+  return hashSystemPrompt(joinPromptBlocks(assembleProtocolBlocks(ctx)))
 }
 
 /**
- * SDK Session Worker：每轮全量注入宿主协议块（协议含 admin 段 + 身份 + 用户规则）。
+ * SDK Session Worker：每轮全量注入宿主协议块（身份、能力、数字身份、用户规则……）。
  * skillCatalog：本机 Skill 名单，只在账本新开或名单变了的那一轮给（之后的轮次不带，已经在历史里了）。
  */
 export function assembleSdkWorkerTurnPrompt(

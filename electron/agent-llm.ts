@@ -290,7 +290,7 @@ function promptHashForLlm(opts: Pick<LlmLaunchOptions, "meta" | "sessionKey" | "
     includeAdmin: opts.includeAdmin,
     digitalIdentityOverride: opts.digitalIdentityOverride,
     visitor: opts.visitor,
-  }, resolveDaemonPortForPrompt())
+  })
 }
 
 async function notifySessionLaunched(sessionKey: string, resumed: boolean, modelLabel?: string): Promise<void> {

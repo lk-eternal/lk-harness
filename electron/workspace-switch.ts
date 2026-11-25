@@ -15,7 +15,7 @@ import { readGitBranch, dirBaseName } from "../src/shared/session-label.js"
 import { CHANNEL_TYPE_LABELS, resolveChannelSessionFlags } from "../src/shared/channel-types.js"
 import { resolveChannelAccess } from "../src/shared/channel-access.js"
 import { invalidateMcpEnabledCache } from "./mcp-manager"
-import { cleanupChannelWorkspaces, clearInjectionCache } from "./workspace-injector"
+import { cleanupChannelWorkspaces } from "./workspace-injector"
 import { broadcastLog } from "./ui-logger"
 import { readLockFile, httpPost, syncActiveSession } from "./daemon-client"
 import type { DaemonChannelConfig } from "../src/shared/channel-types"
@@ -92,7 +92,6 @@ export async function applyChannelWorkspaceSwitch(
   if (!unchanged) {
     updateChannel(channelId, { workspaceDir: w })
     invalidateMcpEnabledCache()
-    clearInjectionCache()
     cleanupChannelWorkspaces()
   }
 

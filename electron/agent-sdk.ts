@@ -150,7 +150,7 @@ function promptHashForSession(session: Pick<SdkSessionAgent, "sessionKey" | "cha
     includeAdmin: session.includeAdmin,
     digitalIdentityOverride: session.digitalIdentityOverride,
     visitor: session.visitor,
-  }, undefined)
+  })
 }
 
 function ensureModelStore(): void {

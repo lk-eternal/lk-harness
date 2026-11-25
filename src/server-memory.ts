@@ -28,6 +28,8 @@ export function registerMemoryTools(s: McpServer, dataRoot: string, invoker: () 
       "记一条当前会话的记忆。对话里只保留最近约 15 轮，更早的内容会丢，记忆不会。",
       "记：用户的决定和约束、已确认的结论、查到的关键事实（ID、路径、数值）、没做完的事和下一步。不记对话原文，也不记能从文件、代码里重新查到的内容。",
       "同一个 key 会覆盖更新，所以事情有变化时用同一个 key 改掉，不要另记一条。",
+      "记忆跟着会话走：之后每次新起的会话，首轮都会带上它；只有重置会话才会清空。",
+      `最多 ${MEMORY_LIMITS.maxEntries} 条，满了先合并，或用 memory_delete 删掉不再需要的。`,
     ].join("\n"),
     {
       key: z.string().describe(`记忆名，简短（≤${MEMORY_LIMITS.maxKeyChars} 字），同名覆盖`),

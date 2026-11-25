@@ -75,6 +75,29 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
     expect(desc).toContain("写明什么情况下才汇报")
   })
 
+  it("memory_save 的说明交代清楚：记忆跟着会话走、只有重置才清空、满了先合并", () => {
+    const s = new McpServer({ name: "t", version: "0" })
+    registerMemory(s)
+    const desc: string = (s as any)._registeredTools.memory_save.description
+    expect(desc).toContain("最近约 15 轮")
+    expect(desc).toContain("首轮都会带上")
+    expect(desc).toContain("只有重置会话才会清空")
+    expect(desc).toContain("满了先合并")
+    expect(desc).toContain("memory_delete")
+  })
+
+  it("send_question 的说明和参数把用法交代清楚（提示词里不再重复这些）", () => {
+    const s = new McpServer({ name: "t", version: "0" })
+    registerAgentOutboundTools(s, { taskResult: false })
+    const tool = (s as any)._registeredTools.send_question
+    expect(tool.description).toContain("答案不会在本次调用里返回")
+    expect(tool.description).toContain("一次发完")
+    const shape = tool.inputSchema?.shape ?? tool.inputSchema?._def?.shape?.() ?? {}
+    expect(shape.text?.description).toContain("不要在题目里写结论")
+    expect(shape.options?.description).toContain("不要写序号")
+    expect(shape.options?.description).toContain("不要含「、」")
+  })
+
   it("manifest 通用组 ⊆ task 端点实注册", () => {
     const task = namesOf(registerAgentOutboundTools as Register, { taskResult: true })
     for (const n of groupNames("lk-harness")) expect(task).toContain(n)

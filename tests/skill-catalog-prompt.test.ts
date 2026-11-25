@@ -2,7 +2,7 @@
  * Skill 名单怎么进提示词：
  * - SDK 引擎：assembleSdkWorkerTurnPrompt 在协议块和本轮消息之间插入名单（是否插入由调用方决定）
  * - Pi 引擎：同一份文本放进 appendSystemPrompt，Pi 自己的 Skill 清单关掉
- * 协议模板走真实的，只桩掉 Electron / 配置 / daemon / 名单扫描这些无关依赖。
+ * 宿主提示词的组装走真实的，只桩掉 Electron / 配置 / daemon / 名单扫描这些无关依赖。
  */
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -28,7 +28,7 @@ const scan = vi.hoisted(() => ({ value: { text: "", hash: "", count: 0 } as { te
 vi.mock("../electron/skill-catalog", () => ({ getSkillCatalog: () => scan.value }))
 
 import { DefaultResourceLoader, SettingsManager } from "@mariozechner/pi-coding-agent"
-import { assembleProtocolBlocks, assembleSdkWorkerTurnPrompt, clearProtocolTemplateCache, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
+import { assembleProtocolBlocks, assembleSdkWorkerTurnPrompt, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
 import { buildAppendSystemPrompt, PI_SKILL_LOADING } from "../electron/pi-embedded.js"
 import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
@@ -38,7 +38,6 @@ const CTX: PromptAssemblyContext = { meta: { chatType: "p2p" }, sessionKey: "ch_
 const MSGS = [{ text: USER_TEXT, messageId: "m1" }]
 
 beforeEach(() => {
-  clearProtocolTemplateCache()
   scan.value = { text: "", hash: "", count: 0 }
 })
 

@@ -1,6 +1,5 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
-import { app } from "electron"
 import { getConfig } from "./config-store"
 import { broadcastLog } from "./ui-logger"
 
@@ -13,20 +12,6 @@ export function setDaemonPort(port: number | null): void {
 
 export function getDaemonPort(): number | null {
   return daemonPort
-}
-
-export function clearInjectionCache(): void {
-  adminSkillContentCache = null
-  void import("./prompt-assembler.js").then(({ clearProtocolTemplateCache }) => clearProtocolTemplateCache())
-}
-
-export function getTemplateRoot(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, "template")
-  return path.join(app.getAppPath(), "resources", "template")
-}
-
-export function getRuleTemplatePath(): string {
-  return path.join(getTemplateRoot(), "rule", "lk-harness.mdc")
 }
 
 const ADMIN_SKILL_DIR = "lk-harness-admin"
@@ -58,22 +43,4 @@ export function cleanupWorkspaceDir(dir: string): boolean {
 /** 清理所有已配置通道工作目录中的遗留注入产物 */
 export function cleanupChannelWorkspaces(): void {
   for (const dir of configuredWorkspaceDirs()) cleanupStaleAdminSkill(dir)
-}
-
-let adminSkillContentCache: string | null = null
-
-export function getAdminSkillContent(): string {
-  if (adminSkillContentCache) return adminSkillContentCache
-  const p = path.join(getTemplateRoot(), "skills", "lk-harness-admin", "SKILL.md")
-  adminSkillContentCache = fs.readFileSync(p, "utf8")
-  return adminSkillContentCache
-}
-
-/** 嵌入宿主协议模板的 admin MCP 段（不含 Skill 标题与重复小节） */
-export function getAdminMcpProtocolSection(): string {
-  let body = getAdminSkillContent().trim()
-  body = body.replace(/^#[^\n]+\r?\n+/, "")
-  body = body.replace(/^[^\n#]+\r?\n+/, "") // 介绍段
-  body = body.replace(/\r?\n## 可用 MCP 工具\r?\n+/, "\n")
-  return `\n\n### 应用自管理（lk-harness-admin）\n\n${body.trim()}\n`
 }

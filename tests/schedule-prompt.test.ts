@@ -1,6 +1,6 @@
-/** AI 自排程的提示词注入：lk-harness-schedule 挂在哪些会话，提示词里的「自排程」段就出现在哪些会话。
- * 走真实的协议模板和 admin SKILL.md，只桩掉 Electron / 配置 / daemon 这些与注入无关的依赖。 */
-import { describe, it, expect, beforeEach, vi } from "vitest"
+/** AI 自排程的提示词注入：lk-harness-schedule 挂在哪些会话，提示词「能力」里的自排程组就出现在哪些会话。
+ * 走真实的提示词组装，只桩掉 Electron / 配置 / daemon 这些与注入无关的依赖。 */
+import { describe, it, expect, vi } from "vitest"
 
 vi.mock("electron", async () => {
   const p = await import("node:path")
@@ -17,54 +17,46 @@ vi.mock("../electron/daemon-client", () => ({ readLockFile: () => null }))
 vi.mock("../electron/cron-scheduler", () => ({ readTasksFromFile: () => [] }))
 vi.mock("../electron/ui-logger", () => ({ broadcastLog: () => {} }))
 
-import { assembleProtocolBlocks, clearProtocolTemplateCache, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
+import { assembleProtocolBlocks, type PromptAssemblyContext } from "../electron/prompt-assembler.js"
 import { buildBuiltinMcpServers, shouldMountScheduleMcp, SCHEDULE_MCP_KEY } from "../src/shared/harness-mcp-store.js"
 import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
-beforeEach(() => clearProtocolTemplateCache())
-
-const SCHEDULE_TOOLS = "schedule_create / schedule_list / schedule_cancel"
-const text = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx, 19528))
+const SCHEDULE_GROUP = "## AI 自排程（lk-harness-schedule）"
+const ADMIN_GROUP = "## 应用自管理（lk-harness-admin）"
+const text = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx))
 const count = (s: string, sub: string) => s.split(sub).length - 1
 
 const MAIN: PromptAssemblyContext = { meta: { chatType: "p2p" }, sessionKey: "ch_a|oc_main", includeAdmin: true }
 const PROJECT: PromptAssemblyContext = { meta: { chatType: "project" }, sessionKey: "ch_a|oc_group::project_p1", includeAdmin: false }
 
 describe("自排程提示词跟着工具挂载走", () => {
-  it("项目会话：有自排程段，没有应用自管理段", () => {
+  it("项目会话：有自排程组，没有应用自管理组", () => {
     const t = text(PROJECT)
-    expect(t).toContain(SCHEDULE_TOOLS)
-    expect(t).toContain("lk-harness-schedule")
-    expect(t).not.toContain("manage_agent")
-    expect(t).not.toContain("应用自管理")
+    expect(t).toContain(SCHEDULE_GROUP)
+    expect(t).not.toContain("lk-harness-admin")
   })
 
   it("项目会话：只靠 sessionKey 里的 ::project_ 也认（meta 没带 chatType）", () => {
-    expect(text({ sessionKey: PROJECT.sessionKey, includeAdmin: false })).toContain(SCHEDULE_TOOLS)
+    expect(text({ sessionKey: PROJECT.sessionKey, includeAdmin: false })).toContain(SCHEDULE_GROUP)
   })
 
-  it("主用户会话：自管理段和自排程段都有，且自排程只出现一次", () => {
+  it("主用户会话：自管理组和自排程组都有，且自排程只出现一次", () => {
     const t = text(MAIN)
-    expect(t).toContain("manage_agent")
-    expect(count(t, SCHEDULE_TOOLS)).toBe(1)
+    expect(t).toContain(ADMIN_GROUP)
+    expect(count(t, SCHEDULE_GROUP)).toBe(1)
   })
 
-  it.each([["项目会话", PROJECT], ["主用户会话", MAIN]] as [string, PromptAssemblyContext][])(
-    "%s：告诉排程者 fresh 的执行者没事可报时可以静默（否则会把「无事」也写成要汇报的内容）",
-    (_n, ctx) => {
-      const t = text(ctx)
-      const fresh = t.slice(t.indexOf("`mode=fresh`"), t.indexOf("`mode=session`"))
-      expect(fresh).toContain("有结论才投回本会话")
-      expect(fresh).toContain("静默")
-    },
-  )
-
-  it("自管理段不再内嵌自排程说明，只留一句指向 schedule_create", () => {
+  it("自管理组指向自排程组：全局定时任务归自管理，给当前会话自己定时用 lk-harness-schedule", () => {
     const t = text(MAIN)
-    const adminPart = t.slice(t.indexOf("应用自管理"), t.indexOf("AI 自排程（lk-harness-schedule）"))
-    expect(adminPart).toContain("manage_tasks")
-    expect(adminPart).toContain("那用 schedule_create")
-    expect(adminPart).not.toContain(SCHEDULE_TOOLS)
+    const adminPart = t.slice(t.indexOf(ADMIN_GROUP), t.indexOf(SCHEDULE_GROUP))
+    expect(adminPart).toContain("全局定时任务")
+    expect(adminPart).toContain("用 lk-harness-schedule")
+  })
+
+  it("没挂自排程（没有会话 key）的主用户会话：自管理组不指向一个不存在的工具", () => {
+    const t = text({ meta: { chatType: "p2p" }, includeAdmin: true })
+    expect(t).toContain(ADMIN_GROUP)
+    expect(t).not.toContain("lk-harness-schedule")
   })
 
   it.each([
@@ -92,7 +84,7 @@ describe("自排程提示词跟着工具挂载走", () => {
         ctx.meta?.chatType === "project" || !!ctx.sessionKey?.includes("::project_"),
         ctx.sessionKey,
       )
-      expect(text(ctx).includes(SCHEDULE_TOOLS), JSON.stringify(ctx)).toBe(mounted)
+      expect(text(ctx).includes(SCHEDULE_GROUP), JSON.stringify(ctx)).toBe(mounted)
     }
   })
 })

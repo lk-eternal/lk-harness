@@ -1,5 +1,5 @@
-/** 会话记忆的提示词：lk-harness-memory 挂在哪些会话，协议里的「会话记忆」段和首轮带入的 memory 就出现在哪些会话。
- * 走真实的协议模板，只桩掉 Electron / 配置 / daemon 这些与注入无关的依赖。 */
+/** 会话记忆的提示词：lk-harness-memory 挂在哪些会话，提示词「能力」里的会话记忆组和首轮带入的 memory 就出现在哪些会话。
+ * 走真实的提示词组装，只桩掉 Electron / 配置 / daemon 这些与注入无关的依赖。 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as fs from "node:fs"
 import * as os from "node:os"
@@ -23,7 +23,6 @@ import {
   assembleProtocolBlocks,
   assembleSdkWorkerTurnPrompt,
   assembleTurnPrompt,
-  clearProtocolTemplateCache,
   type PromptAssemblyContext,
 } from "../electron/prompt-assembler.js"
 import { buildBuiltinMcpServers, MEMORY_MCP_KEY, shouldMountMemoryMcp } from "../src/shared/harness-mcp-store.js"
@@ -33,12 +32,11 @@ import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 
 beforeEach(() => {
   h.userData = fs.mkdtempSync(path.join(os.tmpdir(), "lk-memprompt-"))
-  clearProtocolTemplateCache()
 })
 afterEach(() => { fs.rmSync(h.userData, { recursive: true, force: true }) })
 
-const MEMORY_TOOLS = "memory_save / memory_read / memory_delete"
-const protocol = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx, 19528))
+const MEMORY_GROUP = "## 会话记忆（lk-harness-memory）"
+const protocol = (ctx: PromptAssemblyContext) => joinPromptBlocks(assembleProtocolBlocks(ctx))
 const count = (s: string, sub: string) => s.split(sub).length - 1
 const MSGS = [{ text: "用户这一句", messageId: "m1" }]
 
@@ -59,13 +57,11 @@ function payloadOf(prompt: string): Record<string, unknown> {
   return JSON.parse(m![1]!)
 }
 
-describe("协议里的「会话记忆」段跟着工具挂载走", () => {
+describe("提示词里的「会话记忆」组跟着工具挂载走", () => {
   it.each([["主用户会话", MAIN], ["项目会话", PROJECT], ["完整档的其他人", FULL_OTHER]] as [string, PromptAssemblyContext][])(
-    "%s：有会话记忆段，且只出现一次",
+    "%s：有会话记忆组，且只出现一次",
     (_n, ctx) => {
-      const t = protocol(ctx)
-      expect(count(t, MEMORY_TOOLS)).toBe(1)
-      expect(t).toContain("lk-harness-memory")
+      expect(count(protocol(ctx), MEMORY_GROUP)).toBe(1)
     },
   )
 
@@ -92,16 +88,15 @@ describe("协议里的「会话记忆」段跟着工具挂载走", () => {
         ctx.meta?.chatType === "project" || !!ctx.sessionKey?.includes("::project_"),
         ctx.sessionKey,
       )
-      expect(protocol(ctx).includes(MEMORY_TOOLS), JSON.stringify(ctx)).toBe(mounted)
+      expect(protocol(ctx).includes(MEMORY_GROUP), JSON.stringify(ctx)).toBe(mounted)
     }
   })
 
-  it("协议段把关键规则交代清楚：只保留约 15 轮、记忆随首轮带入、重置才清空、用户最新说法优先", () => {
+  it("会话记忆组把关键规则交代清楚：只保留约 15 轮、记忆随首轮带入、用户最新说法优先", () => {
     const t = protocol(MAIN)
-    const part = t.slice(t.indexOf("会话记忆（lk-harness-memory）"))
+    const part = t.slice(t.indexOf(MEMORY_GROUP))
     expect(part).toContain("最近约 15 轮")
     expect(part).toContain("首轮")
-    expect(part).toContain("只有重置会话才会清空")
     expect(part).toContain("以用户为准")
   })
 })
@@ -181,7 +176,7 @@ describe("首轮带入记忆", () => {
     remember(MAIN.sessionKey!)
     const p = assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: true })
     // 协议正文里本身就提到「[本轮投递]」，要认带 JSON 的那个
-    expect(p.indexOf(MEMORY_TOOLS)).toBeLessThan(p.indexOf("[本轮投递]\n```json"))
+    expect(p.indexOf(MEMORY_GROUP)).toBeLessThan(p.indexOf("[本轮投递]\n```json"))
     expect(count(p, "线上只能周三发布")).toBe(1)
     expect(assembleSdkWorkerTurnPrompt(MSGS, MAIN, { firstTurn: false })).not.toContain("线上只能周三发布")
   })
