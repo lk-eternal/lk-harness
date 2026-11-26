@@ -269,7 +269,7 @@ export function normalizeTaskDelivery<T extends ScheduledTask>(task: T): T {
 
 /**
  * 存着的任务是不是旧版的交付方式（非独立运行 / 不通知 / 通知 AI / 绑了项目）。
- * 这些任务照存的字段继续跑，设置页打开时提示一句，保存才会转成「独立运行 + 通知我」。
+ * 这些任务照存的字段继续跑；设置页保存时直接转成「独立运行 + 通知我」，不提示（manage_tasks 更新会在返回里注明）。
  */
 export function isLegacyDelivery(
   task: Pick<ScheduledTask, "independent" | "notify" | "notifyChatId" | "targetProjectId">,
