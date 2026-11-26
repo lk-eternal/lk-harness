@@ -1,4 +1,5 @@
 import { resolveChannelAudience, resolveChannelResourceId, type ChannelAudience, type MessageChannel } from "./channel-types.js"
+import { isAiTask, type ScheduledTask } from "./scheduled-task-rules.js"
 import { getSessionOverride, resolveModelForSession } from "./session-model-store.js"
 import { resolveResourceForSession } from "./session-resource-store.js"
 
@@ -147,27 +148,52 @@ export function resolveLaunchModel(input: LaunchModelInput): LaunchModel {
   }
 }
 
+/** 任务里决定「用哪个供应商、哪个模型」的字段；ownerSessionKey 只有 AI 排程才有 */
+export type TaskModelSource = Pick<ScheduledTask, "model" | "modelParams" | "resourceId" | "createdBy" | "ownerSessionKey">
+
+/**
+ * 任务拉起时显式指定的供应商和模型，优先级最高；没有就返回 undefined，跟随任务会话自己存的 / 通道主模型。
+ * - 任务自己配了模型：用它。任务自己选了供应商（resourceId）用它，没选跟随通道；供应商只在同时配了模型时生效；
+ * - AI 排程没有自己的模型，跟随创建它的会话：取那个会话下次拉起时实际会用的。创建者一定是主用户自己的会话
+ *   （项目 / 主会话 / 目录 / 临时会话），人群恒为 main；创建者换了模型或供应商，排程下一次运行就跟着换。
+ *   创建者取不到模型（自己没存过、通道也没配）时没有显式指定。
+ * 供应商取创建者解析后的那一家，不留空：留空会让任务会话里上次拉起时存下的旧供应商盖过创建者的新选择。
+ */
+export function taskExplicitModel(input: {
+  task: TaskModelSource
+  channel: ChannelModelFields | undefined
+  resolveResource: LaunchModelInput["resolveResource"]
+}): LaunchModelInput["explicit"] {
+  const { task, channel, resolveResource } = input
+  const model = task.model?.trim()
+  if (model) return { model, modelParams: task.modelParams, resourceId: task.resourceId }
+  const owner = task.ownerSessionKey?.trim()
+  if (!isAiTask(task) || !owner) return undefined
+  const eff = resolveLaunchModel({ sessionKey: owner, channel, audience: "main", resolveResource })
+  return eff.model.trim()
+    ? { model: eff.model, modelParams: eff.modelParams, resourceId: eff.resolvedResourceId }
+    : undefined
+}
+
 /**
  * 定时任务下次拉起时用的供应商和模型。任务是主用户自己的系统会话，按主用户那一套取默认；
- * 任务自己配了模型就是显式指定（优先级最高），没配（空白）就跟随通道主模型。
- * 任务自己选了供应商（resourceId）时用它，没选跟随通道；供应商只在同时配了模型时生效。
+ * 显式指定的规则见 taskExplicitModel，没有显式指定就跟随通道主模型。
  *
- * 拉起任务（launchAgent）走的是同一个 resolveLaunchModel，这里只是把「任务 → 显式指定 + 主用户人群」这一层固定下来，
- * 界面上显示的任务模型和真实拉起的才对得上。
+ * 拉起任务（launchAgent）走的是同一个 resolveLaunchModel 和同一个 taskExplicitModel，这里只是把「任务 → 显式指定 + 主用户人群」
+ * 这一层固定下来，界面上显示的任务模型和真实拉起的才对得上。
  * 任务的会话键是裸任务 id，凭键认不出所属通道，所以通道要由调用方按任务绑定的通道传进来。
  */
 export function resolveTaskLaunchModel(input: {
   sessionKey: string
-  task: { model?: string; modelParams?: string; resourceId?: string }
+  task: TaskModelSource
   channel: ChannelModelFields | undefined
   resolveResource: LaunchModelInput["resolveResource"]
 }): LaunchModel {
-  const model = input.task.model?.trim()
   return resolveLaunchModel({
     sessionKey: input.sessionKey,
     channel: input.channel,
     audience: "main",
-    explicit: model ? { model, modelParams: input.task.modelParams, resourceId: input.task.resourceId } : undefined,
+    explicit: taskExplicitModel(input),
     resolveResource: input.resolveResource,
   })
 }

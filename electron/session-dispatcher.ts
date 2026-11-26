@@ -48,7 +48,7 @@ import { ensureProjectDir } from "./project-workspace"
 import { buildProjectSessionPrompt } from "./project-prompts"
 import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { findStoredSessionKey, getSessionRecord, initSessionOverridesStore, readOverridesSnapshot, withOverridesSnapshot } from "../src/shared/session-overrides-store.js"
-import { resolveLaunchModel, resolveSessionResourceId } from "../src/shared/launch-model.js"
+import { resolveLaunchModel, resolveSessionResourceId, taskExplicitModel } from "../src/shared/launch-model.js"
 import { taskTabModel } from "../src/shared/task-tab-model.js"
 import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
@@ -626,11 +626,6 @@ interface LaunchAgentParams {
   taskMessage?: string
   /** 显式指定通道（定时任务/工作流）；缺省从 sessionKey 的 chatKey 前缀解析 */
   channelId?: string
-  /** 显式模型覆盖（任务模型 / 工作流节点模型） */
-  modelOverride?: string
-  modelParamsOverride?: string
-  /** 显式供应商（任务自己选的）；只在同时有 modelOverride 时生效，空 = 取会话覆盖 / 通道的 */
-  resourceIdOverride?: string
   workingDirectory?: string
   /** 调度时已知的队列 messageId（SDK bootstrap poll 预登记，防误换卡） */
   pendingMessageIds?: string[]
@@ -679,9 +674,7 @@ async function launchAgent(p: LaunchAgentParams): Promise<{ ok: boolean; error?:
     sessionKey,
     channel,
     audience,
-    explicit: p.modelOverride?.trim()
-      ? { model: p.modelOverride, modelParams: p.modelParamsOverride, resourceId: p.resourceIdOverride }
-      : undefined,
+    explicit: scheduledTask ? taskExplicitModel({ task: scheduledTask, channel, resolveResource: getAgentResource }) : undefined,
     resolveResource: getAgentResource,
   })
   const resourceId = effModel.resourceId
@@ -1888,9 +1881,6 @@ async function _planSessionLaunches(): Promise<Promise<void>[]> {
           chatType: launchType,
           meta: { chatId: ownerChat?.includes("|") ? ownerChat : sessionKey, chatType: launchType },
           channelId,
-          modelOverride: task?.model,
-          modelParamsOverride: task?.modelParams,
-          resourceIdOverride: task?.resourceId,
           pendingMessageIds: pendingFor(sessionKey),
         })
         if (!r.ok) await reportLaunchOutcome(sessionKey, r)

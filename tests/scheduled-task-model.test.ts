@@ -3,7 +3,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { channelIdFromSessionKey } from "../src/shared/channel-types"
-import { resolveTaskLaunchModel, type ChannelModelFields } from "../src/shared/launch-model"
+import { resolveTaskLaunchModel, taskExplicitModel, type ChannelModelFields } from "../src/shared/launch-model"
 import { resolveTaskChannelId, taskCardFooter, taskCardHeader, taskSessionOverride, tasksWithChangedModelSetting, type ScheduledTask } from "../src/shared/scheduled-task"
 import { initSessionOverridesStore, resetSessionOverridesStoreForTests } from "../src/shared/session-overrides-store"
 import { setSessionOverride } from "../src/shared/session-model-store"
@@ -143,6 +143,56 @@ describe("resolveTaskLaunchModel", () => {
       const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task({ ...own, resourceId: "llm_gone" }), channel, resolveResource })
       expect(r.resourceId).toBe("llm_gone")
       expect(r.resolvedResourceId).toBe("sdk_default")
+    })
+  })
+
+  describe("AI 排程跟随创建它的会话", () => {
+    const OWNER = "ch_b|app_main::project_p1"
+    const aiTask = (over: Partial<ScheduledTask> = {}) => task({ createdBy: "ai", ownerSessionKey: OWNER, ...over })
+
+    it("创建者自己没存过模型：和创建者下次拉起一样，用通道默认", () => {
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask(), channel, resolveResource })
+      expect(r).toMatchObject({ model: "claude-sonnet", resolvedResourceId: "sdk_main", modelSource: "explicit" })
+    })
+
+    it("创建者存了模型和供应商：用创建者的，盖过任务会话里上次拉起时存下的旧值", () => {
+      setSessionOverride(OWNER, { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
+      setSessionOverride(TASK_ID, { model: "stale", modelParams: "", resourceId: "sdk_main" })
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask(), channel, resolveResource })
+      expect(r).toMatchObject({ model: "gemini-flash", modelParams: "[]", resolvedResourceId: "llm_others", modelSource: "explicit" })
+    })
+
+    it("创建者换了模型，下一次解析就跟着换", () => {
+      setSessionOverride(OWNER, { model: "model-a", modelParams: "", resourceId: "sdk_main" })
+      expect(resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask(), channel, resolveResource }).model).toBe("model-a")
+      setSessionOverride(OWNER, { model: "model-b", modelParams: "", resourceId: "llm_others" })
+      expect(resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask(), channel, resolveResource })).toMatchObject({
+        model: "model-b",
+        resolvedResourceId: "llm_others",
+      })
+    })
+
+    it("别的会话换模型不影响它：只看创建它的那个会话", () => {
+      setSessionOverride("ch_b|app_main::temp_other", { model: "other-model", modelParams: "", resourceId: "llm_others" })
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask(), channel, resolveResource })
+      expect(r.model).toBe("claude-sonnet")
+    })
+
+    it("排程自己配了模型：用排程的，不看创建者", () => {
+      setSessionOverride(OWNER, { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask({ model: "composer-2.5" }), channel, resolveResource })
+      expect(r).toMatchObject({ model: "composer-2.5", resolvedResourceId: "sdk_main" })
+    })
+
+    it("用户建的任务不跟随任何会话，哪怕带着 ownerSessionKey", () => {
+      setSessionOverride(OWNER, { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
+      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task({ ownerSessionKey: OWNER }), channel, resolveResource })
+      expect(r).toMatchObject({ model: "claude-sonnet", modelSource: "channel" })
+    })
+
+    it("AI 排程没有创建者记录、创建者也取不到模型（没有通道）：没有显式指定", () => {
+      expect(taskExplicitModel({ task: aiTask({ ownerSessionKey: undefined }), channel, resolveResource })).toBeUndefined()
+      expect(taskExplicitModel({ task: aiTask(), channel: undefined, resolveResource })).toBeUndefined()
     })
   })
 })
