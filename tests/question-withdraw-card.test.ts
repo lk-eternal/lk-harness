@@ -103,6 +103,19 @@ describe("Agent 撤回流式卡里的题", () => {
     expect(cardQuestionMap.get(messageId)?.blocks?.map((b) => b.closedNote)).toEqual([undefined, WITHDRAW_NOTE])
   })
 
+  it("撤回的题在卡上折叠，标题栏直接写「AI 已撤回」；没撤的题照旧展开", async () => {
+    seedLiveCard(askedInRound(FIRST, SECOND))
+
+    await withdrawStreamQuestions(SESSION, ch, [2])
+
+    const card = sender.updateStreamingCard.mock.calls.at(-1)![1] as El
+    const panels = (card.body.elements as El[]).filter((e) => e.tag === "collapsible_panel")
+    expect(panels.map((p) => [p.expanded, p.header.title.content])).toEqual([
+      [true, "❓ 待选择"],
+      [false, `⌛ ${WITHDRAW_NOTE}`],
+    ])
+  })
+
   it("撤掉没选的那道，其余已选的答案不再被它卡住：这一轮结束就交出，汇总里没有被撤的题", async () => {
     const messageId = seedLiveCard(askedInRound(FIRST, SECOND))
     await handleCardAction(rt, { messageId, chatId: "oc_withdraw_test", value: { kind: "question", opt: "B", sk: SESSION, blockId: "q_first" }, operatorOpenId: "ou_u" } as any)

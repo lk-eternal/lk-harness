@@ -133,7 +133,8 @@ describe("用户打字（那一轮已结束，重启后常见）：把卡上还�
     for (const [, elementId, el] of replaced()) {
       expect(el.tag).toBe("collapsible_panel")
       expect(el.element_id).toBe(elementId)
-      expect(el.header.title.content).toBe("⌛ 已关闭")
+      expect(el.expanded).toBe(false)
+      expect(el.header.title.content).toBe(`⌛ ${NOTE}`)
       expect(textOf(el)).toContain(NOTE)
       expect(hasTag(el, "button")).toBe(false)
       expect(hasTag(el, "form")).toBe(false)

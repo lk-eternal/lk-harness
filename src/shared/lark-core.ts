@@ -1539,7 +1539,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
       | { type: "image"; imageKey: string }
     >;
     thinking?: string;
@@ -1643,6 +1643,8 @@ export class LarkSender {
               buttons: seg.buttons?.length ? seg.buttons : undefined,
               footer: seg.footer,
               elementId: seg.elementId,
+              expanded: seg.expanded,
+              headerTitle: seg.headerTitle,
             }));
           }
         } else if (seg.type === "image") {
@@ -1866,7 +1868,7 @@ export class LarkSender {
       | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
-      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+      | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
       | { type: "image"; imageKey: string }
     >;
     thinking?: string;

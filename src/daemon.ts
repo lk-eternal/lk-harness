@@ -2209,7 +2209,7 @@ type CardBodySegment =
   | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
-  | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+  | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
   | { type: "image"; imageKey: string };
 
 function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfig): boolean {
@@ -2247,10 +2247,13 @@ export function buildCardSegmentsFromPayload(
       const qText = questionBodyText(seg.text, seg.options);
       const buttons = open ? questionOptionButtons(seg.options, sessionKey, seg.blockId) : undefined;
       let footer: string | undefined;
+      let panel: ClosedQuestionPanel | undefined;
       if (seg.answered) footer = answeredQuestionFooter(seg.answered);
-      else if (seg.closedNote) footer = closedQuestionFooter(seg.text, seg.closedNote);
-      else footer = QUESTION_CARD_HINT;
-      out.push({ type: "question", questionText: qText, buttons, footer, elementId });
+      else if (seg.closedNote) {
+        footer = closedQuestionFooter(seg.text, seg.closedNote);
+        panel = closedQuestionPanel(seg.closedNote);
+      } else footer = QUESTION_CARD_HINT;
+      out.push({ type: "question", questionText: qText, buttons, footer, elementId, ...panel });
     } else if (seg.type === "image") {
       out.push({ type: "image", imageKey: seg.imageKey });
     } else if (seg.type === "thinking") {
@@ -3212,6 +3215,12 @@ function closedQuestionFooter(_questionText: string, note: string): string {
   return `⌛ _${note}_`;
 }
 
+/** 已失效（用户打字关掉 / AI 撤回）的题：默认折叠，标题栏直接写原因（折叠后看不到面板里的 footer） */
+type ClosedQuestionPanel = { expanded: false; headerTitle: string };
+function closedQuestionPanel(note: string): ClosedQuestionPanel {
+  return { expanded: false, headerTitle: `⌛ ${note}` };
+}
+
 /** 流式卡当前各题的快照（随未决问题登记存盘，重启后靠它认出卡上的题） */
 function snapshotQuestionBlocks(blocks: StreamQuestionBlock[]): StreamQuestionSnapshot[] {
   return blocks.map((b) => ({
@@ -3261,12 +3270,14 @@ async function replaceOrphanQuestionBlock(
   cardId: string,
   block: StreamQuestionSnapshot,
   footer: string,
+  panel?: ClosedQuestionPanel,
 ): Promise<boolean> {
   const elementId = streamQuestionElementId(block.blockId);
   const element = LarkSender.buildQuestionBlockElement({
     questionText: questionBodyText(block.text, block.options),
     footer,
     elementId,
+    ...panel,
   });
   return sender.replaceCardElement(cardId, elementId, element, nextOrphanCardSequence(cardId));
 }
@@ -3283,7 +3294,7 @@ async function closeOrphanStreamQuestions(
     if (b.answered || b.closedNote) continue;
     // 先标记再发请求：期间点选或再来一次关题都按「已关闭」处理
     b.closedNote = note;
-    if (!await replaceOrphanQuestionBlock(sender, cardId, b, closedQuestionFooter(b.text, note))) allOk = false;
+    if (!await replaceOrphanQuestionBlock(sender, cardId, b, closedQuestionFooter(b.text, note), closedQuestionPanel(note))) allOk = false;
   }
   return allOk;
 }
