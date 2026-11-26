@@ -208,6 +208,7 @@ describe("daemon 接线", () => {
     const push = bodyOf("function pushMessage(")
     expect(push).toMatch(/if \(!content\?\.trim\(\)\)/)
     expect(push).toContain("用户仅 @ 了你")
+    expect(push).not.toMatch(/"（用户仅 @[^"]*meta\./)
     expect(push).toMatch(/meta\?\.quoted_message\?\.text\?\.trim\(\)/)
   })
 })

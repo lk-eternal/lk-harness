@@ -1550,7 +1550,7 @@ function pushMessage(content: string, messageId?: string, chatId?: string, chatT
   if (!content?.trim()) {
     // 群里引用旧消息补 @（正文剥掉 @ 后为空）：实质内容在引用里，不能丢
     if (meta?.quoted_message?.text?.trim()) {
-      content = "（用户仅 @ 了你，正文为空；请处理 meta.quoted_message 引用消息中的内容）";
+      content = "（用户仅 @ 了你，正文为空；请处理他引用的那条消息）";
     } else {
       log("WARN", `丢弃空消息 (messageId=${messageId})`);
       return;
