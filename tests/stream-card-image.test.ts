@@ -76,14 +76,14 @@ afterEach(() => {
 })
 
 describe("图片组件", () => {
-  it("按时间线位置输出 img 组件：在前后两段正文之间，宽度撑满", () => {
+  it("按时间线位置输出 img 组件：在前后两段正文之间，紧凑宽度", () => {
     const card = LarkSender.buildStreamingCardJson({
       status: "streaming",
       segments: [reply("前面"), { type: "image", imageKey: "img_key_x" }, reply("后面")],
     })
     expect(layout(card as El).slice(0, 3)).toEqual(["前面", "img:img_key_x", "后面"])
     const img = (card.body as El).elements.find((e: El) => e.tag === "img")
-    expect(img).toMatchObject({ img_key: "img_key_x", scale_type: "fit_horizontal" })
+    expect(img).toMatchObject({ img_key: "img_key_x", scale_type: "fit_horizontal", compact_width: true })
   })
 
   it("裁剪旧过程段时图片不会被丢", () => {

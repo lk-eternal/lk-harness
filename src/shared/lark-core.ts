@@ -1106,13 +1106,14 @@ export class LarkSender {
     return [{ tag: "markdown", element_id: elementId, content, text_size: "notation" }, { tag: "hr" }];
   }
 
-  /** 流式卡：内联图片（imageKey 来自 uploadImage）。宽度撑满、高度按比例，整张图可见 */
+  /** 流式卡：内联图片（imageKey 来自 uploadImage）。紧凑宽度（最大 278px）、高度按比例，整张图可见，点击可放大 */
   static buildImageElement(imageKey: string): Record<string, unknown> {
     return {
       tag: "img",
       img_key: imageKey,
       alt: { tag: "plain_text", content: "图片" },
       scale_type: "fit_horizontal",
+      compact_width: true,
     };
   }
 
