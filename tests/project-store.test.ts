@@ -16,8 +16,10 @@ import {
   renameProject,
   resetProjectArchivedCacheForTests,
   saveProject,
+  saveProjectNewDraft,
   setProjectArchived,
   getProjectNodes,
+  hasProjectNewDraft,
   initProjectStore,
   listProjects,
   resolveProjectRef,
@@ -724,6 +726,39 @@ describe("project-store", () => {
     })
   })
 
+})
+
+describe("建项向导草稿：哪些步骤算「在等用户回复文本」", () => {
+  let dir: string
+  const chatKey = "ch_x|oc_1"
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "claw-draft-"))
+    initProjectStore(dir)
+  })
+  afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }) })
+
+  it("没有草稿：不接管文本", () => {
+    expect(hasProjectNewDraft(chatKey)).toBe(false)
+  })
+
+  it.each(["feishu_pick", "form"] as const)("%s 靠点卡片推进：用户打的字照常交给 Agent", (step) => {
+    saveProjectNewDraft({ chatKey, step, updatedAt: 0 })
+    expect(hasProjectNewDraft(chatKey)).toBe(false)
+  })
+
+  it.each([
+    "setup_worktree",
+    "setup_add_path",
+    "setup_add_base",
+    "setup_add_test",
+    "setup_add_dev",
+    "setup_gitlab_token",
+    "setup_gitlab_host",
+  ] as const)("%s 在等用户打字：文本归向导", (step) => {
+    saveProjectNewDraft({ chatKey, step, updatedAt: 0 })
+    expect(hasProjectNewDraft(chatKey)).toBe(true)
+  })
 })
 
 describe("旧版仓库、分支字段 → 项目信息（读时转换 + 一次性文件迁移）", () => {

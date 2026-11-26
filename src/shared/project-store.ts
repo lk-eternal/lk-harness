@@ -780,8 +780,20 @@ export function clearProjectNewDraft(chatKey: string): void {
   writeJson(pendingNewPath(), all)
 }
 
+/** 等用户打字回复的步骤（fillProjectNewFromText 逐个处理）；feishu_pick、form 靠点卡片推进，不接文本 */
+const TEXT_STEPS: ReadonlySet<ProjectNewStep> = new Set<ProjectNewStep>([
+  "setup_worktree",
+  "setup_add_path",
+  "setup_add_base",
+  "setup_add_test",
+  "setup_add_dev",
+  "setup_gitlab_token",
+  "setup_gitlab_host",
+])
+
+/** 这个聊天是否正在等用户回复一段文本（是的话，普通消息归向导，不进 Agent） */
 export function hasProjectNewDraft(chatKey: string): boolean {
   const d = getProjectNewDraft(chatKey)
-  return !!d && d.step !== "form"
+  return !!d && TEXT_STEPS.has(d.step)
 }
 
