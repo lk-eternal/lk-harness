@@ -1,6 +1,7 @@
 import { DEFAULT_NODE_GROUP_ID, encodeRepoPairOption } from "./project-types.js";
 import { checkerFieldName } from "./question-multi.js";
 import { RepeatLogGate } from "./stream-card-failure.js";
+import type { ImageSize } from "./image-size.js";
 import type { TurnFooterPart } from "./turn-footer.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -1106,14 +1107,29 @@ export class LarkSender {
     return [{ tag: "markdown", element_id: elementId, content, text_size: "notation" }, { tag: "hr" }];
   }
 
-  /** 流式卡：内联图片（imageKey 来自 uploadImage）。紧凑宽度（最大 278px）、高度按比例，整张图可见，点击可放大 */
-  static buildImageElement(imageKey: string): Record<string, unknown> {
+  /** 流式卡内联图片的最大显示宽度；以及飞书 img 组件 size 单边的取值上限 */
+  private static readonly INLINE_IMAGE_MAX_WIDTH = 280;
+  private static readonly CARD_IMAGE_MAX_SIDE = 1000;
+
+  /**
+   * 流式卡：内联图片（imageKey 来自 uploadImage，original 是原图宽高）。
+   * size 按原图宽高比等比缩小（宽不超过 280px，小图不放大）：比例一致时飞书不会裁剪，点击仍可放大看原图。
+   * 2.0 的 img 没有「最大宽度、保持比例」的字段（custom_width / compact_width 是历史属性，会被拒），所以由这里算好
+   */
+  static buildImageElement(imageKey: string, original: ImageSize): Record<string, unknown> {
+    const scale = Math.min(
+      1,
+      LarkSender.INLINE_IMAGE_MAX_WIDTH / original.width,
+      LarkSender.CARD_IMAGE_MAX_SIDE / original.height,
+    );
+    const width = Math.max(1, Math.round(original.width * scale));
+    const height = Math.max(1, Math.round(original.height * scale));
     return {
       tag: "img",
       img_key: imageKey,
       alt: { tag: "plain_text", content: "图片" },
-      scale_type: "fit_horizontal",
-      compact_width: true,
+      scale_type: "crop_center",
+      size: `${width}px ${height}px`,
     };
   }
 
@@ -1540,7 +1556,7 @@ export class LarkSender {
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
-      | { type: "image"; imageKey: string }
+      | { type: "image"; imageKey: string; width: number; height: number }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -1648,7 +1664,7 @@ export class LarkSender {
             }));
           }
         } else if (seg.type === "image") {
-          els.push(LarkSender.buildImageElement(seg.imageKey));
+          els.push(LarkSender.buildImageElement(seg.imageKey, { width: seg.width, height: seg.height }));
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
           const thinkEid = seg.panelId ? `think_${seg.panelId}` : `think_${thinkIdx++}`;
@@ -1869,7 +1885,7 @@ export class LarkSender {
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
-      | { type: "image"; imageKey: string }
+      | { type: "image"; imageKey: string; width: number; height: number }
     >;
     thinking?: string;
     thinkingTitle?: string;

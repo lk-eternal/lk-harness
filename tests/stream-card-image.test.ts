@@ -2,11 +2,14 @@
  * 飞书流式卡里的内联图片：图片组件的渲染，以及 daemon 把 send_image 并进卡里的流程。
  *
  * 直接驱动 daemon 里真实的 embedImageInStreamCard / updateAgentStreamCard / finishAgentStreamCard，
- * 通道里挂假的飞书发送器（上传、整卡更新都是假的）。
+ * 通道里挂假的飞书发送器（上传、整卡更新都是假的），读图片宽高也是假的（它有自己的单测 image-size.test.ts）。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { agentStreamCards, channels, embedImageInStreamCard, finishAgentStreamCard, updateAgentStreamCard } from "../src/daemon.js"
 import { LarkSender } from "../src/shared/lark-core.js"
+
+const readImageFileSize = vi.hoisted(() => vi.fn(async (_path: string): Promise<{ width: number; height: number } | undefined> => ({ width: 1000, height: 500 })))
+vi.mock("../src/shared/image-size.js", () => ({ readImageFileSize }))
 
 type El = Record<string, any>
 const CHANNEL = "ch_image_test"
@@ -67,6 +70,8 @@ beforeEach(() => {
   sender.updateStreamingCard.mockClear()
   sender.uploadImage.mockClear()
   sender.uploadImage.mockImplementation(async () => "img_key_1")
+  readImageFileSize.mockClear()
+  readImageFileSize.mockImplementation(async () => ({ width: 1000, height: 500 }))
   channels.set(CHANNEL, rt)
 })
 afterEach(() => {
@@ -76,14 +81,33 @@ afterEach(() => {
 })
 
 describe("图片组件", () => {
-  it("按时间线位置输出 img 组件：在前后两段正文之间，紧凑宽度", () => {
+  it("按时间线位置输出 img 组件：在前后两段正文之间，按原图宽高比等比缩小", () => {
     const card = LarkSender.buildStreamingCardJson({
       status: "streaming",
-      segments: [reply("前面"), { type: "image", imageKey: "img_key_x" }, reply("后面")],
+      segments: [reply("前面"), { type: "image", imageKey: "img_key_x", width: 1000, height: 500 }, reply("后面")],
     })
     expect(layout(card as El).slice(0, 3)).toEqual(["前面", "img:img_key_x", "后面"])
     const img = (card.body as El).elements.find((e: El) => e.tag === "img")
-    expect(img).toMatchObject({ img_key: "img_key_x", scale_type: "fit_horizontal", compact_width: true })
+    expect(img).toMatchObject({ img_key: "img_key_x", scale_type: "crop_center", size: "280px 140px" })
+  })
+
+  it("不带飞书 2.0 卡会拒绝的历史属性（custom_width / compact_width / mode）", () => {
+    const img = LarkSender.buildImageElement("img_key_x", { width: 1000, height: 500 })
+    expect(img).not.toHaveProperty("custom_width")
+    expect(img).not.toHaveProperty("compact_width")
+    expect(img).not.toHaveProperty("mode")
+  })
+
+  it.each([
+    ["方形", 1024, 1024, "280px 280px"],
+    ["横图", 1200, 600, "280px 140px"],
+    ["16:9 截图，高度不是整数（157.5）四舍五入", 1920, 1080, "280px 158px"],
+    ["竖图", 800, 1200, "280px 420px"],
+    ["比 280 窄的小图不放大", 200, 100, "200px 100px"],
+    ["极长竖图受飞书单边 1000px 上限约束，仍等比", 300, 3000, "100px 1000px"],
+    ["极扁图高度至少 1px", 3000, 2, "280px 1px"],
+  ])("显示尺寸：%s", (_name, width, height, size) => {
+    expect(LarkSender.buildImageElement("img_key_x", { width, height })).toMatchObject({ scale_type: "crop_center", size })
   })
 
   it("裁剪旧过程段时图片不会被丢", () => {
@@ -91,7 +115,7 @@ describe("图片组件", () => {
       status: "streaming",
       keepPerKind: 1,
       segments: [
-        { type: "image", imageKey: "img_key_x" },
+        { type: "image", imageKey: "img_key_x", width: 1000, height: 500 },
         { ...tools("a"), steps: [{ title: "a", status: "success" }] },
         reply("一"),
         { ...tools("b"), steps: [{ title: "b", status: "success" }] },
@@ -111,6 +135,8 @@ describe("send_image 并进流式卡", () => {
     expect(await embedImageInStreamCard(SESSION, ch, "/tmp/chart.png")).toBe(true)
     expect(sender.uploadImage).toHaveBeenCalledWith("/tmp/chart.png")
     expect(layout(lastCard()).slice(0, 2)).toEqual(["前面的话", "img:img_key_1"])
+    expect(readImageFileSize).toHaveBeenCalledWith("/tmp/chart.png")
+    expect((lastCard().body as El).elements.find((e: El) => e.tag === "img").size).toBe("280px 140px")
 
     await updateAgentStreamCard(SESSION, { segments: [reply("前面的话"), tools("read")] }, ch)
     expect(layout(lastCard()).slice(0, 3)).toEqual(["前面的话", "img:img_key_1", "panel"])
@@ -144,6 +170,16 @@ describe("send_image 并进流式卡", () => {
     expect(layout(lastCard()).slice(0, 2)).toEqual(["前面的话", "panel"])
   })
 
+  it("读不出图片尺寸：返回 false，不上传、不刷卡（调用方改发独立图片）", async () => {
+    seedCard()
+    readImageFileSize.mockImplementation(async () => undefined)
+
+    expect(await embedImageInStreamCard(SESSION, ch, "/tmp/chart.bmp")).toBe(false)
+    expect(sender.uploadImage).not.toHaveBeenCalled()
+    expect(sender.updateStreamingCard).not.toHaveBeenCalled()
+    expect(stateOf().imageBlocks ?? []).toEqual([])
+  })
+
   it("上传失败：返回 false，不动卡", async () => {
     seedCard()
     sender.uploadImage.mockImplementation(async () => undefined)
@@ -157,6 +193,7 @@ describe("send_image 并进流式卡", () => {
 
     seedCard({ finished: true })
     expect(await embedImageInStreamCard(SESSION, ch, "/tmp/chart.png")).toBe(false)
+    expect(readImageFileSize).not.toHaveBeenCalled()
     expect(sender.uploadImage).not.toHaveBeenCalled()
     expect(sender.updateStreamingCard).not.toHaveBeenCalled()
   })

@@ -10,6 +10,7 @@ import {
   setDaemonSchedulerLogger,
 } from "./daemon-scheduled-tasks.js";
 import { stripProxyEnv, localTimestamp, createLarkClient, LarkSender, LarkMessageEvent, LarkCardActionEvent, CardButton, CardInput, CardTitle, QuestionMultiForm, cleanupMediaCache } from "./shared/lark-core.js";
+import { readImageFileSize } from "./shared/image-size.js";
 import { WeChatManager } from "./wechat-manager.js";
 import { AppChat } from "./app-channel.js";
 import { appChatSessionId, type AppChatButton, type AppChatEvent } from "./shared/app-chat-types.js";
@@ -1909,11 +1910,13 @@ type AgentStreamSegment =
   | { type: "reply"; text: string }
   | { type: "todos"; items: AgentStreamTodoItem[] }
   | { type: "question"; blockId: string; text: string; options: string[]; answered?: string; closedNote?: string; multi?: boolean }
-  | { type: "image"; imageKey: string };
+  | { type: "image"; imageKey: string; width: number; height: number };
 
-/** 流式卡内联图片块：imageKey 来自上传；insertAt 是挂进来时卡上已有的段数 */
+/** 流式卡内联图片块：imageKey 来自上传，width/height 是原图宽高（算显示尺寸用）；insertAt 是挂进来时卡上已有的段数 */
 interface StreamImageBlock {
   imageKey: string;
+  width: number;
+  height: number;
   insertAt: number;
 }
 
@@ -2075,7 +2078,7 @@ function overlayImageBlocks(segs: AgentStreamSegment[], blocks: StreamImageBlock
   const out = [...segs];
   let offset = 0;
   for (const b of [...blocks].sort((a, c) => a.insertAt - c.insertAt)) {
-    out.splice(Math.min(Math.max(b.insertAt, 0) + offset, out.length), 0, { type: "image", imageKey: b.imageKey });
+    out.splice(Math.min(Math.max(b.insertAt, 0) + offset, out.length), 0, { type: "image", imageKey: b.imageKey, width: b.width, height: b.height });
     offset++;
   }
   return out;
@@ -2210,7 +2213,7 @@ type CardBodySegment =
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
   | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string; expanded?: boolean; headerTitle?: string }
-  | { type: "image"; imageKey: string };
+  | { type: "image"; imageKey: string; width: number; height: number };
 
 function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfig): boolean {
   return daemonFlagsForSession(sessionKey, cfg).hideThinkingOnFinish;
@@ -2255,7 +2258,7 @@ export function buildCardSegmentsFromPayload(
       } else footer = QUESTION_CARD_HINT;
       out.push({ type: "question", questionText: qText, buttons, footer, elementId, ...panel });
     } else if (seg.type === "image") {
-      out.push({ type: "image", imageKey: seg.imageKey });
+      out.push({ type: "image", imageKey: seg.imageKey, width: seg.width, height: seg.height });
     } else if (seg.type === "thinking") {
       if (!opts.showThinking || stripFoldables) continue;
       if (!seg.text?.trim()) continue;
@@ -3132,7 +3135,7 @@ async function withdrawStreamQuestions(
 
 /**
  * 把图片并进这个会话正在进行的流式卡，显示在发出时的位置（和问题块、MCP 正文同一套叠加）。
- * 没有进行中的卡（没有，或这个回合已收口）、上传失败、刷卡失败返回 false，调用方改发独立图片消息：
+ * 没有进行中的卡（没有，或这个回合已收口）、读不出图片尺寸、上传失败、刷卡失败返回 false，调用方改发独立图片消息：
  * 图片不会丢，只是不在卡里。刷卡失败时把图片块退回去，卡停在上一帧，不留飞书不认的内容。
  */
 export async function embedImageInStreamCard(
@@ -3144,14 +3147,20 @@ export async function embedImageInStreamCard(
     const stream = agentStreamCards.get(sessionKey);
     return stream && !stream.finished ? stream : undefined;
   };
-  // 没有进行中的卡就不必上传了（调用方改发独立图片时会自己上传）；进了链之后还要再看一次，上传期间卡可能已经收口
+  // 没有进行中的卡就不必读、不必上传了（调用方改发独立图片时会自己上传）；进了链之后还要再看一次，上传期间卡可能已经收口
   if (!liveStream()) return false;
+  // 先读尺寸再上传：读不出就不白传一次
+  const size = await readImageFileSize(imagePath);
+  if (!size) {
+    log("WARN", `[send-image] 读不出图片尺寸，改发独立消息 path=${imagePath}`);
+    return false;
+  }
   const imageKey = await ch.rt.sender!.uploadImage(imagePath);
   if (!imageKey) return false;
   return enqueueCardOp(sessionKey, async () => {
     const stream = liveStream();
     if (!stream) return false;
-    const block: StreamImageBlock = { imageKey, insertAt: buildCardBaseSegments(sessionKey, stream).length };
+    const block: StreamImageBlock = { imageKey, ...size, insertAt: buildCardBaseSegments(sessionKey, stream).length };
     stream.imageBlocks = [...(stream.imageBlocks ?? []), block];
     if (await refreshAgentStreamCard(sessionKey, stream, ch, { finish: false })) return true;
     stream.imageBlocks = stream.imageBlocks.filter((b) => b !== block);
