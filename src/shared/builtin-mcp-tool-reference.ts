@@ -38,6 +38,14 @@ export const BUILTIN_MCP_TOOL_DOCS: Record<string, Record<string, BuiltinToolDoc
         { name: "multi_select", type: "boolean", description: "true = 多选：用户勾选多个选项后点「提交」，收到的答案是被选中的选项按题目顺序用「、」连起来；默认 false（点一个就作答）" },
         { name: "message_id", type: "string", description: "回复模式可选" },
       ],
+      notes: "每道题发出后返回题号（本轮内从 1 起），用 withdraw_question 撤回时要用。微信是纯文本选项，没有题号。",
+    },
+    withdraw_question: {
+      summary: "撤回本轮自己用 send_question 发出、不再需要的题。",
+      params: [
+        { name: "numbers", required: true, type: "number[]", description: "要撤回的题号（send_question 返回的题号），可以一次撤多道" },
+      ],
+      notes: "只能撤本轮发出的题，撤掉的题收起选项并标「AI 已撤回」，不再占着本轮的答案。用户已经作答的题不撤，答案照常交给 AI。微信和独立定时任务发的题撤不了。",
     },
     render_branch_diff: {
       summary: "生成分支对比单文件 HTML，返回本地绝对路径；配合 send_file 发送。",

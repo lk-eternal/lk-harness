@@ -1,5 +1,5 @@
 /**
- * 端到端（真实 daemon 进程）：访客专用的内置 MCP 端点 /mcp-visitor 只暴露 send_question。
+ * 端到端（真实 daemon 进程）：访客专用的内置 MCP 端点 /mcp-visitor 只暴露 send_question / withdraw_question。
  *
  * 单测只能验证「注册函数在 visitor 模式下少注册了什么」；这里用真实 HTTP 请求确认
  * daemon 的路由确实把 /mcp-visitor 接到了访客那一份，而不是别的端点——
@@ -34,8 +34,8 @@ const toolNames = async (endpoint: string): Promise<string[]> => {
 }
 
 describe("/mcp-visitor（其他人的受限会话）", () => {
-  it("只有 send_question；没有发图 / 发文件 / 分支 diff", async () => {
-    expect(await toolNames("/mcp-visitor")).toEqual(["send_question"])
+  it("只有提问和撤回提问；没有发图 / 发文件 / 分支 diff", async () => {
+    expect(await toolNames("/mcp-visitor")).toEqual(["send_question", "withdraw_question"])
   })
 
   it("对照：交互端点（主人会话）有发图 / 发文件，说明上面的「没有」是访客端点专有的限制", async () => {

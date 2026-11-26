@@ -17,6 +17,7 @@ import { pageChatHistory, parseHistoryQuery } from "./shared/app-chat-history-pa
 import { searchChatItems } from "./shared/app-chat-search.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
 import { QuestionRounds, mayAnswerQuestion } from "./shared/question-round.js";
+import { WITHDRAW_NOTE, formatWithdrawReport, withdrawOutcome, type WithdrawResult } from "./shared/question-withdraw.js";
 import { MULTI_ANSWER_SEP, joinChoices, readFormChoices } from "./shared/question-multi.js";
 import { CARD_OVER_SIZE_CODE, streamCardBackoffMs, tightenByteBudget } from "./shared/stream-card-failure.js";
 import { buildTurnFooter } from "./shared/turn-footer.js";
@@ -1922,6 +1923,8 @@ interface StreamQuestionBlock {
   round?: string;
   /** 这道题归谁：那一轮的发言人。只有他和管理员能点、他打字才算代替它。没有 = 谁都可以 */
   owner?: string;
+  /** 这道题在它那一轮里的题号：Agent 凭它撤回这道题。只在内存里，重启后那一轮已结束，不需要存盘 */
+  no?: number;
 }
 
 /** 随未决问题登记存盘的题目快照：渲染这道题（关闭 / 已作答的样子）所需的全部信息，不含它在时间线里的位置 */
@@ -3057,6 +3060,40 @@ async function sealQuestionCardByMessageId(messageId: string, entry: CardQuestio
   });
 }
 
+/**
+ * Agent 撤回本轮自己发在流式卡里的题：按题号找到、还没作答的，标成「AI 已撤回」再刷卡，登记快照同步。
+ * 卡没刷成功就把标记退回去并报错：卡上还开着的题和内存里不一致，比撤回失败更糟。
+ */
+async function withdrawStreamQuestions(
+  sessionKey: string,
+  ch: Extract<ResolvedChannel, { type: "feishu" }>,
+  nos: readonly number[],
+): Promise<WithdrawResult[]> {
+  return enqueueCardOp(sessionKey, async () => {
+    const state = agentStreamCards.get(sessionKey);
+    const round = questionRounds.current(sessionKey);
+    const withdrawn: StreamQuestionBlock[] = [];
+    const results = nos.map((no): WithdrawResult => {
+      const block = state?.questionBlocks.find((b) => b.round === round && b.no === no);
+      const outcome = withdrawOutcome(block);
+      if (block && outcome === "withdrawn") {
+        block.closedNote = WITHDRAW_NOTE;
+        withdrawn.push(block);
+      }
+      return { no, outcome };
+    });
+    if (!state || withdrawn.length === 0) return results;
+    const refreshed = await refreshAgentStreamCard(sessionKey, state, ch, { finish: false })
+      || await refreshAgentStreamCard(sessionKey, state, ch, { finish: false });
+    if (!refreshed) {
+      for (const block of withdrawn) delete block.closedNote;
+      throw new Error("飞书卡片刷新失败，撤回没有生效，请稍后重试");
+    }
+    syncQuestionEntrySnapshot(state.messageId, state);
+    return results;
+  });
+}
+
 /** 问题卡正文（发题/终态共用）；Agent text 原样上卡，仅 trim / 可选截断 */
 function questionDisplayBody(raw: string, maxLen?: number): string {
   let t = raw.trim();
@@ -3477,7 +3514,7 @@ async function handleOrphanStreamQuestionAction(
 }
 
 // 测试入口：卡片回调是个有状态的状态机（提交 / 作答），要在测试里连同它读写的卡片状态一起驱动
-export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, expireOpenCardQuestionsForSession, sealActiveStreamCardOnDelivery, pushMessage, questionRounds, deliverReadyQuestionAnswers, rememberStreamCardQuestion, collectFreshAndTrack, handleMessageRecalled, wireReplyTargetRecalled, sseClients };
+export { handleCardAction, agentStreamCards, cardQuestionMap, channels, activeSessionMap, updateAgentStreamCard, finishAgentStreamCard, expireOpenCardQuestionsForSession, sealActiveStreamCardOnDelivery, pushMessage, questionRounds, deliverReadyQuestionAnswers, rememberStreamCardQuestion, withdrawStreamQuestions, collectFreshAndTrack, handleMessageRecalled, wireReplyTargetRecalled, sseClients };
 
 /** 卡片按钮点击回调；返回值作为 card.action.trigger 响应（toast + 更新卡片） */
 async function handleCardAction(rt: ChannelRuntime, evt: LarkCardActionEvent): Promise<unknown> {
@@ -4252,7 +4289,7 @@ function resolveSendSessionKeyForMcp(): string | undefined {
   );
 }
 
-/** visitor：受限访客会话只给 send_question（媒体 / Diff 工具能读写本机任意路径） */
+/** visitor：受限访客会话只给提问和撤回提问（媒体 / Diff 工具能读写本机任意路径） */
 export function registerAgentOutboundTools(s: McpServer, opts?: { taskResult?: boolean; visitor?: boolean }): void {
   if (opts?.taskResult === true) {
     s.tool(
@@ -4330,7 +4367,7 @@ function registerMediaOutboundTools(s: McpServer): void {
 function registerQuestionOutboundTool(s: McpServer): void {
   s.tool(
     "send_question",
-    "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。答案不会在本次调用里返回：要等本轮结束、且本轮的题都选完，才会合成一条带题干的消息交给你。所以本轮要问的问题一次发完（可以多张卡）再结束本轮；后一个问题依赖前一个答案时，拿到答案后下一轮再问。需要用户做事、而你要继续等结果时，用文字说明，不要发选项卡。",
+    "向用户提问并给出选项按钮。默认单选，点一个选项就作答；multi_select=true 为多选，用户勾选多项后点「提交」。飞书发交互卡片；微信降级为文本选项列表。答案不会在本次调用里返回：要等本轮结束、且本轮的题都选完，才会合成一条带题干的消息交给你。所以本轮要问的问题一次发完（可以多张卡）再结束本轮；后一个问题依赖前一个答案时，拿到答案后下一轮再问。每道题发出后会告诉你题号；发完又不需要了，用 withdraw_question 按题号撤回，别留着没用的题。需要用户做事、而你要继续等结果时，用文字说明，不要发选项卡。",
     {
       text: z.string().describe("问题题目（支持 markdown）。保持简练，不要在题目里写结论"),
       options: z.array(z.string()).min(1).max(10).describe("选项文本列表（1-10 个）。选项前不要写序号，渲染层会自动带上。多选时选项文本里不要含「、」，多选答案用它连接"),
@@ -4341,11 +4378,32 @@ function registerQuestionOutboundTool(s: McpServer): void {
       try {
         const routeKey = resolveSendSessionKeyForMcp();
         if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-        const r = await httpJson<{ ok: boolean; degraded?: boolean }>(localDaemonUrl("/api/send-question"), { text, options, multi_select, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
+        const r = await httpJson<{ ok: boolean; degraded?: boolean; no?: number }>(localDaemonUrl("/api/send-question"), { text, options, multi_select, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${(r as any)?.error?.trim() || "问题发送失败"}` }] };
-        return { content: [{ type: "text" as const, text: r.degraded ? "问题已发送（微信文本降级）" : "问题已发送" }] };
+        const sent = r.degraded ? "问题已发送（微信文本降级）" : "问题已发送";
+        return { content: [{ type: "text" as const, text: r.no === undefined ? sent : `${sent}，题号 ${r.no}` }] };
       } catch (e: any) {
         log("ERROR", `send_question 异常: ${e?.message ?? e}`);
+        return { content: [{ type: "text" as const, text: `[error] ${e?.message ?? "unknown error"}` }] };
+      }
+    },
+  );
+
+  s.tool(
+    "withdraw_question",
+    "撤回本轮自己用 send_question 发出、现在不再需要的题（比如发完题又换了思路）。按发题时告诉你的题号撤，可以一次撤多道；撤掉的题在用户那边收起选项、标上「已撤回」，不会再占着本轮的答案。只能撤本轮发出的题；用户已经作答的题不撤，答案照常交给你。",
+    {
+      numbers: z.array(z.number().int().min(1)).min(1).max(20).describe("要撤回的题号（send_question 返回的「题号」）"),
+    },
+    async ({ numbers }) => {
+      try {
+        const routeKey = resolveSendSessionKeyForMcp();
+        if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
+        const r = await httpJson<{ ok: boolean; results?: WithdrawResult[]; error?: string }>(localDaemonUrl("/api/withdraw-question"), { numbers, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
+        if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${r?.error?.trim() || "撤回失败"}` }] };
+        return { content: [{ type: "text" as const, text: formatWithdrawReport(r.results ?? []) }] };
+      } catch (e: any) {
+        log("ERROR", `withdraw_question 异常: ${e?.message ?? e}`);
         return { content: [{ type: "text" as const, text: `[error] ${e?.message ?? "unknown error"}` }] };
       }
     },
@@ -4366,7 +4424,7 @@ function createInteractiveMcpServer(): McpServer {
 }
 
 /**
- * 访客会话（其他人，受限档）：只有 send_question。
+ * 访客会话（其他人，受限档）：只有 send_question / withdraw_question。
  * send_image / send_file 接收本机任意绝对路径，访客一句话就能让 AI 把本机文件发给自己；render_branch_diff 会读本机仓库。
  */
 function createVisitorMcpServer(): McpServer {
@@ -4412,7 +4470,7 @@ function startHttpServer(): Promise<number> {
       try {
         if (pathname === "/mcp-task" || pathname === "/mcp-admin" || pathname === "/mcp-interactive" || pathname === "/mcp-visitor" || pathname === "/mcp-project" || pathname === "/mcp-schedule" || pathname === "/mcp-memory") {
           const isTask = pathname === "/mcp-task";
-          // 访客会话的内置端点只有 send_question：和交互端点一样算「会话在用 MCP」
+          // 访客会话的内置端点只有提问和撤回提问：和交互端点一样算「会话在用 MCP」
           const isVisitor = pathname === "/mcp-visitor";
           const isInteractive = pathname === "/mcp-interactive" || isVisitor;
           const isProject = pathname === "/mcp-project";
@@ -5682,9 +5740,10 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       const appSessionKey = resolveAppSessionKey(ch, message_id, session_key);
       // 独立定时任务没有会话回合，一轮永远等不到结束：它的题不记轮次，选完就交
       const round = session_key && isIndependentTaskSend(session_key, invoker_session_key) ? undefined : questionRounds.current(appSessionKey);
-      const questionId = appChat.addQuestion(appSessionKey, text, opts, multi, round);
+      const no = round ? questionRounds.nextQuestionNo(appSessionKey) : undefined;
+      const questionId = appChat.addQuestion(appSessionKey, text, opts, multi, round, no);
       trackMessageSession(questionId, appSessionKey);
-      json(res, { ok: true, message_id: questionId });
+      json(res, { ok: true, message_id: questionId, ...(no !== undefined ? { no } : {}) });
     } else if (ch.type === "wechat") {
       // 微信无交互卡片：降级为文本选项列表，用户直接回复字母或内容
       const fallback = `${text}\n\n${multi ? "可多选，请回复多个字母或选项内容（用空格或逗号隔开）:" : "请回复字母或选项内容:"}\n${opts.map((o, i) => `${questionOptionLetter(i)}. ${o}`).join("\n")}`;
@@ -5694,7 +5753,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       // 问题一律进流式卡（思考开关只影响思考/工具面板显隐）；合并失败才降级独立卡；独立定时任务直接发独立卡
       if (session_key && !isIndependentTaskSend(session_key, invoker_session_key)) {
         // 建卡/并卡 + 设未决问题 + finish 刷卡整段入全序链，防与 SDK flush / 收口交错
-        const qResult = await enqueueCardOp(session_key, async (): Promise<{ messageId?: string } | undefined> => {
+        const qResult = await enqueueCardOp(session_key, async (): Promise<{ messageId?: string; no: number } | undefined> => {
           const ensured = await ensureAgentStreamCard(session_key, { segments: [] }, ch);
           if (!ensured.ok) return undefined;
           const stream = agentStreamCards.get(session_key);
@@ -5703,6 +5762,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
           const blockId = `q${Date.now()}_${hashStreamPart(String(Math.random())).slice(0, 4)}`;
           // 回合已 finish 但仍有未决题时，后续 send_question 须续写同卡而非降级独立卡
           if (stream.finished) stream.finished = false;
+          const no = questionRounds.nextQuestionNo(session_key);
           stream.questionBlocks.push({
             blockId,
             insertAt: stream.lastSegments.length,
@@ -5711,6 +5771,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
             ...(multi ? { multi: true } : {}),
             round: questionRounds.current(session_key),
             owner: questionRounds.owner(session_key),
+            no,
           });
           let mergedOk = await refreshAgentStreamCard(session_key, stream, ch, { finish: false });
           if (!mergedOk) {
@@ -5731,11 +5792,11 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
             });
             trackMessageSession(stream.messageId, session_key);
           }
-          return { messageId: stream.messageId };
+          return { messageId: stream.messageId, no };
         });
         if (qResult) {
           touchSessionLastReply(session_key);
-          json(res, { ok: true, message_id: qResult.messageId, merged: true });
+          json(res, { ok: true, message_id: qResult.messageId, merged: true, no: qResult.no });
           return true;
         }
         if (agentStreamCards.has(session_key)) {
@@ -5786,6 +5847,34 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       json(res, { ok, message_id: typeof sentMsgId === "string" ? sentMsgId : undefined });
     }
     if (session_key) touchSessionLastReply(session_key);
+    return true;
+  }
+
+  if (method === "POST" && pathname === "/api/withdraw-question") {
+    const body = JSON.parse(await readBody(req));
+    const { numbers, message_id, session_key, invoker_session_key } = body as { numbers: unknown; message_id?: string; session_key?: string; invoker_session_key?: string };
+    const nos = [...new Set((Array.isArray(numbers) ? numbers : []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+    if (nos.length === 0) { json(res, { ok: false, error: "numbers 必填：send_question 返回的题号" }, 400); return true; }
+    if (rejectUnroutedSend(res, "withdraw-question", session_key, message_id)) return true;
+
+    const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
+    if (ch.type === "error") { log("WARN", `[withdraw-question] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
+    if (ch.type === "wechat") { json(res, { ok: false, error: "微信里的题是发出去的纯文本选项，没法撤回" }); return true; }
+    if (!session_key || isIndependentTaskSend(session_key, invoker_session_key)) {
+      json(res, { ok: false, error: "独立定时任务发的题不参与轮次，没法撤回" });
+      return true;
+    }
+
+    try {
+      if (ch.type === "app") {
+        const appSessionKey = resolveAppSessionKey(ch, message_id, session_key);
+        json(res, { ok: true, results: appChat.withdrawQuestions(appSessionKey, questionRounds.current(appSessionKey), nos, WITHDRAW_NOTE) });
+      } else {
+        json(res, { ok: true, results: await withdrawStreamQuestions(session_key, ch, nos) });
+      }
+    } catch (e: any) {
+      json(res, { ok: false, error: e?.message ?? "撤回失败" }, 500);
+    }
     return true;
   }
 

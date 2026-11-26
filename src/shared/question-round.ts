@@ -14,6 +14,7 @@ import { normalizeSessionKey } from "./channel-types.js";
 export class QuestionRounds {
   private readonly active = new Map<string, string>();
   private readonly owners = new Map<string, string>();
+  private readonly questionCounts = new Map<string, number>();
 
   private key(sessionKey: string): string {
     return normalizeSessionKey(sessionKey) || sessionKey;
@@ -42,9 +43,20 @@ export class QuestionRounds {
     return this.owners.get(this.key(sessionKey));
   }
 
+  /** 这一轮里下一道题的题号（从 1 起）：发题时告诉 Agent，它凭题号指定要撤回哪道题 */
+  nextQuestionNo(sessionKey: string): number {
+    this.current(sessionKey);
+    const key = this.key(sessionKey);
+    const no = (this.questionCounts.get(key) ?? 0) + 1;
+    this.questionCounts.set(key, no);
+    return no;
+  }
+
   /** 这一轮结束了（这一批消息已确认处理完）：这一轮问的题此后都算已结束 */
   end(sessionKey: string): void {
-    this.active.delete(this.key(sessionKey));
+    const key = this.key(sessionKey);
+    this.active.delete(key);
+    this.questionCounts.delete(key);
   }
 
   /** 题目所属的那一轮是否已结束。没记轮次（旧版本存下的题）或不是当前这一轮，都算已结束 */

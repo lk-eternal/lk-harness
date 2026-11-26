@@ -7,6 +7,7 @@ import * as path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { channelIdFromSessionKey } from "./shared/channel-types.js";
 import { formatQuestionBatchSummary } from "./shared/question-summary.js";
+import { withdrawOutcome, type WithdrawResult } from "./shared/question-withdraw.js";
 import { appChatImageMime, MAX_APP_CHAT_IMAGE_BYTES } from "./shared/app-chat-image.js";
 import {
   appChatSessionId,
@@ -467,15 +468,31 @@ export class AppChat {
   /**
    * 返回问题的 messageId，调用方据此登记消息路由。
    * round 是问这道题时 Agent 所在的那一轮；不传 = 不参与轮次（选完就交，用户打字随时可关）。
+   * no 是这道题在那一轮里的题号，Agent 凭它撤回这道题。
    */
-  addQuestion(sessionKey: string, text: string, options: string[], multi = false, round?: string): string {
+  addQuestion(sessionKey: string, text: string, options: string[], multi = false, round?: string, no?: number): string {
     const messageId = `app_q_${randomUUID()}`;
     this.upsert(this.entry(sessionKey), {
       kind: "question", id: messageId, ts: Date.now(), messageId, text, options,
       ...(multi ? { multi: true } : {}),
       ...(round ? { round } : {}),
+      ...(no !== undefined ? { no } : {}),
     });
     return messageId;
+  }
+
+  /**
+   * Agent 撤回自己这一轮发出的题：按题号找到、还没作答的关掉并标上说明，不交给 Agent。
+   * 已作答（含已选、在等这一轮结束的）、已关闭、找不到的不动，结果里说明原因。
+   */
+  withdrawQuestions(sessionKey: string, round: string, nos: readonly number[], note: string): WithdrawResult[] {
+    const entry = this.entry(sessionKey);
+    return nos.map((no) => {
+      const hit = entry.items.find((i): i is AppChatQuestionItem => i.kind === "question" && i.round === round && i.no === no);
+      const outcome = withdrawOutcome(hit);
+      if (hit && outcome === "withdrawn") this.upsert(entry, { ...hit, closedNote: note });
+      return { no, outcome };
+    });
   }
 
   /**

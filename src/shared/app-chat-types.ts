@@ -84,6 +84,8 @@ export interface AppChatQuestionItem extends AppChatItemBase {
   held?: boolean;
   /** 问这道题时 Agent 所在的那一轮（见 question-round）。旧记录没有，视为这一轮早已结束 */
   round?: string;
+  /** 这道题在它那一轮里的题号：Agent 凭它撤回这道题（见 question-withdraw）。旧记录和不参与轮次的题没有 */
+  no?: number;
   closedNote?: string;
 }
 

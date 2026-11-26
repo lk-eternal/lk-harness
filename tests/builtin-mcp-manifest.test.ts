@@ -27,21 +27,21 @@ const groupNames = (key: string): string[] =>
   (getBuiltinMcpManifest().find((g) => g.key === key)?.tools ?? []).map((t) => t.name).sort()
 
 describe("builtin manifest 与代码注册一致（单一真相锁死）", () => {
-  it("interactive 端点：通用 4 工具，无 send_result、无 project_*", () => {
+  it("interactive 端点：通用 5 工具，无 send_result、无 project_*", () => {
     expect(namesOf(registerAgentOutboundTools as Register, { taskResult: false })).toEqual(
-      ["render_branch_diff", "send_file", "send_image", "send_question"],
+      ["render_branch_diff", "send_file", "send_image", "send_question", "withdraw_question"],
     )
   })
 
-  it("visitor 端点（其他人的受限会话）：只有 send_question，没有任何能读写本机路径的工具", () => {
+  it("visitor 端点（其他人的受限会话）：只有提问和撤回提问，没有任何能读写本机路径的工具", () => {
     const names = namesOf(registerAgentOutboundTools as Register, { visitor: true })
-    expect(names).toEqual(["send_question"])
+    expect(names).toEqual(["send_question", "withdraw_question"])
     for (const n of ["send_image", "send_file", "render_branch_diff", "send_result"]) expect(names).not.toContain(n)
   })
 
   it("task 端点：interactive 全集＋send_result，且不再有 send_text", () => {
     const names = namesOf(registerAgentOutboundTools as Register, { taskResult: true })
-    expect(names).toEqual(["render_branch_diff", "send_file", "send_image", "send_question", "send_result"])
+    expect(names).toEqual(["render_branch_diff", "send_file", "send_image", "send_question", "send_result", "withdraw_question"])
     expect(names).not.toContain("send_text")
   })
 
@@ -96,6 +96,19 @@ describe("builtin manifest 与代码注册一致（单一真相锁死）", () =>
     expect(shape.text?.description).toContain("不要在题目里写结论")
     expect(shape.options?.description).toContain("不要写序号")
     expect(shape.options?.description).toContain("不要含「、」")
+    expect(tool.description).toContain("题号")
+    expect(tool.description).toContain("withdraw_question")
+  })
+
+  it("withdraw_question 的说明交代清楚：按题号撤本轮的题、用户已作答的不撤", () => {
+    const s = new McpServer({ name: "t", version: "0" })
+    registerAgentOutboundTools(s, { taskResult: false })
+    const tool = (s as any)._registeredTools.withdraw_question
+    expect(tool.description).toContain("题号")
+    expect(tool.description).toContain("本轮")
+    expect(tool.description).toContain("用户已经作答的题不撤")
+    const shape = tool.inputSchema?.shape ?? tool.inputSchema?._def?.shape?.() ?? {}
+    expect(shape.numbers?.description).toContain("题号")
   })
 
   it("manifest 通用组 ⊆ task 端点实注册", () => {

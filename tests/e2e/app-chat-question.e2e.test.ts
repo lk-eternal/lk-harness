@@ -23,13 +23,17 @@ beforeEach(async () => {
 })
 afterEach(async () => { await d?.stop() })
 
-/** Agent 调 send_question：返回问题的 message_id */
-async function ask(text: string, options: string[], multiSelect?: boolean): Promise<string> {
+/** Agent 调 send_question：返回问题的 message_id 和题号 */
+async function askWithNo(text: string, options: string[], multiSelect?: boolean): Promise<{ id: string; no: number | undefined }> {
   const r = await d.post("/api/send-question", { text, options, ...(multiSelect === undefined ? {} : { multi_select: multiSelect }), session_key: d.sessionKey })
   expect(r.ok, JSON.stringify(r)).toBe(true)
   expect(r.message_id).toBeTruthy()
-  return r.message_id as string
+  return { id: r.message_id as string, no: r.no as number | undefined }
 }
+
+/** Agent 调 send_question：返回问题的 message_id */
+const ask = async (text: string, options: string[], multiSelect?: boolean): Promise<string> =>
+  (await askWithNo(text, options, multiSelect)).id
 
 /** 用户点选一个选项 */
 const pick = (questionId: string, option: string) =>
@@ -255,5 +259,49 @@ describe("一轮结束但 Agent 没有进入等待（回合结束 worker 就退�
     expect((await pick(q1, "B")).ok).toBe(true)
     expect(await peeked()).toEqual(["问题 1：用哪个库？\n回答：B"])
     expect((await questionOf(q1)).held).toBeUndefined()
+  })
+})
+
+describe("Agent 撤回自己发的题", () => {
+  const withdraw = (...numbers: number[]) =>
+    d.post("/api/withdraw-question", { numbers, session_key: d.sessionKey })
+
+  it("发题时拿到题号，本轮内从 1 起依次递增", async () => {
+    const a = await askWithNo("第一题", ["是", "否"])
+    const b = await askWithNo("第二题", ["是", "否"])
+    expect([a.no, b.no]).toEqual([1, 2])
+    expect(await questionOf(a.id)).toMatchObject({ no: 1 })
+  })
+
+  it("按题号撤：这道题收起并标「AI 已撤回」，不再占着本轮的答案；其余已选的照常交出", async () => {
+    const q1 = await askWithNo("用哪个库？", ["A", "B"])
+    const q2 = await askWithNo("要不要加测试？", ["要", "不要"])
+    await pick(q1.id, "B")
+
+    const r = await withdraw(q2.no!)
+    expect(r.ok, JSON.stringify(r)).toBe(true)
+    expect(r.results).toEqual([{ no: 2, outcome: "withdrawn" }])
+    expect(await questionOf(q2.id)).toMatchObject({ closedNote: "AI 已撤回" })
+
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：B"])
+  })
+
+  it("撤回的题用户再点：被拒绝", async () => {
+    const q = await askWithNo("要不要加测试？", ["要", "不要"])
+    await withdraw(q.no!)
+    expect((await pick(q.id, "要")).ok).toBe(false)
+  })
+
+  it("用户已经选了的不撤；题号不存在的如实说明", async () => {
+    const q = await askWithNo("用哪个库？", ["A", "B"])
+    await pick(q.id, "A")
+    const r = await withdraw(q.no!, 9)
+    expect(r.results).toEqual([{ no: 1, outcome: "answered" }, { no: 9, outcome: "unknown" }])
+    expect((await questionOf(q.id)).closedNote).toBeUndefined()
+    expect(await polled()).toEqual(["问题 1：用哪个库？\n回答：A"])
+  })
+
+  it("没传题号：拒绝", async () => {
+    expect((await withdraw()).ok).toBe(false)
   })
 })

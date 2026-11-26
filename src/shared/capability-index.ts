@@ -25,7 +25,7 @@ function group(title: string, body: string): string {
 
 /** 基础组：访客只有提问（发图片、发文件能把本机任意文件发出去，访客碰不得）；独立任务多一个交结果的工具 */
 function baseGroup(endpoint: HarnessMcpEndpoint): string {
-  const lines = ["- send_question：需要用户做选择时，发点选题。"]
+  const lines = ["- send_question、withdraw_question：需要用户做选择时，发点选题；发出去又不需要了，撤回它。"]
   if (endpoint !== "visitor") {
     lines.push(
       "- send_image、send_file：把本机图片、文件发给用户。",

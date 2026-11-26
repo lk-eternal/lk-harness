@@ -181,7 +181,7 @@ export async function createHarnessPiSession(
   // 项目会话另挂 lk-harness-project（与 agent-sdk 一致；宿主无 chatType，按 sessionKey 启发式，同 shouldIncludeAdminMcp 惯例）
   const includeProject = opts.sessionKey?.includes("::project_") === true
   // 独立定时任务没有流式卡片，结果只能靠 send_result 交付：走 task 端点（与 agent-sdk 一致）
-  // 访客（其他人的受限会话）：内置端点只有 send_question，用户 MCP 只挂点名开放的
+  // 访客（其他人的受限会话）：内置端点只有提问和撤回提问，用户 MCP 只挂点名开放的
   const mcpEndpoint: HarnessMcpEndpoint = opts.chatType === "task" ? "task" : opts.visitor ? "visitor" : "interactive"
   const mcpConfig = buildPiHostMcpConfig(daemonPort, includeAdmin, includeProject, opts.sessionKey, mcpEndpoint, opts.visitor?.mcpAllow)
   const mcpAdapter = await (await import("./pi-mcp-loader.js")).loadMcpExtension(mcpConfig)

@@ -184,7 +184,7 @@ export function shouldIncludeAdminMcp(
 
 /**
  * task：独立定时任务（有 send_result）；interactive：交互会话（提问 / 媒体 / Diff）；
- * visitor：受限的访客会话，只有 send_question（send_image / send_file 能把本机任意文件发出去，访客碰不得）。
+ * visitor：受限的访客会话，只有 send_question / withdraw_question（send_image / send_file 能把本机任意文件发出去，访客碰不得）。
  */
 export type HarnessMcpEndpoint = "task" | "interactive" | "visitor";
 

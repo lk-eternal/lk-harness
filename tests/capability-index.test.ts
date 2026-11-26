@@ -55,9 +55,10 @@ describe("能力块：只列工具组，不抄参数", () => {
     expect(t).not.toContain(SCHEDULE)
   })
 
-  it("访客：只有 send_question，碰不到本机文件的工具也不被提到", () => {
+  it("访客：只有提问和撤回提问，碰不到本机文件的工具也不被提到", () => {
     const t = buildCapabilityBlock(scope({ endpoint: "visitor" }))
     expect(t).toContain("send_question")
+    expect(t).toContain("withdraw_question")
     for (const s of ["send_image", "send_file", "render_branch_diff", "send_result", MEMORY, SCHEDULE, ADMIN, PROJECT]) expect(t).not.toContain(s)
   })
 

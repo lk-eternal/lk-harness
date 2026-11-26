@@ -54,6 +54,34 @@ describe("QuestionRounds", () => {
   })
 })
 
+describe("QuestionRounds 题号", () => {
+  it("同一轮里从 1 起依次编号", () => {
+    const rounds = new QuestionRounds()
+    expect([rounds.nextQuestionNo(SESSION), rounds.nextQuestionNo(SESSION), rounds.nextQuestionNo(SESSION)]).toEqual([1, 2, 3])
+  })
+
+  it("一轮结束后重新从 1 起；会话互不影响", () => {
+    const rounds = new QuestionRounds()
+    rounds.nextQuestionNo(SESSION)
+    rounds.nextQuestionNo(SESSION)
+    expect(rounds.nextQuestionNo("ch_a|oc_2::D:\\ws\\b")).toBe(1)
+    rounds.end(SESSION)
+    expect(rounds.nextQuestionNo(SESSION)).toBe(1)
+  })
+
+  it("取题号会开这一轮：之后发的题拿到的轮次编号和它一致", () => {
+    const rounds = new QuestionRounds()
+    rounds.nextQuestionNo(SESSION)
+    expect(rounds.isEnded(SESSION, rounds.current(SESSION))).toBe(false)
+  })
+
+  it("盘符路径里重复的反斜杠不会让同一个会话的题号分成两份", () => {
+    const rounds = new QuestionRounds()
+    rounds.nextQuestionNo("ch_a|oc_1::D:\\\\ws\\\\a")
+    expect(rounds.nextQuestionNo(SESSION)).toBe(2)
+  })
+})
+
 describe("QuestionRounds 这一轮问的题归谁", () => {
   it("领到一批消息记下发言人，发题时取出来；换了一批就换人", () => {
     const rounds = new QuestionRounds()
