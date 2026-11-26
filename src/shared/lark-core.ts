@@ -1106,6 +1106,16 @@ export class LarkSender {
     return [{ tag: "markdown", element_id: elementId, content, text_size: "notation" }, { tag: "hr" }];
   }
 
+  /** 流式卡：内联图片（imageKey 来自 uploadImage）。宽度撑满、高度按比例，整张图可见 */
+  static buildImageElement(imageKey: string): Record<string, unknown> {
+    return {
+      tag: "img",
+      img_key: imageKey,
+      alt: { tag: "plain_text", content: "图片" },
+      scale_type: "fit_horizontal",
+    };
+  }
+
   /** 流式卡：未决/已收口问题区（collapsible_panel 灰框） */
   static buildQuestionBlockElement(opts: {
     questionText: string;
@@ -1529,6 +1539,7 @@ export class LarkSender {
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+      | { type: "image"; imageKey: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -1633,6 +1644,8 @@ export class LarkSender {
               elementId: seg.elementId,
             }));
           }
+        } else if (seg.type === "image") {
+          els.push(LarkSender.buildImageElement(seg.imageKey));
         } else if (seg.type === "thinking") {
           if (!showThinking) continue;
           const thinkEid = seg.panelId ? `think_${seg.panelId}` : `think_${thinkIdx++}`;
@@ -1853,6 +1866,7 @@ export class LarkSender {
       | { type: "reply"; text: string }
       | { type: "todos"; items: Array<{ content: string; status: string }> }
       | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+      | { type: "image"; imageKey: string }
     >;
     thinking?: string;
     thinkingTitle?: string;
@@ -2216,13 +2230,22 @@ export class LarkSender {
     }
   }
 
-  async sendImage(imagePath: string, replyMessageId?: string, chatId?: string): Promise<string | undefined> {
+  /** 上传图片，拿到 image_key（发图片消息、嵌进卡片的图片组件用的是同一种 key）；文件不存在或上传失败返回 undefined */
+  async uploadImage(imagePath: string): Promise<string | undefined> {
     const absPath = path.resolve(imagePath);
     if (!fs.existsSync(absPath)) { this.log("ERROR", `图片不存在: ${absPath}`); return undefined; }
     try {
       const uploadRes: any = await this.client.im.image.create({ data: { image_type: "message", image: fs.createReadStream(absPath) } });
       const imageKey = uploadRes?.data?.image_key ?? uploadRes?.image_key;
       if (!imageKey) { this.log("ERROR", `图片上传失败`); return undefined; }
+      return imageKey;
+    } catch (e: any) { this.log("ERROR", `上传图片异常: ${e?.message ?? e}`); return undefined; }
+  }
+
+  async sendImage(imagePath: string, replyMessageId?: string, chatId?: string): Promise<string | undefined> {
+    const imageKey = await this.uploadImage(imagePath);
+    if (!imageKey) return undefined;
+    try {
       const content = JSON.stringify({ image_key: imageKey });
       let sentId: string | undefined;
       if (replyMessageId && !replyMessageId.startsWith("internal_")) {

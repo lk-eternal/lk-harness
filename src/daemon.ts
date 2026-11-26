@@ -1908,7 +1908,14 @@ type AgentStreamSegment =
   | { type: "tools"; tools: AgentStreamToolItem[]; panelId?: string }
   | { type: "reply"; text: string }
   | { type: "todos"; items: AgentStreamTodoItem[] }
-  | { type: "question"; blockId: string; text: string; options: string[]; answered?: string; closedNote?: string; multi?: boolean };
+  | { type: "question"; blockId: string; text: string; options: string[]; answered?: string; closedNote?: string; multi?: boolean }
+  | { type: "image"; imageKey: string };
+
+/** 流式卡内联图片块：imageKey 来自上传；insertAt 是挂进来时卡上已有的段数 */
+interface StreamImageBlock {
+  imageKey: string;
+  insertAt: number;
+}
 
 interface StreamQuestionBlock {
   blockId: string;
@@ -1963,6 +1970,8 @@ interface AgentStreamCardState {
   mcpReplies: Array<{ text: string; insertAt: number }>;
   /** 流式卡内联问题块（按 insertAt 插入时间线；SDK 刷新不覆盖） */
   questionBlocks: StreamQuestionBlock[];
+  /** 流式卡内联图片块（叠加方式同问题块）；没有 = 这张卡没内联过图片 */
+  imageBlocks?: StreamImageBlock[];
   createdAt: number;
   /** 串行 CardKit 写操作，避免与 SDK update / MCP merge 撞 sequence */
   inflight: Promise<unknown>;
@@ -2055,6 +2064,18 @@ function overlayQuestionBlocks(segs: AgentStreamSegment[], blocks: StreamQuestio
       closedNote: b.closedNote,
       ...(b.multi ? { multi: true } : {}),
     });
+    offset++;
+  }
+  return out;
+}
+
+/** 图片块的 insertAt 量的是除图片以外的时间线（见 buildCardBaseSegments），所以最后叠，各块互不挪位 */
+function overlayImageBlocks(segs: AgentStreamSegment[], blocks: StreamImageBlock[]): AgentStreamSegment[] {
+  if (!blocks.length) return segs;
+  const out = [...segs];
+  let offset = 0;
+  for (const b of [...blocks].sort((a, c) => a.insertAt - c.insertAt)) {
+    out.splice(Math.min(Math.max(b.insertAt, 0) + offset, out.length), 0, { type: "image", imageKey: b.imageKey });
     offset++;
   }
   return out;
@@ -2188,7 +2209,8 @@ type CardBodySegment =
   | { type: "tools"; title?: string; panelId?: string; expanded?: boolean; steps: Array<{ title: string; status: string; detail?: string; icon?: string }>; stats?: { calls: number; failed: number } }
   | { type: "reply"; text: string }
   | { type: "todos"; items: Array<{ content: string; status: string }> }
-  | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string };
+  | { type: "question"; questionText: string; buttons?: CardButton[]; form?: QuestionMultiForm; footer?: string; elementId?: string }
+  | { type: "image"; imageKey: string };
 
 function hideThinkingOnFinishEnabled(sessionKey: string, cfg: DaemonChannelConfig): boolean {
   return daemonFlagsForSession(sessionKey, cfg).hideThinkingOnFinish;
@@ -2229,6 +2251,8 @@ export function buildCardSegmentsFromPayload(
       else if (seg.closedNote) footer = closedQuestionFooter(seg.text, seg.closedNote);
       else footer = QUESTION_CARD_HINT;
       out.push({ type: "question", questionText: qText, buttons, footer, elementId });
+    } else if (seg.type === "image") {
+      out.push({ type: "image", imageKey: seg.imageKey });
     } else if (seg.type === "thinking") {
       if (!opts.showThinking || stripFoldables) continue;
       if (!seg.text?.trim()) continue;
@@ -2314,7 +2338,7 @@ function coalesceTimeline(segments: AgentStreamSegment[]): AgentStreamSegment[] 
       } else out.push({ type: "reply", text });
       continue;
     }
-    if (seg.type === "question") {
+    if (seg.type === "question" || seg.type === "image") {
       out.push(seg);
       continue;
     }
@@ -2359,14 +2383,17 @@ function overlayMcpOnPayload(sessionKey: string, state: AgentStreamCardState, sd
   return coalesceTimeline(segs);
 }
 
-/** 卡片渲染的唯一输入：SDK 时间线 + MCP 正文 + 内联问题块。指纹与渲染必须同源，否则去重永不命中 */
+/** 卡上除内联图片以外的时间线：SDK 时间线 + MCP 正文 + 内联问题块 */
+function buildCardBaseSegments(sessionKey: string, state: AgentStreamCardState): AgentStreamSegment[] {
+  return overlayQuestionBlocks(
+    overlayMcpOnPayload(sessionKey, state, state.lastSegments),
+    state.questionBlocks,
+  );
+}
+
+/** 卡片渲染的唯一输入：SDK 时间线 + MCP 正文 + 内联问题块 + 内联图片块。指纹与渲染必须同源，否则去重永不命中 */
 function buildCardMergedPayload(sessionKey: string, state: AgentStreamCardState): AgentStreamCardPayload {
-  return {
-    segments: overlayQuestionBlocks(
-      overlayMcpOnPayload(sessionKey, state, state.lastSegments),
-      state.questionBlocks,
-    ),
-  };
+  return { segments: overlayImageBlocks(buildCardBaseSegments(sessionKey, state), state.imageBlocks ?? []) };
 }
 
 /** 拼流式卡 JSON（纯构建，不动 sequence/lastHash/终态，供全量刷新与回调回卡共用） */
@@ -2387,12 +2414,13 @@ function buildAgentStreamCardJson(
   ensureSegmentPanelIds(state, state.lastSegments);
   const merged = buildCardMergedPayload(sessionKey, state);
   ensureSegmentPanelIds(state, merged.segments, state.lastSegments);
-  const hasInlineQuestion = merged.segments.some((s) => s.type === "question");
+  // 内联的问题、图片本身就是这个回合的内容，不用「仅包含思考」的占位
+  const hasInlineBlock = merged.segments.some((s) => s.type === "question" || s.type === "image");
   const cardSegs = buildCardSegmentsFromPayload(merged, {
     finish: terminal,
     showThinking: state.showThinking,
     hideThinkingOnFinish: hideThinkingOnFinishEnabled(sessionKey, ch.rt.cfg),
-    skipThinkingOnlyPlaceholder: hasInlineQuestion,
+    skipThinkingOnlyPlaceholder: hasInlineBlock,
   }, state, sessionKey);
   const status = terminal ? "completed" as const : "streaming" as const;
   // 页脚：模型 · 状态 · 耗时 · 时间（内容与顺序由共享的 buildTurnFooter 定，和应用内聊天一致），正文区不掺元信息。
@@ -3096,6 +3124,36 @@ async function withdrawStreamQuestions(
     }
     syncQuestionEntrySnapshot(state.messageId, state);
     return results;
+  });
+}
+
+/**
+ * 把图片并进这个会话正在进行的流式卡，显示在发出时的位置（和问题块、MCP 正文同一套叠加）。
+ * 没有进行中的卡（没有，或这个回合已收口）、上传失败、刷卡失败返回 false，调用方改发独立图片消息：
+ * 图片不会丢，只是不在卡里。刷卡失败时把图片块退回去，卡停在上一帧，不留飞书不认的内容。
+ */
+export async function embedImageInStreamCard(
+  sessionKey: string,
+  ch: Extract<ResolvedChannel, { type: "feishu" }>,
+  imagePath: string,
+): Promise<boolean> {
+  const liveStream = () => {
+    const stream = agentStreamCards.get(sessionKey);
+    return stream && !stream.finished ? stream : undefined;
+  };
+  // 没有进行中的卡就不必上传了（调用方改发独立图片时会自己上传）；进了链之后还要再看一次，上传期间卡可能已经收口
+  if (!liveStream()) return false;
+  const imageKey = await ch.rt.sender!.uploadImage(imagePath);
+  if (!imageKey) return false;
+  return enqueueCardOp(sessionKey, async () => {
+    const stream = liveStream();
+    if (!stream) return false;
+    const block: StreamImageBlock = { imageKey, insertAt: buildCardBaseSegments(sessionKey, stream).length };
+    stream.imageBlocks = [...(stream.imageBlocks ?? []), block];
+    if (await refreshAgentStreamCard(sessionKey, stream, ch, { finish: false })) return true;
+    stream.imageBlocks = stream.imageBlocks.filter((b) => b !== block);
+    log("WARN", `[send-image] 流式卡刷新失败，图片改发独立消息 session=${sessionKey}`);
+    return false;
   });
 }
 
@@ -5897,6 +5955,9 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
       sentOk = true;
     } else if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, image_path);
+    } else if (session_key && !isIndependentTaskSend(session_key, invoker_session_key) && await embedImageInStreamCard(session_key, ch, image_path)) {
+      // 回合进行中：图片并进了流式卡发出时的位置，没有独立消息（也就没有消息号可登记路由）
+      sentOk = true;
     } else {
       const replyId = shouldReplyToMessage(ch, message_id) ? message_id : undefined;
       if (!replyId && !ch.chatId) { json(res, { ok: false, error: "无法解析发送目标 chatId" }, 400); return true; }
