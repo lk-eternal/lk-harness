@@ -16,12 +16,15 @@ import {
 } from "./config-store"
 import { parseChatKey, channelIdFromSessionKey, chatIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
+import { cancelAiTask, listBoundTasks } from "./session-tasks"
+import { projectScheduleContexts } from "./project-bind"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
 import { keepTaskAppSessions } from "../src/shared/task-delivery.js"
 import { aiScheduleStateFile, readAiScheduleRuns } from "../src/shared/ai-schedule-state.js"
 import { readTaskRuns, taskRunLogFile } from "../src/shared/task-run-log.js"
 import { buildSessionSchedules, removeUserTask } from "../src/shared/session-schedule-build.js"
+import type { SessionTaskTarget } from "../src/shared/session-schedule.js"
 import { resetChangedTaskModelOverrides } from "../src/shared/task-model-reset.js"
 import { pushLog, pushUiLog, broadcastLog, getLogBuffer, clearLogBuffer, escapeLogContentSingleLine } from "./ui-logger"
 import { shellPathReady } from "./shell-path"
@@ -2256,22 +2259,7 @@ export function initDaemonManager(): void {
     return triggerScheduledTaskNow(task)
   })
 
-  // 取消 AI 排程：走 daemon（正在跑的先停用，不直接删）；daemon 不在就直接改文件
-  ipcMain.handle("scheduled-tasks:cancel-ai", async (_, taskId: string) => {
-    const task = readTasksFromFile().find((t) => t.id === taskId && isAiTask(t))
-    if (!task) return { ok: false, error: "排程不存在（可能已结束并被清理）" }
-    const lock = readLockFile()
-    if (lock?.port) {
-      try {
-        const r = (await httpPost(`http://127.0.0.1:${lock.port}/api/ai-task-cancel`, { taskId }, 5000)) as { ok?: boolean; error?: string } | null
-        return r?.ok ? { ok: true } : { ok: false, error: r?.error ?? "取消失败" }
-      } catch (e) {
-        return { ok: false, error: e instanceof Error ? e.message : String(e) }
-      }
-    }
-    writeTasksToFile(readTasksFromFile().filter((t) => t.id !== taskId))
-    return { ok: true }
-  })
+  ipcMain.handle("scheduled-tasks:cancel-ai", (_, taskId: string) => cancelAiTask(taskId))
 
   ipcMain.handle("scheduled-tasks:get-status", () => getIndependentTaskStatuses())
 
@@ -2304,6 +2292,16 @@ export function initDaemonManager(): void {
     if (!r.ok) return { ok: false, error: r.error }
     writeTasksToFile(r.tasks)
     return { ok: true }
+  })
+
+  // 删会话 / 删项目前：确认框要列出会跟着一起删的任务。和真正删除用同一套判定（session-tasks.ts）
+  ipcMain.handle("scheduled-tasks:bound-to-delete", (_, target: SessionTaskTarget) => {
+    if ("projectId" in target) {
+      initProjectStore(app.getPath("userData"))
+      const project = getProject(target.projectId)
+      return project ? listBoundTasks(projectScheduleContexts(project)) : []
+    }
+    return listBoundTasks([scheduleContextForSession(target.sessionKey)])
   })
 
   // ── 项目流程组 ──────────────────────────────────────

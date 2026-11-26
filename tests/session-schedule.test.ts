@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  appendTasksNote,
   deliveryLabel,
   describeCronShort,
   describeScheduleDetail,
@@ -12,7 +13,7 @@ import {
   type SessionScheduleContext,
   type SessionScheduleItem,
 } from "../src/shared/session-schedule.js"
-import { buildSessionSchedules, nextCronFireAt, removeUserTask } from "../src/shared/session-schedule-build.js"
+import { buildSessionSchedules, nextCronFireAt, removeUserTask, tasksBoundToSessions } from "../src/shared/session-schedule-build.js"
 import type { ScheduledTask } from "../src/shared/scheduled-task.js"
 
 const NOW = new Date("2026-11-06T10:00:00+08:00").getTime()
@@ -381,6 +382,70 @@ describe("removeUserTask：对话页删除用户建的任务", () => {
     const r = removeUserTask(tasks, "nope")
     expect(r.ok).toBe(false)
     expect(!r.ok && r.error).toContain("不存在")
+  })
+})
+
+describe("tasksBoundToSessions：删会话 / 删项目时跟着走的任务", () => {
+  const channels = [{ id: "ch_app", enabled: true }]
+  const ids = (tasks: ScheduledTask[]) => tasks.map((t) => t.id)
+
+  it("AI 排程认创建它的会话；已作废还没清理的（停用、过期）也算，它们跟着会话一起走", () => {
+    const tasks = [
+      aiTask({ id: "live", ownerSessionKey: dirCtx.sessionKey }),
+      aiTask({ id: "cancelled", ownerSessionKey: dirCtx.sessionKey, enabled: false }),
+      aiTask({ id: "expired", ownerSessionKey: dirCtx.sessionKey, maxRuns: undefined, expiresAt: NOW - 1 }),
+      aiTask({ id: "other", ownerSessionKey: MAIN_KEY }),
+    ]
+    expect(ids(tasksBoundToSessions(tasks, [dirCtx], channels))).toEqual(["live", "cancelled", "expired"])
+  })
+
+  it("设置页任务：通知我 + 应用内选的会话（任务专属会话）、通知 AI 选的会话都算；飞书群的不算", () => {
+    const tasks = [
+      task({ id: "dedicated", independent: true, notify: "im", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+      task({ id: "picked", independent: false, notify: "agent", channelId: "ch_app", notifyChatId: dirCtx.sessionKey }),
+      task({ id: "feishu", independent: true, notify: "im", channelId: "ch_feishu", notifyChatId: "oc_group" }),
+      task({ id: "elsewhere", independent: true, notify: "im", channelId: "ch_app", notifyChatId: MAIN_KEY }),
+    ]
+    expect(ids(tasksBoundToSessions(tasks, [dirCtx], channels))).toEqual(["dedicated", "picked"])
+  })
+
+  it("项目有好几个入口：任一入口会话建的 AI 排程、绑了这个项目的设置页任务，都算", () => {
+    const feishuKey = "ch_feishu|oc_grp::project_p1"
+    const tasks = [
+      aiTask({ id: "from-app", ownerSessionKey: projectCtx.sessionKey }),
+      aiTask({ id: "from-feishu", ownerSessionKey: feishuKey }),
+      task({ id: "legacy", independent: false, notify: "agent", channelId: "ch_app", targetProjectId: "p1" }),
+      task({ id: "other-project", independent: false, notify: "agent", channelId: "ch_app", targetProjectId: "p2" }),
+      aiTask({ id: "unrelated", ownerSessionKey: dirCtx.sessionKey }),
+    ]
+    const ctxs: SessionScheduleContext[] = [projectCtx, { sessionKey: feishuKey, projectId: "p1" }]
+    expect(ids(tasksBoundToSessions(tasks, ctxs, channels))).toEqual(["from-app", "from-feishu", "legacy"])
+  })
+
+  it("通道主会话：没选会话的旧「通知 AI」任务跟着主会话走；普通会话不带它们", () => {
+    const tasks = [task({ id: "main-bound", independent: false, notify: "agent", channelId: "ch_app" })]
+    expect(ids(tasksBoundToSessions(tasks, [mainCtx], channels))).toEqual(["main-bound"])
+    expect(tasksBoundToSessions(tasks, [dirCtx], channels)).toEqual([])
+  })
+
+  it("没有会话时什么都不算，不改传入的数组", () => {
+    const tasks = [aiTask()]
+    expect(tasksBoundToSessions(tasks, [], channels)).toEqual([])
+    expect(tasks).toHaveLength(1)
+  })
+})
+
+describe("appendTasksNote：删除确认文案后补上连带删掉的任务", () => {
+  it("没有挂着的任务，文案原样不动", () => {
+    expect(appendTasksNote("确定删除「A」吗？", [])).toBe("确定删除「A」吗？")
+  })
+
+  it("一条一行，区分 AI 排程和设置页的定时任务，写明个数", () => {
+    const text = appendTasksNote("确定删除「A」吗？", [
+      { id: "1", name: "每日新闻", origin: "user" },
+      { id: "2", name: "巡检", origin: "ai" },
+    ])
+    expect(text).toBe("确定删除「A」吗？\n\n同时删除 2 个挂在它上面的定时任务：\n· 定时任务「每日新闻」\n· AI 排程「巡检」")
   })
 })
 

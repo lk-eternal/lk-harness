@@ -66,8 +66,11 @@ import {
   mainChatKeyOfChannel,
   projectCleanupSessionKeys,
   projectGroupName,
+  projectScheduleContexts,
   type GroupBindResult,
 } from "./project-bind"
+import { appendTasksNote, type BoundTaskBrief } from "../src/shared/session-schedule.js"
+import { listBoundTasks, removeBoundTasks } from "./session-tasks"
 
 /** 当前 chat 是哪个项目的专属群（有则返回该项目） */
 function resolveBoundGroupProject(chatId?: string): Project | undefined {
@@ -1074,7 +1077,7 @@ async function handleDeleteProjectCommand(
       port,
       messageId,
       true,
-      [
+      appendTasksNote([
         `⚠️ 确认删除项目「${target.name}」？`,
         `id：${target.id}`,
         `📁 ${root}`,
@@ -1082,7 +1085,7 @@ async function handleDeleteProjectCommand(
         target.externalWorkspace
           ? "只移除项目记录，这个文件夹原样保留。"
           : "将移除上面的项目目录（含克隆副本里没提交的改动）；你自己本机的代码仓库和远程分支不受影响。",
-      ].join("\n"),
+      ].join("\n"), listBoundTasks(projectScheduleContexts(target))),
       chatId,
       [
         { label: `确认删除 ${target.name}`, cmd: `/p del ${target.id} --yes` },
@@ -1096,13 +1099,13 @@ async function handleDeleteProjectCommand(
   const deletedName = target.name
   const deletedId = target.id
   // 停在这个项目上的聊天（含当前这个）挪回主会话、每个入口的会话清掉，都在 executeProjectDelete 里做
-  await executeProjectDelete(deletedId)
+  const deleted = await executeProjectDelete(deletedId)
   void archiveProjectGroup(port, target)
   await reportCommandResult(
     port,
     messageId,
     true,
-    `🗑 已删除项目「${deletedName}」（id=${deletedId}）`,
+    appendTasksNote(`🗑 已删除项目「${deletedName}」（id=${deletedId}）`, deleted.removedTasks ?? []),
     chatId,
     [{ label: "项目菜单", cmd: "/p" }],
     patchExtra,
@@ -1122,7 +1125,7 @@ export async function archiveProjectGroup(port: number, project: Pick<Project, "
 }
 
 /** 删除项目：元数据软删进 trash；项目目录整包移入系统回收站（只动项目目录，用户自己的代码仓库不碰）。目录被其他项目引用时只删记录。 */
-export async function executeProjectDelete(projectId: string): Promise<{ ok: boolean; name?: string }> {
+export async function executeProjectDelete(projectId: string): Promise<{ ok: boolean; name?: string; removedTasks?: BoundTaskBrief[] }> {
   ensureStore()
   if (!/^[a-f0-9]{12}$/i.test(projectId)) {
     pushUiLog("Project", "WARN", `[Delete] 拒绝非法 projectId: ${projectId}`)
@@ -1191,7 +1194,8 @@ export async function executeProjectDelete(projectId: string): Promise<{ ok: boo
     if (ch && getChannel(ch)?.type === "app") await clearAppChatRecords({ sessionKey: sk })
   }
   deleteProject(target.id)
-  return { ok: true, name: target.name }
+  // 挂在项目每个入口会话上的定时任务（AI 排程、设置页任务）也一起走，确认框里已经列过
+  return { ok: true, name: target.name, removedTasks: await removeBoundTasks(projectScheduleContexts(target)) }
 }
 
 /** 项目协作主卡：仅 header + 流程组按钮（详情走 /p info） */

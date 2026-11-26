@@ -50,7 +50,8 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { findStoredSessionKey, getSessionRecord, initSessionOverridesStore, readOverridesSnapshot, withOverridesSnapshot } from "../src/shared/session-overrides-store.js"
 import { resolveLaunchModel, resolveSessionResourceId, taskExplicitModel } from "../src/shared/launch-model.js"
 import { taskTabModel } from "../src/shared/task-tab-model.js"
-import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
+import { appendTasksNote, type BoundTaskBrief, type SessionScheduleContext } from "../src/shared/session-schedule.js"
+import { removeBoundTasks } from "./session-tasks"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
@@ -1205,11 +1206,11 @@ function manageChatIdFor(sessionKey: string): ManageChatResolution {
   )
 }
 
-/** 删除会话：停止 Agent、清 Resume、移出常用目录；若当前活跃则回主会话。项目会话请用 /p del。 */
+/** 删除会话：停止 Agent、清 Resume、移出常用目录、一并删掉挂在它上面的定时任务；若当前活跃则回主会话。项目会话请用 /p del。 */
 export async function deleteUserSession(
   sessionKey: string,
   chatId?: string,
-): Promise<{ ok: boolean; error?: string; label?: string }> {
+): Promise<{ ok: boolean; error?: string; label?: string; removedTasks?: BoundTaskBrief[] }> {
   const key = sessionKey?.trim()
   if (!key) return { ok: false, error: "sessionKey 不能为空" }
 
@@ -1236,6 +1237,8 @@ export async function deleteUserSession(
   const label = tabLabelForSession(key)
   // 先于 purgeSessionEntry 解析：会话记录被清掉后，无通道前缀的 key 就查不到所属通道了
   const ownerChannel = resolveChannelForSession(key)
+  // 同理：是不是某个通道的主会话，也要靠会话记录里的通道判断
+  const taskContext = scheduleContextForSession(key)
 
   if (isSessionAgentRunning(key)) await stopSessionAgent(key)
   resetAllSessionContext(key)
@@ -1263,7 +1266,7 @@ export async function deleteUserSession(
     await pushChannelRuntimeToDaemon()
   }
 
-  return { ok: true, label }
+  return { ok: true, label, removedTasks: await removeBoundTasks([taskContext]) }
 }
 
 export type SessionTabItem = {
@@ -1741,7 +1744,7 @@ export async function handleChatCommand(
       await handleChatCommand(["/c", "ls"], port, messageId, chatId, patchMessageId)
       return
     }
-    await reply(true, `🗑 已删除会话 #${idx}${result.label ? `: ${result.label}` : ""}`)
+    await reply(true, appendTasksNote(`🗑 已删除会话 #${idx}${result.label ? `: ${result.label}` : ""}`, result.removedTasks ?? []))
     return
   }
 

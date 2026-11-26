@@ -102,6 +102,23 @@ export function taskBoundToSession(
   return !!ctx.mainOfChannelId && !!notifyChannelId && ctx.mainOfChannelId === notifyChannelId;
 }
 
+/** 删会话 / 删项目时跟着一起删的任务：确认框和删除后的回复里列名字用 */
+export interface BoundTaskBrief {
+  id: string;
+  name: string;
+  origin: "ai" | "user";
+}
+
+/** 要删的是哪个：普通会话（会话键）或项目（项目在每个入口上各有一条会话，任务要按整个项目找） */
+export type SessionTaskTarget = { sessionKey: string } | { projectId: string };
+
+/** 在删除确认（或删除结果）文案后面补上连带删掉哪些定时任务；没有挂着的任务就原样返回 */
+export function appendTasksNote(message: string, tasks: readonly BoundTaskBrief[]): string {
+  if (tasks.length === 0) return message;
+  const lines = tasks.map((t) => `· ${t.origin === "ai" ? "AI 排程" : "定时任务"}「${t.name}」`);
+  return `${message}\n\n同时删除 ${tasks.length} 个挂在它上面的定时任务：\n${lines.join("\n")}`;
+}
+
 // ── cron → 一句人话 ────────────────────────────────────
 
 const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];

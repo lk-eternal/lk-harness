@@ -44,6 +44,21 @@ export function removeUserTask(
   return { ok: true, tasks: tasks.filter((t) => t.id !== taskId) };
 }
 
+/**
+ * 绑定到 ctxs 里任意一个会话的任务（判定同 taskBoundToSession）。删会话传它自己；删项目传它每个入口上的会话。
+ * 没设通知通道的任务按「第一个启用的通道」算，和设置页、daemon 的口径一致。
+ */
+export function tasksBoundToSessions(
+  tasks: readonly ScheduledTask[],
+  ctxs: readonly SessionScheduleContext[],
+  channels: readonly { id: string; enabled?: boolean }[],
+): ScheduledTask[] {
+  return tasks.filter((task) => {
+    const notifyChannelId = resolveTaskChannelId({ channelId: taskNotifyChannelId(task) }, channels);
+    return ctxs.some((ctx) => taskBoundToSession(task, ctx, notifyChannelId));
+  });
+}
+
 export interface BuildSessionSchedulesInput {
   tasks: readonly ScheduledTask[];
   ctx: SessionScheduleContext;
@@ -70,10 +85,7 @@ export function buildSessionSchedules(input: BuildSessionSchedulesInput): Sessio
   const nextFireAt = input.nextFireAt ?? nextCronFireAt;
   const items: SessionScheduleItem[] = [];
 
-  for (const task of tasks) {
-    const notifyChannelId = resolveTaskChannelId({ channelId: taskNotifyChannelId(task) }, channels);
-    if (!taskBoundToSession(task, ctx, notifyChannelId)) continue;
-
+  for (const task of tasksBoundToSessions(tasks, [ctx], channels)) {
     const ai = isAiTask(task);
     const runs = aiRuns[task.id] ?? 0;
     if (ai && (!task.enabled || !evaluateAiTaskFire(task, runs, now).fire)) continue;

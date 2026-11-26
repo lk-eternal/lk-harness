@@ -16,6 +16,7 @@ import {
   type ProjectBinding,
 } from "../src/shared/project-types.js"
 import type { BindingChannelFacts } from "../src/shared/project-bindings.js"
+import type { SessionScheduleContext } from "../src/shared/session-schedule.js"
 
 /** 通道配置 → 规划接入点要用的事实（不含密钥） */
 export function bindingChannelFacts(): BindingChannelFacts[] {
@@ -137,4 +138,9 @@ export function projectCleanupSessionKeys(project: Project): string[] {
     if (ch.type === "app") keys.add(projectSessionKey(makeChatKey(ch.id, APP_CHANNEL_CHAT_ID), project.id))
   }
   return [...keys]
+}
+
+/** 删项目时按整个项目找挂靠的任务：每个入口的会话都算，并带上项目 id（设置页任务按项目 id 绑定，不按会话键） */
+export function projectScheduleContexts(project: Project): SessionScheduleContext[] {
+  return projectCleanupSessionKeys(project).map((sessionKey) => ({ sessionKey, projectId: project.id }))
 }
