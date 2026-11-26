@@ -57,7 +57,7 @@ vi.mock("../electron/pi-mcp-loader.js", async () => {
   }
 })
 
-import { buildAppendSystemPrompt, createHarnessPiSession } from "../electron/pi-embedded"
+import { buildPiHostPrompt, createHarnessPiSession } from "../electron/pi-embedded"
 import { buildHostPrompt } from "../electron/prompt-assembler"
 import { initHarnessMcpStore, saveHarnessMcpServer, CLAW_MCP_KEY } from "../src/shared/harness-mcp-store"
 import { PI_LOCAL_TOOLS, resolveVisitorLimits } from "../src/shared/visitor-limits"
@@ -150,8 +150,8 @@ describe("宿主提示词指纹（两个引擎共用）：访客限制变了指�
 describe("pi 访客提示词", () => {
   it("访客：有访客说明，Skill 名单按开放的取；不受限：没有访客说明，名单全量", () => {
     const visitor = resolveVisitorLimits({ visitorTier: "visitor", visitorSkills: ["s1"] }, "others")!
-    const v = buildAppendSystemPrompt(launchOpts({ visitor }))[0]!
-    const plain = buildAppendSystemPrompt(launchOpts())[0]!
+    const v = buildPiHostPrompt(launchOpts({ visitor })).text
+    const plain = buildPiHostPrompt(launchOpts()).text
     expect(v).toContain("访客")
     expect(v).toContain("NAMELIST:s1")
     expect(plain).not.toContain("访客")

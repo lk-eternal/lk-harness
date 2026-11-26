@@ -26,11 +26,18 @@ import { WORKER_IDLE_EXIT_MS } from "../src/shared/poll-protocol.js"
 
 export type LlmWorkerPhase = "listening" | "processing" | "stopping"
 
+/** 宿主提示词（规则、Skill 名单）的指纹：launched 是拉起时放进系统提示词的那一版，current 现算当前这一版 */
+export interface HostPromptProbe {
+  launched: string
+  current: () => string
+}
+
 interface WorkerState {
   session: LlmWorkerSession
   phase: LlmWorkerPhase
   persistentPoll: boolean
   promptCtx: PromptAssemblyContext
+  hostPrompt: HostPromptProbe
   taskMessage?: string
   historyTurns?: HistoryTurn[]
   firstTurn: boolean
@@ -146,6 +153,7 @@ export function startLlmWorkerLoop(
   opts: {
     persistentPoll: boolean
     promptCtx: PromptAssemblyContext
+    hostPrompt: HostPromptProbe
     taskMessage?: string
     historyTurns?: HistoryTurn[]
     firstTurn: boolean
@@ -157,6 +165,7 @@ export function startLlmWorkerLoop(
     phase: "listening",
     persistentPoll: opts.persistentPoll,
     promptCtx: opts.promptCtx,
+    hostPrompt: opts.hostPrompt,
     taskMessage: opts.taskMessage,
     historyTurns: opts.historyTurns,
     firstTurn: opts.firstTurn,
@@ -224,6 +233,13 @@ async function runWorkerLoop(state: WorkerState): Promise<void> {
         pushUiLog("LLM", "INFO", `[${sessionKey}] worker 跳过已处理消息重投 (${deliverable.length}条)`)
         try { await hostConfirmClaimed(sessionKey) } catch { /* best-effort */ }
         continue
+      }
+
+      // 规则或 Skill 名单变了：Pi 的系统提示词在拉起时就定下了。这批消息不确认、不处理，直接退出：
+      // daemon 把 .claimed 重投，调度器重新拉起，新 worker 带着新的系统提示词续上账本
+      if (state.hostPrompt.current() !== state.hostPrompt.launched) {
+        pushUiLog("LLM", "INFO", `[${sessionKey}] 规则或 Skill 名单有变化，worker 退出重建（这批消息保持未确认，由调度器重投）`)
+        break
       }
 
       for (const m of fresh) {

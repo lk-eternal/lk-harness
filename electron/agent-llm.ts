@@ -19,7 +19,7 @@ import {
   recordModelUse,
 } from "../src/shared/session-model-store.js"
 import { initSessionResourceStore, resolveResourceForSession } from "../src/shared/session-resource-store.js"
-import { createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
+import { buildPiHostPrompt, createHarnessPiSession, hasPersistedPiSession, clearPiSession, readPiSessionTurns } from "./pi-embedded"
 import {
   initSessionThinkingStore,
   resolveThinkingLevel,
@@ -917,6 +917,7 @@ export async function launchLlmAgent(opts: LlmLaunchOptions): Promise<{ ok: bool
     session.runPromise = startLlmWorkerLoop(session, {
       persistentPoll,
       promptCtx,
+      hostPrompt: { launched: created.hostPromptHash, current: () => buildPiHostPrompt(opts).hash },
       taskMessage: opts.taskMessage,
       historyTurns: opts.historyTurns,
       firstTurn: !resumed || !!(opts.pendingMessageIds?.length),

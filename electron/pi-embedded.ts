@@ -18,7 +18,7 @@ import { ensureSessionLayoutMigrated } from "../src/shared/session-layout-migrat
 import { sessionPiDir } from "../src/shared/session-entry-paths.js"
 import type { LlmLaunchOptions } from "./agent-llm"
 import { llmProviderId } from "./llm-config"
-import { buildHostPrompt, resolveDaemonPortForPrompt } from "./prompt-assembler"
+import { buildHostPrompt, resolveDaemonPortForPrompt, type HostPrompt } from "./prompt-assembler"
 import { countPiPhysicalTurns, turnsFromPiMessages } from "./carryover"
 import type { TranscriptTurn } from "./agent-engine/types"
 import { buildPiHostMcpConfig } from "./pi-mcp-config"
@@ -105,14 +105,17 @@ export function readPiSessionTurns(sessionKey: string): TranscriptTurn[] {
 }
 
 /**
- * 不让 Pi 自己扫 Skill 目录并生成清单：名单由 buildAppendSystemPrompt 统一给（和 SDK 引擎一致）。
+ * 不让 Pi 自己扫 Skill 目录并生成清单：名单由 buildPiHostPrompt 统一给（和 SDK 引擎一致）。
  * 开着的话 Pi 会再列一份自己扫到的，两份对不上，还多占上下文。
  */
 export const PI_SKILL_LOADING = { noSkills: true } as const
 
-/** 协议、规则和 Skill 名单整份放系统提示词（和 SDK 引擎同一个构建函数）；系统提示词每个请求都在，不用判断「给过没有」 */
-export function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
-  return [buildHostPrompt({
+/**
+ * 协议、规则和 Skill 名单整份放系统提示词（和 SDK 引擎同一个构建函数）；系统提示词每个请求都在，不用判断「给过没有」。
+ * 它在拉起时就定下了：worker 每次领到消息，用同一个 opts 重算这份的指纹，和拉起时不一样就退出重建（见 llm-session-worker）。
+ */
+export function buildPiHostPrompt(opts: LlmLaunchOptions): HostPrompt {
+  return buildHostPrompt({
     meta: opts.meta,
     sessionKey: opts.sessionKey,
     useMainWorkspace: opts.useMainWorkspace,
@@ -121,7 +124,7 @@ export function buildAppendSystemPrompt(opts: LlmLaunchOptions): string[] {
     digitalIdentityOverride: opts.digitalIdentityOverride,
     notifySessionKey: opts.notifySessionKey,
     taskMessage: opts.taskMessage,
-  }).text]
+  })
 }
 
 function resolveSessionManager(cwd: string, sessionKey: string): SessionManager {
@@ -136,6 +139,8 @@ export interface HarnessPiSession {
   session: AgentSession
   sessionManager: SessionManager
   resumed: boolean
+  /** 拉起时放进系统提示词的那一版宿主提示词的指纹 */
+  hostPromptHash: string
 }
 
 export async function createHarnessPiSession(
@@ -189,11 +194,12 @@ export async function createHarnessPiSession(
   // Always inject Harness protocol into appendSystemPrompt so resumed sessions
   // rebuild the same system-prompt prefix as cold start (KV cache prefix match).
   // Wake/resume instructions stay in the user bootstrap turn (agent-llm.ts).
+  const hostPrompt = buildPiHostPrompt(opts)
   const resourceLoader = new DefaultResourceLoader({
     cwd,
     agentDir,
     settingsManager,
-    appendSystemPrompt: buildAppendSystemPrompt(opts),
+    appendSystemPrompt: [hostPrompt.text],
     ...PI_SKILL_LOADING,
     ...(mcpAdapter ? { extensionFactories: [mcpAdapter] } : {}),
   })
@@ -222,7 +228,7 @@ export async function createHarnessPiSession(
   })
   wrapAgentStreamWithProxy(session)
 
-  return { session, sessionManager, resumed }
+  return { session, sessionManager, resumed, hostPromptHash: hostPrompt.hash }
 }
 
 function wrapAgentStreamWithProxy(session: AgentSession): void {

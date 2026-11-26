@@ -141,7 +141,7 @@ describe("LLM worker 失败", () => {
     processedMessageIds: new Set<string>(),
   })
   const start = () =>
-    void startLlmWorkerLoop(session() as never, { persistentPoll: true, promptCtx: {} as never, firstTurn: true })
+    void startLlmWorkerLoop(session() as never, { persistentPoll: true, promptCtx: {} as never, hostPrompt: { launched: "h", current: () => "h" }, firstTurn: true })
 
   it("回合报错但会话还能用：这批消息作废，各通道都提示「需要重发」，worker 不退出", async () => {
     let polls = 0

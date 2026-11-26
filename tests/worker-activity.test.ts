@@ -251,7 +251,7 @@ describe("LLM worker 记 Agent 的动静", () => {
     processedMessageIds: new Set<string>(),
   })
   const start = (s: ReturnType<typeof session>) =>
-    void startLlmWorkerLoop(s as never, { persistentPoll: true, promptCtx: {} as never, firstTurn: true })
+    void startLlmWorkerLoop(s as never, { persistentPoll: true, promptCtx: {} as never, hostPrompt: { launched: "h", current: () => "h" }, firstTurn: true })
 
   it("poll 挂起到点后继续监听：不记动静，阶段一直是 listening；退出时记一笔", async () => {
     let polls = 0

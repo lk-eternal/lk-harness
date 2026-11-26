@@ -45,7 +45,7 @@ import {
   planHostPrompt,
   type PromptAssemblyContext,
 } from "../electron/prompt-assembler.js"
-import { buildAppendSystemPrompt, PI_SKILL_LOADING } from "../electron/pi-embedded.js"
+import { buildPiHostPrompt, PI_SKILL_LOADING } from "../electron/pi-embedded.js"
 import { joinPromptBlocks } from "../src/shared/prompt-markup.js"
 import { resolveVisitorLimits } from "../src/shared/visitor-limits.js"
 
@@ -172,25 +172,33 @@ describe("SDK：assembleSdkWorkerTurnPrompt 的 hostPrompt", () => {
   })
 })
 
-describe("Pi：buildAppendSystemPrompt 放同一份宿主提示词", () => {
+describe("Pi：buildPiHostPrompt 放同一份宿主提示词", () => {
   const launch = { meta: { chatType: "p2p" }, sessionKey: "ch_a|oc_main", includeAdmin: true } as never
 
-  it("整份放进系统提示词，仍是一个字符串块；有名单就带名单", () => {
+  it("整份放进系统提示词；有名单就带名单", () => {
     withCatalog(CATALOG)
-    const blocks = buildAppendSystemPrompt(launch)
-    expect(blocks).toEqual([buildHostPrompt(CTX).text])
-    expect(blocks[0]).toContain(CATALOG)
+    const host = buildPiHostPrompt(launch)
+    expect(host).toEqual(buildHostPrompt(CTX))
+    expect(host.text).toContain(CATALOG)
   })
 
   it("没有名单：只有协议", () => {
-    const blocks = buildAppendSystemPrompt(launch)
-    expect(blocks).toEqual([joinPromptBlocks(assembleProtocolBlocks(CTX))])
-    expect(blocks[0]).not.toContain("本机有下面这些 Skill")
+    const { text } = buildPiHostPrompt(launch)
+    expect(text).toBe(joinPromptBlocks(assembleProtocolBlocks(CTX)))
+    expect(text).not.toContain("本机有下面这些 Skill")
   })
 
   it("两个引擎给 AI 看的是同一份文本：Pi 的系统提示词 = SDK 新账本第一轮给的整份", () => {
     withCatalog(CATALOG)
-    expect(buildAppendSystemPrompt(launch)[0]).toBe(planHostPrompt(CTX, undefined)!.text)
+    expect(buildPiHostPrompt(launch).text).toBe(planHostPrompt(CTX, undefined)!.text)
+  })
+
+  it("指纹：同一份 opts 连算两次相同，Skill 名单变了就不同（worker 靠它决定要不要重建）", () => {
+    withCatalog(CATALOG)
+    const before = buildPiHostPrompt(launch).hash
+    expect(buildPiHostPrompt(launch).hash).toBe(before)
+    withCatalog(CATALOG_V2)
+    expect(buildPiHostPrompt(launch).hash).not.toBe(before)
   })
 })
 
