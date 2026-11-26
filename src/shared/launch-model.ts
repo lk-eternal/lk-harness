@@ -153,11 +153,10 @@ export type TaskModelSource = Pick<ScheduledTask, "model" | "modelParams" | "res
 
 /**
  * 任务拉起时显式指定的供应商和模型，优先级最高；没有就返回 undefined，跟随任务会话自己存的 / 通道主模型。
- * - 任务自己配了模型：用它。任务自己选了供应商（resourceId）用它，没选跟随通道；供应商只在同时配了模型时生效；
- * - AI 排程没有自己的模型，跟随创建它的会话：取那个会话下次拉起时实际会用的。创建者一定是主用户自己的会话
+ * - 用户建的任务：用任务自己配的模型。任务自己选了供应商（resourceId）用它，没选跟随通道；供应商只在同时配了模型时生效；
+ * - AI 排程没有自己的模型，一直跟随创建它的会话：取那个会话下次拉起时实际会用的。创建者一定是主用户自己的会话
  *   （项目 / 主会话 / 目录 / 临时会话），人群恒为 main；创建者换了模型或供应商，排程下一次运行就跟着换。
- *   创建者取不到模型（自己没存过、通道也没配）时没有显式指定。
- * 供应商取创建者解析后的那一家，不留空：留空会让任务会话里上次拉起时存下的旧供应商盖过创建者的新选择。
+ *   供应商取创建者解析后的那一家，不留空：留空会让任务会话里上次拉起时存下的旧供应商盖过创建者的新选择。
  */
 export function taskExplicitModel(input: {
   task: TaskModelSource
@@ -165,14 +164,14 @@ export function taskExplicitModel(input: {
   resolveResource: LaunchModelInput["resolveResource"]
 }): LaunchModelInput["explicit"] {
   const { task, channel, resolveResource } = input
-  const model = task.model?.trim()
-  if (model) return { model, modelParams: task.modelParams, resourceId: task.resourceId }
+  if (!isAiTask(task)) {
+    const model = task.model?.trim()
+    return model ? { model, modelParams: task.modelParams, resourceId: task.resourceId } : undefined
+  }
   const owner = task.ownerSessionKey?.trim()
-  if (!isAiTask(task) || !owner) return undefined
+  if (!owner) return undefined
   const eff = resolveLaunchModel({ sessionKey: owner, channel, audience: "main", resolveResource })
-  return eff.model.trim()
-    ? { model: eff.model, modelParams: eff.modelParams, resourceId: eff.resolvedResourceId }
-    : undefined
+  return { model: eff.model, modelParams: eff.modelParams, resourceId: eff.resolvedResourceId }
 }
 
 /**

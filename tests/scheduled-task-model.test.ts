@@ -178,21 +178,14 @@ describe("resolveTaskLaunchModel", () => {
       expect(r.model).toBe("claude-sonnet")
     })
 
-    it("排程自己配了模型：用排程的，不看创建者", () => {
-      setSessionOverride(OWNER, { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
-      const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: aiTask({ model: "composer-2.5" }), channel, resolveResource })
-      expect(r).toMatchObject({ model: "composer-2.5", resolvedResourceId: "sdk_main" })
-    })
-
     it("用户建的任务不跟随任何会话，哪怕带着 ownerSessionKey", () => {
       setSessionOverride(OWNER, { model: "gemini-flash", modelParams: "[]", resourceId: "llm_others" })
       const r = resolveTaskLaunchModel({ sessionKey: TASK_ID, task: task({ ownerSessionKey: OWNER }), channel, resolveResource })
       expect(r).toMatchObject({ model: "claude-sonnet", modelSource: "channel" })
     })
 
-    it("AI 排程没有创建者记录、创建者也取不到模型（没有通道）：没有显式指定", () => {
+    it("AI 排程没有记录创建者：没有显式指定", () => {
       expect(taskExplicitModel({ task: aiTask({ ownerSessionKey: undefined }), channel, resolveResource })).toBeUndefined()
-      expect(taskExplicitModel({ task: aiTask(), channel: undefined, resolveResource })).toBeUndefined()
     })
   })
 })
