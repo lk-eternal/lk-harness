@@ -119,7 +119,8 @@ const components: Components = {
   },
 }
 
-export const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [remarkGfm]
+// singleTilde:false 只认 ~~删除线~~，否则 Agent 常写的 8~10、2~3 会把中间整段划掉
+export const remarkPlugins: NonNullable<Options["remarkPlugins"]> = [[remarkGfm, { singleTilde: false }]]
 // detect:false 只高亮显式标注语言的代码块，不做昂贵且常猜错的自动识别
 export const rehypePlugins: NonNullable<Options["rehypePlugins"]> = [
   [rehypeHighlight, { detect: false, ignoreMissing: true }],
