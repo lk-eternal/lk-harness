@@ -9,7 +9,7 @@ import type { ProjectNodeGroupDef } from "../src/shared/project-types"
 import type { InspectRepoResult, ProjectActionResult, ProjectBindingChoice, ProjectBindResult, ProjectChannelOption, ProjectCreateInput, ProjectCreateResult, ProjectListItem, ProjectRepoOption, ProjectTemplateInfo, ProjectUnbindResult, ProjectView } from "../src/shared/project-app-types"
 import type { PreviewBytesResult, PreviewDirResult, PreviewOpenResult, PreviewPathCheck, PreviewRect, PreviewTextResult, PreviewWebNav, PreviewWebOpenTab, PreviewWebState, PreviewZipResult } from "../src/shared/preview-types"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
-import type { SessionScheduleItem } from "../src/shared/session-schedule"
+import type { BoundTaskBrief, SessionScheduleItem, SessionTaskTarget } from "../src/shared/session-schedule"
 import type { TaskRunLog } from "../src/shared/task-run-log-rules"
 import type { CleanupPreviewResult, CleanupRunResult, ManagerListResult, ManagerOpResult } from "../src/shared/managed-sessions"
 import type { ChannelImpactClearResult, ChannelImpactPreviewResult, ChannelImpactStopResult } from "../src/shared/channel-model-impact"
@@ -382,6 +382,8 @@ const api = {
     ipcRenderer.invoke("scheduled-tasks:for-session", sessionKey),
   deleteScheduledTask: (taskId: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("scheduled-tasks:delete", taskId),
+  listTasksBoundToDelete: (target: SessionTaskTarget): Promise<BoundTaskBrief[]> =>
+    ipcRenderer.invoke("scheduled-tasks:bound-to-delete", target),
 
   // ── 项目流程组 ──────────────────────────────────────
   getProjectNodeGroups: (): Promise<(Omit<ProjectNodeGroupDef, "nodes"> & { nodes: (ProjectNodeGroupDef["nodes"][number] & { defaultPrompt?: string })[] })[]> =>

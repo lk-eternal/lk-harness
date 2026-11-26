@@ -5,6 +5,7 @@ import {
   INFO_KEY_MAX, LINK_FIELDS, composeMetadata, fieldsForSelection, linkFieldsShown, newInfoRow,
   retargetInfo, sameIdList, splitInfo, type InfoForm, type LinkKey,
 } from "../../../shared/project-detail-form"
+import { appendTasksNote } from "../../../shared/session-schedule"
 import { usePanelSave } from "../usePanelSave"
 import ProjectBindings from "./ProjectBindings"
 import type { Group } from "./template-data"
@@ -135,7 +136,8 @@ export default function ProjectDetail({ item, groups, ui, onChanged, onDeleted, 
 
   const remove = async () => {
     const text = projectDeleteConfirmText({ name: item.name, externalDir: item.externalWorkspace, dir: item.dir, isCode: item.isCode })
-    if (!(await ui.showConfirm("删除项目", text, "删除", "取消"))) return
+    const tasks = await window.electronAPI.listTasksBoundToDelete({ projectId: item.id })
+    if (!(await ui.showConfirm("删除项目", appendTasksNote(text, tasks), "删除", "取消"))) return
     const r = await window.electronAPI.deleteProject(item.id)
     if (!r.ok) { void ui.showAlert("删除失败", r.error ?? "删除失败"); return }
     await onDeleted()

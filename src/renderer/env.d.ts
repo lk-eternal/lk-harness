@@ -1,7 +1,11 @@
 import type { AgentResource as AgentResourceType, MessageChannel, ChannelStatusInfo as ChannelStatusInfoType } from "../shared/channel-types"
 import type { RuleScope as RuleScopeType } from "../shared/rule-scope"
 import type { ScheduledTask as ScheduledTaskType } from "../shared/scheduled-task"
-import type { SessionScheduleItem as SessionScheduleItemType } from "../shared/session-schedule"
+import type {
+  BoundTaskBrief as BoundTaskBriefType,
+  SessionScheduleItem as SessionScheduleItemType,
+  SessionTaskTarget as SessionTaskTargetType,
+} from "../shared/session-schedule"
 import type { TaskRunLog as TaskRunLogType } from "../shared/task-run-log-rules"
 import type {
   ChannelImpactClearResult as ChannelImpactClearResultType,
@@ -387,6 +391,7 @@ declare global {
     getScheduledTaskRuns(): Promise<TaskRunLogType>
     getSessionSchedules(sessionKey: string): Promise<SessionScheduleItemType[]>
     deleteScheduledTask(taskId: string): Promise<{ ok: boolean; error?: string }>
+    listTasksBoundToDelete(target: SessionTaskTargetType): Promise<BoundTaskBriefType[]>
     onScheduledTaskStatus(cb: (statuses: Record<string, { running: boolean; pid?: number; startedAt?: number }>) => void): () => void
     getMcpServers(): Promise<McpServerEntry[]>
     saveMcpServer(name: string, entry: Record<string, unknown>): Promise<{ ok: boolean }>

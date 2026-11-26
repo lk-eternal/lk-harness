@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Archive, ArchiveRestore, FileText, FolderKanban, FolderOpen, Info, Loader2, Trash2 } from "lucide-react"
 import { parentPath } from "../../../shared/preview-kinds"
 import { projectDeleteConfirmText, type ProjectView } from "../../../shared/project-app-types"
+import { appendTasksNote } from "../../../shared/session-schedule"
 import { splitTextLinks } from "../../../shared/text-links"
 import useOutsideClose from "../../hooks/useOutsideClose"
 import { formatTimeAgo } from "../../time-ago"
@@ -115,7 +116,8 @@ export default function ProjectBar({ channelId, projectId, running, reloadToken,
 
   const removeProject = async () => {
     if (busy) return
-    if (!await confirm("删除项目", projectDeleteConfirmText(view), "删除")) return
+    const tasks = await window.electronAPI.listTasksBoundToDelete({ projectId })
+    if (!await confirm("删除项目", appendTasksNote(projectDeleteConfirmText(view), tasks), "删除")) return
     setBusy("delete")
     try {
       const r = await window.electronAPI.deleteProject(projectId, channelId)

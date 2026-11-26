@@ -35,6 +35,7 @@ import { buildDashboardTree, GROUP_IDS, withAppChatNames, type DashboardChannelN
 import type { ModelChoice, ModelPickerSource } from "../components/chat/ModelPicker"
 import { useModelFavorites } from "../hooks/useModelFavorites"
 import { makeChatKey } from "../../shared/channel-types"
+import { appendTasksNote } from "../../shared/session-schedule"
 
 interface Props {
   /** 打开设置页，可指定初始 Tab */
@@ -408,9 +409,10 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         setActionError("无法解析项目 id")
         return
       }
+      const tasks = await window.electronAPI.listTasksBoundToDelete({ projectId: pid })
       if (!(await showConfirm(
         "删除项目",
-        `确定删除项目「${short}」？\n将移除项目目录（含克隆副本里没提交的改动），你自己的代码仓库与远程分支不受影响。`,
+        appendTasksNote(`确定删除项目「${short}」？\n将移除项目目录（含克隆副本里没提交的改动），你自己的代码仓库与远程分支不受影响。`, tasks),
         "删除项目",
         "取消",
       ))) return
@@ -420,7 +422,8 @@ export default function Dashboard({ onSettings, onSwitchPage, active }: Props) {
         return
       }
     } else {
-      if (!(await showConfirm("删除会话", `确定删除「${name}」？`, "删除", "取消"))) return
+      const tasks = await window.electronAPI.listTasksBoundToDelete({ sessionKey })
+      if (!(await showConfirm("删除会话", appendTasksNote(`确定删除「${name}」？`, tasks), "删除", "取消"))) return
       const r = await window.electronAPI.deleteSession(sessionKey)
       if (!r.ok) {
         setActionError(r.error ?? "删除会话失败")

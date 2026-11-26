@@ -43,6 +43,7 @@ import { emptyChannel } from "../channel-defaults"
 import { notifyChannelsChanged } from "../channel-events"
 import { PROJECT_NAME_MAX, projectDeleteConfirmText, projectIdOfSessionKey, projectNotOwnedHint, type ProjectCreateResult } from "../../shared/project-app-types"
 import { pickDefaultTab } from "../../shared/session-archive"
+import { appendTasksNote } from "../../shared/session-schedule"
 import { groupOf, splitGroups, type SessionListGroupId } from "../../shared/session-groups"
 import { isTempChatWorkspace, tempWorkspaceCreatedAt } from "../../shared/temp-workspace"
 import { modelSlug } from "../model-utils"
@@ -397,7 +398,10 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
       : t.kind === "main"
         ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
         : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
-    if (!isDraft && !await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
+    if (!isDraft) {
+      const tasks = await window.electronAPI.listTasksBoundToDelete({ sessionKey: t.sessionKey })
+      if (!await showConfirm("删除会话", appendTasksNote(`确定删除「${sessionName(t)}」吗？\n${effect}`, tasks), "删除")) return
+    }
     const r = await window.electronAPI.appChatDeleteSession(t.sessionKey)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, t.sessionKey)))
@@ -580,7 +584,8 @@ export default function ChatPage({ active, onSwitchPage, onSettings }: Props) {
     if (!view) { setActionError("项目不存在"); return }
     // 归别的通道管的项目删不了，先说明，别让用户确认完才报错
     if (!view.ownedHere) { setActionError(projectNotOwnedHint("删除")); return }
-    if (!await showConfirm("删除项目", projectDeleteConfirmText(view), "删除")) return
+    const tasks = await window.electronAPI.listTasksBoundToDelete({ projectId })
+    if (!await showConfirm("删除项目", appendTasksNote(projectDeleteConfirmText(view), tasks), "删除")) return
     const r = await window.electronAPI.deleteProject(projectId, channelId)
     if (!r.ok) { setActionError(r.error ?? "删除失败"); return }
     await projectDeleted(t)

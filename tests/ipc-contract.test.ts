@@ -36,11 +36,12 @@ describe("IPC 接线", () => {
     expect(invoked.filter((c) => !handled.has(c))).toEqual([])
   })
 
-  it("对话页「这个会话的定时」：两个方法在 preload / 主进程 / 界面类型里都有，且各调各的通道", () => {
+  it("对话页「这个会话的定时」和删会话前的任务名单：三个方法在 preload / 主进程 / 界面类型里都有，且各调各的通道", () => {
     const envDts = read("src/renderer/env.d.ts")
     const expectChannel: Record<string, string> = {
       getSessionSchedules: "scheduled-tasks:for-session",
       deleteScheduledTask: "scheduled-tasks:delete",
+      listTasksBoundToDelete: "scheduled-tasks:bound-to-delete",
     }
     for (const [method, channel] of Object.entries(expectChannel)) {
       expect(envDts, `env.d.ts 缺 ${method}`).toMatch(new RegExp(`\\b${method}\\(`))
