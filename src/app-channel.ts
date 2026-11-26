@@ -13,9 +13,11 @@ import {
   appChatSessionId,
   chatItemInsertIndex,
   isQueuedUserItem,
+  overlayInlineBlocks,
   type AppChatAssistantItem,
   type AppChatButton,
   type AppChatEvent,
+  type AppChatInlineBlock,
   type AppChatItem,
   type AppChatQuestionItem,
   type AppChatSegment,
@@ -29,6 +31,16 @@ const CLOSED_CARD_MEMORY = 8;
 /** 会话的图片目录 = 记录文件名去掉 .jsonl 再加这个后缀，放在同一个通道目录里 */
 const IMAGE_DIR_SUFFIX = ".images";
 
+/**
+ * 还没收口的回合卡。卡上的 segments 每次流式更新都整体替换，所以原样的流式输出另存一份（streamed），
+ * Agent 在回合中途发的问题、图片、文件、文字记在 inlines 里，每次更新后重新叠到对应位置。
+ */
+interface LiveCard {
+  id: string;
+  streamed: AppChatSegment[];
+  inlines: AppChatInlineBlock[];
+}
+
 interface SessionEntry {
   sessionKey: string;
   file: string;
@@ -36,7 +48,7 @@ interface SessionEntry {
   imageDir: string;
   items: AppChatItem[];
   timer: NodeJS.Timeout | null;
-  liveCardId?: string;
+  live?: LiveCard;
   /** 已收口的卡 id：旧回合的迟到 update 据此判定作废 */
   closedCardIds: string[];
 }
@@ -322,7 +334,7 @@ export class AppChat {
 
   /** Agent 正在干活：有还没收口的回合卡。此时发来的消息要排队，等这一回合结束再投递 */
   hasLiveTurn(sessionKey: string): boolean {
-    return this.entry(sessionKey).liveCardId !== undefined;
+    return this.entry(sessionKey).live !== undefined;
   }
 
   /** 暂存区里的某条消息；已投递（或不存在）返回 undefined */
@@ -404,6 +416,28 @@ export class AppChat {
     this.upsert(this.entry(sessionKey), { kind: "text", id: randomUUID(), ts: Date.now(), text });
   }
 
+  /**
+   * 把一块挂进当前回合卡的当前位置（流式输出此刻已有的段数处）。
+   * 没有回合卡（Agent 不在回合中）返回 false，调用方自己落成独立记录。
+   */
+  private inlineIntoLiveCard(entry: SessionEntry, segment: AppChatSegment): boolean {
+    const live = entry.live;
+    const card = live ? this.findAssistant(entry, live.id) : undefined;
+    if (!live || !card) return false;
+    live.inlines.push({ insertAt: live.streamed.length, segment });
+    this.upsert(entry, { ...card, segments: overlayInlineBlocks(live.streamed, live.inlines) });
+    return true;
+  }
+
+  /**
+   * 落一条独立记录；inline=true 且有回合卡时，卡里同时引用它（记录本身仍在，答题、搜索、转存都认它）。
+   * 先让卡引用它、再落记录：界面先收到卡、再收到记录，这条记录不会先单独出现在末尾、又被收进卡里。
+   */
+  private place(entry: SessionEntry, item: AppChatItem, inline: boolean): void {
+    if (inline) this.inlineIntoLiveCard(entry, { type: "item", itemId: item.id });
+    this.upsert(entry, item);
+  }
+
   addNotice(sessionKey: string, text: string, buttons?: AppChatButton[]): void {
     this.upsert(this.entry(sessionKey), {
       kind: "notice", id: randomUUID(), ts: Date.now(), text,
@@ -423,8 +457,9 @@ export class AppChat {
     }
   }
 
-  addImage(sessionKey: string, imagePath: string): void {
-    this.upsert(this.entry(sessionKey), { kind: "image", id: randomUUID(), ts: Date.now(), path: this.adoptImage(sessionKey, imagePath) });
+  /** inline=true：Agent 在回合中发的，有回合卡就显示在卡里它发的那个位置；没有回合卡时落成独立记录 */
+  addImage(sessionKey: string, imagePath: string, inline = false): void {
+    this.place(this.entry(sessionKey), { kind: "image", id: randomUUID(), ts: Date.now(), path: this.adoptImage(sessionKey, imagePath) }, inline);
   }
 
   /**
@@ -459,25 +494,26 @@ export class AppChat {
     return sources.map((p) => this.adoptImage(sessionKey, p));
   }
 
-  addFile(sessionKey: string, filePath: string): void {
-    this.upsert(this.entry(sessionKey), {
+  addFile(sessionKey: string, filePath: string, inline = false): void {
+    this.place(this.entry(sessionKey), {
       kind: "file", id: randomUUID(), ts: Date.now(), path: filePath, name: path.basename(filePath),
-    });
+    }, inline);
   }
 
   /**
    * 返回问题的 messageId，调用方据此登记消息路由。
    * round 是问这道题时 Agent 所在的那一轮；不传 = 不参与轮次（选完就交，用户打字随时可关）。
    * no 是这道题在那一轮里的题号，Agent 凭它撤回这道题。
+   * 参与轮次的题就是 Agent 在回合中发的：有回合卡就显示在卡里它发的那个位置。
    */
   addQuestion(sessionKey: string, text: string, options: string[], multi = false, round?: string, no?: number): string {
     const messageId = `app_q_${randomUUID()}`;
-    this.upsert(this.entry(sessionKey), {
+    this.place(this.entry(sessionKey), {
       kind: "question", id: messageId, ts: Date.now(), messageId, text, options,
       ...(multi ? { multi: true } : {}),
       ...(round ? { round } : {}),
       ...(no !== undefined ? { no } : {}),
-    });
+    }, !!round);
     return messageId;
   }
 
@@ -580,8 +616,14 @@ export class AppChat {
   }
 
   private closeCard(entry: SessionEntry, cardId: string): void {
-    if (entry.liveCardId === cardId) entry.liveCardId = undefined;
+    if (entry.live?.id === cardId) entry.live = undefined;
     entry.closedCardIds = [...entry.closedCardIds, cardId].slice(-CLOSED_CARD_MEMORY);
+  }
+
+  /** 采用这次的流式输出（空的更新沿用上一份），返回叠上内联块之后卡上要显示的段落 */
+  private refreshLive(live: LiveCard, streamed: AppChatSegment[]): AppChatSegment[] {
+    if (streamed.length) live.streamed = streamed;
+    return overlayInlineBlocks(live.streamed, live.inlines);
   }
 
   /** 对应 /api/agent-stream-card 的 ensure / update / finish */
@@ -595,37 +637,42 @@ export class AppChat {
     const segments = toAppChatSegments(rawSegments);
 
     if (action === "finish") {
-      const targetId = entry.liveCardId ?? opts.cardId;
-      const live = targetId ? this.findAssistant(entry, targetId) : undefined;
-      if (!live) return { cardId: targetId, hasReply: hasReplyText(segments) };
+      const live = entry.live;
+      const targetId = live?.id ?? opts.cardId;
+      const card = targetId ? this.findAssistant(entry, targetId) : undefined;
+      if (!card) return { cardId: targetId, hasReply: hasReplyText(segments) };
       // 收口只认第一次：Agent 重新拉起（Resume）时会按记着的卡 id 再补发一次 finish，
-      // 再盖一次 finishedAt，「耗时」就成了从这条回复到下一条消息的整段时间（几小时）
-      if (live.finished) return { cardId: live.id, hasReply: hasReplyText(live.segments) };
+      // 再盖一次 finishedAt，「耗时」就成了从这条回复到下一条消息的整段时间（几小时）。不是活卡的都算已收口
+      if (card.finished || !live) return { cardId: card.id, hasReply: hasReplyText(card.segments) };
       const next: AppChatAssistantItem = {
-        ...live,
-        segments: segments.length ? segments : live.segments,
+        ...card,
+        segments: this.refreshLive(live, segments),
         finished: true,
         finishedAt: Date.now(),
         ...(opts.modelLabel?.trim() ? { modelLabel: opts.modelLabel.trim() } : {}),
         ...(opts.interrupted ? { interrupted: true } : {}),
       };
       this.upsert(entry, next);
-      this.closeCard(entry, live.id);
-      return { cardId: live.id, hasReply: hasReplyText(next.segments) };
+      this.closeCard(entry, card.id);
+      return { cardId: card.id, hasReply: hasReplyText(next.segments) };
     }
 
     if (opts.cardId && entry.closedCardIds.includes(opts.cardId)) return { gone: true, hasReply: false };
-    if (entry.liveCardId && opts.cardId && opts.cardId !== entry.liveCardId) {
-      return { gone: true, cardId: entry.liveCardId, hasReply: false };
+    if (entry.live && opts.cardId && opts.cardId !== entry.live.id) {
+      return { gone: true, cardId: entry.live.id, hasReply: false };
     }
 
-    const live = entry.liveCardId ? this.findAssistant(entry, entry.liveCardId) : undefined;
-    const next: AppChatAssistantItem = live
-      ? { ...live, segments: segments.length ? segments : live.segments }
-      : { kind: "assistant", id: randomUUID(), ts: this.newCardTs(entry), segments, finished: false };
-    entry.liveCardId = next.id;
-    this.upsert(entry, next);
-    return { cardId: next.id, hasReply: hasReplyText(next.segments) };
+    const live = entry.live;
+    const card = live ? this.findAssistant(entry, live.id) : undefined;
+    if (live && card) {
+      const next: AppChatAssistantItem = { ...card, segments: this.refreshLive(live, segments) };
+      this.upsert(entry, next);
+      return { cardId: next.id, hasReply: hasReplyText(next.segments) };
+    }
+    const created: AppChatAssistantItem = { kind: "assistant", id: randomUUID(), ts: this.newCardTs(entry), segments, finished: false };
+    entry.live = { id: created.id, streamed: segments, inlines: [] };
+    this.upsert(entry, created);
+    return { cardId: created.id, hasReply: hasReplyText(created.segments) };
   }
 
   clearSession(sessionKey: string): void {
@@ -633,7 +680,7 @@ export class AppChat {
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = null;
     entry.items = [];
-    if (entry.liveCardId) this.closeCard(entry, entry.liveCardId);
+    if (entry.live) this.closeCard(entry, entry.live.id);
     fs.rmSync(entry.file, { force: true });
     fs.rmSync(entry.imageDir, { recursive: true, force: true });
     this.emit({ type: "clear", sessionKey: entry.sessionKey });

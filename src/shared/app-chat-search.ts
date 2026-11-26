@@ -103,6 +103,7 @@ export function searchChatItems(items: AppChatItem[], query: string): ChatSearch
   const hits: ChatSearchHit[] = [];
   if (tokens.length === 0) return { hits, capped: false };
 
+  // 被回合卡引用的记录也要搜：它们显示在卡里，命中后界面按 id 定位到卡里的那一块
   const stream = chatStreamItems(items);
   for (let i = stream.length - 1; i >= 0; i--) {
     const found = searchable(stream[i]);

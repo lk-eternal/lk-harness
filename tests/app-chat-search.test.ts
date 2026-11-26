@@ -45,6 +45,12 @@ describe("searchChatItems：搜哪些记录", () => {
     expect(ids([q], "ramda")).toEqual(["q1"])
   })
 
+  it("被回合卡引用的问题照样能搜：命中的是问题自己的 id，界面据此定位到卡里的那一块", () => {
+    const q = { kind: "question", id: "q1", ts: 1500, messageId: "q1", text: "用哪个库？", options: ["lodash"] } as AppChatItem
+    const turn = { kind: "assistant", id: "a1", ts: 1000, finished: true, segments: [{ type: "reply", text: "先问你" }, { type: "item", itemId: "q1" }] } as AppChatItem
+    expect(ids([turn, q], "哪个库")).toEqual(["q1"])
+  })
+
   it("图片、文件不搜", () => {
     const items = [
       { kind: "image", id: "i1", ts: 1000, path: "/tmp/关键词.png" },

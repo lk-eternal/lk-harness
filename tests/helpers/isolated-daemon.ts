@@ -26,7 +26,7 @@ export interface ChatItem {
   /** 用户消息带的本地图片路径 */
   images?: string[]
   interrupted?: boolean
-  segments?: Array<{ type: string; text?: string }>
+  segments?: Array<{ type: string; text?: string; itemId?: string }>
   /** 问题卡：用户选的选项、是否已选但还没交给 Agent、关闭原因 */
   answered?: string
   held?: boolean

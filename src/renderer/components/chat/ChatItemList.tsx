@@ -1,6 +1,6 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowDown, Loader2, MessageCircle } from "lucide-react"
-import type { AppChatItem } from "../../../shared/app-chat-types"
+import { inlinedItemIds, type AppChatItem } from "../../../shared/app-chat-types"
 import { useKeepScrollOnPrepend } from "../../hooks/useKeepScrollOnPrepend"
 import { useStickToBottom } from "../../hooks/useStickToBottom"
 import AssistantTurn from "./AssistantTurn"
@@ -35,11 +35,11 @@ interface Props {
   }
 }
 
-/** reveal：搜索刚定位到这条记录的时刻；折叠着的提示条据此自动展开 */
-function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Props["onCommand"], reveal?: number): ReactNode {
+/** reveal：搜索刚定位到这条记录的时刻；折叠着的提示条据此自动展开；renderInline：画回合卡里引用的记录 */
+function renderItem(it: AppChatItem, onAnswer: Props["onAnswer"], onCommand: Props["onCommand"], renderInline: (itemId: string) => ReactNode, reveal?: number): ReactNode {
   switch (it.kind) {
     case "user": return <UserBubble item={it} />
-    case "assistant": return <AssistantTurn item={it} />
+    case "assistant": return <AssistantTurn item={it} renderInline={renderInline} />
     case "text": return <Markdown text={it.text} />
     case "question": return <QuestionCard item={it} onAnswer={onAnswer} />
     case "image": return <LocalImage path={it.path} className="max-h-72 max-w-sm self-start" />
@@ -121,6 +121,16 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
     return loaded
   }
 
+  // 被回合卡引用的记录（Agent 在回合中发的问题、图片、文件）显示在卡里它发的那个位置，不在列表里单独出现
+  const inlined = useMemo(() => inlinedItemIds(items), [items])
+  const itemById = useMemo(() => new Map(items.map((it) => [it.id, it] as const)), [items])
+  const revealAt = (id: string) => (revealed?.id === id ? revealed.at : undefined)
+  const renderInline = (id: string): ReactNode => {
+    const it = itemById.get(id)
+    // 同样套定位锚点：搜索命中这条记录时，滚到卡里的那一块
+    return it && <div data-item-id={id} className="flex flex-col">{renderItem(it, onAnswer, onCommand, renderInline, revealAt(id))}</div>
+  }
+
   return (
     <div className="relative min-h-0 flex-1">
       <div ref={scrollRef} className="h-full overflow-y-auto px-6 py-4">
@@ -139,8 +149,8 @@ export default function ChatItemList({ items, loading, hasMore, loadingEarlier, 
             </button>
           )}
           {/* 每条记录套一个定位锚点（搜索定位靠它找）；flex-col 让里面的 self-end / max-w 百分比和直接放在列里时一致 */}
-          {items.map((it) => (
-            <div key={it.id} data-item-id={it.id} className="flex flex-col">{renderItem(it, onAnswer, onCommand, revealed?.id === it.id ? revealed.at : undefined)}</div>
+          {items.filter((it) => !inlined.has(it.id)).map((it) => (
+            <div key={it.id} data-item-id={it.id} className="flex flex-col">{renderItem(it, onAnswer, onCommand, renderInline, revealAt(it.id))}</div>
           ))}
           {waiting && <div className="flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={12} className="animate-spin" />Agent 正在处理…</div>}
           <div ref={sentinelRef} />

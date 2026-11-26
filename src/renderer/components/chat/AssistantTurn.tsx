@@ -185,8 +185,17 @@ function TurnFooter({ item, replyText }: { item: AppChatAssistantItem; replyText
   )
 }
 
-export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) {
-  const last = item.segments.length - 1
+/** 最后一段流式输出的下标：被引用进来的记录不算，它挂在后面也不该让前面还在跑的思考/工具块停止转圈 */
+function lastStreamedIndex(segments: AppChatSegment[]): number {
+  for (let i = segments.length - 1; i >= 0; i--) {
+    if (segments[i].type !== "item") return i
+  }
+  return -1
+}
+
+/** renderInline：画这个回合里引用的那条记录（问题、图片、文件）；找不到记录时什么都不画 */
+export default function AssistantTurn({ item, renderInline }: { item: AppChatAssistantItem; renderInline: (itemId: string) => ReactNode }) {
+  const last = lastStreamedIndex(item.segments)
   const lastThinking = lastIndexOfType(item.segments, "thinking")
   const lastTools = lastIndexOfType(item.segments, "tools")
   const replyText = item.segments.flatMap((s) => (s.type === "reply" ? [s.text] : [])).join("\n\n")
@@ -197,6 +206,7 @@ export default function AssistantTurn({ item }: { item: AppChatAssistantItem }) 
       case "tools": return <ToolsBlock key={i} tools={seg.tools} live={live} expanded={!item.finished && i === lastTools} />
       case "todos": return <TodosBlock key={i} items={seg.items} />
       case "reply": return <Markdown key={i} text={seg.text} />
+      case "item": return <Fragment key={i}>{renderInline(seg.itemId)}</Fragment>
     }
   }
   return (

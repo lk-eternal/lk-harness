@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type ComponentProps } from "react"
+import { useEffect, useRef, useState, type ComponentProps, type ReactNode } from "react"
 import { ArrowDown, Download, Eye, FileText, ImageOff, Loader2, Sparkles, Terminal } from "lucide-react"
-import type { AppChatFileItem, AppChatItem, AppChatUserItem } from "../shared/app-chat-types"
+import { inlinedItemIds, type AppChatFileItem, type AppChatItem, type AppChatUserItem } from "../shared/app-chat-types"
 import { previewTypeOf } from "../shared/preview-kinds"
 import AssistantTurn from "../renderer/components/chat/AssistantTurn"
 import { ImageLightbox } from "../renderer/components/chat/ImageLightbox"
@@ -269,6 +269,62 @@ function MobileItemListBody({
 
   const hasLiveTurn = items.some((it) => it.kind === "assistant" && !it.finished)
 
+  // 被回合卡引用的记录（Agent 在回合中发的问题、图片、文件）显示在卡里它发的那个位置，不在列表里单独出现
+  const inlined = inlinedItemIds(items)
+  const itemById = new Map(items.map((it) => [it.id, it] as const))
+  const renderInline = (id: string): ReactNode => {
+    const it = itemById.get(id)
+    return it && renderItem(it)
+  }
+  const renderItem = (item: AppChatItem): ReactNode => {
+    switch (item.kind) {
+      case "user":
+        return (
+          <MobileUserBubble
+            key={item.id}
+            item={item}
+            baseUrl={baseUrl}
+            token={token}
+            sessionKey={sessionKey}
+          />
+        )
+      case "assistant":
+        return <AssistantTurn key={item.id} item={item} renderInline={renderInline} />
+      case "text":
+        return <Markdown key={item.id} text={item.text} />
+      case "question":
+        return <QuestionCard key={item.id} item={item} onAnswer={onAnswer} />
+      case "image":
+        return (
+          <MobileRemoteImage
+            key={item.id}
+            baseUrl={baseUrl}
+            token={token}
+            sessionKey={sessionKey}
+            path={item.path}
+            className="max-h-72 min-h-24 min-w-24 max-w-full self-start"
+          />
+        )
+      case "file":
+        return (
+          <MobileFileCard
+            key={item.id}
+            item={item}
+            baseUrl={baseUrl}
+            token={token}
+            sessionKey={sessionKey}
+          />
+        )
+      case "notice":
+        return <NoticePill key={item.id} item={item} onCommand={onCommand} />
+      default: {
+        // 新增消息类型漏渲染时在这里编译报错，而不是在手机上悄悄丢消息
+        const unhandled: never = item
+        return unhandled
+      }
+    }
+  }
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
@@ -325,54 +381,7 @@ function MobileItemListBody({
                 {loadingEarlier ? "加载中…" : "加载更早的消息"}
               </button>
             )}
-            {items.map((item) => {
-              switch (item.kind) {
-                case "user":
-                  return (
-                    <MobileUserBubble
-                      key={item.id}
-                      item={item}
-                      baseUrl={baseUrl}
-                      token={token}
-                      sessionKey={sessionKey}
-                    />
-                  )
-                case "assistant":
-                  return <AssistantTurn key={item.id} item={item} />
-                case "text":
-                  return <Markdown key={item.id} text={item.text} />
-                case "question":
-                  return <QuestionCard key={item.id} item={item} onAnswer={onAnswer} />
-                case "image":
-                  return (
-                    <MobileRemoteImage
-                      key={item.id}
-                      baseUrl={baseUrl}
-                      token={token}
-                      sessionKey={sessionKey}
-                      path={item.path}
-                      className="max-h-72 min-h-24 min-w-24 max-w-full self-start"
-                    />
-                  )
-                case "file":
-                  return (
-                    <MobileFileCard
-                      key={item.id}
-                      item={item}
-                      baseUrl={baseUrl}
-                      token={token}
-                      sessionKey={sessionKey}
-                    />
-                  )
-                case "notice":
-                  return <NoticePill key={item.id} item={item} onCommand={onCommand} />
-                default: {
-                  // 新增消息类型漏渲染时在这里编译报错，而不是在手机上悄悄丢消息
-                  const unhandled: never = item
-                  return unhandled
-                }
-              }
-            })}
+            {items.filter((item) => !inlined.has(item.id)).map(renderItem)}
             {busy && !hasLiveTurn && (
               <div className="flex items-center gap-2 text-xs text-fg-muted">
                 <Loader2 size={13} className="animate-spin text-accent" />Agent 正在思考…

@@ -23,7 +23,9 @@ export type AppChatSegment =
   | { type: "thinking"; text: string; ms?: number }
   | { type: "tools"; tools: AppChatTool[] }
   | { type: "reply"; text: string }
-  | { type: "todos"; items: AppChatTodo[] };
+  | { type: "todos"; items: AppChatTodo[] }
+  /** 引用一条独立记录（问题、图片、文件）：Agent 在回合中途发的，就显示在它发的那个位置，而不是排到会话末尾 */
+  | { type: "item"; itemId: string };
 
 /** 指令回执里的可点击项：点击等于发送 cmd */
 export interface AppChatButton {
@@ -131,6 +133,33 @@ export function isQueuedUserItem(item: AppChatItem): item is AppChatUserItem {
 /** 聊天流里要显示的条目：排队中的消息只出现在暂存区 */
 export function chatStreamItems(items: AppChatItem[]): AppChatItem[] {
   return items.some(isQueuedUserItem) ? items.filter((it) => !isQueuedUserItem(it)) : items;
+}
+
+/** 被回合卡引用的记录 id：它们显示在卡里的引用位置，不再在聊天流里单独出现 */
+export function inlinedItemIds(items: readonly AppChatItem[]): Set<string> {
+  const ids = new Set<string>();
+  for (const it of items) {
+    if (it.kind !== "assistant") continue;
+    for (const seg of it.segments) if (seg.type === "item") ids.add(seg.itemId);
+  }
+  return ids;
+}
+
+/** 回合卡里内联进去的一块；insertAt 是它挂进来时流式输出已有的段数，块就插在那个位置 */
+export interface AppChatInlineBlock {
+  insertAt: number;
+  segment: AppChatSegment;
+}
+
+/** 把内联块按位置叠到流式输出的段落上。流式输出每次整体替换，内联块要在每次替换后重新叠一遍才不会丢 */
+export function overlayInlineBlocks(streamed: readonly AppChatSegment[], blocks: readonly AppChatInlineBlock[]): AppChatSegment[] {
+  const out = streamed.slice();
+  let offset = 0;
+  for (const block of [...blocks].sort((a, b) => a.insertAt - b.insertAt)) {
+    out.splice(Math.min(block.insertAt + offset, out.length), 0, block.segment);
+    offset++;
+  }
+  return out;
 }
 
 /**

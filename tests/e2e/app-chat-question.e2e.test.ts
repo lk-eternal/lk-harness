@@ -305,3 +305,21 @@ describe("Agent 撤回自己发的题", () => {
     expect((await withdraw()).ok).toBe(false)
   })
 })
+
+describe("问题并进回合卡", () => {
+  const turnSegments = async () => (await d.history()).find((i) => i.kind === "assistant")?.segments
+
+  it("问题显示在卡里它发的那个位置，之后的流式更新不会把它冲掉", async () => {
+    const q = await ask("用哪个库？", ["A", "B"])
+    expect(await turnSegments()).toEqual([{ type: "reply", text: "处理中" }, { type: "item", itemId: q }])
+
+    await d.card("update", { segments: [{ type: "reply", text: "处理中" }, { type: "reply", text: "等你选" }] })
+    expect(await turnSegments()).toEqual([
+      { type: "reply", text: "处理中" },
+      { type: "item", itemId: q },
+      { type: "reply", text: "等你选" },
+    ])
+    // 记录本身还在：点选、撤回都认它
+    expect(await questionOf(q)).toMatchObject({ id: q })
+  })
+})

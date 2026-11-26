@@ -159,6 +159,51 @@ describe("AI 发的图（send_image）：同样收进会话目录", () => {
   })
 })
 
+describe("AI 回合中发的图 / 文件：并进回合卡它发的那个位置", () => {
+  beforeEach(async () => {
+    await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "来张图" })
+    await d.poll()
+  })
+
+  const turnSegments = async () => (await d.history()).find((i) => i.kind === "assistant")?.segments
+
+  it("有回合卡：图、文件各在卡里发的位置，记录本身仍在", async () => {
+    await d.card("ensure")
+    await d.post("/api/send-image", { image_path: makeImage("chart.png"), session_key: d.sessionKey })
+    const report = path.join(d.dataDir, "report.txt")
+    fs.writeFileSync(report, "x")
+    await d.post("/api/send-file", { file_path: report, session_key: d.sessionKey })
+
+    const [image] = await imageItems()
+    const file = (await d.history()).find((i) => i.kind === "file")
+    expect(file).toBeDefined()
+    expect(await turnSegments()).toEqual([
+      { type: "reply", text: "处理中" },
+      { type: "item", itemId: image.id },
+      { type: "item", itemId: file!.id },
+    ])
+  })
+
+  it("卡后续的流式更新不会把它们冲掉", async () => {
+    await d.card("ensure")
+    await d.post("/api/send-image", { image_path: makeImage("chart.png"), session_key: d.sessionKey })
+    await d.card("update", { segments: [{ type: "reply", text: "处理中" }, { type: "reply", text: "接着说" }] })
+
+    const [image] = await imageItems()
+    expect(await turnSegments()).toEqual([
+      { type: "reply", text: "处理中" },
+      { type: "item", itemId: image.id },
+      { type: "reply", text: "接着说" },
+    ])
+  })
+
+  it("没有回合卡：仍是独立记录", async () => {
+    await d.post("/api/send-image", { image_path: makeImage("chart.png"), session_key: d.sessionKey })
+    expect(await turnSegments()).toBeUndefined()
+    expect(await imageItems()).toHaveLength(1)
+  })
+})
+
 describe("清空 / 删除会话：图片一起删", () => {
   it("清空会话记录：用户发的图和 AI 发的图都删，目录也删", async () => {
     const sent = await d.post("/api/app-chat/send", { sessionKey: d.sessionKey, text: "看图", images: [makeImage("u.png")] })

@@ -1,4 +1,4 @@
-import { createElement } from "react"
+import { createElement, type ReactNode } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 import type { AppChatAssistantItem, AppChatSegment } from "../src/shared/app-chat-types"
@@ -7,8 +7,8 @@ import { formatFullTime, formatMessageTime } from "../src/renderer/time-ago"
 
 const base: AppChatAssistantItem = { id: "a1", kind: "assistant", ts: 1_700_000_000_000, segments: [], finished: true }
 
-const render = (segments: AppChatSegment[], finished = true) =>
-  renderToStaticMarkup(createElement(AssistantTurn, { item: { ...base, segments, finished } }))
+const render = (segments: AppChatSegment[], finished = true, renderInline: (itemId: string) => ReactNode = () => null) =>
+  renderToStaticMarkup(createElement(AssistantTurn, { item: { ...base, segments, finished }, renderInline }))
 
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
 
@@ -84,6 +84,29 @@ describe("AssistantTurn 折叠", () => {
   })
 })
 
+describe("AssistantTurn 内联记录", () => {
+  const inline = (id: string) => createElement("em", null, `记录:${id}`)
+
+  it("引用的记录画在它所在的位置：前后的回复之间", () => {
+    const segs: AppChatSegment[] = [
+      { type: "reply", text: "前面的话" },
+      { type: "item", itemId: "q1" },
+      { type: "reply", text: "后面的话" },
+    ]
+    const t = text(render(segs, true, inline))
+    expect(t.indexOf("前面的话")).toBeLessThan(t.indexOf("记录:q1"))
+    expect(t.indexOf("记录:q1")).toBeLessThan(t.indexOf("后面的话"))
+  })
+
+  it("引用的记录排在最后，前面还在跑的工具照样转圈", () => {
+    const segs: AppChatSegment[] = [
+      { type: "tools", tools: [{ name: "shell", status: "running", summary: "sleep 99" }] },
+      { type: "item", itemId: "q1" },
+    ]
+    expect(render(segs, false, inline)).toContain("animate-spin")
+  })
+})
+
 /**
  * 页脚的内容和顺序由共享的 buildTurnFooter 定（飞书卡片页脚用同一个函数），这里验证应用内这一端画得对：
  * 模型 · 状态 · 耗时 · 时间，时间是完成时刻。
@@ -92,7 +115,7 @@ describe("AssistantTurn 页脚", () => {
   const TS = base.ts
   const DONE = TS + 129_000
   const renderItem = (over: Partial<AppChatAssistantItem>) =>
-    renderToStaticMarkup(createElement(AssistantTurn, { item: { ...base, ...over } }))
+    renderToStaticMarkup(createElement(AssistantTurn, { item: { ...base, ...over }, renderInline: () => null }))
 
   it("正常完成：模型 · 耗时 2m9s · 完成时间（没有状态项）", () => {
     const html = renderItem({ modelLabel: "gpt-5.5", finishedAt: DONE })

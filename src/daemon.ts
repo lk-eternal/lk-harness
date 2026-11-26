@@ -2549,6 +2549,11 @@ function isIndependentTaskSend(sessionKey: string, invokerSessionKey: string | u
   return !!task && sendsStandaloneMessages(task);
 }
 
+/** 这次发送是不是 Agent 在某个会话的回合里发的：应用内可以把它并进该回合卡的当前位置。没带会话的系统通知、独立定时任务都不是 */
+function isInTurnSend(sessionKey: string | undefined, invokerSessionKey: string | undefined): boolean {
+  return !!sessionKey && !isIndependentTaskSend(sessionKey, invokerSessionKey);
+}
+
 /** 无活跃流式卡时先建卡，供 send_text/send_question 抢先合并（ACK 早于思考/工具）。整体入全序链。 */
 async function ensureStreamCardForMcpMerge(
   sessionKey: string,
@@ -4332,7 +4337,7 @@ function registerMediaOutboundTools(s: McpServer): void {
       try {
         const routeKey = resolveSendSessionKeyForMcp();
         if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-image"), { image_path, message_id, session_key: routeKey });
+        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-image"), { image_path, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${r?.error?.trim() || "图片发送失败"}` }] };
         return { content: [{ type: "text" as const, text: "图片已发送" }] };
       } catch (e: any) {
@@ -4353,7 +4358,7 @@ function registerMediaOutboundTools(s: McpServer): void {
       try {
         const routeKey = resolveSendSessionKeyForMcp();
         if (!routeKey) return { content: [{ type: "text" as const, text: MCP_SEND_NO_ROUTE }] };
-        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-file"), { file_path, message_id, session_key: routeKey });
+        const r = await httpJson<{ ok: boolean; error?: string }>(localDaemonUrl("/api/send-file"), { file_path, message_id, session_key: routeKey, invoker_session_key: getMcpInvokerSessionKey() });
         if (!r?.ok) return { content: [{ type: "text" as const, text: `[send_failed] ${r?.error?.trim() || "文件发送失败"}` }] };
         return { content: [{ type: "text" as const, text: "文件已发送" }] };
       } catch (e: any) {
@@ -5880,7 +5885,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/send-image") {
     const body = JSON.parse(await readBody(req));
-    const { image_path, message_id, session_key } = body as { image_path: string; message_id?: string; session_key?: string };
+    const { image_path, message_id, session_key, invoker_session_key } = body as { image_path: string; message_id?: string; session_key?: string; invoker_session_key?: string };
     if (!image_path) { json(res, { ok: false, error: "image_path is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-image", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
@@ -5888,7 +5893,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     let sentOk: boolean;
     if (ch.type === "app") {
       if (!fs.existsSync(image_path)) { json(res, { ok: false, error: "图片文件不存在" }, 400); return true; }
-      appChat.addImage(resolveAppSessionKey(ch, message_id, session_key), image_path);
+      appChat.addImage(resolveAppSessionKey(ch, message_id, session_key), image_path, isInTurnSend(session_key, invoker_session_key));
       sentOk = true;
     } else if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, image_path);
@@ -5910,7 +5915,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
 
   if (method === "POST" && pathname === "/api/send-file") {
     const body = JSON.parse(await readBody(req));
-    const { file_path, message_id, session_key } = body as { file_path: string; message_id?: string; session_key?: string };
+    const { file_path, message_id, session_key, invoker_session_key } = body as { file_path: string; message_id?: string; session_key?: string; invoker_session_key?: string };
     if (!file_path) { json(res, { ok: false, error: "file_path is required" }, 400); return true; }
     if (rejectUnroutedSend(res, "send-file", session_key, message_id)) return true;
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
@@ -5918,7 +5923,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     let sentOk: boolean;
     if (ch.type === "app") {
       if (!fs.existsSync(file_path)) { json(res, { ok: false, error: "文件不存在" }, 400); return true; }
-      appChat.addFile(resolveAppSessionKey(ch, message_id, session_key), file_path);
+      appChat.addFile(resolveAppSessionKey(ch, message_id, session_key), file_path, isInTurnSend(session_key, invoker_session_key));
       sentOk = true;
     } else if (ch.type === "wechat") {
       sentOk = await ch.rt.wechat!.sendMedia(ch.chatId, file_path);
