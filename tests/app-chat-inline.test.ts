@@ -141,6 +141,29 @@ describe("回合中发的问题、图片、文件：并进回合卡它发的那�
   })
 })
 
+describe("回合中发的文字：并进回合卡成为一段回复", () => {
+  it("inline=true：卡里多一段回复，不产生独立文本记录；流式更新后位置不变", () => {
+    chat.streamCard(SESSION, "ensure", [tools("a")], {})
+    chat.addText(SESSION, "先说一句", true)
+    expect(card().segments).toEqual([tools("a"), reply("先说一句")])
+    expect(itemOfKind("text")).toBeUndefined()
+
+    const r = chat.streamCard(SESSION, "update", [tools("a"), tools("b")], {})
+    expect(card().segments).toEqual([tools("a"), reply("先说一句"), tools("b")])
+    // 并进去的文字算这个回合有回复（收口时据此判断要不要补「没有回复」的提示）
+    expect(r.hasReply).toBe(true)
+  })
+
+  it("默认、或没有回合卡：独立文本记录", () => {
+    chat.addText(SESSION, "没人在干活", true)
+    chat.streamCard(SESSION, "ensure", [tools("a")], {})
+    chat.addText(SESSION, "默认独立")
+
+    expect(chat.list(SESSION).filter((i) => i.kind === "text").map((i) => (i as { text: string }).text)).toEqual(["没人在干活", "默认独立"])
+    expect(card().segments).toEqual([tools("a")])
+  })
+})
+
 describe("没有回合卡、或不是回合中发的：落成独立记录，和以前一样", () => {
   it("没有活卡（Agent 不在回合中）", () => {
     const id = chat.addQuestion(SESSION, "选哪个？", ["A"], false, ROUND, 1)

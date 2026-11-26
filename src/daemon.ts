@@ -5550,7 +5550,7 @@ async function handleAdminApi(pathname: string, method: string, req: http.Incomi
     const ch = resolveChannel(routeTargetKey(session_key, message_id), { allowDefault: false });
     if (ch.type === "error") { log("WARN", `[send-text] 通道解析失败: ${ch.message} (session=${session_key ?? "-"})`); json(res, { ok: false, error: ch.message }, 400); return true; }
     if (ch.type === "app") {
-      appChat.addText(resolveAppSessionKey(ch, message_id, session_key), text);
+      appChat.addText(resolveAppSessionKey(ch, message_id, session_key), text, isInTurnSend(session_key, invoker_session_key));
       if (session_key) touchSessionLastReply(session_key);
       json(res, { ok: true });
       return true;

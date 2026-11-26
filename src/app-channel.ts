@@ -412,8 +412,11 @@ export class AppChat {
     this.markDelivered(sessionKey, stale);
   }
 
-  addText(sessionKey: string, text: string): void {
-    this.upsert(this.entry(sessionKey), { kind: "text", id: randomUUID(), ts: Date.now(), text });
+  /** inline=true：这段文字是 Agent 回合中发的，有回合卡就并进卡里发出时的位置（成为一段回复）；没有回合卡时落成独立记录 */
+  addText(sessionKey: string, text: string, inline = false): void {
+    const entry = this.entry(sessionKey);
+    if (inline && this.inlineIntoLiveCard(entry, { type: "reply", text })) return;
+    this.upsert(entry, { kind: "text", id: randomUUID(), ts: Date.now(), text });
   }
 
   /**
