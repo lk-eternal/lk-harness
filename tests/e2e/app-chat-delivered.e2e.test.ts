@@ -32,7 +32,7 @@ describe("投递时补记录", () => {
 
     const [notice, ...rest] = await notices()
     expect(rest).toEqual([])
-    expect(notice).toMatchObject({ id: "internal_enqueue_step_1", kind: "notice", text: "[PROJECT_ACTION] 开发步骤", detail: STEP_PROMPT })
+    expect(notice).toMatchObject({ id: "internal_enqueue_step_1", kind: "notice", text: "[PROJECT_ACTION] 开发步骤", detail: "来源：应用内步骤条。\n\n本步骤要求:\n- 先读代码再动手\n- 磁盘占用要检查" })
   })
 
   it("同一条再领取一次（重投）：仍然只有一条提示", async () => {

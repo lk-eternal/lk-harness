@@ -189,7 +189,7 @@ describe("应用内项目：真实 daemon", () => {
     const notices = (await history(r.sessionKey!)).filter((i) => i.kind === "notice")
     expect(notices).toHaveLength(1)
     expect(notices[0].text).toMatch(/^\[PROJECT_ACTION\]/)
-    expect(notices[0].detail).toBe(texts[0].trim())
+    expect(notices[0].detail).toBe(texts[0].trim().slice(notices[0].text!.length).trim())
     // 项目会话以外的会话里不会有这条记录
     expect((await history(d.sessionKey)).some((i) => i.kind === "notice" && i.text?.startsWith("[PROJECT_ACTION]"))).toBe(false)
   })
