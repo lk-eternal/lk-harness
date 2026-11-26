@@ -12,7 +12,7 @@ import QRCode from "qrcode"
 import { getAgentResource, getConfig, saveConfig } from "./config-store"
 import { getAgentEngine } from "./agent-engine/factory"
 import { applySessionModelChange, clearSessionQueue, sendQueuedNow } from "./daemon-manager"
-import { listDashboardTree, resolveSessionModels, stopSessionAgent } from "./session-dispatcher"
+import { listDashboardTree, listTasksBoundToDelete, resolveSessionModels, stopSessionAgent } from "./session-dispatcher"
 import {
   createProjectFromApp,
   deleteProjectByUser,
@@ -520,6 +520,13 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
     case "/api/mobile/delete-session": {
       const sessionKey = String(body.sessionKey ?? "")
       sendJson(res, 200, await deleteAppChatSession(sessionKey))
+      return
+    }
+    case "/api/mobile/tasks-bound-to-delete": {
+      // 删会话 / 删项目前，确认框列出会一并删掉的定时任务；传了项目 id 按整个项目找，否则按会话键
+      const projectId = typeof body.projectId === "string" ? body.projectId.trim() : ""
+      const target = projectId ? { projectId } : { sessionKey: String(body.sessionKey ?? "") }
+      sendJson(res, 200, { ok: true, tasks: listTasksBoundToDelete(target) })
       return
     }
     case "/api/mobile/set-model": {

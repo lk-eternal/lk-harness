@@ -10,13 +10,14 @@ import {
   parseRemoteRepoInput, picksOf, repoItemsFromOptions, upsertPickedRepo,
   type RepoPickItem,
 } from "../shared/project-repo-picker"
+import { appendTasksNote } from "../shared/session-schedule"
 import { splitTextLinks } from "../shared/text-links"
 import { WORK_BRANCH_MODES, type WorkBranchMode } from "../shared/work-branch-mode"
 import { usePreview } from "../renderer/components/preview/PreviewContext"
 import { formatTimeAgo } from "../renderer/time-ago"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, setMobileProjectArchived,
+  fetchMobileTasksBoundToDelete, runMobileProjectStep, setMobileProjectArchived,
 } from "./api"
 import { useBackToClose } from "./back-stack"
 import { MobilePreviewProvider } from "./MobilePreview"
@@ -627,7 +628,9 @@ function ProjectBarBody({ baseUrl, token, channelId, projectId, sessionKey, runn
 
   const removeProject = async () => {
     if (busy) return
-    if (!await confirm("删除项目", projectDeleteConfirmText(view, "电脑的回收站"), "删除")) return
+    const bound = await fetchMobileTasksBoundToDelete(baseUrl, token, { projectId })
+    if (!bound.ok) { onError(bound.error ?? "读取挂在项目上的定时任务失败"); return }
+    if (!await confirm("删除项目", appendTasksNote(projectDeleteConfirmText(view, "电脑的回收站"), bound.tasks ?? []), "删除")) return
     setBusy("delete")
     try {
       const r = await deleteMobileProject(baseUrl, token, channelId, projectId)

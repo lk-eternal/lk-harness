@@ -56,7 +56,7 @@ import { clearAppChatRecords } from "./app-chat"
 import { removeNoFollow } from "../src/shared/safe-remove.js"
 import { buildEmptyProjectMenu } from "../src/shared/quick-start.js"
 import { pushUiLog } from "./ui-logger"
-import { leaveProjectSession, formatCurrentSessionBlock, stopSessionAgent } from "./session-dispatcher"
+import { leaveProjectSession, formatCurrentSessionBlock, listTasksBoundToDelete, stopSessionAgent } from "./session-dispatcher"
 import { parseChatKey, channelIdFromSessionKey } from "../src/shared/channel-types.js"
 import {
   bindExistingGroup,
@@ -70,7 +70,7 @@ import {
   type GroupBindResult,
 } from "./project-bind"
 import { appendTasksNote, type BoundTaskBrief } from "../src/shared/session-schedule.js"
-import { listBoundTasks, removeBoundTasks } from "./session-tasks"
+import { removeBoundTasks } from "./session-tasks"
 
 /** 当前 chat 是哪个项目的专属群（有则返回该项目） */
 function resolveBoundGroupProject(chatId?: string): Project | undefined {
@@ -1085,7 +1085,7 @@ async function handleDeleteProjectCommand(
         target.externalWorkspace
           ? "只移除项目记录，这个文件夹原样保留。"
           : "将移除上面的项目目录（含克隆副本里没提交的改动）；你自己本机的代码仓库和远程分支不受影响。",
-      ].join("\n"), listBoundTasks(projectScheduleContexts(target))),
+      ].join("\n"), listTasksBoundToDelete({ projectId: target.id })),
       chatId,
       [
         { label: `确认删除 ${target.name}`, cmd: `/p del ${target.id} --yes` },

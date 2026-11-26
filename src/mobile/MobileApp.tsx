@@ -27,6 +27,7 @@ import { createDraftStore } from "../shared/composer-drafts"
 import { createUploadGate, waitForUploadsBeforeSend, type UploadBatchResult } from "../shared/upload-gate"
 import { hideDeletedTabs, markSessionDeleted, type DeletedSessions } from "../shared/deleted-sessions"
 import { pickDefaultTab } from "../shared/session-archive"
+import { appendTasksNote } from "../shared/session-schedule"
 import { isSessionPinned, parsePinnedIds, setSessionPinned } from "../shared/app-chat-pins"
 import { applyGroupPatch, DEFAULT_GROUP_STATES, groupOf, parseGroupStates, type GroupStatePatch, type SessionGroupStates, type SessionListGroupId } from "../shared/session-groups"
 import { canSwitchBranch, isDetachedLabel, makeBranchOverride, sharedSessionCount, shownBranch, type BranchOverride } from "../shared/git-branch"
@@ -56,6 +57,7 @@ import {
   editMobileQueued,
   fetchBootstrap,
   fetchHistory,
+  fetchMobileTasksBoundToDelete,
   fetchSessionModels,
   imageExtOf,
   loadMobileTheme,
@@ -874,7 +876,9 @@ export default function MobileApp() {
         : t.kind === "main"
           ? "会停止 Agent、清除上下文和聊天记录，并清除该通道的主目录设置（不删磁盘文件）。"
           : "会停止 Agent、清除上下文和聊天记录，并从常用目录中移除。"
-      if (!await showConfirm("删除会话", `确定删除「${sessionName(t)}」吗？\n${effect}`, "删除")) return
+      const bound = await fetchMobileTasksBoundToDelete(route.activeUrl, pairCfg.token, { sessionKey: key })
+      if (!bound.ok) { setActionError(bound.error ?? "读取挂在会话上的定时任务失败"); return }
+      if (!await showConfirm("删除会话", appendTasksNote(`确定删除「${sessionName(t)}」吗？\n${effect}`, bound.tasks ?? []), "删除")) return
     }
     setDrafts((prev) => prev.filter((d) => !sameChatSession(d.sessionKey, key)))
     const r = await deleteMobileSession(route.activeUrl, pairCfg.token, key)

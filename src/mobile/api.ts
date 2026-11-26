@@ -7,6 +7,7 @@ import type { MobileUpdateInfo } from "../shared/app-update"
 import type { AgentResource } from "../shared/channel-types"
 import { OLD_DESKTOP_BRANCH, type BranchListResult, type BranchSwitchResult, type BranchTarget } from "../shared/git-branch"
 import type { GroupStatePatch, SessionListGroupId } from "../shared/session-groups"
+import type { BoundTaskBrief, SessionTaskTarget } from "../shared/session-schedule"
 import type {
   ProjectActionResult, ProjectCreateInput, ProjectCreateResult, ProjectRepoOption, ProjectTemplateInfo, ProjectView,
 } from "../shared/project-app-types"
@@ -451,6 +452,16 @@ export async function clearMobileSession(baseUrl: string, token: string, opts: {
 
 export async function deleteMobileSession(baseUrl: string, token: string, sessionKey: string): Promise<{ ok: boolean; error?: string }> {
   return await callApi(baseUrl, token, "/api/mobile/delete-session", { sessionKey })
+}
+
+/** 删会话 / 删项目前：电脑端会一并删掉哪些挂在它上面的定时任务（确认框里列出）。旧版电脑端没有这个接口，也不会连带删，按没有处理 */
+export async function fetchMobileTasksBoundToDelete(
+  baseUrl: string,
+  token: string,
+  target: SessionTaskTarget,
+): Promise<{ ok: boolean; tasks?: BoundTaskBrief[]; error?: string }> {
+  const r = await callApi<{ ok: boolean; tasks?: BoundTaskBrief[]; error?: string }>(baseUrl, token, "/api/mobile/tasks-bound-to-delete", { ...target })
+  return !r.ok && r.error === "未知接口" ? { ok: true, tasks: [] } : r
 }
 
 // ── 项目（电脑端同一组函数；旧版电脑端没有这些接口，网关回「未知接口」） ──

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
   createMobileProject, deleteMobileProject, fetchMobileProjectRepos, fetchMobileProjectTemplates, fetchMobileProjectView,
-  runMobileProjectStep, setMobileProjectArchived,
+  fetchMobileTasksBoundToDelete, runMobileProjectStep, setMobileProjectArchived,
   type MobileChatTab, type RouteStatus,
 } from "../src/mobile/api"
 import { SessionDrawer } from "../src/mobile/MobileModals"
@@ -105,6 +105,32 @@ describe("手机端项目接口：请求长什么样", () => {
   it("电脑端的拒绝原因原样带回（比如项目归飞书管）", async () => {
     stubFetch(json({ ok: false, error: "这个项目归其它通道管" }))
     expect(await runMobileProjectStep(BASE, TOKEN, "c", "p", "n")).toEqual({ ok: false, error: "这个项目归其它通道管" })
+  })
+})
+
+describe("手机端删除前读挂靠的定时任务", () => {
+  const tasks = [{ id: "t1", name: "巡检", origin: "ai" as const }]
+
+  it("项目按项目 id 找，会话按会话键找；各自只带自己的字段", async () => {
+    const calls = stubFetch(json({ ok: true, tasks }), json({ ok: true, tasks: [] }))
+    expect(await fetchMobileTasksBoundToDelete(BASE, TOKEN, { projectId: "p1" })).toEqual({ ok: true, tasks })
+    expect(await fetchMobileTasksBoundToDelete(BASE, TOKEN, { sessionKey: "ch|app_main::D:\\x" })).toEqual({ ok: true, tasks: [] })
+    expect(calls.map((c) => c.url.replace("http://192.168.1.5:19529", ""))).toEqual([
+      "/api/mobile/tasks-bound-to-delete", "/api/mobile/tasks-bound-to-delete",
+    ])
+    expect(sent(calls[0])).toEqual({ projectId: "p1" })
+    expect(sent(calls[1])).toEqual({ sessionKey: "ch|app_main::D:\\x" })
+  })
+
+  it("旧版电脑端没有这个接口，删除时也不会连带删任务：当作没有，不拦住删除", async () => {
+    stubFetch(json({ ok: false, error: "未知接口" }, 404))
+    expect(await fetchMobileTasksBoundToDelete(BASE, TOKEN, { projectId: "p1" })).toEqual({ ok: true, tasks: [] })
+  })
+
+  it("别的失败（连不上、电脑端报错）原样带回，由界面拦住删除", async () => {
+    stubFetch(new Error("offline"), json({ ok: false, error: "出错了" }))
+    expect((await fetchMobileTasksBoundToDelete(BASE, TOKEN, { projectId: "p1" })).ok).toBe(false)
+    expect(await fetchMobileTasksBoundToDelete(BASE, TOKEN, { projectId: "p1" })).toEqual({ ok: false, error: "出错了" })
   })
 })
 

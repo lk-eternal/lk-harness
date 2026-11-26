@@ -50,8 +50,9 @@ import { getSessionOverride } from "../src/shared/session-model-store.js"
 import { findStoredSessionKey, getSessionRecord, initSessionOverridesStore, readOverridesSnapshot, withOverridesSnapshot } from "../src/shared/session-overrides-store.js"
 import { resolveLaunchModel, resolveSessionResourceId, taskExplicitModel } from "../src/shared/launch-model.js"
 import { taskTabModel } from "../src/shared/task-tab-model.js"
-import { appendTasksNote, type BoundTaskBrief, type SessionScheduleContext } from "../src/shared/session-schedule.js"
-import { removeBoundTasks } from "./session-tasks"
+import { appendTasksNote, type BoundTaskBrief, type SessionScheduleContext, type SessionTaskTarget } from "../src/shared/session-schedule.js"
+import { listBoundTasks, removeBoundTasks } from "./session-tasks"
+import { projectScheduleContexts } from "./project-bind"
 import { resolveManageChatId, type ManageChatResolution } from "../src/shared/session-owner.js"
 import { resolveModelLabel } from "../src/shared/model-utils.js"
 import { readTasksFromFile } from "./cron-scheduler"
@@ -1204,6 +1205,16 @@ function manageChatIdFor(sessionKey: string): ManageChatResolution {
     getChannels().filter((c) => c.enabled !== false),
     getSessionRecord(sessionKey)?.chatId,
   )
+}
+
+/** 删会话 / 删项目前，确认框要列出会一并删掉的任务：和 deleteUserSession、executeProjectDelete 删的是同一批 */
+export function listTasksBoundToDelete(target: SessionTaskTarget): BoundTaskBrief[] {
+  if ("projectId" in target) {
+    initProjectStore(app.getPath("userData"))
+    const project = getProject(target.projectId)
+    return project ? listBoundTasks(projectScheduleContexts(project)) : []
+  }
+  return listBoundTasks([scheduleContextForSession(target.sessionKey)])
 }
 
 /** 删除会话：停止 Agent、清 Resume、移出常用目录、一并删掉挂在它上面的定时任务；若当前活跃则回主会话。项目会话请用 /p del。 */

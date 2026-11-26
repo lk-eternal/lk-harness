@@ -16,8 +16,7 @@ import {
 } from "./config-store"
 import { parseChatKey, channelIdFromSessionKey, chatIdFromSessionKey, normalizeSessionKey, type DaemonChannelConfig, type ChannelStatusInfo } from "../src/shared/channel-types"
 import { validateCron, readTasksFromFile, writeTasksToFile, previewCronNextRuns, getNextCronFireLabel } from "./cron-scheduler"
-import { cancelAiTask, listBoundTasks } from "./session-tasks"
-import { projectScheduleContexts } from "./project-bind"
+import { cancelAiTask } from "./session-tasks"
 import type { ScheduledTask } from "../src/shared/scheduled-task"
 import { isAiTask, mergeSavedTasksKeepingAi } from "../src/shared/ai-schedule.js"
 import { keepTaskAppSessions } from "../src/shared/task-delivery.js"
@@ -112,7 +111,7 @@ import {
   listMainSessionTabs, listDashboardTree, resolveSessionModels, switchMainSession, deleteUserSession, leaveProjectSession,
   pullMergedMessagesFromQueue, isMainUser, extractChatId, chatNameCache, rememberP2pNames,
   fetchChatNames, fetchUserNames, initSessionDispatcher, previousActiveSessionMap,
-  formatCurrentSessionBlock, currentResourceIdForSession, scheduleContextForSession,
+  formatCurrentSessionBlock, currentResourceIdForSession, scheduleContextForSession, listTasksBoundToDelete,
   enforceChannelAccess,
   applyChannelPolicyChanges,
   resetSessionConversation,
@@ -2294,15 +2293,8 @@ export function initDaemonManager(): void {
     return { ok: true }
   })
 
-  // 删会话 / 删项目前：确认框要列出会跟着一起删的任务。和真正删除用同一套判定（session-tasks.ts）
-  ipcMain.handle("scheduled-tasks:bound-to-delete", (_, target: SessionTaskTarget) => {
-    if ("projectId" in target) {
-      initProjectStore(app.getPath("userData"))
-      const project = getProject(target.projectId)
-      return project ? listBoundTasks(projectScheduleContexts(project)) : []
-    }
-    return listBoundTasks([scheduleContextForSession(target.sessionKey)])
-  })
+  // 删会话 / 删项目前：确认框要列出会跟着一起删的任务
+  ipcMain.handle("scheduled-tasks:bound-to-delete", (_, target: SessionTaskTarget) => listTasksBoundToDelete(target))
 
   // ── 项目流程组 ──────────────────────────────────────
   ipcMain.handle("project-node-groups:get", () => {
